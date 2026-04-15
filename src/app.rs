@@ -64,8 +64,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/users/me",
-            get(crate::domains::identity::routes::profile::get_profile)
-                .put(crate::domains::identity::routes::profile::update_profile),
+            get(crate::domains::identity::routes::profile::get_me)
+                .put(crate::domains::identity::routes::profile::update_me),
         );
 
     Router::new()
