@@ -49,10 +49,7 @@ pub async fn authorize(
         requested_scopes
     };
 
-    let method = query
-        .code_challenge_method
-        .as_deref()
-        .unwrap_or("S256");
+    let method = query.code_challenge_method.as_deref().unwrap_or("S256");
     if method != "S256" && method != "plain" {
         return Err(AppError::BadRequest("invalid code_challenge_method".into()));
     }

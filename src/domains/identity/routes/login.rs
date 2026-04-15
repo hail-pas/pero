@@ -1,13 +1,13 @@
-use axum::extract::State;
-use axum::Json;
+use crate::cache::session;
 use crate::domains::identity::models::{LoginRequest, RefreshRequest, TokenResponse};
-use crate::domains::identity::repos::{UserRepo, IdentityRepo};
+use crate::domains::identity::repos::{IdentityRepo, UserRepo};
 use crate::shared::error::AppError;
 use crate::shared::extractors::AuthUser;
 use crate::shared::jwt;
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
-use crate::cache::session;
+use axum::Json;
+use axum::extract::State;
 
 pub async fn login(
     State(state): State<AppState>,
@@ -25,7 +25,10 @@ pub async fn login(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    let credential = identity.credential.as_deref().ok_or(AppError::Unauthorized)?;
+    let credential = identity
+        .credential
+        .as_deref()
+        .ok_or(AppError::Unauthorized)?;
 
     let valid = bcrypt::verify(&req.password, credential)
         .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
@@ -54,8 +57,7 @@ pub async fn refresh(
         return Err(AppError::Unauthorized);
     }
 
-    let user_id: uuid::Uuid = user_id_str.parse()
-        .map_err(|_| AppError::Unauthorized)?;
+    let user_id: uuid::Uuid = user_id_str.parse().map_err(|_| AppError::Unauthorized)?;
 
     let user = UserRepo::find_by_id(&state.db, user_id)
         .await?
@@ -92,10 +94,6 @@ pub async fn logout(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
-    session::revoke_refresh_token(
-        &mut state.cache.clone(),
-        &auth_user.user_id.to_string(),
-    )
-    .await?;
+    session::revoke_refresh_token(&mut state.cache.clone(), &auth_user.user_id.to_string()).await?;
     Ok(Json(ApiResponse::<()>::success_message("logged out")))
 }

@@ -1,11 +1,11 @@
-use axum::extract::{Path, State};
-use axum::Json;
-use crate::domains::identity::models::{UserDTO, UpdateUserRequest, UpdateMeRequest};
+use crate::domains::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
 use crate::domains::identity::repos::UserRepo;
 use crate::shared::error::AppError;
-use crate::shared::extractors::{AuthUser, ValidatedJson, Pagination};
+use crate::shared::extractors::{AuthUser, Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
 use crate::shared::state::AppState;
+use axum::Json;
+use axum::extract::{Path, State};
 
 pub async fn get_me(
     State(state): State<AppState>,
@@ -39,7 +39,9 @@ pub async fn list_users(
 ) -> Result<Json<ApiResponse<PageData<UserDTO>>>, AppError> {
     let (users, total) = UserRepo::list(&state.db, page, page_size).await?;
     let items: Vec<UserDTO> = users.into_iter().map(UserDTO::from).collect();
-    Ok(Json(ApiResponse::success(PageData::new(items, total, page, page_size))))
+    Ok(Json(ApiResponse::success(PageData::new(
+        items, total, page, page_size,
+    ))))
 }
 
 pub async fn get_user(

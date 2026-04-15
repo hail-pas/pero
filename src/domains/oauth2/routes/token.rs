@@ -1,5 +1,5 @@
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
 
 use crate::domains::identity::repos::UserRepo;
 use crate::domains::oauth2::models::{TokenRequest, TokenResponse};
@@ -122,7 +122,9 @@ async fn handle_refresh_token(
 
     let stored = RefreshTokenRepo::find_by_token(&state.db, old_refresh)
         .await?
-        .ok_or(AppError::BadRequest("invalid or expired refresh token".into()))?;
+        .ok_or(AppError::BadRequest(
+            "invalid or expired refresh token".into(),
+        ))?;
 
     let client_id_str = req
         .client_id

@@ -41,13 +41,11 @@ impl OAuth2ClientRepo {
         pool: &PgPool,
         client_id: &str,
     ) -> Result<Option<OAuth2Client>, AppError> {
-        sqlx::query_as::<_, OAuth2Client>(
-            "SELECT * FROM oauth2_clients WHERE client_id = $1",
-        )
-        .bind(client_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+        sqlx::query_as::<_, OAuth2Client>("SELECT * FROM oauth2_clients WHERE client_id = $1")
+            .bind(client_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn list(

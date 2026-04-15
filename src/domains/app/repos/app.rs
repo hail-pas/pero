@@ -57,11 +57,7 @@ impl AppRepo {
         Ok((apps, total))
     }
 
-    pub async fn update(
-        pool: &PgPool,
-        id: Uuid,
-        req: &UpdateAppRequest,
-    ) -> Result<App, AppError> {
+    pub async fn update(pool: &PgPool, id: Uuid, req: &UpdateAppRequest) -> Result<App, AppError> {
         let app = Self::find_by_id(pool, id)
             .await?
             .ok_or(AppError::NotFound("app".into()))?;

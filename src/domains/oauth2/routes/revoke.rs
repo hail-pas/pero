@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 
 use crate::domains::oauth2::models::RevokeRequest;
 use crate::domains::oauth2::repos::RefreshTokenRepo;

@@ -1,16 +1,13 @@
 use crate::cache::session;
-use crate::domains::identity::models::User;
 use crate::domains::identity::models::TokenResponse;
+use crate::domains::identity::models::User;
 use crate::domains::identity::repos::UserRepo;
 use crate::shared::error::AppError;
 use crate::shared::jwt;
 use crate::shared::state::AppState;
 use sqlx::postgres::PgPool;
 
-pub async fn issue_tokens(
-    state: &AppState,
-    user: &User,
-) -> Result<TokenResponse, AppError> {
+pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse, AppError> {
     let user_id_str = user.id.to_string();
     let roles = vec!["user".to_string()];
 
@@ -37,11 +34,7 @@ pub async fn issue_tokens(
     })
 }
 
-pub async fn validate_new_user(
-    pool: &PgPool,
-    username: &str,
-    email: &str,
-) -> Result<(), AppError> {
+pub async fn validate_new_user(pool: &PgPool, username: &str, email: &str) -> Result<(), AppError> {
     if UserRepo::find_by_username(pool, username).await?.is_some() {
         return Err(AppError::Conflict(format!(
             "username '{}' already exists",

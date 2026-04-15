@@ -1,13 +1,15 @@
-use axum::extract::{Path, State};
-use axum::Json;
-use serde::Serialize;
-use uuid::Uuid;
-use crate::domains::abac::models::{Policy, PolicyCondition, CreatePolicyRequest, UpdatePolicyRequest};
+use crate::domains::abac::models::{
+    CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest,
+};
 use crate::domains::abac::repos::PolicyRepo;
 use crate::shared::error::AppError;
-use crate::shared::extractors::{ValidatedJson, Pagination};
+use crate::shared::extractors::{Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
 use crate::shared::state::AppState;
+use axum::Json;
+use axum::extract::{Path, State};
+use serde::Serialize;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 pub struct PolicyDTO {
@@ -23,7 +25,10 @@ pub struct PolicyDTO {
 }
 
 impl PolicyDTO {
-    pub async fn from_policy(pool: &sqlx::postgres::PgPool, policy: Policy) -> Result<Self, AppError> {
+    pub async fn from_policy(
+        pool: &sqlx::postgres::PgPool,
+        policy: Policy,
+    ) -> Result<Self, AppError> {
         let conditions = PolicyRepo::get_conditions(pool, policy.id).await?;
         Ok(Self {
             id: policy.id,
@@ -69,11 +74,16 @@ pub async fn list_policies(
     let (policies, total) = PolicyRepo::list(&state.db, page, page_size).await?;
     let ids: Vec<uuid::Uuid> = policies.iter().map(|p| p.id).collect();
     let conditions_map = PolicyRepo::batch_get_conditions_map(&state.db, &ids).await?;
-    let items: Vec<PolicyDTO> = policies.into_iter().map(|p| {
-        let conditions = conditions_map.get(&p.id).cloned().unwrap_or_default();
-        PolicyDTO::from_policy_with_conditions(p, conditions)
-    }).collect();
-    Ok(Json(ApiResponse::success(PageData::new(items, total, page, page_size))))
+    let items: Vec<PolicyDTO> = policies
+        .into_iter()
+        .map(|p| {
+            let conditions = conditions_map.get(&p.id).cloned().unwrap_or_default();
+            PolicyDTO::from_policy_with_conditions(p, conditions)
+        })
+        .collect();
+    Ok(Json(ApiResponse::success(PageData::new(
+        items, total, page, page_size,
+    ))))
 }
 
 pub async fn get_policy(

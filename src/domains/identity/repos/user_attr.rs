@@ -1,6 +1,6 @@
-use sqlx::postgres::PgPool;
 use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
+use sqlx::postgres::PgPool;
 
 #[derive(Debug, sqlx::FromRow, Serialize)]
 pub struct UserAttribute {
@@ -24,9 +24,12 @@ pub struct AttributeItem {
 pub struct UserAttributeRepo;
 
 impl UserAttributeRepo {
-    pub async fn list_by_user(pool: &PgPool, user_id: uuid::Uuid) -> Result<Vec<UserAttribute>, AppError> {
+    pub async fn list_by_user(
+        pool: &PgPool,
+        user_id: uuid::Uuid,
+    ) -> Result<Vec<UserAttribute>, AppError> {
         let attrs = sqlx::query_as::<_, UserAttribute>(
-            "SELECT * FROM user_attributes WHERE user_id = $1 ORDER BY key"
+            "SELECT * FROM user_attributes WHERE user_id = $1 ORDER BY key",
         )
         .bind(user_id)
         .fetch_all(pool)
@@ -34,11 +37,15 @@ impl UserAttributeRepo {
         Ok(attrs)
     }
 
-    pub async fn upsert(pool: &PgPool, user_id: uuid::Uuid, items: &[AttributeItem]) -> Result<(), AppError> {
+    pub async fn upsert(
+        pool: &PgPool,
+        user_id: uuid::Uuid,
+        items: &[AttributeItem],
+    ) -> Result<(), AppError> {
         for item in items {
             sqlx::query(
                 "INSERT INTO user_attributes (user_id, key, value) VALUES ($1, $2, $3)
-                 ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value"
+                 ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
             )
             .bind(user_id)
             .bind(&item.key)
@@ -50,7 +57,11 @@ impl UserAttributeRepo {
     }
 
     #[allow(dead_code)]
-    pub async fn delete_by_user(pool: &PgPool, user_id: uuid::Uuid, key: &str) -> Result<(), AppError> {
+    pub async fn delete_by_user(
+        pool: &PgPool,
+        user_id: uuid::Uuid,
+        key: &str,
+    ) -> Result<(), AppError> {
         sqlx::query("DELETE FROM user_attributes WHERE user_id = $1 AND key = $2")
             .bind(user_id)
             .bind(key)

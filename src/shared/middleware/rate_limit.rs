@@ -37,7 +37,9 @@ where
                     let resp = Response::builder()
                         .status(429)
                         .header("content-type", "application/json")
-                        .body(Body::from(r#"{"code":429001,"message":"rate limit exceeded"}"#))
+                        .body(Body::from(
+                            r#"{"code":429001,"message":"rate limit exceeded"}"#,
+                        ))
                         .unwrap();
                     Ok(resp)
                 }

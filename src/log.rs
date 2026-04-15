@@ -1,6 +1,6 @@
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 use crate::config::LogConfig;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 pub fn init(cfg: &LogConfig) {
     let file_appender = tracing_appender::rolling::daily(&cfg.dir, "pero.log");
@@ -9,11 +9,10 @@ pub fn init(cfg: &LogConfig) {
     // Keep the guard alive for the process lifetime
     std::mem::forget(_guard);
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&cfg.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cfg.level));
 
-    let stdout_layer = tracing_subscriber::fmt::layer()
-        .with_target(false);
+    let stdout_layer = tracing_subscriber::fmt::layer().with_target(false);
 
     let file_layer = tracing_subscriber::fmt::layer()
         .json()

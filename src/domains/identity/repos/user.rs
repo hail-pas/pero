@@ -1,7 +1,7 @@
+use super::super::models::User;
+use crate::shared::error::AppError;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
-use crate::shared::error::AppError;
-use super::super::models::User;
 
 pub struct UserRepo;
 
@@ -51,10 +51,14 @@ impl UserRepo {
         Ok(user)
     }
 
-    pub async fn list(pool: &PgPool, page: i64, page_size: i64) -> Result<(Vec<User>, i64), AppError> {
+    pub async fn list(
+        pool: &PgPool,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<User>, i64), AppError> {
         let offset = (page - 1) * page_size;
         let users = sqlx::query_as::<_, User>(
-            "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+            "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(page_size)
         .bind(offset)

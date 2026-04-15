@@ -12,7 +12,7 @@ max_connections = 20
 min_connections = 5
 
 [redis]
-url = "redis://localhost:6379"
+url = "redis://localhost:6379/1"
 pool_size = 10
 
 [jwt]

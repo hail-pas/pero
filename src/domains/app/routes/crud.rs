@@ -1,5 +1,5 @@
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 
 use crate::domains::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
 use crate::domains::app::repos::AppRepo;
@@ -12,10 +12,7 @@ pub async fn create_app(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateAppRequest>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
-    if AppRepo::find_by_code(&state.db, &req.code)
-        .await?
-        .is_some()
-    {
+    if AppRepo::find_by_code(&state.db, &req.code).await?.is_some() {
         return Err(AppError::Conflict(format!(
             "app code '{}' already exists",
             req.code

@@ -10,8 +10,7 @@ pub struct AuthUser {
 
 impl AuthUser {
     pub fn from_claims(claims: &TokenClaims) -> Result<Self, AppError> {
-        let user_id: uuid::Uuid = claims.sub.parse()
-            .map_err(|_| AppError::Unauthorized)?;
+        let user_id: uuid::Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
         Ok(Self {
             user_id,
             roles: claims.roles.clone(),

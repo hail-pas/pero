@@ -1,5 +1,5 @@
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 
 use crate::domains::oauth2::models::{CreateClientRequest, OAuth2ClientDTO, UpdateClientRequest};
 use crate::domains::oauth2::repos::OAuth2ClientRepo;
@@ -16,8 +16,7 @@ pub async fn create_client(
     let client_secret = uuid::Uuid::new_v4().to_string().replace('-', "");
     let client_secret_hash = crate::domains::identity::helpers::hash_password(&client_secret)?;
 
-    let client =
-        OAuth2ClientRepo::create(&state.db, &client_id, &client_secret_hash, &req).await?;
+    let client = OAuth2ClientRepo::create(&state.db, &client_id, &client_secret_hash, &req).await?;
 
     Ok(Json(ApiResponse::success(serde_json::json!({
         "client": OAuth2ClientDTO::from(client),

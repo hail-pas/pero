@@ -1,10 +1,10 @@
-use axum::extract::{Path, State};
-use axum::Json;
-use super::super::repos::user_attr::{UserAttributeRepo, SetAttributes, UserAttribute};
 use super::super::repos::UserRepo;
+use super::super::repos::user_attr::{SetAttributes, UserAttribute, UserAttributeRepo};
 use crate::shared::error::AppError;
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
+use axum::Json;
+use axum::extract::{Path, State};
 
 pub async fn list_attributes(
     State(state): State<AppState>,
@@ -28,5 +28,7 @@ pub async fn set_attributes(
         .ok_or(AppError::NotFound("user".into()))?;
 
     UserAttributeRepo::upsert(&state.db, user_id, &input.attributes).await?;
-    Ok(Json(ApiResponse::<()>::success_message("attributes updated")))
+    Ok(Json(ApiResponse::<()>::success_message(
+        "attributes updated",
+    )))
 }

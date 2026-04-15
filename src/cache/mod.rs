@@ -1,9 +1,9 @@
 pub mod session;
 
-use redis::aio::ConnectionManager;
-use redis::Client;
 use crate::config::RedisConfig;
 use crate::shared::error::AppError;
+use redis::Client;
+use redis::aio::ConnectionManager;
 
 pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError> {
     let client = Client::open(cfg.url.as_str())
@@ -18,14 +18,16 @@ pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError>
 }
 
 pub async fn get(conn: &mut ConnectionManager, key: &str) -> Result<Option<String>, AppError> {
-    let result: Option<String> = redis::cmd("GET")
-        .arg(key)
-        .query_async(conn)
-        .await?;
+    let result: Option<String> = redis::cmd("GET").arg(key).query_async(conn).await?;
     Ok(result)
 }
 
-pub async fn set(conn: &mut ConnectionManager, key: &str, value: &str, ttl_seconds: i64) -> Result<(), AppError> {
+pub async fn set(
+    conn: &mut ConnectionManager,
+    key: &str,
+    value: &str,
+    ttl_seconds: i64,
+) -> Result<(), AppError> {
     redis::cmd("SET")
         .arg(key)
         .arg(value)
@@ -37,9 +39,6 @@ pub async fn set(conn: &mut ConnectionManager, key: &str, value: &str, ttl_secon
 }
 
 pub async fn del(conn: &mut ConnectionManager, key: &str) -> Result<(), AppError> {
-    redis::cmd("DEL")
-        .arg(key)
-        .query_async::<()>(conn)
-        .await?;
+    redis::cmd("DEL").arg(key).query_async::<()>(conn).await?;
     Ok(())
 }

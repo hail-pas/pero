@@ -1,10 +1,8 @@
-use axum::extract::State;
-use axum::Json;
 use crate::shared::state::AppState;
+use axum::Json;
+use axum::extract::State;
 
-pub async fn discovery(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+pub async fn discovery(State(state): State<AppState>) -> Json<serde_json::Value> {
     let issuer = &state.config.oidc.issuer;
     Json(serde_json::json!({
         "issuer": issuer,

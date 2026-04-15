@@ -1,8 +1,6 @@
-pub mod repos;
-
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use crate::config::DatabaseConfig;
 use crate::shared::error::AppError;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 
 pub async fn init_pool(cfg: &DatabaseConfig) -> Result<PgPool, AppError> {
     let pool = PgPoolOptions::new()
@@ -17,6 +15,9 @@ pub async fn init_pool(cfg: &DatabaseConfig) -> Result<PgPool, AppError> {
         .await
         .map_err(|e| AppError::Internal(format!("Database health check failed: {e}")))?;
 
-    tracing::info!("Database connected: {}", cfg.url.split('@').last().unwrap_or("*****"));
+    tracing::info!(
+        "Database connected: {}",
+        cfg.url.split('@').last().unwrap_or("*****")
+    );
     Ok(pool)
 }

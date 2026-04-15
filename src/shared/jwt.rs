@@ -2,7 +2,7 @@ use crate::config::OidcConfig;
 use crate::shared::error::AppError;
 use base64::Engine;
 use chrono::{TimeDelta, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

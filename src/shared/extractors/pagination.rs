@@ -1,7 +1,7 @@
+use crate::shared::error::AppError;
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use serde::Deserialize;
-use crate::shared::error::AppError;
 
 #[derive(Debug, Deserialize)]
 pub struct Pagination {
@@ -11,8 +11,12 @@ pub struct Pagination {
     pub page_size: i64,
 }
 
-fn default_page() -> i64 { 1 }
-fn default_page_size() -> i64 { 20 }
+fn default_page() -> i64 {
+    1
+}
+fn default_page_size() -> i64 {
+    20
+}
 
 const MAX_PAGE_SIZE: i64 = 100;
 

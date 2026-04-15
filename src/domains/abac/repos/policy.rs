@@ -1,8 +1,10 @@
-use sqlx::postgres::PgPool;
-use uuid::Uuid;
+use super::super::models::{
+    CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest, UserAttribute,
+};
 use crate::shared::error::AppError;
-use super::super::models::{Policy, PolicyCondition, UserAttribute, CreatePolicyRequest, UpdatePolicyRequest};
+use sqlx::postgres::PgPool;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 pub struct PolicyRepo;
 
@@ -44,10 +46,14 @@ impl PolicyRepo {
             .map_err(Into::into)
     }
 
-    pub async fn list(pool: &PgPool, page: i64, page_size: i64) -> Result<(Vec<Policy>, i64), AppError> {
+    pub async fn list(
+        pool: &PgPool,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<Policy>, i64), AppError> {
         let offset = (page - 1) * page_size;
         let policies = sqlx::query_as::<_, Policy>(
-            "SELECT * FROM policies ORDER BY priority DESC LIMIT $1 OFFSET $2"
+            "SELECT * FROM policies ORDER BY priority DESC LIMIT $1 OFFSET $2",
         )
         .bind(page_size)
         .bind(offset)
@@ -61,7 +67,11 @@ impl PolicyRepo {
         Ok((policies, total))
     }
 
-    pub async fn update(pool: &PgPool, id: Uuid, req: &UpdatePolicyRequest) -> Result<Policy, AppError> {
+    pub async fn update(
+        pool: &PgPool,
+        id: Uuid,
+        req: &UpdatePolicyRequest,
+    ) -> Result<Policy, AppError> {
         let policy = Self::find_by_id(pool, id)
             .await?
             .ok_or(AppError::NotFound("policy".into()))?;
@@ -120,26 +130,29 @@ impl PolicyRepo {
         Ok(())
     }
 
-    pub async fn get_conditions(pool: &PgPool, policy_id: Uuid) -> Result<Vec<PolicyCondition>, AppError> {
-        sqlx::query_as::<_, PolicyCondition>(
-            "SELECT * FROM policy_conditions WHERE policy_id = $1"
-        )
-        .bind(policy_id)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
+    pub async fn get_conditions(
+        pool: &PgPool,
+        policy_id: Uuid,
+    ) -> Result<Vec<PolicyCondition>, AppError> {
+        sqlx::query_as::<_, PolicyCondition>("SELECT * FROM policy_conditions WHERE policy_id = $1")
+            .bind(policy_id)
+            .fetch_all(pool)
+            .await
+            .map_err(Into::into)
     }
 
-    pub async fn batch_get_conditions_map(pool: &PgPool, policy_ids: &[Uuid]) -> Result<HashMap<Uuid, Vec<PolicyCondition>>, AppError> {
+    pub async fn batch_get_conditions_map(
+        pool: &PgPool,
+        policy_ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, Vec<PolicyCondition>>, AppError> {
         if policy_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let conditions: Vec<PolicyCondition> = sqlx::query_as(
-            "SELECT * FROM policy_conditions WHERE policy_id = ANY($1)"
-        )
-        .bind(policy_ids)
-        .fetch_all(pool)
-        .await?;
+        let conditions: Vec<PolicyCondition> =
+            sqlx::query_as("SELECT * FROM policy_conditions WHERE policy_id = ANY($1)")
+                .bind(policy_ids)
+                .fetch_all(pool)
+                .await?;
 
         let mut map: HashMap<Uuid, Vec<PolicyCondition>> = HashMap::new();
         for cond in conditions {
@@ -148,18 +161,23 @@ impl PolicyRepo {
         Ok(map)
     }
 
-    pub async fn load_user_attributes(pool: &PgPool, user_id: Uuid) -> Result<Vec<(String, String)>, AppError> {
-        let attrs: Vec<UserAttribute> = sqlx::query_as(
-            "SELECT key, value FROM user_attributes WHERE user_id = $1"
-        )
-        .bind(user_id)
-        .fetch_all(pool)
-        .await?;
+    pub async fn load_user_attributes(
+        pool: &PgPool,
+        user_id: Uuid,
+    ) -> Result<Vec<(String, String)>, AppError> {
+        let attrs: Vec<UserAttribute> =
+            sqlx::query_as("SELECT key, value FROM user_attributes WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_all(pool)
+                .await?;
 
         Ok(attrs.into_iter().map(|a| (a.key, a.value)).collect())
     }
 
-    pub async fn load_policies_for_app(pool: &PgPool, app_id: Option<Uuid>) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
+    pub async fn load_policies_for_app(
+        pool: &PgPool,
+        app_id: Option<Uuid>,
+    ) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
         let policies: Vec<Policy> = sqlx::query_as(
             "SELECT * FROM policies WHERE enabled = true AND (app_id = $1 OR app_id IS NULL) ORDER BY priority DESC"
         )
@@ -170,18 +188,25 @@ impl PolicyRepo {
         let ids: Vec<Uuid> = policies.iter().map(|p| p.id).collect();
         let conditions_map = Self::batch_get_conditions_map(pool, &ids).await?;
 
-        Ok(policies.into_iter().map(|p| {
-            let conds = conditions_map.get(&p.id).cloned().unwrap_or_default();
-            (p, conds)
-        }).collect())
+        Ok(policies
+            .into_iter()
+            .map(|p| {
+                let conds = conditions_map.get(&p.id).cloned().unwrap_or_default();
+                (p, conds)
+            })
+            .collect())
     }
 
-    pub async fn load_user_policies_for_app(pool: &PgPool, user_id: Uuid, app_id: Option<Uuid>) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
+    pub async fn load_user_policies_for_app(
+        pool: &PgPool,
+        user_id: Uuid,
+        app_id: Option<Uuid>,
+    ) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
         let policies: Vec<Policy> = sqlx::query_as(
             "SELECT p.* FROM policies p
              INNER JOIN user_policies up ON up.policy_id = p.id
              WHERE up.user_id = $1 AND p.enabled = true AND (p.app_id = $2 OR p.app_id IS NULL)
-             ORDER BY p.priority DESC"
+             ORDER BY p.priority DESC",
         )
         .bind(user_id)
         .bind(app_id)
@@ -191,9 +216,12 @@ impl PolicyRepo {
         let ids: Vec<Uuid> = policies.iter().map(|p| p.id).collect();
         let conditions_map = Self::batch_get_conditions_map(pool, &ids).await?;
 
-        Ok(policies.into_iter().map(|p| {
-            let conds = conditions_map.get(&p.id).cloned().unwrap_or_default();
-            (p, conds)
-        }).collect())
+        Ok(policies
+            .into_iter()
+            .map(|p| {
+                let conds = conditions_map.get(&p.id).cloned().unwrap_or_default();
+                (p, conds)
+            })
+            .collect())
     }
 }

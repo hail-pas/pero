@@ -1,7 +1,7 @@
+use super::super::models::Identity;
+use crate::shared::error::AppError;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
-use crate::shared::error::AppError;
-use super::super::models::Identity;
 
 pub struct IdentityRepo;
 
@@ -45,7 +45,7 @@ impl IdentityRepo {
         provider: &str,
     ) -> Result<Option<Identity>, AppError> {
         let identity = sqlx::query_as::<_, Identity>(
-            "SELECT * FROM identities WHERE user_id = $1 AND provider = $2"
+            "SELECT * FROM identities WHERE user_id = $1 AND provider = $2",
         )
         .bind(user_id)
         .bind(provider)
@@ -61,7 +61,7 @@ impl IdentityRepo {
         provider_uid: &str,
     ) -> Result<Option<Identity>, AppError> {
         let identity = sqlx::query_as::<_, Identity>(
-            "SELECT * FROM identities WHERE provider = $1 AND provider_uid = $2"
+            "SELECT * FROM identities WHERE provider = $1 AND provider_uid = $2",
         )
         .bind(provider)
         .bind(provider_uid)
@@ -71,12 +71,9 @@ impl IdentityRepo {
     }
 
     #[allow(dead_code)]
-    pub async fn list_by_user(
-        pool: &PgPool,
-        user_id: Uuid,
-    ) -> Result<Vec<Identity>, AppError> {
+    pub async fn list_by_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Identity>, AppError> {
         let identities = sqlx::query_as::<_, Identity>(
-            "SELECT * FROM identities WHERE user_id = $1 ORDER BY created_at"
+            "SELECT * FROM identities WHERE user_id = $1 ORDER BY created_at",
         )
         .bind(user_id)
         .fetch_all(pool)
@@ -84,34 +81,23 @@ impl IdentityRepo {
         Ok(identities)
     }
 
-    pub async fn delete(
-        pool: &PgPool,
-        user_id: Uuid,
-        provider: &str,
-    ) -> Result<(), AppError> {
-        let result = sqlx::query(
-            "DELETE FROM identities WHERE user_id = $1 AND provider = $2"
-        )
-        .bind(user_id)
-        .bind(provider)
-        .execute(pool)
-        .await?;
+    pub async fn delete(pool: &PgPool, user_id: Uuid, provider: &str) -> Result<(), AppError> {
+        let result = sqlx::query("DELETE FROM identities WHERE user_id = $1 AND provider = $2")
+            .bind(user_id)
+            .bind(provider)
+            .execute(pool)
+            .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound("identity".into()));
         }
         Ok(())
     }
 
-    pub async fn count_by_user(
-        pool: &PgPool,
-        user_id: Uuid,
-    ) -> Result<i64, AppError> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM identities WHERE user_id = $1"
-        )
-        .bind(user_id)
-        .fetch_one(pool)
-        .await?;
+    pub async fn count_by_user(pool: &PgPool, user_id: Uuid) -> Result<i64, AppError> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identities WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await?;
         Ok(count)
     }
 

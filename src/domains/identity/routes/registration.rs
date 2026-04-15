@@ -1,17 +1,20 @@
-use axum::extract::State;
-use axum::Json;
-use crate::domains::identity::models::{RegisterRequest, CreateUserRequest, UserDTO, TokenResponse};
-use crate::domains::identity::repos::{UserRepo, IdentityRepo};
+use crate::domains::identity::models::{
+    CreateUserRequest, RegisterRequest, TokenResponse, UserDTO,
+};
+use crate::domains::identity::repos::{IdentityRepo, UserRepo};
 use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedJson;
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
+use axum::Json;
+use axum::extract::State;
 
 pub async fn register(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
-    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email).await?;
+    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email)
+        .await?;
 
     let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
 
@@ -35,7 +38,8 @@ pub async fn create_user(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email).await?;
+    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email)
+        .await?;
 
     let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
 

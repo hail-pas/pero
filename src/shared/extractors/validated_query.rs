@@ -1,7 +1,7 @@
+use crate::shared::error::AppError;
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use validator::Validate;
-use crate::shared::error::AppError;
 
 #[allow(dead_code)]
 pub struct ValidatedQuery<T>(pub T);
@@ -18,7 +18,9 @@ where
             .await
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-        value.validate().map_err(|e: validator::ValidationErrors| AppError::Validation(e.to_string()))?;
+        value
+            .validate()
+            .map_err(|e: validator::ValidationErrors| AppError::Validation(e.to_string()))?;
         Ok(ValidatedQuery(value))
     }
 }

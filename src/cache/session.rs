@@ -1,6 +1,6 @@
-use redis::aio::ConnectionManager;
 use crate::cache;
 use crate::shared::error::AppError;
+use redis::aio::ConnectionManager;
 
 const REFRESH_TOKEN_PREFIX: &str = "refresh_token:";
 
