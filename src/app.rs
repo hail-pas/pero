@@ -22,6 +22,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/oauth2/revoke",
             post(crate::domains::oauth2::routes::revoke::revoke),
+        )
+        .route(
+            "/.well-known/openid-configuration",
+            get(crate::domains::oidc::routes::discovery::discovery),
+        )
+        .route(
+            "/oauth2/keys",
+            get(crate::domains::oidc::routes::jwks::jwks),
         );
 
     let auth_only = Router::new()
@@ -32,6 +40,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/oauth2/authorize",
             get(crate::domains::oauth2::routes::authorize::authorize),
+        )
+        .route(
+            "/oauth2/userinfo",
+            get(crate::domains::oidc::routes::userinfo::userinfo),
         )
         .route(
             "/api/users/{id}/attributes",
