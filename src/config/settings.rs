@@ -33,6 +33,9 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub workers: usize,
+    pub request_body_limit_bytes: usize,
+    pub rate_limit_rps: u64,
+    pub rate_limit_burst: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]

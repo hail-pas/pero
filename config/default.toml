@@ -2,6 +2,9 @@
 host = "0.0.0.0"
 port = 8080
 workers = 4
+request_body_limit_bytes = 1048576
+rate_limit_rps = 100
+rate_limit_burst = 200
 
 [database]
 url = "postgres://localhost/pero"

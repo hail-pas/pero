@@ -7,6 +7,8 @@ edition = "2024"
 # Web framework
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "sensitive-headers", "limit", "normalize-path", "catch-panic", "propagate-header", "util", "uuid"] }
+tower = "0.5"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }

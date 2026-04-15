@@ -1,6 +1,12 @@
-use crate::shared::middleware;
 use crate::shared::state::AppState;
+use axum::http::header;
 use axum::Router;
+use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::normalize_path::NormalizePathLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::sensitive_headers::SetSensitiveHeadersLayer;
+use tower_http::trace::TraceLayer;
 
 pub fn build_router(state: AppState) -> Router {
     use axum::routing::{get, post};
@@ -43,7 +49,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            middleware::auth::auth_middleware,
+            crate::shared::middleware::auth::auth_middleware,
         ));
 
     let authorized = Router::new()
@@ -102,7 +108,7 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            middleware::auth::auth_middleware,
+            crate::shared::middleware::auth::auth_middleware,
         ));
 
     let identity_public = Router::new()
@@ -135,8 +141,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            middleware::auth::auth_middleware,
+            crate::shared::middleware::auth::auth_middleware,
         ));
+
+    let x_request_id = axum::http::HeaderName::from_static("x-request-id");
 
     Router::new()
         .merge(public)
@@ -144,11 +152,50 @@ pub fn build_router(state: AppState) -> Router {
         .merge(authorized)
         .merge(identity_public)
         .merge(identity_authed)
-        .with_state(state)
-        .layer(axum::middleware::from_fn(
-            middleware::logging::request_logging,
+        .with_state(state.clone())
+        // --- tower-http middleware stack (outermost = last applied to request) ---
+        // TraceLayer: structured request/response tracing
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(
+                    tower_http::trace::DefaultMakeSpan::new()
+                        .level(tracing::Level::INFO)
+                        .include_headers(true),
+                )
+                .on_request(tower_http::trace::DefaultOnRequest::new().level(tracing::Level::INFO))
+                .on_response(
+                    tower_http::trace::DefaultOnResponse::new()
+                        .level(tracing::Level::INFO)
+                        .include_headers(true),
+                )
+                .on_failure(
+                    tower_http::trace::DefaultOnFailure::new().level(tracing::Level::ERROR),
+                ),
+        )
+        // PropagateRequestIdLayer: copy x-request-id from request to response
+        .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
+        // SetRequestIdLayer: generate x-request-id if not present
+        .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
+        // SetSensitiveHeadersLayer: mask Authorization and Cookie headers in traces
+        .layer(SetSensitiveHeadersLayer::new(vec![
+            header::AUTHORIZATION,
+            header::COOKIE,
+        ]))
+        // RequestBodyLimitLayer: reject oversized request bodies
+        .layer(RequestBodyLimitLayer::new(
+            state.config.server.request_body_limit_bytes,
         ))
-        .layer(axum::middleware::from_fn(
-            middleware::request_id::add_request_id,
-        ))
+        // CatchPanicLayer: convert panics into 500 responses
+        .layer(CatchPanicLayer::new())
+        .layer({
+            let burst = state.config.server.rate_limit_burst as usize;
+            tower::layer::layer_fn(move |service| {
+                crate::shared::middleware::rate_limit::RateLimit {
+                    inner: service,
+                    limiter: std::sync::Arc::new(tokio::sync::Semaphore::new(burst)),
+                }
+            })
+        })
+        // NormalizePathLayer: merge/trim trailing slashes
+        .layer(NormalizePathLayer::trim_trailing_slash())
 }
