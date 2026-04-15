@@ -8,6 +8,23 @@ pub struct AppConfig {
     pub jwt: JwtConfig,
     pub log: LogConfig,
     pub abac: AbacConfig,
+    pub oidc: OidcConfig,
+    pub oauth2: OAuth2Config,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OidcConfig {
+    pub issuer: String,
+    pub private_key_path: String,
+    pub public_key_path: String,
+    pub key_id: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OAuth2Config {
+    pub auth_code_ttl_minutes: i64,
+    pub access_token_ttl_minutes: i64,
+    pub refresh_token_ttl_days: i64,
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -15,7 +15,7 @@ pool_size = 10
 [jwt]
 secret = "change-me-in-production"
 access_ttl_minutes = 15
-refresh_ttl_days = 7
+refresh_ttl_days = 30
 
 [log]
 level = "info"
@@ -25,3 +25,14 @@ max_age_days = 7
 
 [abac]
 default_action = "deny"
+
+[oidc]
+issuer = "https://auth.example.com"
+private_key_path = "./keys/private.pem"
+public_key_path = "./keys/public.pem"
+key_id = "key-2026-01"
+
+[oauth2]
+auth_code_ttl_minutes = 10
+access_token_ttl_minutes = 15
+refresh_token_ttl_days = 30
