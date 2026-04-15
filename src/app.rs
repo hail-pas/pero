@@ -14,12 +14,24 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/auth/refresh",
             post(crate::domains::identity::routes::login::refresh),
+        )
+        .route(
+            "/oauth2/token",
+            post(crate::domains::oauth2::routes::token::token),
+        )
+        .route(
+            "/oauth2/revoke",
+            post(crate::domains::oauth2::routes::revoke::revoke),
         );
 
     let auth_only = Router::new()
         .route(
             "/auth/logout",
             post(crate::domains::identity::routes::login::logout),
+        )
+        .route(
+            "/oauth2/authorize",
+            get(crate::domains::oauth2::routes::authorize::authorize),
         )
         .route(
             "/api/users/{id}/attributes",
@@ -42,6 +54,28 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::domains::identity::routes::profile::get_user)
                 .put(crate::domains::identity::routes::profile::update_user)
                 .delete(crate::domains::identity::routes::profile::delete_user),
+        )
+        .route(
+            "/api/apps",
+            post(crate::domains::app::routes::crud::create_app)
+                .get(crate::domains::app::routes::crud::list_apps),
+        )
+        .route(
+            "/api/apps/{id}",
+            get(crate::domains::app::routes::crud::get_app)
+                .put(crate::domains::app::routes::crud::update_app)
+                .delete(crate::domains::app::routes::crud::delete_app),
+        )
+        .route(
+            "/api/oauth2/clients",
+            post(crate::domains::oauth2::routes::client_management::create_client)
+                .get(crate::domains::oauth2::routes::client_management::list_clients),
+        )
+        .route(
+            "/api/oauth2/clients/{id}",
+            get(crate::domains::oauth2::routes::client_management::get_client)
+                .put(crate::domains::oauth2::routes::client_management::update_client)
+                .delete(crate::domains::oauth2::routes::client_management::delete_client),
         )
         .route(
             "/api/policies",
