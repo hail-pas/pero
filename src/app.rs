@@ -91,14 +91,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/policies",
-            post(crate::routes::policies::create_policy)
-                .get(crate::routes::policies::list_policies),
+            post(crate::domains::abac::routes::policies::create_policy)
+                .get(crate::domains::abac::routes::policies::list_policies),
         )
         .route(
             "/api/policies/{id}",
-            get(crate::routes::policies::get_policy)
-                .put(crate::routes::policies::update_policy)
-                .delete(crate::routes::policies::delete_policy),
+            get(crate::domains::abac::routes::policies::get_policy)
+                .put(crate::domains::abac::routes::policies::update_policy)
+                .delete(crate::domains::abac::routes::policies::delete_policy),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
