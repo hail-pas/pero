@@ -13,7 +13,6 @@ url = "redis://localhost:6379"
 pool_size = 10
 
 [jwt]
-secret = "change-me-in-production"
 access_ttl_minutes = 15
 refresh_ttl_days = 30
 

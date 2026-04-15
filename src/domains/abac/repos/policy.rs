@@ -2,6 +2,7 @@ use sqlx::postgres::PgPool;
 use uuid::Uuid;
 use crate::shared::error::AppError;
 use super::super::models::{Policy, PolicyCondition, UserAttribute, CreatePolicyRequest, UpdatePolicyRequest};
+use std::collections::HashMap;
 
 pub struct PolicyRepo;
 
@@ -129,6 +130,24 @@ impl PolicyRepo {
         .map_err(Into::into)
     }
 
+    pub async fn batch_get_conditions_map(pool: &PgPool, policy_ids: &[Uuid]) -> Result<HashMap<Uuid, Vec<PolicyCondition>>, AppError> {
+        if policy_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conditions: Vec<PolicyCondition> = sqlx::query_as(
+            "SELECT * FROM policy_conditions WHERE policy_id = ANY($1)"
+        )
+        .bind(policy_ids)
+        .fetch_all(pool)
+        .await?;
+
+        let mut map: HashMap<Uuid, Vec<PolicyCondition>> = HashMap::new();
+        for cond in conditions {
+            map.entry(cond.policy_id).or_default().push(cond);
+        }
+        Ok(map)
+    }
+
     pub async fn load_user_attributes(pool: &PgPool, user_id: Uuid) -> Result<Vec<(String, String)>, AppError> {
         let attrs: Vec<UserAttribute> = sqlx::query_as(
             "SELECT key, value FROM user_attributes WHERE user_id = $1"
@@ -148,12 +167,13 @@ impl PolicyRepo {
         .fetch_all(pool)
         .await?;
 
-        let mut result = Vec::new();
-        for policy in policies {
-            let conditions = Self::get_conditions(pool, policy.id).await?;
-            result.push((policy, conditions));
-        }
-        Ok(result)
+        let ids: Vec<Uuid> = policies.iter().map(|p| p.id).collect();
+        let conditions_map = Self::batch_get_conditions_map(pool, &ids).await?;
+
+        Ok(policies.into_iter().map(|p| {
+            let conds = conditions_map.get(&p.id).cloned().unwrap_or_default();
+            (p, conds)
+        }).collect())
     }
 
     pub async fn load_user_policies_for_app(pool: &PgPool, user_id: Uuid, app_id: Option<Uuid>) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
@@ -168,11 +188,12 @@ impl PolicyRepo {
         .fetch_all(pool)
         .await?;
 
-        let mut result = Vec::new();
-        for policy in policies {
-            let conditions = Self::get_conditions(pool, policy.id).await?;
-            result.push((policy, conditions));
-        }
-        Ok(result)
+        let ids: Vec<Uuid> = policies.iter().map(|p| p.id).collect();
+        let conditions_map = Self::batch_get_conditions_map(pool, &ids).await?;
+
+        Ok(policies.into_iter().map(|p| {
+            let conds = conditions_map.get(&p.id).cloned().unwrap_or_default();
+            (p, conds)
+        }).collect())
     }
 }

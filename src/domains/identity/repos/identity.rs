@@ -21,6 +21,7 @@ impl IdentityRepo {
         Ok(identity)
     }
 
+    #[allow(dead_code)]
     pub async fn create_oauth(
         pool: &PgPool,
         user_id: Uuid,
@@ -53,6 +54,7 @@ impl IdentityRepo {
         Ok(identity)
     }
 
+    #[allow(dead_code)]
     pub async fn find_by_provider(
         pool: &PgPool,
         provider: &str,
@@ -68,6 +70,7 @@ impl IdentityRepo {
         Ok(identity)
     }
 
+    #[allow(dead_code)]
     pub async fn list_by_user(
         pool: &PgPool,
         user_id: Uuid,

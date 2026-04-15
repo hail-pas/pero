@@ -99,7 +99,7 @@ async fn handle_authorization_code(
     )
     .await?;
 
-    let id_token = build_id_token(&state, &user, &ac.scopes, None)?;
+    let id_token = build_id_token(&state, &user, &ac.scopes, None, &client.client_id)?;
 
     Ok(Json(TokenResponse {
         access_token,
@@ -171,7 +171,7 @@ async fn handle_refresh_token(
     )
     .await?;
 
-    let id_token = build_id_token(&state, &user, &stored.scopes, None)?;
+    let id_token = build_id_token(&state, &user, &stored.scopes, None, &client.client_id)?;
 
     Ok(Json(TokenResponse {
         access_token,
@@ -188,6 +188,7 @@ fn build_id_token(
     user: &crate::domains::identity::models::User,
     scopes: &[String],
     nonce: Option<String>,
+    client_id: &str,
 ) -> Result<String, AppError> {
     use crate::shared::jwt::IdTokenClaims;
     use chrono::{TimeDelta, Utc};
@@ -196,7 +197,7 @@ fn build_id_token(
     let mut claims = IdTokenClaims {
         sub: user.id.to_string(),
         iss: state.config.oidc.issuer.clone(),
-        aud: String::new(),
+        aud: client_id.to_string(),
         exp: (now + TimeDelta::minutes(state.config.oauth2.access_token_ttl_minutes)).timestamp(),
         iat: now.timestamp(),
         auth_time: now.timestamp(),

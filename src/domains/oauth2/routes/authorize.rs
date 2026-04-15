@@ -74,7 +74,7 @@ pub async fn authorize(
 
     let mut redirect_url = format!("{}?code={}", query.redirect_uri, code);
     if let Some(state_param) = &query.state {
-        redirect_url.push_str(&format!("&state={}", state_param));
+        redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
     }
 
     Ok(Redirect::temporary(&redirect_url).into_response())

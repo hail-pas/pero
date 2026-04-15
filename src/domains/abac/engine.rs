@@ -1,6 +1,11 @@
 use super::models::{EvalContext, PolicyCondition};
+use std::collections::HashMap;
 
-pub fn eval_condition(cond: &PolicyCondition, ctx: &EvalContext) -> bool {
+pub fn eval_condition(
+    cond: &PolicyCondition,
+    ctx: &EvalContext,
+    regex_cache: &HashMap<String, regex::Regex>,
+) -> bool {
     let target_value = match cond.condition_type.as_str() {
         "subject" => ctx
             .subject_attrs
@@ -20,9 +25,9 @@ pub fn eval_condition(cond: &PolicyCondition, ctx: &EvalContext) -> bool {
         "eq" => actual == cond.value,
         "in" => cond.value.split(',').any(|v| v.trim() == actual),
         "wildcard" => wildcard_match(&cond.value, actual),
-        "regex" => regex::Regex::new(&cond.value)
-            .map(|re| re.is_match(actual))
-            .unwrap_or(false),
+        "regex" => regex_cache
+            .get(&cond.value)
+            .map_or(false, |re| re.is_match(actual)),
         "contains" => actual.contains(&cond.value),
         "gt" => actual.parse::<f64>().ok().map_or(false, |a| {
             cond.value.parse::<f64>().map_or(false, |b| a > b)
@@ -39,8 +44,22 @@ pub fn evaluate(
     ctx: &EvalContext,
     default_action: &str,
 ) -> String {
+    let mut regex_cache: HashMap<String, regex::Regex> = HashMap::new();
+    for (_, conditions) in policies {
+        for cond in conditions {
+            if cond.operator == "regex" && !regex_cache.contains_key(&cond.value) {
+                if let Ok(re) = regex::Regex::new(&cond.value) {
+                    regex_cache.insert(cond.value.clone(), re);
+                }
+            }
+        }
+    }
+
     for (policy, conditions) in policies {
-        if conditions.iter().all(|c| eval_condition(c, ctx)) {
+        if conditions
+            .iter()
+            .all(|c| eval_condition(c, ctx, &regex_cache))
+        {
             return policy.effect.clone();
         }
     }

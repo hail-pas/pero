@@ -91,6 +91,7 @@ pub struct AuthorizeQuery {
     pub state: Option<String>,
     pub code_challenge: String,
     pub code_challenge_method: Option<String>,
+    #[allow(dead_code)]
     pub nonce: Option<String>,
 }
 
@@ -118,10 +119,12 @@ pub struct TokenResponse {
 #[derive(Debug, Deserialize)]
 pub struct RevokeRequest {
     pub token: String,
+    #[allow(dead_code)]
     pub token_type_hint: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct AuthorizationCode {
     pub code: String,
     pub client_id: Uuid,
@@ -136,6 +139,7 @@ pub struct AuthorizationCode {
 }
 
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct RefreshToken {
     pub id: Uuid,
     pub client_id: Uuid,

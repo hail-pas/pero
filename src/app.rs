@@ -109,7 +109,7 @@ pub fn build_router(state: AppState) -> Router {
             middleware::auth::auth_middleware,
         ));
 
-    let identity = Router::new()
+    let identity_public = Router::new()
         .route(
             "/api/identity/register",
             post(crate::domains::identity::routes::registration::register),
@@ -117,18 +117,37 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/identity/login",
             post(crate::domains::identity::routes::login::login),
-        )
+        );
+
+    let identity_authed = Router::new()
         .route(
             "/api/users/me",
             get(crate::domains::identity::routes::profile::get_me)
                 .put(crate::domains::identity::routes::profile::update_me),
-        );
+        )
+        .route(
+            "/api/identity/bind/{provider}",
+            post(crate::domains::identity::routes::binding::bind),
+        )
+        .route(
+            "/api/identity/unbind/{provider}",
+            axum::routing::delete(crate::domains::identity::routes::binding::unbind),
+        )
+        .route(
+            "/api/identity/password/change",
+            axum::routing::put(crate::domains::identity::routes::password::change_password),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::auth_middleware,
+        ));
 
     Router::new()
         .merge(public)
         .merge(auth_only)
         .merge(authorized)
-        .merge(identity)
+        .merge(identity_public)
+        .merge(identity_authed)
         .with_state(state)
         .layer(axum::middleware::from_fn(
             middleware::request_id::add_request_id,

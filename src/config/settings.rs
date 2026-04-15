@@ -51,7 +51,6 @@ pub struct RedisConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct JwtConfig {
-    pub secret: String,
     pub access_ttl_minutes: i64,
     pub refresh_ttl_days: i64,
 }

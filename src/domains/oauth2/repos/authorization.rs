@@ -42,18 +42,11 @@ impl AuthCodeRepo {
         code: &str,
     ) -> Result<Option<AuthorizationCode>, AppError> {
         let ac = sqlx::query_as::<_, AuthorizationCode>(
-            "SELECT * FROM oauth2_authorization_codes WHERE code = $1 AND used = false AND expires_at > now()",
+            "UPDATE oauth2_authorization_codes SET used = true WHERE code = $1 AND used = false AND expires_at > now() RETURNING *",
         )
         .bind(code)
         .fetch_optional(pool)
         .await?;
-
-        if ac.is_some() {
-            sqlx::query("UPDATE oauth2_authorization_codes SET used = true WHERE code = $1")
-                .bind(code)
-                .execute(pool)
-                .await?;
-        }
 
         Ok(ac)
     }

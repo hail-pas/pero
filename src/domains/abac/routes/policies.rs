@@ -37,6 +37,20 @@ impl PolicyDTO {
             conditions,
         })
     }
+
+    pub fn from_policy_with_conditions(policy: Policy, conditions: Vec<PolicyCondition>) -> Self {
+        Self {
+            id: policy.id,
+            name: policy.name,
+            description: policy.description,
+            effect: policy.effect,
+            priority: policy.priority,
+            enabled: policy.enabled,
+            app_id: policy.app_id,
+            created_at: policy.created_at,
+            conditions,
+        }
+    }
 }
 
 pub async fn create_policy(
@@ -53,10 +67,12 @@ pub async fn list_policies(
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<PolicyDTO>>>, AppError> {
     let (policies, total) = PolicyRepo::list(&state.db, page, page_size).await?;
-    let mut items = Vec::new();
-    for policy in policies {
-        items.push(PolicyDTO::from_policy(&state.db, policy).await?);
-    }
+    let ids: Vec<uuid::Uuid> = policies.iter().map(|p| p.id).collect();
+    let conditions_map = PolicyRepo::batch_get_conditions_map(&state.db, &ids).await?;
+    let items: Vec<PolicyDTO> = policies.into_iter().map(|p| {
+        let conditions = conditions_map.get(&p.id).cloned().unwrap_or_default();
+        PolicyDTO::from_policy_with_conditions(p, conditions)
+    }).collect();
     Ok(Json(ApiResponse::success(PageData::new(items, total, page, page_size))))
 }
 

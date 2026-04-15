@@ -119,6 +119,7 @@ pub struct Identity {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct BindRequest {
     pub code: String,
     pub redirect_uri: String,
