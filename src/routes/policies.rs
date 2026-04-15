@@ -10,8 +10,8 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct PolicyDetail {
     #[serde(flatten)]
-    pub policy: crate::auth::abac::Policy,
-    pub conditions: Vec<crate::auth::abac::PolicyCondition>,
+    pub policy: crate::shared::abac::Policy,
+    pub conditions: Vec<crate::shared::abac::PolicyCondition>,
 }
 
 pub async fn create_policy(
@@ -25,7 +25,7 @@ pub async fn create_policy(
 
 pub async fn list_policies(
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<crate::auth::abac::Policy>>>, AppError> {
+) -> Result<Json<ApiResponse<Vec<crate::shared::abac::Policy>>>, AppError> {
     let policies = PolicyRepo::list(&state.db).await?;
     Ok(Json(ApiResponse::success(policies)))
 }

@@ -2,7 +2,7 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use crate::shared::jwt::TokenClaims;
-use crate::auth::abac::{self, EvalContext};
+use crate::shared::abac::{self, EvalContext};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 

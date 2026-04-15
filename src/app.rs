@@ -7,11 +7,20 @@ pub fn build_router(state: AppState) -> Router {
 
     let public = Router::new()
         .route("/health", get(crate::routes::health::health))
-        .route("/auth/login", post(crate::routes::auth::login))
-        .route("/auth/refresh", post(crate::routes::auth::refresh));
+        .route(
+            "/auth/login",
+            post(crate::domains::identity::routes::login::login),
+        )
+        .route(
+            "/auth/refresh",
+            post(crate::domains::identity::routes::login::refresh),
+        );
 
     let auth_only = Router::new()
-        .route("/auth/logout", post(crate::routes::auth::logout))
+        .route(
+            "/auth/logout",
+            post(crate::domains::identity::routes::login::logout),
+        )
         .route(
             "/api/users/{id}/attributes",
             get(crate::routes::user_attrs::list_attributes)
@@ -25,13 +34,14 @@ pub fn build_router(state: AppState) -> Router {
     let authorized = Router::new()
         .route(
             "/api/users",
-            post(crate::routes::users::create_user).get(crate::routes::users::list_users),
+            post(crate::domains::identity::routes::registration::create_user)
+                .get(crate::domains::identity::routes::profile::list_users),
         )
         .route(
             "/api/users/{id}",
-            get(crate::routes::users::get_user)
-                .put(crate::routes::users::update_user)
-                .delete(crate::routes::users::delete_user),
+            get(crate::domains::identity::routes::profile::get_user)
+                .put(crate::domains::identity::routes::profile::update_user)
+                .delete(crate::domains::identity::routes::profile::delete_user),
         )
         .route(
             "/api/policies",

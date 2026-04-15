@@ -1,6 +1,6 @@
 use sqlx::postgres::PgPool;
 use crate::shared::error::AppError;
-use crate::auth::abac::{Policy, PolicyCondition};
+use crate::shared::abac::{Policy, PolicyCondition};
 use serde::Deserialize;
 use validator::Validate;
 
