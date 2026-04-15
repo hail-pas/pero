@@ -20,10 +20,14 @@ async fn main() {
     let db_pool = db::init_pool(&cfg.database).await.expect("Failed to init database");
     let cache_pool = cache::init_pool(&cfg.redis).await.expect("Failed to init redis");
 
+    let jwt_keys = crate::shared::jwt::JwtKeys::load(&cfg.oidc)
+        .expect("Failed to load JWT keys");
+
     let state = AppState {
         db: db_pool,
         cache: cache_pool,
         config: Arc::new(cfg),
+        jwt_keys: Arc::new(jwt_keys),
     };
 
     let addr = format!(

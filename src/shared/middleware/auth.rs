@@ -4,7 +4,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
-use crate::auth::jwt;
+use crate::shared::jwt;
 
 pub async fn auth_middleware(
     State(state): State<AppState>,
@@ -21,7 +21,7 @@ pub async fn auth_middleware(
         .strip_prefix("Bearer ")
         .ok_or(AppError::Unauthorized)?;
 
-    let claims = jwt::verify_token(token, &state.config.jwt.secret)?;
+    let claims = jwt::verify_token(token, &state.jwt_keys)?;
     req.extensions_mut().insert(claims);
     Ok(next.run(req).await)
 }

@@ -43,5 +43,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # Error handling
 thiserror = "2"
 
+# RSA / JWT
+rsa = { version = "0.9", features = ["pem"] }
+base64 = "0.22"
+sha2 = "0.10"
+pkcs1 = "0.7"
+
 # Regex (for ABAC pattern matching)
 regex = "1"

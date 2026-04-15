@@ -46,10 +46,10 @@ pub async fn login(
     let user_id_str = user.id.to_string();
     let roles = vec!["user".to_string()];
 
-    let access_token = crate::auth::jwt::sign_access_token(
+    let access_token = crate::shared::jwt::sign_access_token(
         &user_id_str,
         roles.clone(),
-        &state.config.jwt.secret,
+        &state.jwt_keys,
         state.config.jwt.access_ttl_minutes,
     )?;
 
@@ -88,10 +88,10 @@ pub async fn refresh(
     }
 
     let roles = vec!["user".to_string()];
-    let access_token = crate::auth::jwt::sign_access_token(
+    let access_token = crate::shared::jwt::sign_access_token(
         user_id_str,
         roles,
-        &state.config.jwt.secret,
+        &state.jwt_keys,
         state.config.jwt.access_ttl_minutes,
     )?;
 
@@ -102,7 +102,7 @@ pub async fn refresh(
 
 pub async fn logout(
     State(state): State<AppState>,
-    axum::extract::Extension(claims): axum::extract::Extension<crate::auth::jwt::TokenClaims>,
+    axum::extract::Extension(claims): axum::extract::Extension<crate::shared::jwt::TokenClaims>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     session::revoke_refresh_token(&mut state.cache.clone(), &claims.sub).await?;
     Ok(Json(ApiResponse::<()>::success_message("logged out")))

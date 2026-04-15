@@ -1359,14 +1359,18 @@ name = "pero"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "bcrypt",
  "chrono",
  "config",
  "jsonwebtoken",
+ "pkcs1",
  "redis",
  "regex",
+ "rsa",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror",
  "tokio",
