@@ -14,8 +14,7 @@ pub async fn create_client(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let client_id = uuid::Uuid::new_v4().to_string().replace('-', "");
     let client_secret = uuid::Uuid::new_v4().to_string().replace('-', "");
-    let client_secret_hash = bcrypt::hash(&client_secret, bcrypt::DEFAULT_COST)
-        .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
+    let client_secret_hash = crate::domains::identity::helpers::hash_password(&client_secret)?;
 
     let client =
         OAuth2ClientRepo::create(&state.db, &client_id, &client_secret_hash, &req).await?;

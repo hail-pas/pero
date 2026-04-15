@@ -6,22 +6,14 @@ use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedJson;
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
-use crate::shared::jwt;
-use crate::cache::session;
 
 pub async fn register(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
-    if UserRepo::find_by_username(&state.db, &req.username).await?.is_some() {
-        return Err(AppError::Conflict(format!("username '{}' already exists", req.username)));
-    }
-    if UserRepo::find_by_email(&state.db, &req.email).await?.is_some() {
-        return Err(AppError::Conflict(format!("email '{}' already exists", req.email)));
-    }
+    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email).await?;
 
-    let password_hash = bcrypt::hash(&req.password, bcrypt::DEFAULT_COST)
-        .map_err(|e| AppError::Internal(format!("Password hash error: {e}")))?;
+    let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
 
     let user = UserRepo::create(
         &state.db,
@@ -35,44 +27,17 @@ pub async fn register(
 
     IdentityRepo::create_password(&state.db, user.id, &password_hash).await?;
 
-    let user_id_str = user.id.to_string();
-    let roles = vec!["user".to_string()];
-    let access_token = jwt::sign_access_token(
-        &user_id_str,
-        roles,
-        &state.jwt_keys,
-        state.config.jwt.access_ttl_minutes,
-    )?;
-
-    let refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());
-    session::store_refresh_token(
-        &mut state.cache.clone(),
-        &user_id_str,
-        &refresh_token,
-        state.config.jwt.refresh_ttl_days,
-    )
-    .await?;
-
-    Ok(Json(ApiResponse::success(TokenResponse {
-        access_token,
-        refresh_token,
-        user: user.into(),
-    })))
+    let token_response = crate::domains::identity::helpers::issue_tokens(&state, &user).await?;
+    Ok(Json(ApiResponse::success(token_response)))
 }
 
 pub async fn create_user(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    if UserRepo::find_by_username(&state.db, &req.username).await?.is_some() {
-        return Err(AppError::Conflict(format!("username '{}' already exists", req.username)));
-    }
-    if UserRepo::find_by_email(&state.db, &req.email).await?.is_some() {
-        return Err(AppError::Conflict(format!("email '{}' already exists", req.email)));
-    }
+    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email).await?;
 
-    let password_hash = bcrypt::hash(&req.password, bcrypt::DEFAULT_COST)
-        .map_err(|e| AppError::Internal(format!("Password hash error: {e}")))?;
+    let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
 
     let user = UserRepo::create(
         &state.db,

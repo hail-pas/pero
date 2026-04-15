@@ -8,10 +8,6 @@ pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/health", get(crate::routes::health::health))
         .route(
-            "/auth/login",
-            post(crate::domains::identity::routes::login::login),
-        )
-        .route(
             "/auth/refresh",
             post(crate::domains::identity::routes::login::refresh),
         )

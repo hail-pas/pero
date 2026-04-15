@@ -33,30 +33,8 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
-    let user_id_str = user.id.to_string();
-    let roles = vec!["user".to_string()];
-
-    let access_token = jwt::sign_access_token(
-        &user_id_str,
-        roles,
-        &state.jwt_keys,
-        state.config.jwt.access_ttl_minutes,
-    )?;
-
-    let refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());
-    session::store_refresh_token(
-        &mut state.cache.clone(),
-        &user_id_str,
-        &refresh_token,
-        state.config.jwt.refresh_ttl_days,
-    )
-    .await?;
-
-    Ok(Json(ApiResponse::success(TokenResponse {
-        access_token,
-        refresh_token,
-        user: user.into(),
-    })))
+    let token_response = crate::domains::identity::helpers::issue_tokens(&state, &user).await?;
+    Ok(Json(ApiResponse::success(token_response)))
 }
 
 pub async fn refresh(
