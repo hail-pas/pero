@@ -1,0 +1,6 @@
+/target
+/logs
+*.swp
+.DS_Store
+config/*.toml
+!config/default.toml

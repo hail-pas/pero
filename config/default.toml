@@ -1,0 +1,27 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 4
+
+[database]
+url = "postgres://localhost/pero"
+max_connections = 20
+min_connections = 5
+
+[redis]
+url = "redis://localhost:6379"
+pool_size = 10
+
+[jwt]
+secret = "change-me-in-production"
+access_ttl_minutes = 15
+refresh_ttl_days = 7
+
+[log]
+level = "info"
+dir = "./logs"
+rotation = "day"
+max_age_days = 7
+
+[abac]
+default_action = "deny"
