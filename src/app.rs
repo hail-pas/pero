@@ -41,11 +41,6 @@ pub fn build_router(state: AppState) -> Router {
             "/oauth2/userinfo",
             get(crate::domains::oidc::routes::userinfo::userinfo),
         )
-        .route(
-            "/api/users/{id}/attributes",
-            get(crate::routes::user_attrs::list_attributes)
-                .put(crate::routes::user_attrs::set_attributes),
-        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth::auth_middleware,
@@ -96,9 +91,14 @@ pub fn build_router(state: AppState) -> Router {
                 .put(crate::domains::abac::routes::policies::update_policy)
                 .delete(crate::domains::abac::routes::policies::delete_policy),
         )
+        .route(
+            "/api/users/{id}/attributes",
+            get(crate::domains::identity::routes::user_attrs::list_attributes)
+                .put(crate::domains::identity::routes::user_attrs::set_attributes),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            middleware::abac::abac_middleware,
+            crate::domains::abac::middleware::abac_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -146,9 +146,9 @@ pub fn build_router(state: AppState) -> Router {
         .merge(identity_authed)
         .with_state(state)
         .layer(axum::middleware::from_fn(
-            middleware::request_id::add_request_id,
+            middleware::logging::request_logging,
         ))
         .layer(axum::middleware::from_fn(
-            middleware::logging::request_logging,
+            middleware::request_id::add_request_id,
         ))
 }
