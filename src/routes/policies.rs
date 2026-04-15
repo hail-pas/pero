@@ -1,10 +1,10 @@
 use axum::extract::{Path, State};
 use axum::Json;
 use crate::db::repos::{PolicyRepo, CreatePolicy, UpdatePolicy};
-use crate::error::AppError;
-use crate::extractors::ValidatedJson;
-use crate::response::ApiResponse;
-use crate::state::AppState;
+use crate::shared::error::AppError;
+use crate::shared::extractors::ValidatedJson;
+use crate::shared::response::ApiResponse;
+use crate::shared::state::AppState;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

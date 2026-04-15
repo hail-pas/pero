@@ -3,8 +3,8 @@ use axum::middleware::Next;
 use axum::response::Response;
 use crate::auth::jwt::TokenClaims;
 use crate::auth::abac::{self, EvalContext};
-use crate::error::AppError;
-use crate::state::AppState;
+use crate::shared::error::AppError;
+use crate::shared::state::AppState;
 
 pub async fn abac_middleware(
     State(state): State<AppState>,

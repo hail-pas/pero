@@ -2,8 +2,8 @@ use axum::extract::{Request, State};
 use axum::http::header;
 use axum::middleware::Next;
 use axum::response::Response;
-use crate::error::AppError;
-use crate::state::AppState;
+use crate::shared::error::AppError;
+use crate::shared::state::AppState;
 use crate::auth::jwt;
 
 pub async fn auth_middleware(

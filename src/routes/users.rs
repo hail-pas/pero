@@ -1,16 +1,15 @@
 use axum::extract::{Path, State};
 use axum::Json;
 use crate::db::repos::{UserRepo, UserDTO, CreateUser, UpdateUser};
-use crate::error::AppError;
-use crate::extractors::{ValidatedJson, Pagination};
-use crate::response::{ApiResponse, PageData};
-use crate::state::AppState;
+use crate::shared::error::AppError;
+use crate::shared::extractors::{ValidatedJson, Pagination};
+use crate::shared::response::{ApiResponse, PageData};
+use crate::shared::state::AppState;
 
 pub async fn create_user(
     State(state): State<AppState>,
     ValidatedJson(input): ValidatedJson<CreateUser>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    // Check username uniqueness
     if UserRepo::find_by_username(&state.db, &input.username).await?.is_some() {
         return Err(AppError::Conflict(format!("username '{}' already exists", input.username)));
     }

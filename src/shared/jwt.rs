@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TokenClaims {
-    pub sub: String,
+    pub sub: String, // user_id
     pub roles: Vec<String>,
     pub exp: i64,
     pub iat: i64,

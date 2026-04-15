@@ -1,7 +1,7 @@
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use serde::Deserialize;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 
 #[derive(Debug, Deserialize)]
 pub struct Pagination {

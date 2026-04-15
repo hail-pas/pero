@@ -1,5 +1,5 @@
 use sqlx::postgres::PgPool;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 
 #[derive(Debug, sqlx::FromRow, serde::Serialize, Clone)]
 pub struct User {

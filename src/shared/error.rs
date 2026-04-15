@@ -1,7 +1,7 @@
+use crate::shared::response::ApiResponse;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use crate::response::ApiResponse;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {

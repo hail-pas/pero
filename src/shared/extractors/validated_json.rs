@@ -3,7 +3,7 @@ use axum::extract::FromRequest;
 use axum::http::Request;
 use axum::Json;
 use validator::Validate;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 
 pub struct ValidatedJson<T>(pub T);
 

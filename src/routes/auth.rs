@@ -3,9 +3,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use crate::cache::session;
 use crate::db::repos::{UserRepo, UserDTO};
-use crate::error::AppError;
-use crate::response::ApiResponse;
-use crate::state::AppState;
+use crate::shared::error::AppError;
+use crate::shared::response::ApiResponse;
+use crate::shared::state::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -44,7 +44,7 @@ pub async fn login(
     }
 
     let user_id_str = user.id.to_string();
-    let roles = vec!["user".to_string()]; // Default role
+    let roles = vec!["user".to_string()];
 
     let access_token = crate::auth::jwt::sign_access_token(
         &user_id_str,
@@ -53,7 +53,6 @@ pub async fn login(
         state.config.jwt.access_ttl_minutes,
     )?;
 
-    // Generate a refresh token (simple UUID-based)
     let refresh_token = uuid::Uuid::new_v4().to_string();
     session::store_refresh_token(
         &mut state.cache.clone(),
@@ -74,12 +73,6 @@ pub async fn refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    // Decode the access token from the refresh request to get user_id
-    // For simplicity, the refresh_token is stored in Redis keyed by user_id
-    // We need to find which user owns this refresh token
-    // Approach: iterate is impractical. Better: encode user_id in refresh_token.
-    // Let's use format "user_id:token" for the refresh token.
-
     let parts: Vec<&str> = req.refresh_token.splitn(2, ':').collect();
     if parts.len() != 2 {
         return Err(AppError::Unauthorized);
@@ -94,7 +87,6 @@ pub async fn refresh(
         return Err(AppError::Unauthorized);
     }
 
-    // Issue new access token
     let roles = vec!["user".to_string()];
     let access_token = crate::auth::jwt::sign_access_token(
         user_id_str,

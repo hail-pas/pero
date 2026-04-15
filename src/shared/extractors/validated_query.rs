@@ -1,7 +1,7 @@
 use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use validator::Validate;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 
 #[allow(dead_code)]
 pub struct ValidatedQuery<T>(pub T);

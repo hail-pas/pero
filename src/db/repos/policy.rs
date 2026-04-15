@@ -1,5 +1,5 @@
 use sqlx::postgres::PgPool;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use crate::auth::abac::{Policy, PolicyCondition};
 use serde::Deserialize;
 use validator::Validate;
@@ -113,7 +113,6 @@ impl PolicyRepo {
         .fetch_one(pool)
         .await?;
 
-        // If conditions provided, replace them
         if let Some(conditions) = &input.conditions {
             sqlx::query("DELETE FROM policy_conditions WHERE policy_id = $1")
                 .bind(id)

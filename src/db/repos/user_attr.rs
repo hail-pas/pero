@@ -1,5 +1,5 @@
 use sqlx::postgres::PgPool;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, sqlx::FromRow, Serialize)]

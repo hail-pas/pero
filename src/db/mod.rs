@@ -2,7 +2,7 @@ pub mod repos;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use crate::config::DatabaseConfig;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 
 pub async fn init_pool(cfg: &DatabaseConfig) -> Result<PgPool, AppError> {
     let pool = PgPoolOptions::new()

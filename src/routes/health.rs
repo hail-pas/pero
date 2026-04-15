@@ -1,5 +1,5 @@
 use axum::Json;
-use crate::response::ApiResponse;
+use crate::shared::response::ApiResponse;
 use serde::Serialize;
 
 #[derive(Serialize)]

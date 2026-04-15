@@ -1,16 +1,15 @@
+mod app;
 mod auth;
 mod cache;
 mod config;
 mod db;
-mod error;
-mod extractors;
+mod domains;
 mod log;
-mod middleware;
-mod response;
 mod routes;
-mod state;
+mod shared;
 
 use config::AppConfig;
+use shared::state::AppState;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -21,7 +20,7 @@ async fn main() {
     let db_pool = db::init_pool(&cfg.database).await.expect("Failed to init database");
     let cache_pool = cache::init_pool(&cfg.redis).await.expect("Failed to init redis");
 
-    let state = state::AppState {
+    let state = AppState {
         db: db_pool,
         cache: cache_pool,
         config: Arc::new(cfg),
@@ -33,7 +32,7 @@ async fn main() {
         state.config.server.port
     );
 
-    let app = routes::build_router(state);
+    let app = app::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("Failed to bind address");
 

@@ -3,7 +3,7 @@ pub mod session;
 use redis::aio::ConnectionManager;
 use redis::Client;
 use crate::config::RedisConfig;
-use crate::error::AppError;
+use crate::shared::error::AppError;
 
 pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError> {
     let client = Client::open(cfg.url.as_str())
