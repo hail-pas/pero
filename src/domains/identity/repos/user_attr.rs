@@ -57,7 +57,6 @@ impl UserAttributeRepo {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub async fn delete_by_user(
         pool: &PgPool,
         user_id: uuid::Uuid,

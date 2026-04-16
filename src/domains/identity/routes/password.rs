@@ -1,5 +1,6 @@
 use crate::domains::identity::models::ChangePasswordRequest;
 use crate::domains::identity::repos::IdentityRepo;
+use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, ValidatedJson};
 use crate::shared::response::ApiResponse;
@@ -26,7 +27,7 @@ pub async fn change_password(
     ValidatedJson(req): ValidatedJson<ChangePasswordRequest>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     let identity =
-        IdentityRepo::find_by_user_and_provider(&state.db, auth_user.user_id, "password")
+        IdentityRepo::find_by_user_and_provider(&state.db, auth_user.user_id, PROVIDER_PASSWORD)
             .await?
             .ok_or(AppError::NotFound("password identity".into()))?;
 
@@ -43,7 +44,7 @@ pub async fn change_password(
 
     let new_hash = crate::domains::identity::helpers::hash_password(&req.new_password)?;
 
-    IdentityRepo::update_credential(&state.db, auth_user.user_id, "password", &new_hash).await?;
+    IdentityRepo::update_credential(&state.db, auth_user.user_id, PROVIDER_PASSWORD, &new_hash).await?;
 
     Ok(Json(ApiResponse::<()>::success_message("password changed")))
 }

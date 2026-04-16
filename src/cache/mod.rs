@@ -1,12 +1,14 @@
 pub mod session;
 
 use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::config::RedisConfig;
 use crate::shared::error::AppError;
+use deadpool::managed;
+use deadpool::managed::RecycleResult;
 use redis::Client;
 use redis::TlsCertificates;
-use redis::aio::ConnectionManager;
 
 fn build_clean_url(raw: &str) -> Result<String, AppError> {
     let mut url =
@@ -29,14 +31,14 @@ fn build_clean_url(raw: &str) -> Result<String, AppError> {
     Ok(url.into())
 }
 
-pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError> {
+fn build_client(cfg: &RedisConfig) -> Result<Client, AppError> {
     let ssl_ca_certs = url::Url::parse(&cfg.url).ok().and_then(|u| {
         u.query_pairs()
             .find(|(k, _)| k == "ssl_ca_certs")
             .map(|(_, v)| v.into_owned())
     });
 
-    let client = if let Some(ca_path) = ssl_ca_certs {
+    if let Some(ca_path) = ssl_ca_certs {
         let root_cert = fs::read(&ca_path)
             .map_err(|e| AppError::Internal(format!("Failed to read CA cert {}: {e}", ca_path)))?;
         let clean_url = build_clean_url(&cfg.url)?;
@@ -47,51 +49,116 @@ pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError>
                 root_cert: Some(root_cert),
             },
         )
-        .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))?
+        .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))
     } else {
         Client::open(cfg.url.as_str())
-            .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))?
-    };
-
-    let conn = ConnectionManager::new(client)
-        .await
-        .map_err(|e| AppError::Internal(format!("Redis connection failed: {e}")))?;
-
-    tracing::info!("Redis connected");
-    Ok(conn)
+            .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))
+    }
 }
 
-pub async fn get(conn: &mut ConnectionManager, key: &str) -> Result<Option<String>, AppError> {
-    let result: Option<String> = redis::cmd("GET").arg(key).query_async(conn).await?;
+pub type Pool = managed::Pool<RedisManager>;
+pub type Connection = redis::aio::MultiplexedConnection;
+
+pub struct RedisManager {
+    client: Client,
+    ping_counter: AtomicUsize,
+}
+
+impl RedisManager {
+    pub fn new(client: Client) -> Self {
+        Self {
+            client,
+            ping_counter: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl managed::Manager for RedisManager {
+    type Type = Connection;
+    type Error = redis::RedisError;
+
+    async fn create(&self) -> Result<Connection, Self::Error> {
+        self.client.get_multiplexed_async_connection().await
+    }
+
+    async fn recycle(
+        &self,
+        conn: &mut Connection,
+        _: &managed::Metrics,
+    ) -> RecycleResult<redis::RedisError> {
+        let ping = self
+            .ping_counter
+            .fetch_add(1, Ordering::Relaxed)
+            .to_string();
+        redis::cmd("PING")
+            .arg(&ping)
+            .query_async::<String>(conn)
+            .await
+            .map_err(|e| managed::RecycleError::Message(std::borrow::Cow::Owned(e.to_string())))?;
+        Ok(())
+    }
+}
+
+pub async fn init_pool(cfg: &RedisConfig) -> Result<Pool, AppError> {
+    let client = build_client(cfg)?;
+    let manager = RedisManager::new(client);
+
+    let pool = managed::Pool::builder(manager)
+        .max_size(cfg.pool_size)
+        .build()
+        .map_err(|e| AppError::Internal(format!("Redis pool build error: {e}")))?;
+
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(format!("Redis connection health check failed: {e}")))?;
+    drop(conn);
+
+    tracing::info!("Redis connected (pool_size={})", cfg.pool_size);
+    Ok(pool)
+}
+
+pub async fn get(pool: &Pool, key: &str) -> Result<Option<String>, AppError> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let result: Option<String> = redis::cmd("GET").arg(key).query_async(&mut *conn).await?;
     Ok(result)
 }
 
-pub async fn set(
-    conn: &mut ConnectionManager,
-    key: &str,
-    value: &str,
-    ttl_seconds: i64,
-) -> Result<(), AppError> {
+pub async fn set(pool: &Pool, key: &str, value: &str, ttl_seconds: i64) -> Result<(), AppError> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     redis::cmd("SET")
         .arg(key)
         .arg(value)
         .arg("EX")
         .arg(ttl_seconds)
-        .query_async::<()>(conn)
+        .query_async::<()>(&mut *conn)
         .await?;
     Ok(())
 }
 
-pub async fn del(conn: &mut ConnectionManager, key: &str) -> Result<(), AppError> {
-    redis::cmd("DEL").arg(key).query_async::<()>(conn).await?;
+pub async fn del(pool: &Pool, key: &str) -> Result<(), AppError> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut *conn)
+        .await?;
     Ok(())
 }
 
 pub async fn get_json<T: serde::de::DeserializeOwned>(
-    conn: &mut ConnectionManager,
+    pool: &Pool,
     key: &str,
 ) -> Result<Option<T>, AppError> {
-    let raw = get(conn, key).await?;
+    let raw = get(pool, key).await?;
     match raw {
         Some(json_str) => {
             let val: T = serde_json::from_str(&json_str)
@@ -103,12 +170,12 @@ pub async fn get_json<T: serde::de::DeserializeOwned>(
 }
 
 pub async fn set_json<T: serde::Serialize>(
-    conn: &mut ConnectionManager,
+    pool: &Pool,
     key: &str,
     value: &T,
     ttl_seconds: i64,
 ) -> Result<(), AppError> {
     let json_str = serde_json::to_string(value)
         .map_err(|e| AppError::Internal(format!("cache serialize error: {e}")))?;
-    set(conn, key, &json_str, ttl_seconds).await
+    set(pool, key, &json_str, ttl_seconds).await
 }

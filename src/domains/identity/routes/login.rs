@@ -1,6 +1,7 @@
 use crate::cache::session;
 use crate::domains::identity::models::{LoginRequest, RefreshRequest, TokenResponse};
 use crate::domains::identity::repos::{IdentityRepo, UserRepo};
+use crate::shared::constants::identity::{DEFAULT_ROLE, PROVIDER_PASSWORD};
 use crate::shared::error::AppError;
 use crate::shared::extractors::AuthUser;
 use crate::shared::jwt;
@@ -32,7 +33,7 @@ pub async fn login(
         return Err(AppError::Forbidden("account is disabled".into()));
     }
 
-    let identity = IdentityRepo::find_by_user_and_provider(&state.db, user.id, "password")
+    let identity = IdentityRepo::find_by_user_and_provider(&state.db, user.id, PROVIDER_PASSWORD)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -71,7 +72,7 @@ pub async fn refresh(
     }
     let user_id_str = parts[0];
 
-    let stored = session::get_refresh_token(&mut state.cache.clone(), user_id_str).await?;
+    let stored = session::get_refresh_token(&state.cache, user_id_str).await?;
     let stored = stored.ok_or(AppError::Unauthorized)?;
 
     if stored != req.refresh_token {
@@ -88,7 +89,7 @@ pub async fn refresh(
         return Err(AppError::Forbidden("account is disabled".into()));
     }
 
-    let roles = vec!["user".to_string()];
+    let roles = vec![DEFAULT_ROLE.to_string()];
     let access_token = jwt::sign_access_token(
         user_id_str,
         roles,
@@ -99,7 +100,7 @@ pub async fn refresh(
 
     let new_refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());
     session::store_refresh_token(
-        &mut state.cache.clone(),
+        &state.cache,
         user_id_str,
         &new_refresh_token,
         state.config.jwt.refresh_ttl_days,
@@ -126,6 +127,6 @@ pub async fn logout(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
-    session::revoke_refresh_token(&mut state.cache.clone(), &auth_user.user_id.to_string()).await?;
+    session::revoke_refresh_token(&state.cache, &auth_user.user_id.to_string()).await?;
     Ok(Json(ApiResponse::<()>::success_message("logged out")))
 }

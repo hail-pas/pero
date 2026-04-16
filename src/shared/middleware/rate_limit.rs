@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::Semaphore;
+use tokio::time::{Duration, interval};
 use tower::Service;
 
 #[derive(Clone)]
@@ -46,4 +47,23 @@ where
             }
         })
     }
+}
+
+pub fn spawn_refill_task(limiter: Arc<Semaphore>, max_permits: usize, rps: u64) {
+    if rps == 0 {
+        return;
+    }
+    let refill_amount = max_permits.div_ceil(rps as usize).max(1);
+    let interval_duration = Duration::from_secs(1).div_f64(rps as f64);
+    tokio::spawn(async move {
+        let mut ticker = interval(interval_duration);
+        loop {
+            ticker.tick().await;
+            let current = limiter.available_permits();
+            let to_add = refill_amount.min(max_permits - current);
+            if to_add > 0 {
+                limiter.add_permits(to_add);
+            }
+        }
+    });
 }

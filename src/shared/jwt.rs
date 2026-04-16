@@ -1,8 +1,9 @@
 use crate::config::OidcConfig;
+use crate::shared::constants::jwt as jwt_constants;
 use crate::shared::error::AppError;
 use base64::Engine;
 use chrono::{TimeDelta, Utc};
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,10 +84,10 @@ impl JwtKeys {
 
     pub fn public_key_jwk(&self) -> serde_json::Value {
         serde_json::json!({
-            "kty": "RSA",
+            "kty": jwt_constants::KEY_TYPE_RSA,
             "kid": self.key_id,
-            "use": "sig",
-            "alg": "RS256",
+            "use": jwt_constants::KEY_USE_SIG,
+            "alg": jwt_constants::ALG_RS256,
             "n": self.public_n,
             "e": self.public_e,
         })

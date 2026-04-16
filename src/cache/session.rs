@@ -1,32 +1,31 @@
 use crate::cache;
+use crate::shared::constants::cache_keys;
 use crate::shared::error::AppError;
-use redis::aio::ConnectionManager;
-
-const REFRESH_TOKEN_PREFIX: &str = "refresh_token:";
+use crate::cache::Pool;
 
 pub async fn store_refresh_token(
-    conn: &mut ConnectionManager,
+    pool: &Pool,
     user_id: &str,
     token: &str,
     ttl_days: i64,
 ) -> Result<(), AppError> {
-    let key = format!("{REFRESH_TOKEN_PREFIX}{user_id}");
+    let key = format!("{}{user_id}", cache_keys::REFRESH_TOKEN_PREFIX);
     let ttl_seconds = ttl_days * 86400;
-    cache::set(conn, &key, token, ttl_seconds).await
+    cache::set(pool, &key, token, ttl_seconds).await
 }
 
 pub async fn get_refresh_token(
-    conn: &mut ConnectionManager,
+    pool: &Pool,
     user_id: &str,
 ) -> Result<Option<String>, AppError> {
-    let key = format!("{REFRESH_TOKEN_PREFIX}{user_id}");
-    cache::get(conn, &key).await
+    let key = format!("{}{user_id}", cache_keys::REFRESH_TOKEN_PREFIX);
+    cache::get(pool, &key).await
 }
 
 pub async fn revoke_refresh_token(
-    conn: &mut ConnectionManager,
+    pool: &Pool,
     user_id: &str,
 ) -> Result<(), AppError> {
-    let key = format!("{REFRESH_TOKEN_PREFIX}{user_id}");
-    cache::del(conn, &key).await
+    let key = format!("{}{user_id}", cache_keys::REFRESH_TOKEN_PREFIX);
+    cache::del(pool, &key).await
 }

@@ -107,7 +107,7 @@ pub struct RefreshRequest {
     pub refresh_token: String,
 }
 
-#[derive(Debug, sqlx::FromRow, Serialize, Clone)]
+#[derive(Debug, sqlx::FromRow, Serialize, Clone, ToSchema)]
 pub struct Identity {
     pub id: Uuid,
     pub user_id: Uuid,
@@ -120,7 +120,7 @@ pub struct Identity {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
-#[allow(dead_code)]
+#[allow(dead_code)] // TODO: implement OAuth binding flow (see binding.rs)
 pub struct BindRequest {
     pub code: String,
     pub redirect_uri: String,

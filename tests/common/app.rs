@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 type SharedResources = (
     PgPool,
-    redis::aio::ConnectionManager,
+    pero::cache::Pool,
     Arc<AppConfig>,
     Arc<pero::shared::jwt::JwtKeys>,
 );
@@ -64,7 +64,6 @@ pub fn shared_resources() -> &'static SharedResources {
     APP_RESOURCES.get_or_init(init_resources)
 }
 
-#[allow(dead_code)]
 pub async fn build_app() -> TestApp {
     let guard = ensure_rt().enter();
     let (db, cache, config, jwt_keys) = shared_resources();
@@ -85,7 +84,6 @@ pub async fn build_app() -> TestApp {
     }
 }
 
-#[allow(dead_code)]
 pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static>) {
     let guard = ensure_rt().enter();
     let (db, cache, config, jwt_keys) = shared_resources();
@@ -98,18 +96,15 @@ pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static
     (router, guard)
 }
 
-#[allow(dead_code)]
 pub struct TestApp {
     pub app: axum::Router,
     pub db: PgPool,
-    pub cache: redis::aio::ConnectionManager,
-    #[allow(dead_code)]
+    pub cache: pero::cache::Pool,
     pub config: Arc<AppConfig>,
     cleanup: Vec<CleanupItem>,
     _guard: tokio::runtime::EnterGuard<'static>,
 }
 
-#[allow(dead_code)]
 impl TestApp {
     pub fn track_user(&mut self, user_id: uuid::Uuid) {
         self.cleanup.push(CleanupItem::User(user_id));
@@ -144,7 +139,10 @@ impl TestApp {
     pub(crate) async fn clear_user_cache(&self, user_id: uuid::Uuid) {
         use redis::AsyncCommands;
 
-        let mut conn = self.cache.clone();
+        let mut conn = match self.cache.get().await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         for key in [
             format!("refresh_token:{user_id}"),
             format!("abac:{user_id}:"),
@@ -158,7 +156,7 @@ impl TestApp {
                         .arg(format!("{key}*"))
                         .arg("COUNT")
                         .arg(100)
-                        .query_async(&mut conn)
+                        .query_async(&mut *conn)
                         .await;
 
                     let Ok((next_cursor, keys)) = result else {

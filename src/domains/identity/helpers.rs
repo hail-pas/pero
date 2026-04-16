@@ -2,6 +2,7 @@ use crate::cache::session;
 use crate::domains::identity::models::TokenResponse;
 use crate::domains::identity::models::User;
 use crate::domains::identity::repos::UserRepo;
+use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
 use crate::shared::jwt;
 use crate::shared::state::AppState;
@@ -9,7 +10,7 @@ use sqlx::postgres::PgPool;
 
 pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse, AppError> {
     let user_id_str = user.id.to_string();
-    let roles = vec!["user".to_string()];
+    let roles = vec![DEFAULT_ROLE.to_string()];
 
     let access_token = jwt::sign_access_token(
         &user_id_str,
@@ -21,7 +22,7 @@ pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse
 
     let refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());
     session::store_refresh_token(
-        &mut state.cache.clone(),
+        &state.cache,
         &user_id_str,
         &refresh_token,
         state.config.jwt.refresh_ttl_days,

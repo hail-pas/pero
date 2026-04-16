@@ -22,6 +22,10 @@ pub async fn revoke(
     State(state): State<AppState>,
     Json(req): Json<RevokeRequest>,
 ) -> Result<Response, AppError> {
+    if let Some(hint) = &req.token_type_hint {
+        tracing::debug!(token_type_hint = %hint, "token revocation requested with type hint");
+    }
+
     if let Some(token) = RefreshTokenRepo::find_by_token(&state.db, &req.token).await? {
         RefreshTokenRepo::revoke(&state.db, token.id).await?;
     }

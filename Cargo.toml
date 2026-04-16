@@ -14,7 +14,9 @@ tower = "0.5"
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }
 
 # Redis
-redis = { version = "1.2", features = ["aio", "tokio-comp", "connection-manager", "tokio-rustls-comp"] }
+redis = { version = "1.2", features = ["aio", "tokio-comp", "tokio-rustls-comp"] }
+deadpool-redis = "0.23"
+deadpool = "0.13"
 rustls = { version = "0.23", features = ["ring", "std", "tls12"] }
 
 # Auth

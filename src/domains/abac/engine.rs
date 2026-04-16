@@ -6,6 +6,7 @@ pub fn eval_condition(
     ctx: &EvalContext,
     regex_cache: &HashMap<String, regex::Regex>,
 ) -> bool {
+    let app_id_str = ctx.app_id.map(|id| id.to_string());
     let target_value = match cond.condition_type.as_str() {
         "subject" => ctx
             .subject_attrs
@@ -14,6 +15,7 @@ pub fn eval_condition(
             .map(|(_, v)| v.as_str()),
         "resource" if cond.key == "path" => Some(ctx.resource.as_str()),
         "action" if cond.key == "method" => Some(ctx.action.as_str()),
+        "app" if cond.key == "app_id" => app_id_str.as_deref(),
         _ => None,
     };
 

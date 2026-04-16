@@ -37,7 +37,6 @@ pub struct EvalContext {
     pub subject_attrs: Vec<(String, String)>,
     pub resource: String,
     pub action: String,
-    #[allow(dead_code)]
     pub app_id: Option<Uuid>,
 }
 
@@ -94,7 +93,7 @@ fn validate_effect_opt(effect: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_condition_type(ct: &str) -> Result<(), validator::ValidationError> {
-    if !["subject", "resource", "action"].contains(&ct) {
+    if !["subject", "resource", "action", "app"].contains(&ct) {
         return Err(validator::ValidationError::new("invalid_condition_type"));
     }
     Ok(())

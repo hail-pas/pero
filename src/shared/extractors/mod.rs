@@ -6,5 +6,4 @@ mod validated_query;
 pub use auth_user::AuthUser;
 pub use pagination::Pagination;
 pub use validated_json::ValidatedJson;
-#[allow(unused_imports)]
 pub use validated_query::ValidatedQuery;

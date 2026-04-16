@@ -1,12 +1,18 @@
 use axum::Json;
 use axum::extract::State;
+use chrono::{TimeDelta, Utc};
 
 use crate::domains::identity::repos::UserRepo;
 use crate::domains::oauth2::models::{TokenRequest, TokenResponse};
 use crate::domains::oauth2::pkce;
 use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo, RefreshTokenRepo};
+use crate::shared::constants::identity::DEFAULT_ROLE;
+use crate::shared::constants::oauth2::{
+    GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN, TOKEN_TYPE_BEARER,
+};
+use crate::shared::constants::oauth2::scopes as oauth2_scopes;
 use crate::shared::error::AppError;
-use crate::shared::jwt;
+use crate::shared::jwt::{self, IdTokenClaims};
 use crate::shared::state::AppState;
 
 #[utoipa::path(
@@ -24,8 +30,8 @@ pub async fn token(
     Json(req): Json<TokenRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
     match req.grant_type.as_str() {
-        "authorization_code" => handle_authorization_code(&state, &req).await,
-        "refresh_token" => handle_refresh_token(&state, &req).await,
+        GRANT_TYPE_AUTH_CODE => handle_authorization_code(&state, &req).await,
+        GRANT_TYPE_REFRESH_TOKEN => handle_refresh_token(&state, &req).await,
         _ => Err(AppError::BadRequest("unsupported grant_type".into())),
     }
 }
@@ -89,7 +95,7 @@ async fn handle_authorization_code(
         .ok_or(AppError::NotFound("user".into()))?;
 
     let user_id_str = user.id.to_string();
-    let roles = vec!["user".to_string()];
+    let roles = vec![DEFAULT_ROLE.to_string()];
 
     let scope_str = Some(ac.scopes.join(" "));
     let access_token = jwt::sign_access_token(
@@ -111,11 +117,11 @@ async fn handle_authorization_code(
     )
     .await?;
 
-    let id_token = build_id_token(&state, &user, &ac.scopes, None, &client.client_id)?;
+    let id_token = build_id_token(&state, &user, &ac.scopes, ac.nonce, &client.client_id)?;
 
     Ok(Json(TokenResponse {
         access_token,
-        token_type: "Bearer".to_string(),
+        token_type: TOKEN_TYPE_BEARER.to_string(),
         expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
         refresh_token: Some(refresh_token_str),
         id_token: Some(id_token),
@@ -186,7 +192,7 @@ async fn handle_refresh_token(
         .ok_or(AppError::NotFound("user".into()))?;
 
     let user_id_str = user.id.to_string();
-    let roles = vec!["user".to_string()];
+    let roles = vec![DEFAULT_ROLE.to_string()];
     let scope_str = Some(stored.scopes.join(" "));
 
     let access_token = jwt::sign_access_token(
@@ -212,8 +218,7 @@ async fn handle_refresh_token(
 
     Ok(Json(TokenResponse {
         access_token,
-        token_type: "Bearer".to_string(),
-        expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
+        token_type: TOKEN_TYPE_BEARER.to_string(),        expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
         refresh_token: Some(new_refresh),
         id_token: Some(id_token),
         scope: Some(stored.scopes.join(" ")),
@@ -227,9 +232,6 @@ fn build_id_token(
     nonce: Option<String>,
     client_id: &str,
 ) -> Result<String, AppError> {
-    use crate::shared::jwt::IdTokenClaims;
-    use chrono::{TimeDelta, Utc};
-
     let now = Utc::now();
     let mut claims = IdTokenClaims {
         sub: user.id.to_string(),
@@ -248,16 +250,16 @@ fn build_id_token(
         phone_number_verified: None,
     };
 
-    if scopes.contains(&"profile".to_string()) {
+    if scopes.contains(&oauth2_scopes::PROFILE.to_string()) {
         claims.name = Some(user.username.clone());
         claims.nickname = user.nickname.clone();
         claims.picture = user.avatar_url.clone();
     }
-    if scopes.contains(&"email".to_string()) {
+    if scopes.contains(&oauth2_scopes::EMAIL.to_string()) {
         claims.email = Some(user.email.clone());
         claims.email_verified = Some(true);
     }
-    if scopes.contains(&"phone".to_string()) {
+    if scopes.contains(&oauth2_scopes::PHONE.to_string()) {
         claims.phone_number = user.phone.clone();
         claims.phone_number_verified = Some(user.phone.is_some());
     }

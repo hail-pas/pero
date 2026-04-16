@@ -1,18 +1,20 @@
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::domains::oauth2::models::AuthorizeQuery;
 use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo};
+use crate::shared::constants::oauth2::{PKCE_METHOD_S256, PKCE_METHOD_PLAIN, RESPONSE_TYPE_CODE};
 use crate::shared::error::AppError;
 use crate::shared::extractors::AuthUser;
+use crate::shared::extractors::ValidatedQuery;
 use crate::shared::state::AppState;
 
 pub async fn authorize(
     State(state): State<AppState>,
     auth_user: AuthUser,
-    Query(query): Query<AuthorizeQuery>,
+    ValidatedQuery(query): ValidatedQuery<AuthorizeQuery>,
 ) -> Result<Response, AppError> {
-    if query.response_type != "code" {
+    if query.response_type != RESPONSE_TYPE_CODE {
         return Err(AppError::BadRequest("unsupported response_type".into()));
     }
 
@@ -49,8 +51,8 @@ pub async fn authorize(
         requested_scopes
     };
 
-    let method = query.code_challenge_method.as_deref().unwrap_or("S256");
-    if method != "S256" && method != "plain" {
+    let method = query.code_challenge_method.as_deref().unwrap_or(PKCE_METHOD_S256);
+    if method != PKCE_METHOD_S256 && method != PKCE_METHOD_PLAIN {
         return Err(AppError::BadRequest("invalid code_challenge_method".into()));
     }
 
@@ -65,6 +67,7 @@ pub async fn authorize(
         &scopes,
         Some(&query.code_challenge),
         Some(method),
+        query.nonce.as_deref(),
         state.config.oauth2.auth_code_ttl_minutes,
     )
     .await?;

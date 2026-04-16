@@ -1,5 +1,6 @@
-use crate::domains::identity::models::BindRequest;
+use crate::domains::identity::models::{BindRequest, Identity};
 use crate::domains::identity::repos::IdentityRepo;
+use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::AuthUser;
 use crate::shared::response::ApiResponse;
@@ -7,6 +8,24 @@ use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use utoipa;
+
+#[utoipa::path(
+    get,
+    path = "/api/identity/identities",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "User identities", body = ApiResponse<Vec<Identity>>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn list_identities(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> Result<Json<ApiResponse<Vec<Identity>>>, AppError> {
+    let identities = IdentityRepo::list_by_user(&state.db, auth_user.user_id).await?;
+    Ok(Json(ApiResponse::success(identities)))
+}
 
 #[utoipa::path(
     post,
@@ -67,7 +86,7 @@ pub async fn unbind(
     auth_user: AuthUser,
     Path(provider): Path<String>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
-    if provider == "password" {
+    if provider == PROVIDER_PASSWORD {
         return Err(AppError::BadRequest(
             "cannot unbind password identity".into(),
         ));

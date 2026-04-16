@@ -1,3 +1,4 @@
+use crate::shared::constants::oauth2::TOKEN_TYPE_BEARER_PREFIX;
 use crate::shared::error::AppError;
 use crate::shared::jwt;
 use crate::shared::state::AppState;
@@ -18,7 +19,7 @@ pub async fn auth_middleware(
         .ok_or(AppError::Unauthorized)?;
 
     let token = auth_header
-        .strip_prefix("Bearer ")
+        .strip_prefix(TOKEN_TYPE_BEARER_PREFIX)
         .ok_or(AppError::Unauthorized)?;
 
     let claims = jwt::verify_token(token, &state.jwt_keys)?;

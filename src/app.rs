@@ -1,6 +1,7 @@
+use crate::shared::constants::headers::X_REQUEST_ID;
 use crate::shared::state::AppState;
-use axum::Router;
 use axum::http::header;
+use axum::Router;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -11,7 +12,7 @@ use tower_http::trace::TraceLayer;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub fn build_router(state: AppState) -> Router {
-    use axum::routing::{get, post};
+    use axum::routing::{delete, get, post};
 
     let public = Router::new()
         .route("/health", get(crate::routes::health::health))
@@ -113,6 +114,10 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::domains::identity::routes::user_attrs::list_attributes)
                 .put(crate::domains::identity::routes::user_attrs::set_attributes),
         )
+        .route(
+            "/api/users/{id}/attributes/{key}",
+            delete(crate::domains::identity::routes::user_attrs::delete_attribute),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::domains::abac::middleware::abac_middleware,
@@ -147,6 +152,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::delete(crate::domains::identity::routes::binding::unbind),
         )
         .route(
+            "/api/identity/identities",
+            get(crate::domains::identity::routes::binding::list_identities),
+        )
+        .route(
             "/api/identity/password/change",
             axum::routing::put(crate::domains::identity::routes::password::change_password),
         )
@@ -157,7 +166,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let openapi = crate::docs::build_openapi(&state.config.docs);
 
-    let x_request_id = axum::http::HeaderName::from_static("x-request-id");
+    let x_request_id = axum::http::HeaderName::from_static(X_REQUEST_ID);
 
     let cors = build_cors(&state.config.cors);
 
@@ -206,10 +215,13 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CatchPanicLayer::new())
         .layer({
             let burst = state.config.server.rate_limit_burst as usize;
+            let rps = state.config.server.rate_limit_rps;
+            let limiter = std::sync::Arc::new(tokio::sync::Semaphore::new(burst));
+            crate::shared::middleware::rate_limit::spawn_refill_task(limiter.clone(), burst, rps);
             tower::layer::layer_fn(move |service| {
                 crate::shared::middleware::rate_limit::RateLimit {
                     inner: service,
-                    limiter: std::sync::Arc::new(tokio::sync::Semaphore::new(burst)),
+                    limiter: limiter.clone(),
                 }
             })
         })

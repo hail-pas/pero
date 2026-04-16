@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS oauth2_authorization_codes (
     redirect_uri TEXT NOT NULL,
     scopes TEXT[] NOT NULL,
     code_challenge TEXT,
+    nonce TEXT,
     code_challenge_method VARCHAR(16),
     expires_at TIMESTAMPTZ NOT NULL,
     used BOOLEAN NOT NULL DEFAULT false,

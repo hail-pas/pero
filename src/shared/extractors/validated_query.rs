@@ -3,7 +3,6 @@ use axum::extract::{FromRequestParts, Query};
 use axum::http::request::Parts;
 use validator::Validate;
 
-#[allow(dead_code)]
 pub struct ValidatedQuery<T>(pub T);
 
 impl<T, S> FromRequestParts<S> for ValidatedQuery<T>

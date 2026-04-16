@@ -62,3 +62,32 @@ pub async fn set_attributes(
         "attributes updated",
     )))
 }
+
+#[utoipa::path(
+    delete,
+    path = "/api/users/{user_id}/attributes/{key}",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+        ("key" = String, Path, description = "Attribute key"),
+    ),
+    responses(
+        (status = 200, description = "Attribute deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User not found"),
+    )
+)]
+pub async fn delete_attribute(
+    State(state): State<AppState>,
+    Path((user_id, key)): Path<(uuid::Uuid, String)>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    UserRepo::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or(AppError::NotFound("user".into()))?;
+
+    UserAttributeRepo::delete_by_user(&state.db, user_id, &key).await?;
+    Ok(Json(ApiResponse::<()>::success_message(
+        "attribute deleted",
+    )))
+}

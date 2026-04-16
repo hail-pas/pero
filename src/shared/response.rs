@@ -25,15 +25,6 @@ impl<T: Serialize + ToSchema> ApiResponse<T> {
             data: None,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn error(code: i32, message: String) -> ApiResponse<()> {
-        ApiResponse {
-            code,
-            message,
-            data: None,
-        }
-    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]

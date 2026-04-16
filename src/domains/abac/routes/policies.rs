@@ -2,12 +2,14 @@ use crate::domains::abac::models::{
     CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest,
 };
 use crate::domains::abac::repos::PolicyRepo;
+use crate::shared::constants::cache_keys;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use redis::AsyncCommands;
 use serde::Serialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -60,13 +62,15 @@ impl PolicyDTO {
 }
 
 async fn invalidate_policy_cache(state: &AppState, app_id: Option<Uuid>) -> Result<(), AppError> {
-    use redis::AsyncCommands;
-    let mut conn = state.cache.clone();
+    let mut conn = state.cache.get().await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     let patterns: Vec<String> = if app_id.is_some() {
-        vec![format!("abac:*:{}", app_id.unwrap()), "abac:*:".to_string()]
+        vec![
+            format!("{}*:{}", cache_keys::ABAC_PREFIX, app_id.unwrap()),
+            format!("{}*:", cache_keys::ABAC_PREFIX),
+        ]
     } else {
-        vec!["abac:*:".to_string()]
+        vec![format!("{}*:", cache_keys::ABAC_PREFIX)]
     };
 
     for pattern in patterns {
@@ -78,7 +82,7 @@ async fn invalidate_policy_cache(state: &AppState, app_id: Option<Uuid>) -> Resu
                 .arg(&pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut conn)
+                .query_async(&mut *conn)
                 .await?;
             if !keys.is_empty() {
                 let _: () = conn.del(&keys).await?;

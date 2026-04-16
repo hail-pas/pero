@@ -4,6 +4,8 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
+use crate::shared::constants::oauth2::{self as oauth2_constants, scopes as oauth2_scopes};
+
 #[derive(Debug, sqlx::FromRow, Serialize, Clone)]
 pub struct OAuth2Client {
     pub id: Uuid,
@@ -63,14 +65,14 @@ pub struct CreateClientRequest {
 }
 
 fn default_grant_types() -> Vec<String> {
-    vec!["authorization_code".to_string()]
+    vec![oauth2_constants::GRANT_TYPE_AUTH_CODE.to_string()]
 }
 
 fn default_scopes() -> Vec<String> {
     vec![
-        "openid".to_string(),
-        "profile".to_string(),
-        "email".to_string(),
+        oauth2_scopes::OPENID.to_string(),
+        oauth2_scopes::PROFILE.to_string(),
+        oauth2_scopes::EMAIL.to_string(),
     ]
 }
 
@@ -83,7 +85,7 @@ pub struct UpdateClientRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct AuthorizeQuery {
     pub client_id: String,
     pub redirect_uri: String,
@@ -92,7 +94,6 @@ pub struct AuthorizeQuery {
     pub state: Option<String>,
     pub code_challenge: String,
     pub code_challenge_method: Option<String>,
-    #[allow(dead_code)]
     pub nonce: Option<String>,
 }
 
@@ -121,12 +122,11 @@ pub struct TokenResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RevokeRequest {
     pub token: String,
-    #[allow(dead_code)]
     pub token_type_hint: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-#[allow(dead_code)]
+#[allow(dead_code)] // REMARK: sqlx::FromRow requires all DB columns, some fields are read by token.rs
 pub struct AuthorizationCode {
     pub code: String,
     pub client_id: Uuid,
@@ -135,13 +135,14 @@ pub struct AuthorizationCode {
     pub scopes: Vec<String>,
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
+    pub nonce: Option<String>,
     pub expires_at: DateTime<Utc>,
     pub used: bool,
     pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-#[allow(dead_code)]
+#[allow(dead_code)] // REMARK: sqlx::FromRow requires all DB columns, some fields are read by token.rs
 pub struct RefreshToken {
     pub id: Uuid,
     pub client_id: Uuid,

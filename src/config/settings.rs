@@ -32,11 +32,9 @@ pub struct OAuth2Config {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub workers: usize,
     pub request_body_limit_bytes: usize,
     pub rate_limit_rps: u64,
     pub rate_limit_burst: u64,
@@ -50,7 +48,6 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct RedisConfig {
     pub url: String,
     pub pool_size: usize,
@@ -63,12 +60,10 @@ pub struct JwtConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct LogConfig {
     pub level: String,
     pub dir: String,
     pub rotation: String,
-    pub max_age_days: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]

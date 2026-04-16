@@ -2,7 +2,6 @@ use crate::common::app::TestApp;
 use crate::common::client::send_request;
 use crate::common::isolation::{unique_email, unique_name};
 
-#[allow(dead_code)]
 pub struct UserFixture {
     pub user_id: uuid::Uuid,
     pub username: String,
@@ -11,27 +10,23 @@ pub struct UserFixture {
     pub refresh_token: String,
 }
 
-#[allow(dead_code)]
 pub struct AppFixture {
     pub app_id: uuid::Uuid,
     pub name: String,
     pub code: String,
 }
 
-#[allow(dead_code)]
 pub struct PolicyFixture {
     pub policy_id: uuid::Uuid,
     pub name: String,
 }
 
-#[allow(dead_code)]
 pub struct ClientFixture {
     pub client_id: uuid::Uuid,
     pub client_id_str: String,
     pub client_secret: String,
 }
 
-#[allow(dead_code)]
 impl TestApp {
     pub async fn register_default_user(&mut self) -> UserFixture {
         let prefix = "fx";
@@ -197,7 +192,6 @@ impl TestApp {
     }
 }
 
-#[allow(dead_code)]
 pub async fn register_user_inner(
     app: &mut axum::Router,
     username: &str,
@@ -236,7 +230,6 @@ pub async fn register_user_inner(
     (user_id, access_token, refresh_token)
 }
 
-#[allow(dead_code)]
 pub async fn login_user_inner(app: &mut axum::Router, username: &str, password: &str) -> String {
     let (status, body) = send_request(
         app,

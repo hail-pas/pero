@@ -2,6 +2,7 @@ use super::engine;
 use super::models::{EvalContext, Policy, PolicyCondition};
 use super::repos::PolicyRepo;
 use crate::cache;
+use crate::shared::constants::{cache_keys, headers, identity};
 use crate::shared::error::AppError;
 use crate::shared::jwt::TokenClaims;
 use crate::shared::state::AppState;
@@ -29,20 +30,24 @@ pub async fn abac_middleware(
 
     let app_id = req
         .headers()
-        .get("x-app-id")
+        .get(headers::X_APP_ID)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Uuid>().ok());
 
-    let subject_attrs = PolicyRepo::load_user_attributes(&state.db, user_id).await?;
+    let mut subject_attrs = PolicyRepo::load_user_attributes(&state.db, user_id).await?;
+    for role in &claims.roles {
+        subject_attrs.push((identity::ROLE_ATTR_KEY.to_string(), role.clone()));
+    }
 
     let cache_key = format!(
-        "abac:{}:{}",
+        "{}{}:{}",
+        cache_keys::ABAC_PREFIX,
         user_id,
         app_id.map(|id| id.to_string()).unwrap_or_default()
     );
 
     let policies: CachedPolicies =
-        match cache::get_json::<CachedPolicies>(&mut state.cache.clone(), &cache_key).await {
+        match cache::get_json::<CachedPolicies>(&state.cache, &cache_key).await {
             Ok(Some(cached)) => cached,
             _ => {
                 let mut app_policies = PolicyRepo::load_policies_for_app(&state.db, app_id).await?;
@@ -52,7 +57,7 @@ pub async fn abac_middleware(
                 app_policies.sort_by(|a, b| b.0.priority.cmp(&a.0.priority));
 
                 let _ = cache::set_json(
-                    &mut state.cache.clone(),
+                    &state.cache,
                     &cache_key,
                     &app_policies,
                     state.config.abac.policy_cache_ttl_seconds,

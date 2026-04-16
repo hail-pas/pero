@@ -18,11 +18,12 @@ impl AuthCodeRepo {
         scopes: &[String],
         code_challenge: Option<&str>,
         code_challenge_method: Option<&str>,
+        nonce: Option<&str>,
         ttl_minutes: i64,
     ) -> Result<AuthorizationCode, AppError> {
         let expires_at = Utc::now() + TimeDelta::minutes(ttl_minutes);
         let ac = sqlx::query_as::<_, AuthorizationCode>(
-            "INSERT INTO oauth2_authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+            "INSERT INTO oauth2_authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
         )
         .bind(code)
         .bind(client_id)
@@ -31,6 +32,7 @@ impl AuthCodeRepo {
         .bind(scopes)
         .bind(code_challenge)
         .bind(code_challenge_method)
+        .bind(nonce)
         .bind(expires_at)
         .fetch_one(pool)
         .await?;

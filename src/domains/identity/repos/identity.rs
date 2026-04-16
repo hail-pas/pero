@@ -21,7 +21,7 @@ impl IdentityRepo {
         Ok(identity)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: called by bind() once OAuth provider exchange is implemented
     pub async fn create_oauth(
         pool: &PgPool,
         user_id: Uuid,
@@ -54,7 +54,7 @@ impl IdentityRepo {
         Ok(identity)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // TODO: needed for OAuth login — find existing user by provider UID
     pub async fn find_by_provider(
         pool: &PgPool,
         provider: &str,
@@ -70,7 +70,6 @@ impl IdentityRepo {
         Ok(identity)
     }
 
-    #[allow(dead_code)]
     pub async fn list_by_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Identity>, AppError> {
         let identities = sqlx::query_as::<_, Identity>(
             "SELECT * FROM identities WHERE user_id = $1 ORDER BY created_at",

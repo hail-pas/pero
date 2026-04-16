@@ -1,4 +1,5 @@
 use crate::domains::identity::repos::UserRepo;
+use crate::shared::constants::oauth2::scopes as oauth2_scopes;
 use crate::shared::error::AppError;
 use crate::shared::extractors::AuthUser;
 use crate::shared::state::AppState;
@@ -37,7 +38,7 @@ pub async fn userinfo(
         serde_json::Value::String(user.id.to_string()),
     );
 
-    if scopes.contains(&"profile") || scopes.is_empty() {
+    if scopes.contains(&oauth2_scopes::PROFILE) || scopes.is_empty() {
         claims.insert(
             "name".to_string(),
             serde_json::Value::String(user.username.clone()),
@@ -56,15 +57,15 @@ pub async fn userinfo(
         }
     }
 
-    if scopes.contains(&"email") || scopes.is_empty() {
+    if scopes.contains(&oauth2_scopes::EMAIL) || scopes.is_empty() {
         claims.insert(
-            "email".to_string(),
+            oauth2_scopes::EMAIL.to_string(),
             serde_json::Value::String(user.email.clone()),
         );
         claims.insert("email_verified".to_string(), serde_json::Value::Bool(true));
     }
 
-    if scopes.contains(&"phone") || scopes.is_empty() {
+    if scopes.contains(&oauth2_scopes::PHONE) || scopes.is_empty() {
         if let Some(phone) = &user.phone {
             claims.insert(
                 "phone_number".to_string(),

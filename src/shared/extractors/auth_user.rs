@@ -4,7 +4,6 @@ use crate::shared::jwt::TokenClaims;
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user_id: uuid::Uuid,
-    #[allow(dead_code)]
     pub roles: Vec<String>,
     pub scope: Option<String>,
 }
