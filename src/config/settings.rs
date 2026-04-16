@@ -70,6 +70,7 @@ pub struct LogConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AbacConfig {
     pub default_action: String,
+    pub policy_cache_ttl_seconds: i64,
 }
 
 impl AppConfig {

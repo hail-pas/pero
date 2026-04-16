@@ -58,12 +58,49 @@ impl PolicyDTO {
     }
 }
 
+async fn invalidate_policy_cache(state: &AppState, app_id: Option<Uuid>) -> Result<(), AppError> {
+    use redis::AsyncCommands;
+    let mut conn = state.cache.clone();
+
+    let patterns: Vec<String> = if app_id.is_some() {
+        vec![
+            format!("abac:*:{}", app_id.unwrap()),
+            "abac:*:".to_string(),
+        ]
+    } else {
+        vec!["abac:*:".to_string()]
+    };
+
+    for pattern in patterns {
+        let mut cursor: u64 = 0;
+        loop {
+            let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await?;
+            if !keys.is_empty() {
+                let _: () = conn.del(&keys).await?;
+            }
+            cursor = new_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn create_policy(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreatePolicyRequest>,
 ) -> Result<Json<ApiResponse<PolicyDTO>>, AppError> {
     let policy = PolicyRepo::create(&state.db, &req).await?;
-    let dto = PolicyDTO::from_policy(&state.db, policy).await?;
+    let dto = PolicyDTO::from_policy(&state.db, policy.clone()).await?;
+    invalidate_policy_cache(&state, req.app_id).await?;
     Ok(Json(ApiResponse::success(dto)))
 }
 
@@ -102,8 +139,9 @@ pub async fn update_policy(
     Path(id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdatePolicyRequest>,
 ) -> Result<Json<ApiResponse<PolicyDTO>>, AppError> {
-    let policy = PolicyRepo::update(&state.db, id, &req).await?;
-    let dto = PolicyDTO::from_policy(&state.db, policy).await?;
+    let updated = PolicyRepo::update(&state.db, id, &req).await?;
+    let dto = PolicyDTO::from_policy(&state.db, updated.clone()).await?;
+    invalidate_policy_cache(&state, updated.app_id).await?;
     Ok(Json(ApiResponse::success(dto)))
 }
 
@@ -111,7 +149,11 @@ pub async fn delete_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
+    let policy = PolicyRepo::find_by_id(&state.db, id)
+        .await?
+        .ok_or(AppError::NotFound("policy".into()))?;
     PolicyRepo::delete(&state.db, id).await?;
+    invalidate_policy_cache(&state, policy.app_id).await?;
     Ok(Json(ApiResponse::<()>::success_message("policy deleted")))
 }
 
@@ -120,6 +162,8 @@ pub async fn assign_policy(
     Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     PolicyRepo::assign_policy_to_user(&state.db, user_id, policy_id).await?;
+    let policy = PolicyRepo::find_by_id(&state.db, policy_id).await?;
+    invalidate_policy_cache(&state, policy.and_then(|p| p.app_id)).await?;
     Ok(Json(ApiResponse::<()>::success_message("policy assigned")))
 }
 
@@ -127,7 +171,9 @@ pub async fn unassign_policy(
     State(state): State<AppState>,
     Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
+    let policy = PolicyRepo::find_by_id(&state.db, policy_id).await?;
     PolicyRepo::unassign_policy_from_user(&state.db, user_id, policy_id).await?;
+    invalidate_policy_cache(&state, policy.and_then(|p| p.app_id)).await?;
     Ok(Json(ApiResponse::<()>::success_message("policy unassigned")))
 }
 

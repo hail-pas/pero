@@ -27,6 +27,7 @@ max_age_days = 7
 
 [abac]
 default_action = "deny"
+policy_cache_ttl_seconds = 300
 
 [oidc]
 issuer = "https://auth.example.com"
