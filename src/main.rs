@@ -1,15 +1,5 @@
-mod app;
-mod cache;
-mod config;
-mod db;
-mod docs;
-mod domains;
-mod log;
-mod routes;
-mod shared;
-
-use config::AppConfig;
-use shared::state::AppState;
+use pero::config::AppConfig;
+use pero::shared::state::AppState;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -19,16 +9,16 @@ async fn main() {
         .expect("Failed to install rustls crypto provider");
 
     let cfg = AppConfig::load().expect("Failed to load configuration");
-    log::init(&cfg.log);
+    pero::log::init(&cfg.log);
 
-    let db_pool = db::init_pool(&cfg.database)
+    let db_pool = pero::db::init_pool(&cfg.database)
         .await
         .expect("Failed to init database");
-    let cache_pool = cache::init_pool(&cfg.redis)
+    let cache_pool = pero::cache::init_pool(&cfg.redis)
         .await
         .expect("Failed to init redis");
 
-    let jwt_keys = crate::shared::jwt::JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
+    let jwt_keys = pero::shared::jwt::JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
 
     let state = AppState {
         db: db_pool,
@@ -39,7 +29,7 @@ async fn main() {
 
     let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
 
-    let app = app::build_router(state);
+    let app = pero::app::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

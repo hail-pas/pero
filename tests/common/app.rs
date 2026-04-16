@@ -1,0 +1,196 @@
+use crate::common::cleanup::{
+    CleanupItem, cleanup_app, cleanup_client, cleanup_policy, cleanup_user,
+};
+use pero::config::AppConfig;
+use pero::shared::state::AppState;
+use sqlx::postgres::PgPool;
+use std::sync::{Arc, OnceLock};
+
+type SharedResources = (
+    PgPool,
+    redis::aio::ConnectionManager,
+    Arc<AppConfig>,
+    Arc<pero::shared::jwt::JwtKeys>,
+);
+
+static TEST_RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+static APP_RESOURCES: OnceLock<SharedResources> = OnceLock::new();
+
+pub fn ensure_rt() -> &'static tokio::runtime::Runtime {
+    TEST_RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create test runtime")
+    })
+}
+
+fn init_resources() -> SharedResources {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_target(false)
+        .try_init();
+
+    std::thread::scope(|s| {
+        let handle = s.spawn(|| {
+            let rt = ensure_rt();
+            let _guard = rt.enter();
+            rt.block_on(async {
+                let cfg = load_test_config().expect("Failed to load test config");
+                let jwt_keys =
+                    pero::shared::jwt::JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
+                let config = Arc::new(cfg);
+                let jwt_keys = Arc::new(jwt_keys);
+
+                let db = pero::db::init_pool(&config.database)
+                    .await
+                    .expect("Failed to init DB");
+                let cache = pero::cache::init_pool(&config.redis)
+                    .await
+                    .expect("Failed to init Redis");
+
+                (db, cache, config, jwt_keys)
+            })
+        });
+        handle.join().expect("init panicked")
+    })
+}
+
+pub fn shared_resources() -> &'static SharedResources {
+    APP_RESOURCES.get_or_init(init_resources)
+}
+
+#[allow(dead_code)]
+pub async fn build_app() -> TestApp {
+    let guard = ensure_rt().enter();
+    let (db, cache, config, jwt_keys) = shared_resources();
+    let app = pero::app::build_router(AppState {
+        db: db.clone(),
+        cache: cache.clone(),
+        config: config.clone(),
+        jwt_keys: jwt_keys.clone(),
+    });
+
+    TestApp {
+        app,
+        db: db.clone(),
+        cache: cache.clone(),
+        config: config.clone(),
+        cleanup: Vec::new(),
+        _guard: guard,
+    }
+}
+
+#[allow(dead_code)]
+pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static>) {
+    let guard = ensure_rt().enter();
+    let (db, cache, config, jwt_keys) = shared_resources();
+    let router = pero::app::build_router(AppState {
+        db: db.clone(),
+        cache: cache.clone(),
+        config: config.clone(),
+        jwt_keys: jwt_keys.clone(),
+    });
+    (router, guard)
+}
+
+#[allow(dead_code)]
+pub struct TestApp {
+    pub app: axum::Router,
+    pub db: PgPool,
+    pub cache: redis::aio::ConnectionManager,
+    #[allow(dead_code)]
+    pub config: Arc<AppConfig>,
+    cleanup: Vec<CleanupItem>,
+    _guard: tokio::runtime::EnterGuard<'static>,
+}
+
+#[allow(dead_code)]
+impl TestApp {
+    pub fn track_user(&mut self, user_id: uuid::Uuid) {
+        self.cleanup.push(CleanupItem::User(user_id));
+    }
+
+    pub fn track_app(&mut self, app_id: uuid::Uuid) {
+        self.cleanup.push(CleanupItem::App(app_id));
+    }
+
+    pub fn track_policy(&mut self, policy_id: uuid::Uuid) {
+        self.cleanup.push(CleanupItem::Policy(policy_id));
+    }
+
+    pub fn track_client(&mut self, client_id: uuid::Uuid) {
+        self.cleanup.push(CleanupItem::Client(client_id));
+    }
+
+    pub async fn cleanup(mut self) {
+        while let Some(item) = self.cleanup.pop() {
+            match item {
+                CleanupItem::Client(client_id) => cleanup_client(&self.db, client_id).await,
+                CleanupItem::Policy(policy_id) => cleanup_policy(&self.db, policy_id).await,
+                CleanupItem::App(app_id) => cleanup_app(&self.db, app_id).await,
+                CleanupItem::User(user_id) => {
+                    self.clear_user_cache(user_id).await;
+                    cleanup_user(&self.db, user_id).await;
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn clear_user_cache(&self, user_id: uuid::Uuid) {
+        use redis::AsyncCommands;
+
+        let mut conn = self.cache.clone();
+        for key in [
+            format!("refresh_token:{user_id}"),
+            format!("abac:{user_id}:"),
+        ] {
+            if key.ends_with(':') {
+                let mut cursor: u64 = 0;
+                loop {
+                    let result: Result<(u64, Vec<String>), redis::RedisError> = redis::cmd("SCAN")
+                        .arg(cursor)
+                        .arg("MATCH")
+                        .arg(format!("{key}*"))
+                        .arg("COUNT")
+                        .arg(100)
+                        .query_async(&mut conn)
+                        .await;
+
+                    let Ok((next_cursor, keys)) = result else {
+                        break;
+                    };
+
+                    if !keys.is_empty() {
+                        let _: Result<(), redis::RedisError> = conn.del(&keys).await;
+                    }
+
+                    cursor = next_cursor;
+                    if cursor == 0 {
+                        break;
+                    }
+                }
+            } else {
+                let _: Result<(), redis::RedisError> = conn.del(&key).await;
+            }
+        }
+    }
+}
+
+fn load_test_config() -> Result<AppConfig, config::ConfigError> {
+    let cfg = config::Config::builder()
+        .add_source(config::File::with_name("config/default"))
+        .add_source(config::File::with_name("config/test"))
+        .add_source(
+            config::Environment::with_prefix("PERO")
+                .separator("__")
+                .try_parsing(true),
+        )
+        .build()?;
+
+    cfg.try_deserialize()
+}

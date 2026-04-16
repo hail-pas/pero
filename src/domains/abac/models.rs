@@ -53,6 +53,7 @@ pub struct CreatePolicyRequest {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     pub app_id: Option<Uuid>,
+    #[validate(nested)]
     pub conditions: Vec<CreateConditionRequest>,
 }
 
@@ -66,6 +67,7 @@ pub struct UpdatePolicyRequest {
     pub priority: Option<i32>,
     pub enabled: Option<bool>,
     pub app_id: Option<Uuid>,
+    #[validate(nested)]
     pub conditions: Option<Vec<CreateConditionRequest>>,
 }
 
