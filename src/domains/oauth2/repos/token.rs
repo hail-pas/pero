@@ -52,7 +52,19 @@ impl RefreshTokenRepo {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    pub async fn find_revoked_by_token(
+        pool: &PgPool,
+        refresh_token: &str,
+    ) -> Result<Option<RefreshToken>, AppError> {
+        sqlx::query_as::<_, RefreshToken>(
+            "SELECT * FROM oauth2_tokens WHERE refresh_token = $1 AND revoked = true AND expires_at > now()",
+        )
+        .bind(refresh_token)
+        .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn revoke_all_for_user_client(
         pool: &PgPool,
         user_id: Uuid,

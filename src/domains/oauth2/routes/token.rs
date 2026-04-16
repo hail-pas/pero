@@ -122,11 +122,30 @@ async fn handle_refresh_token(
         .as_deref()
         .ok_or(AppError::BadRequest("missing refresh_token".into()))?;
 
-    let stored = RefreshTokenRepo::find_by_token(&state.db, old_refresh)
-        .await?
-        .ok_or(AppError::BadRequest(
-            "invalid or expired refresh token".into(),
-        ))?;
+    let stored = RefreshTokenRepo::find_by_token(&state.db, old_refresh).await?;
+
+    let stored = match stored {
+        Some(s) => s,
+        None => {
+            if let Some(revoked) = RefreshTokenRepo::find_revoked_by_token(&state.db, old_refresh).await? {
+                tracing::warn!(
+                    user_id = %revoked.user_id,
+                    client_id = %revoked.client_id,
+                    "refresh token replay detected, revoking all tokens for user-client pair"
+                );
+                RefreshTokenRepo::revoke_all_for_user_client(
+                    &state.db,
+                    revoked.user_id,
+                    revoked.client_id,
+                )
+                .await?;
+                return Err(AppError::Unauthorized);
+            }
+            return Err(AppError::BadRequest(
+                "invalid or expired refresh token".into(),
+            ));
+        }
+    };
 
     let client_id_str = req
         .client_id
@@ -156,8 +175,8 @@ async fn handle_refresh_token(
 
     let user_id_str = user.id.to_string();
     let roles = vec!["user".to_string()];
-
     let scope_str = Some(stored.scopes.join(" "));
+
     let access_token = jwt::sign_access_token(
         &user_id_str,
         roles,
