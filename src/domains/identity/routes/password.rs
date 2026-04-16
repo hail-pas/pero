@@ -6,7 +6,20 @@ use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
+use utoipa;
 
+#[utoipa::path(
+    put,
+    path = "/api/identity/password/change",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, description = "Password changed", body = serde_json::Value),
+        (status = 400, description = "Old password incorrect"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn change_password(
     State(state): State<AppState>,
     auth_user: AuthUser,

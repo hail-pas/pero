@@ -6,7 +6,24 @@ use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use utoipa;
 
+#[utoipa::path(
+    post,
+    path = "/api/identity/bind/{provider}",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("provider" = String, Path, description = "OAuth provider name"),
+    ),
+    request_body = BindRequest,
+    responses(
+        (status = 200, description = "Provider bound", body = serde_json::Value),
+        (status = 400, description = "Provider not yet implemented"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Provider already bound"),
+    )
+)]
 pub async fn bind(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -31,6 +48,20 @@ pub async fn bind(
     )))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/identity/unbind/{provider}",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("provider" = String, Path, description = "OAuth provider name"),
+    ),
+    responses(
+        (status = 200, description = "Provider unbound", body = serde_json::Value),
+        (status = 400, description = "Cannot unbind password / must keep one method"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn unbind(
     State(state): State<AppState>,
     auth_user: AuthUser,

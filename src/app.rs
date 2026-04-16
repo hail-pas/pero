@@ -7,6 +7,7 @@ use tower_http::normalize_path::NormalizePathLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::sensitive_headers::SetSensitiveHeadersLayer;
 use tower_http::trace::TraceLayer;
+use utoipa_swagger_ui::SwaggerUi;
 
 pub fn build_router(state: AppState) -> Router {
     use axum::routing::{get, post};
@@ -153,6 +154,8 @@ pub fn build_router(state: AppState) -> Router {
             crate::shared::middleware::auth::auth_middleware,
         ));
 
+    let openapi = crate::docs::build_openapi(&state.config.docs);
+
     let x_request_id = axum::http::HeaderName::from_static("x-request-id");
 
     Router::new()
@@ -161,6 +164,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(authorized)
         .merge(identity_public)
         .merge(identity_authed)
+        .merge(SwaggerUi::new("/docs").url("/openapi.json", openapi))
         .with_state(state.clone())
         // --- tower-http middleware stack (outermost = last applied to request) ---
         // TraceLayer: structured request/response tracing

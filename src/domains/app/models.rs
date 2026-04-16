@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -14,7 +15,7 @@ pub struct App {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, ToSchema)]
 pub struct AppDTO {
     pub id: Uuid,
     pub name: String,
@@ -39,7 +40,7 @@ impl From<App> for AppDTO {
     }
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateAppRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
@@ -48,7 +49,7 @@ pub struct CreateAppRequest {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateAppRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: Option<String>,

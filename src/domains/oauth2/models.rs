@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -18,7 +19,7 @@ pub struct OAuth2Client {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, ToSchema)]
 pub struct OAuth2ClientDTO {
     pub id: Uuid,
     pub app_id: Uuid,
@@ -49,7 +50,7 @@ impl From<OAuth2Client> for OAuth2ClientDTO {
     }
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateClientRequest {
     pub app_id: Uuid,
     #[validate(length(min = 1, max = 128))]
@@ -73,7 +74,7 @@ fn default_scopes() -> Vec<String> {
     ]
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateClientRequest {
     #[validate(length(min = 1, max = 128))]
     pub client_name: Option<String>,
@@ -82,7 +83,7 @@ pub struct UpdateClientRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AuthorizeQuery {
     pub client_id: String,
     pub redirect_uri: String,
@@ -95,7 +96,7 @@ pub struct AuthorizeQuery {
     pub nonce: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TokenRequest {
     pub grant_type: String,
     pub code: Option<String>,
@@ -106,7 +107,8 @@ pub struct TokenRequest {
     pub refresh_token: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(as = OAuth2TokenResponse)]
 pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -116,7 +118,7 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RevokeRequest {
     pub token: String,
     #[allow(dead_code)]

@@ -2,6 +2,14 @@ use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
 
+#[utoipa::path(
+    get,
+    path = "/.well-known/openid-configuration",
+    tag = "OIDC",
+    responses(
+        (status = 200, description = "OIDC Discovery document")
+    )
+)]
 pub async fn discovery(State(state): State<AppState>) -> Json<serde_json::Value> {
     let issuer = &state.config.oidc.issuer;
     Json(serde_json::json!({

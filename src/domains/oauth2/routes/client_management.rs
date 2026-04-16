@@ -8,6 +8,17 @@ use crate::shared::extractors::{Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
 use crate::shared::state::AppState;
 
+#[utoipa::path(
+    post,
+    path = "/api/oauth2/clients",
+    tag = "OAuth2",
+    security(("bearer_auth" = [])),
+    request_body = crate::domains::oauth2::models::CreateClientRequest,
+    responses(
+        (status = 200, description = "Client created"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn create_client(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateClientRequest>,
@@ -24,6 +35,20 @@ pub async fn create_client(
     }))))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/oauth2/clients",
+    tag = "OAuth2",
+    security(("bearer_auth" = [])),
+    params(
+        ("page" = i64, Query, description = "Page number"),
+        ("page_size" = i64, Query, description = "Page size"),
+    ),
+    responses(
+        (status = 200, description = "Client list"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn list_clients(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
@@ -35,6 +60,20 @@ pub async fn list_clients(
     ))))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/oauth2/clients/{id}",
+    tag = "OAuth2",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Client ID"),
+    ),
+    responses(
+        (status = 200, description = "Client details"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Client not found"),
+    )
+)]
 pub async fn get_client(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
@@ -45,6 +84,21 @@ pub async fn get_client(
     Ok(Json(ApiResponse::success(client.into())))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/oauth2/clients/{id}",
+    tag = "OAuth2",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Client ID"),
+    ),
+    request_body = crate::domains::oauth2::models::UpdateClientRequest,
+    responses(
+        (status = 200, description = "Client updated"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Client not found"),
+    )
+)]
 pub async fn update_client(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
@@ -54,6 +108,20 @@ pub async fn update_client(
     Ok(Json(ApiResponse::success(client.into())))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/oauth2/clients/{id}",
+    tag = "OAuth2",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Client ID"),
+    ),
+    responses(
+        (status = 200, description = "Client deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Client not found"),
+    )
+)]
 pub async fn delete_client(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,

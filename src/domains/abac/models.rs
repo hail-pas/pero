@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
-#[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Policy {
     pub id: Uuid,
     pub name: String,
@@ -15,7 +16,7 @@ pub struct Policy {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone, ToSchema)]
 pub struct PolicyCondition {
     pub id: Uuid,
     pub policy_id: Uuid,
@@ -40,7 +41,7 @@ pub struct EvalContext {
     pub app_id: Option<Uuid>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreatePolicyRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
@@ -55,7 +56,7 @@ pub struct CreatePolicyRequest {
     pub conditions: Vec<CreateConditionRequest>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdatePolicyRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: Option<String>,
@@ -68,7 +69,7 @@ pub struct UpdatePolicyRequest {
     pub conditions: Option<Vec<CreateConditionRequest>>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateConditionRequest {
     #[validate(custom(function = "validate_condition_type"))]
     pub condition_type: String,

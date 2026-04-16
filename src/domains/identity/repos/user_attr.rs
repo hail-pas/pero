@@ -1,8 +1,9 @@
 use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
+use utoipa::ToSchema;
 
-#[derive(Debug, sqlx::FromRow, Serialize)]
+#[derive(Debug, sqlx::FromRow, Serialize, ToSchema)]
 pub struct UserAttribute {
     pub id: uuid::Uuid,
     pub user_id: uuid::Uuid,
@@ -10,12 +11,12 @@ pub struct UserAttribute {
     pub value: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetAttributes {
     pub attributes: Vec<AttributeItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AttributeItem {
     pub key: String,
     pub value: String,

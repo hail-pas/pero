@@ -39,3 +39,8 @@ key_id = "key-2026-01"
 auth_code_ttl_minutes = 10
 access_token_ttl_minutes = 15
 refresh_token_ttl_days = 30
+
+[docs]
+servers = [
+    { url = "http://localhost:8080", description = "Development" },
+]

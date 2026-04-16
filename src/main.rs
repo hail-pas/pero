@@ -2,6 +2,7 @@ mod app;
 mod cache;
 mod config;
 mod db;
+mod docs;
 mod domains;
 mod log;
 mod routes;

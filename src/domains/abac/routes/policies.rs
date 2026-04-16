@@ -9,9 +9,10 @@ use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PolicyDTO {
     pub id: Uuid,
     pub name: String,
@@ -91,6 +92,17 @@ async fn invalidate_policy_cache(state: &AppState, app_id: Option<Uuid>) -> Resu
     Ok(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/policies",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    request_body = crate::domains::abac::models::CreatePolicyRequest,
+    responses(
+        (status = 200, description = "Policy created", body = ApiResponse<crate::domains::abac::routes::policies::PolicyDTO>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn create_policy(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreatePolicyRequest>,
@@ -101,6 +113,20 @@ pub async fn create_policy(
     Ok(Json(ApiResponse::success(dto)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/policies",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("page" = i64, Query, description = "Page number"),
+        ("page_size" = i64, Query, description = "Page size"),
+    ),
+    responses(
+        (status = 200, description = "Policy list"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn list_policies(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
@@ -120,6 +146,20 @@ pub async fn list_policies(
     ))))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/policies/{id}",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
+    responses(
+        (status = 200, description = "Policy details", body = ApiResponse<crate::domains::abac::routes::policies::PolicyDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Policy not found"),
+    )
+)]
 pub async fn get_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -131,6 +171,21 @@ pub async fn get_policy(
     Ok(Json(ApiResponse::success(dto)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/policies/{id}",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
+    request_body = crate::domains::abac::models::UpdatePolicyRequest,
+    responses(
+        (status = 200, description = "Policy updated", body = ApiResponse<crate::domains::abac::routes::policies::PolicyDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Policy not found"),
+    )
+)]
 pub async fn update_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -142,6 +197,20 @@ pub async fn update_policy(
     Ok(Json(ApiResponse::success(dto)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/policies/{id}",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
+    responses(
+        (status = 200, description = "Policy deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Policy not found"),
+    )
+)]
 pub async fn delete_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -154,6 +223,21 @@ pub async fn delete_policy(
     Ok(Json(ApiResponse::<()>::success_message("policy deleted")))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/users/{user_id}/policies/{policy_id}",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+        ("policy_id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
+    responses(
+        (status = 200, description = "Policy assigned", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User or policy not found"),
+    )
+)]
 pub async fn assign_policy(
     State(state): State<AppState>,
     Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
@@ -164,6 +248,21 @@ pub async fn assign_policy(
     Ok(Json(ApiResponse::<()>::success_message("policy assigned")))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/users/{user_id}/policies/{policy_id}",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+        ("policy_id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
+    responses(
+        (status = 200, description = "Policy unassigned", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Assignment not found"),
+    )
+)]
 pub async fn unassign_policy(
     State(state): State<AppState>,
     Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
@@ -176,6 +275,19 @@ pub async fn unassign_policy(
     )))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/users/{user_id}/policies",
+    tag = "ABAC",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "User policies"),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn list_user_policies(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,

@@ -10,6 +10,8 @@ pub struct AppConfig {
     pub abac: AbacConfig,
     pub oidc: OidcConfig,
     pub oauth2: OAuth2Config,
+    #[serde(default)]
+    pub docs: DocsConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -71,6 +73,18 @@ pub struct LogConfig {
 pub struct AbacConfig {
     pub default_action: String,
     pub policy_cache_ttl_seconds: i64,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct DocsConfig {
+    #[serde(default)]
+    pub servers: Vec<DocsServer>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DocsServer {
+    pub url: String,
+    pub description: String,
 }
 
 impl AppConfig {

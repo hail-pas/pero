@@ -5,7 +5,22 @@ use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use utoipa;
 
+#[utoipa::path(
+    get,
+    path = "/api/users/{user_id}/attributes",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "User attributes", body = ApiResponse<Vec<UserAttribute>>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User not found"),
+    )
+)]
 pub async fn list_attributes(
     State(state): State<AppState>,
     Path(user_id): Path<uuid::Uuid>,
@@ -18,6 +33,21 @@ pub async fn list_attributes(
     Ok(Json(ApiResponse::success(attrs)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/users/{user_id}/attributes",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+    ),
+    request_body = SetAttributes,
+    responses(
+        (status = 200, description = "Attributes updated", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User not found"),
+    )
+)]
 pub async fn set_attributes(
     State(state): State<AppState>,
     Path(user_id): Path<uuid::Uuid>,

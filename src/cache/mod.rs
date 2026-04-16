@@ -5,12 +5,12 @@ use std::fs;
 use crate::config::RedisConfig;
 use crate::shared::error::AppError;
 use redis::Client;
-use redis::aio::ConnectionManager;
 use redis::TlsCertificates;
+use redis::aio::ConnectionManager;
 
 fn build_clean_url(raw: &str) -> Result<String, AppError> {
-    let mut url = url::Url::parse(raw)
-        .map_err(|e| AppError::Internal(format!("Invalid redis URL: {e}")))?;
+    let mut url =
+        url::Url::parse(raw).map_err(|e| AppError::Internal(format!("Invalid redis URL: {e}")))?;
 
     let keep: Vec<(String, String)> = url
         .query_pairs()
@@ -30,13 +30,11 @@ fn build_clean_url(raw: &str) -> Result<String, AppError> {
 }
 
 pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError> {
-    let ssl_ca_certs = url::Url::parse(&cfg.url)
-        .ok()
-        .and_then(|u| {
-            u.query_pairs()
-                .find(|(k, _)| k == "ssl_ca_certs")
-                .map(|(_, v)| v.into_owned())
-        });
+    let ssl_ca_certs = url::Url::parse(&cfg.url).ok().and_then(|u| {
+        u.query_pairs()
+            .find(|(k, _)| k == "ssl_ca_certs")
+            .map(|(_, v)| v.into_owned())
+    });
 
     let client = if let Some(ca_path) = ssl_ca_certs {
         let root_cert = fs::read(&ca_path)

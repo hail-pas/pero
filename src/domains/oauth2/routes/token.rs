@@ -9,6 +9,16 @@ use crate::shared::error::AppError;
 use crate::shared::jwt;
 use crate::shared::state::AppState;
 
+#[utoipa::path(
+    post,
+    path = "/oauth2/token",
+    tag = "OAuth2",
+    request_body = crate::domains::oauth2::models::TokenRequest,
+    responses(
+        (status = 200, description = "Token response", body = crate::domains::oauth2::models::TokenResponse),
+        (status = 400, description = "Invalid request"),
+    )
+)]
 pub async fn token(
     State(state): State<AppState>,
     Json(req): Json<TokenRequest>,

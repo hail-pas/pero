@@ -8,6 +8,18 @@ use crate::shared::extractors::{Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
 use crate::shared::state::AppState;
 
+#[utoipa::path(
+    post,
+    path = "/api/apps",
+    tag = "Apps",
+    security(("bearer_auth" = [])),
+    request_body = CreateAppRequest,
+    responses(
+        (status = 200, description = "App created", body = ApiResponse<AppDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "App code already exists"),
+    )
+)]
 pub async fn create_app(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateAppRequest>,
@@ -22,6 +34,20 @@ pub async fn create_app(
     Ok(Json(ApiResponse::success(app.into())))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/apps",
+    tag = "Apps",
+    security(("bearer_auth" = [])),
+    params(
+        ("page" = i64, Query, description = "Page number"),
+        ("page_size" = i64, Query, description = "Page size"),
+    ),
+    responses(
+        (status = 200, description = "App list", body = ApiResponse<PageData<AppDTO>>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn list_apps(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
@@ -33,6 +59,20 @@ pub async fn list_apps(
     ))))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/apps/{id}",
+    tag = "Apps",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "App ID"),
+    ),
+    responses(
+        (status = 200, description = "App details", body = ApiResponse<AppDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App not found"),
+    )
+)]
 pub async fn get_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
@@ -43,6 +83,21 @@ pub async fn get_app(
     Ok(Json(ApiResponse::success(app.into())))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/apps/{id}",
+    tag = "Apps",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "App ID"),
+    ),
+    request_body = UpdateAppRequest,
+    responses(
+        (status = 200, description = "App updated", body = ApiResponse<AppDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App not found"),
+    )
+)]
 pub async fn update_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
@@ -52,6 +107,20 @@ pub async fn update_app(
     Ok(Json(ApiResponse::success(app.into())))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/apps/{id}",
+    tag = "Apps",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "App ID"),
+    ),
+    responses(
+        (status = 200, description = "App deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "App not found"),
+    )
+)]
 pub async fn delete_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,

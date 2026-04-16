@@ -8,7 +8,18 @@ use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
+use utoipa;
 
+#[utoipa::path(
+    post,
+    path = "/api/identity/login",
+    tag = "Identity",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = ApiResponse<TokenResponse>),
+        (status = 401, description = "Invalid credentials"),
+    )
+)]
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
@@ -40,6 +51,16 @@ pub async fn login(
     Ok(Json(ApiResponse::success(token_response)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/refresh",
+    tag = "Identity",
+    request_body = RefreshRequest,
+    responses(
+        (status = 200, description = "Token refreshed"),
+        (status = 401, description = "Invalid refresh token"),
+    )
+)]
 pub async fn refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshRequest>,
@@ -91,6 +112,16 @@ pub async fn refresh(
     }))))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Logged out", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn logout(
     State(state): State<AppState>,
     auth_user: AuthUser,

@@ -6,7 +6,18 @@ use crate::shared::response::{ApiResponse, PageData};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
+use utoipa;
 
+#[utoipa::path(
+    get,
+    path = "/api/users/me",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Current user profile", body = ApiResponse<UserDTO>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn get_me(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -17,6 +28,17 @@ pub async fn get_me(
     Ok(Json(ApiResponse::success(user.into())))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/users/me",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    request_body = UpdateMeRequest,
+    responses(
+        (status = 200, description = "Profile updated", body = ApiResponse<UserDTO>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn update_me(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -33,6 +55,20 @@ pub async fn update_me(
     Ok(Json(ApiResponse::success(user.into())))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/users",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("page" = i64, Query, description = "Page number"),
+        ("page_size" = i64, Query, description = "Page size"),
+    ),
+    responses(
+        (status = 200, description = "User list", body = ApiResponse<PageData<UserDTO>>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
 pub async fn list_users(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
@@ -44,6 +80,20 @@ pub async fn list_users(
     ))))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/users/{id}",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "User details", body = ApiResponse<UserDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User not found"),
+    )
+)]
 pub async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
@@ -54,6 +104,21 @@ pub async fn get_user(
     Ok(Json(ApiResponse::success(user.into())))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/users/{id}",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "User ID"),
+    ),
+    request_body = UpdateUserRequest,
+    responses(
+        (status = 200, description = "User updated", body = ApiResponse<UserDTO>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User not found"),
+    )
+)]
 pub async fn update_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
@@ -73,6 +138,20 @@ pub async fn update_user(
     Ok(Json(ApiResponse::success(user.into())))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/users/{id}",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = uuid::Uuid, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 200, description = "User deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "User not found"),
+    )
+)]
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
