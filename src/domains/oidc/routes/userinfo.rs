@@ -13,43 +13,58 @@ pub async fn userinfo(
         .await?
         .ok_or(AppError::NotFound("user".into()))?;
 
+    let scopes: Vec<&str> = auth_user
+        .scope
+        .as_deref()
+        .unwrap_or("")
+        .split(' ')
+        .filter(|s| !s.is_empty())
+        .collect();
+
     let mut claims = serde_json::Map::new();
     claims.insert(
         "sub".to_string(),
         serde_json::Value::String(user.id.to_string()),
     );
-    claims.insert(
-        "name".to_string(),
-        serde_json::Value::String(user.username.clone()),
-    );
 
-    if let Some(nickname) = &user.nickname {
+    if scopes.contains(&"profile") || scopes.is_empty() {
         claims.insert(
-            "nickname".to_string(),
-            serde_json::Value::String(nickname.clone()),
+            "name".to_string(),
+            serde_json::Value::String(user.username.clone()),
         );
+        if let Some(nickname) = &user.nickname {
+            claims.insert(
+                "nickname".to_string(),
+                serde_json::Value::String(nickname.clone()),
+            );
+        }
+        if let Some(avatar) = &user.avatar_url {
+            claims.insert(
+                "picture".to_string(),
+                serde_json::Value::String(avatar.clone()),
+            );
+        }
     }
-    if let Some(avatar) = &user.avatar_url {
-        claims.insert(
-            "picture".to_string(),
-            serde_json::Value::String(avatar.clone()),
-        );
-    }
-    claims.insert(
-        "email".to_string(),
-        serde_json::Value::String(user.email.clone()),
-    );
-    claims.insert("email_verified".to_string(), serde_json::Value::Bool(true));
 
-    if let Some(phone) = &user.phone {
+    if scopes.contains(&"email") || scopes.is_empty() {
         claims.insert(
-            "phone_number".to_string(),
-            serde_json::Value::String(phone.clone()),
+            "email".to_string(),
+            serde_json::Value::String(user.email.clone()),
         );
-        claims.insert(
-            "phone_number_verified".to_string(),
-            serde_json::Value::Bool(true),
-        );
+        claims.insert("email_verified".to_string(), serde_json::Value::Bool(true));
+    }
+
+    if scopes.contains(&"phone") || scopes.is_empty() {
+        if let Some(phone) = &user.phone {
+            claims.insert(
+                "phone_number".to_string(),
+                serde_json::Value::String(phone.clone()),
+            );
+            claims.insert(
+                "phone_number_verified".to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
     }
 
     Ok(Json(serde_json::Value::Object(claims)))
