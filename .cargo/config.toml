@@ -1,2 +1,5 @@
+[env]
+SWAGGER_UI_ZIP_PATH = { value = "vendor/swagger-ui.zip", relative = true }
+
 [target.x86_64-unknown-linux-musl]
 linker = "x86_64-linux-musl-gcc"
