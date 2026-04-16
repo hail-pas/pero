@@ -1,6 +1,6 @@
 use crate::shared::state::AppState;
-use axum::Router;
 use axum::http::header;
+use axum::Router;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::normalize_path::NormalizePathLayer;
@@ -96,6 +96,15 @@ pub fn build_router(state: AppState) -> Router {
             get(crate::domains::abac::routes::policies::get_policy)
                 .put(crate::domains::abac::routes::policies::update_policy)
                 .delete(crate::domains::abac::routes::policies::delete_policy),
+        )
+        .route(
+            "/api/users/{user_id}/policies",
+            get(crate::domains::abac::routes::policies::list_user_policies),
+        )
+        .route(
+            "/api/users/{user_id}/policies/{policy_id}",
+            post(crate::domains::abac::routes::policies::assign_policy)
+                .delete(crate::domains::abac::routes::policies::unassign_policy),
         )
         .route(
             "/api/users/{id}/attributes",

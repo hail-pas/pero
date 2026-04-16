@@ -114,3 +114,36 @@ pub async fn delete_policy(
     PolicyRepo::delete(&state.db, id).await?;
     Ok(Json(ApiResponse::<()>::success_message("policy deleted")))
 }
+
+pub async fn assign_policy(
+    State(state): State<AppState>,
+    Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    PolicyRepo::assign_policy_to_user(&state.db, user_id, policy_id).await?;
+    Ok(Json(ApiResponse::<()>::success_message("policy assigned")))
+}
+
+pub async fn unassign_policy(
+    State(state): State<AppState>,
+    Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    PolicyRepo::unassign_policy_from_user(&state.db, user_id, policy_id).await?;
+    Ok(Json(ApiResponse::<()>::success_message("policy unassigned")))
+}
+
+pub async fn list_user_policies(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<ApiResponse<Vec<PolicyDTO>>>, AppError> {
+    let policies = PolicyRepo::list_user_assignments(&state.db, user_id).await?;
+    let ids: Vec<Uuid> = policies.iter().map(|p| p.id).collect();
+    let conditions_map = PolicyRepo::batch_get_conditions_map(&state.db, &ids).await?;
+    let items: Vec<PolicyDTO> = policies
+        .into_iter()
+        .map(|p| {
+            let conditions = conditions_map.get(&p.id).cloned().unwrap_or_default();
+            PolicyDTO::from_policy_with_conditions(p, conditions)
+        })
+        .collect();
+    Ok(Json(ApiResponse::success(items)))
+}

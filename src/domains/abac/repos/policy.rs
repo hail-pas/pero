@@ -197,6 +197,71 @@ impl PolicyRepo {
             .collect())
     }
 
+    pub async fn assign_policy_to_user(
+        pool: &PgPool,
+        user_id: Uuid,
+        policy_id: Uuid,
+    ) -> Result<(), AppError> {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM policies WHERE id = $1)")
+            .bind(policy_id)
+            .fetch_one(pool)
+            .await?;
+        if !exists {
+            return Err(AppError::NotFound("policy".into()));
+        }
+
+        let user_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await?;
+        if !user_exists {
+            return Err(AppError::NotFound("user".into()));
+        }
+
+        sqlx::query(
+            "INSERT INTO user_policies (user_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(policy_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unassign_policy_from_user(
+        pool: &PgPool,
+        user_id: Uuid,
+        policy_id: Uuid,
+    ) -> Result<(), AppError> {
+        let result = sqlx::query(
+            "DELETE FROM user_policies WHERE user_id = $1 AND policy_id = $2",
+        )
+        .bind(user_id)
+        .bind(policy_id)
+        .execute(pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound("user_policy assignment".into()));
+        }
+        Ok(())
+    }
+
+    pub async fn list_user_assignments(
+        pool: &PgPool,
+        user_id: Uuid,
+    ) -> Result<Vec<Policy>, AppError> {
+        sqlx::query_as::<_, Policy>(
+            "SELECT p.* FROM policies p
+             INNER JOIN user_policies up ON up.policy_id = p.id
+             WHERE up.user_id = $1
+             ORDER BY p.priority DESC",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn load_user_policies_for_app(
         pool: &PgPool,
         user_id: Uuid,
