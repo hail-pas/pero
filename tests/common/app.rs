@@ -26,9 +26,7 @@ pub fn ensure_rt() -> &'static tokio::runtime::Runtime {
 }
 
 fn init_resources() -> SharedResources {
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("Failed to install rustls crypto provider");
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
