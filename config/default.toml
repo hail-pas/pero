@@ -31,8 +31,8 @@ policy_cache_ttl_seconds = 300
 
 [oidc]
 issuer = "https://auth.example.com"
-private_key_path = "./keys/private.pem"
-public_key_path = "./keys/public.pem"
+private_key_path = "./config/keys/private.pem"
+public_key_path = "./config/keys/public.pem"
 key_id = "key-2026-01"
 
 [oauth2]
