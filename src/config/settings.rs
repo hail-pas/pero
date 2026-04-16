@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub oauth2: OAuth2Config,
     #[serde(default)]
     pub docs: DocsConfig,
+    #[serde(default)]
+    pub cors: CorsConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -85,6 +87,16 @@ pub struct DocsConfig {
 pub struct DocsServer {
     pub url: String,
     pub description: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct CorsConfig {
+    #[serde(default)]
+    pub allow_origins: Vec<String>,
+    #[serde(default)]
+    pub allow_methods: Vec<String>,
+    #[serde(default)]
+    pub allow_headers: Vec<String>,
 }
 
 impl AppConfig {

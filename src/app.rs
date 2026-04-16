@@ -2,6 +2,7 @@ use crate::shared::state::AppState;
 use axum::Router;
 use axum::http::header;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::normalize_path::NormalizePathLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -158,6 +159,8 @@ pub fn build_router(state: AppState) -> Router {
 
     let x_request_id = axum::http::HeaderName::from_static("x-request-id");
 
+    let cors = build_cors(&state.config.cors);
+
     Router::new()
         .merge(public)
         .merge(auth_only)
@@ -166,6 +169,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(identity_authed)
         .merge(SwaggerUi::new("/docs").url("/openapi.json", openapi))
         .with_state(state.clone())
+        .layer(cors)
         // --- tower-http middleware stack (outermost = last applied to request) ---
         // TraceLayer: structured request/response tracing
         .layer(
@@ -211,4 +215,44 @@ pub fn build_router(state: AppState) -> Router {
         })
         // NormalizePathLayer: merge/trim trailing slashes
         .layer(NormalizePathLayer::trim_trailing_slash())
+}
+
+fn build_cors(cfg: &crate::config::CorsConfig) -> CorsLayer {
+    use axum::http::{HeaderName, Method};
+    let mut layer = CorsLayer::new();
+
+    if cfg.allow_origins.is_empty() {
+        layer = layer.allow_origin(Any);
+    } else {
+        let origins: Vec<_> = cfg
+            .allow_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        layer = layer.allow_origin(origins);
+    }
+
+    if cfg.allow_methods.is_empty() {
+        layer = layer.allow_methods(Any);
+    } else {
+        let methods: Vec<_> = cfg
+            .allow_methods
+            .iter()
+            .filter_map(|m| m.parse::<Method>().ok())
+            .collect();
+        layer = layer.allow_methods(methods);
+    }
+
+    if cfg.allow_headers.is_empty() {
+        layer = layer.allow_headers(Any);
+    } else {
+        let headers: Vec<_> = cfg
+            .allow_headers
+            .iter()
+            .filter_map(|h| h.parse::<HeaderName>().ok())
+            .collect();
+        layer = layer.allow_headers(headers);
+    }
+
+    layer
 }
