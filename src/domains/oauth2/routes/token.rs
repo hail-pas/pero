@@ -127,7 +127,9 @@ async fn handle_refresh_token(
     let stored = match stored {
         Some(s) => s,
         None => {
-            if let Some(revoked) = RefreshTokenRepo::find_revoked_by_token(&state.db, old_refresh).await? {
+            if let Some(revoked) =
+                RefreshTokenRepo::find_revoked_by_token(&state.db, old_refresh).await?
+            {
                 tracing::warn!(
                     user_id = %revoked.user_id,
                     client_id = %revoked.client_id,

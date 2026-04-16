@@ -202,18 +202,20 @@ impl PolicyRepo {
         user_id: Uuid,
         policy_id: Uuid,
     ) -> Result<(), AppError> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM policies WHERE id = $1)")
-            .bind(policy_id)
-            .fetch_one(pool)
-            .await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM policies WHERE id = $1)")
+                .bind(policy_id)
+                .fetch_one(pool)
+                .await?;
         if !exists {
             return Err(AppError::NotFound("policy".into()));
         }
 
-        let user_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-            .bind(user_id)
-            .fetch_one(pool)
-            .await?;
+        let user_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+                .bind(user_id)
+                .fetch_one(pool)
+                .await?;
         if !user_exists {
             return Err(AppError::NotFound("user".into()));
         }
@@ -233,13 +235,11 @@ impl PolicyRepo {
         user_id: Uuid,
         policy_id: Uuid,
     ) -> Result<(), AppError> {
-        let result = sqlx::query(
-            "DELETE FROM user_policies WHERE user_id = $1 AND policy_id = $2",
-        )
-        .bind(user_id)
-        .bind(policy_id)
-        .execute(pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM user_policies WHERE user_id = $1 AND policy_id = $2")
+            .bind(user_id)
+            .bind(policy_id)
+            .execute(pool)
+            .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound("user_policy assignment".into()));
         }

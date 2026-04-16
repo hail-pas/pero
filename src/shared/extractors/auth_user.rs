@@ -6,7 +6,6 @@ pub struct AuthUser {
     pub user_id: uuid::Uuid,
     #[allow(dead_code)]
     pub roles: Vec<String>,
-    #[allow(dead_code)]
     pub scope: Option<String>,
 }
 

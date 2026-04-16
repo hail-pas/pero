@@ -63,10 +63,7 @@ async fn invalidate_policy_cache(state: &AppState, app_id: Option<Uuid>) -> Resu
     let mut conn = state.cache.clone();
 
     let patterns: Vec<String> = if app_id.is_some() {
-        vec![
-            format!("abac:*:{}", app_id.unwrap()),
-            "abac:*:".to_string(),
-        ]
+        vec![format!("abac:*:{}", app_id.unwrap()), "abac:*:".to_string()]
     } else {
         vec!["abac:*:".to_string()]
     };
@@ -174,7 +171,9 @@ pub async fn unassign_policy(
     let policy = PolicyRepo::find_by_id(&state.db, policy_id).await?;
     PolicyRepo::unassign_policy_from_user(&state.db, user_id, policy_id).await?;
     invalidate_policy_cache(&state, policy.and_then(|p| p.app_id)).await?;
-    Ok(Json(ApiResponse::<()>::success_message("policy unassigned")))
+    Ok(Json(ApiResponse::<()>::success_message(
+        "policy unassigned",
+    )))
 }
 
 pub async fn list_user_policies(
