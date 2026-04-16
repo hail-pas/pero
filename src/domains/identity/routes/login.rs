@@ -73,6 +73,7 @@ pub async fn refresh(
         roles,
         &state.jwt_keys,
         state.config.jwt.access_ttl_minutes,
+        None,
     )?;
 
     let new_refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());

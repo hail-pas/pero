@@ -2,7 +2,7 @@ use crate::config::OidcConfig;
 use crate::shared::error::AppError;
 use base64::Engine;
 use chrono::{TimeDelta, Utc};
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -11,6 +11,8 @@ pub struct TokenClaims {
     pub roles: Vec<String>,
     pub exp: i64,
     pub iat: i64,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -96,6 +98,7 @@ pub fn sign_access_token(
     roles: Vec<String>,
     keys: &JwtKeys,
     ttl_minutes: i64,
+    scope: Option<String>,
 ) -> Result<String, AppError> {
     let now = Utc::now();
     let claims = TokenClaims {
@@ -103,6 +106,7 @@ pub fn sign_access_token(
         roles,
         exp: (now + TimeDelta::minutes(ttl_minutes)).timestamp(),
         iat: now.timestamp(),
+        scope,
     };
     let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());

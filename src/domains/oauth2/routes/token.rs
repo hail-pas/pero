@@ -81,11 +81,13 @@ async fn handle_authorization_code(
     let user_id_str = user.id.to_string();
     let roles = vec!["user".to_string()];
 
+    let scope_str = Some(ac.scopes.join(" "));
     let access_token = jwt::sign_access_token(
         &user_id_str,
         roles,
         &state.jwt_keys,
         state.config.oauth2.access_token_ttl_minutes,
+        scope_str,
     )?;
 
     let refresh_token_str = uuid::Uuid::new_v4().to_string().replace('-', "");
@@ -155,11 +157,13 @@ async fn handle_refresh_token(
     let user_id_str = user.id.to_string();
     let roles = vec!["user".to_string()];
 
+    let scope_str = Some(stored.scopes.join(" "));
     let access_token = jwt::sign_access_token(
         &user_id_str,
         roles,
         &state.jwt_keys,
         state.config.oauth2.access_token_ttl_minutes,
+        scope_str,
     )?;
 
     let new_refresh = uuid::Uuid::new_v4().to_string().replace('-', "");
