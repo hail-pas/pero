@@ -1,5 +1,6 @@
 use crate::domains::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
 use crate::domains::identity::repos::UserRepo;
+use crate::cache::session;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
@@ -124,6 +125,14 @@ pub async fn update_user(
     Path(id): Path<uuid::Uuid>,
     ValidatedJson(input): ValidatedJson<UpdateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
+    crate::domains::identity::helpers::validate_update_user(
+        &state.db,
+        id,
+        input.username.as_deref(),
+        input.email.as_deref(),
+    )
+    .await?;
+
     let user = UserRepo::update(
         &state.db,
         id,
@@ -156,6 +165,7 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
+    session::revoke_refresh_token(&state.cache, &id.to_string()).await?;
     UserRepo::delete(&state.db, id).await?;
     Ok(Json(ApiResponse::<()>::success_message("user deleted")))
 }

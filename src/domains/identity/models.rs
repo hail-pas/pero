@@ -53,8 +53,12 @@ pub struct RegisterRequest {
     pub username: String,
     #[validate(email)]
     pub email: String,
-    #[validate(length(min = 8))]
+    #[validate(length(min = 8, max = 128))]
     pub password: String,
+    #[validate(length(max = 20))]
+    pub phone: Option<String>,
+    #[validate(length(min = 1, max = 64))]
+    pub nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
@@ -63,9 +67,11 @@ pub struct CreateUserRequest {
     pub username: String,
     #[validate(email)]
     pub email: String,
-    #[validate(length(min = 8))]
+    #[validate(length(min = 8, max = 128))]
     pub password: String,
+    #[validate(length(max = 20))]
     pub phone: Option<String>,
+    #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
 }
 
@@ -75,9 +81,13 @@ pub struct UpdateUserRequest {
     pub username: Option<String>,
     #[validate(email)]
     pub email: Option<String>,
+    #[validate(length(max = 20))]
     pub phone: Option<String>,
+    #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
+    #[validate(length(max = 512))]
     pub avatar_url: Option<String>,
+    #[validate(range(min = 0, max = 1))]
     pub status: Option<i16>,
 }
 
@@ -85,13 +95,17 @@ pub struct UpdateUserRequest {
 pub struct UpdateMeRequest {
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
+    #[validate(length(max = 512))]
     pub avatar_url: Option<String>,
+    #[validate(length(max = 20))]
     pub phone: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
+    #[validate(length(min = 1, max = 64))]
     pub username: String,
+    #[validate(length(min = 1, max = 128))]
     pub password: String,
 }
 
@@ -102,8 +116,9 @@ pub struct TokenResponse {
     pub user: UserDTO,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RefreshRequest {
+    #[validate(length(min = 1))]
     pub refresh_token: String,
 }
 
@@ -119,17 +134,19 @@ pub struct Identity {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-#[allow(dead_code)] // TODO: implement OAuth binding flow (see binding.rs)
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[allow(dead_code)]
 pub struct BindRequest {
+    #[validate(length(min = 1))]
     pub code: String,
+    #[validate(length(min = 1))]
     pub redirect_uri: String,
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ChangePasswordRequest {
-    #[validate(length(min = 8))]
+    #[validate(length(min = 8, max = 128))]
     pub old_password: String,
-    #[validate(length(min = 8))]
+    #[validate(length(min = 8, max = 128))]
     pub new_password: String,
 }

@@ -2,7 +2,7 @@ use crate::domains::identity::models::{BindRequest, Identity};
 use crate::domains::identity::repos::IdentityRepo;
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
-use crate::shared::extractors::AuthUser;
+use crate::shared::extractors::{AuthUser, ValidatedJson};
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -47,7 +47,7 @@ pub async fn bind(
     State(state): State<AppState>,
     auth_user: AuthUser,
     Path(provider): Path<String>,
-    Json(_req): Json<BindRequest>,
+    ValidatedJson(_req): ValidatedJson<BindRequest>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     let existing =
         IdentityRepo::find_by_user_and_provider(&state.db, auth_user.user_id, &provider).await?;

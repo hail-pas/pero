@@ -57,6 +57,7 @@ pub struct CreateClientRequest {
     pub app_id: Uuid,
     #[validate(length(min = 1, max = 128))]
     pub client_name: String,
+    #[validate(length(min = 1))]
     pub redirect_uris: Vec<String>,
     #[serde(default = "default_grant_types")]
     pub grant_types: Vec<String>,
@@ -87,11 +88,15 @@ pub struct UpdateClientRequest {
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct AuthorizeQuery {
+    #[validate(length(min = 1))]
     pub client_id: String,
+    #[validate(length(min = 1))]
     pub redirect_uri: String,
+    #[validate(length(min = 1))]
     pub response_type: String,
     pub scope: Option<String>,
     pub state: Option<String>,
+    #[validate(length(min = 1, max = 128))]
     pub code_challenge: String,
     pub code_challenge_method: Option<String>,
     pub nonce: Option<String>,
@@ -119,10 +124,13 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RevokeRequest {
+    #[validate(length(min = 1))]
     pub token: String,
     pub token_type_hint: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

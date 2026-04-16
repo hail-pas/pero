@@ -1,7 +1,7 @@
 use crate::shared::response::ApiResponse;
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -68,7 +68,16 @@ impl IntoResponse for AppError {
 
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
-        AppError::Internal(err.to_string())
+        match &err {
+            sqlx::Error::Database(db_err) => match db_err.code().as_deref() {
+                Some("23505") => {
+                    AppError::Conflict("duplicate key value violates unique constraint".into())
+                }
+                Some("23503") => AppError::BadRequest("referenced record not found".into()),
+                _ => AppError::Internal(err.to_string()),
+            },
+            _ => AppError::Internal(err.to_string()),
+        }
     }
 }
 

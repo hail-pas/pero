@@ -44,8 +44,9 @@ impl From<App> for AppDTO {
 pub struct CreateAppRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
-    #[validate(length(min = 1, max = 64))]
+    #[validate(length(min = 1, max = 64), custom(function = "validate_app_code"))]
     pub code: String,
+    #[validate(length(max = 512))]
     pub description: Option<String>,
 }
 
@@ -53,6 +54,16 @@ pub struct CreateAppRequest {
 pub struct UpdateAppRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: Option<String>,
+    #[validate(length(max = 512))]
     pub description: Option<String>,
     pub enabled: Option<bool>,
+}
+
+fn validate_app_code(code: &str) -> Result<(), validator::ValidationError> {
+    for c in code.chars() {
+        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '-' && c != '_' {
+            return Err(validator::ValidationError::new("invalid_app_code"));
+        }
+    }
+    Ok(())
 }

@@ -7,6 +7,7 @@ use crate::shared::error::AppError;
 use crate::shared::jwt;
 use crate::shared::state::AppState;
 use sqlx::postgres::PgPool;
+use uuid::Uuid;
 
 pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse, AppError> {
     let user_id_str = user.id.to_string();
@@ -48,6 +49,35 @@ pub async fn validate_new_user(pool: &PgPool, username: &str, email: &str) -> Re
             "email '{}' already exists",
             email
         )));
+    }
+    Ok(())
+}
+
+pub async fn validate_update_user(
+    pool: &PgPool,
+    id: Uuid,
+    username: Option<&str>,
+    email: Option<&str>,
+) -> Result<(), AppError> {
+    if let Some(username) = username {
+        if let Some(existing) = UserRepo::find_by_username(pool, username).await? {
+            if existing.id != id {
+                return Err(AppError::Conflict(format!(
+                    "username '{}' already exists",
+                    username
+                )));
+            }
+        }
+    }
+    if let Some(email) = email {
+        if let Some(existing) = UserRepo::find_by_email(pool, email).await? {
+            if existing.id != id {
+                return Err(AppError::Conflict(format!(
+                    "email '{}' already exists",
+                    email
+                )));
+            }
+        }
     }
     Ok(())
 }

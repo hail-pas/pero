@@ -5,6 +5,7 @@ pub mod headers {
 
 pub mod cache_keys {
     pub const REFRESH_TOKEN_PREFIX: &str = "refresh_token:";
+    pub const REFRESH_TOKEN_PREV_PREFIX: &str = "refresh_token_prev:";
     pub const ABAC_PREFIX: &str = "abac:";
 }
 

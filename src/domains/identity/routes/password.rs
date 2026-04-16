@@ -1,5 +1,5 @@
 use crate::domains::identity::models::ChangePasswordRequest;
-use crate::domains::identity::repos::IdentityRepo;
+use crate::domains::identity::repos::{IdentityRepo, UserRepo};
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, ValidatedJson};
@@ -44,6 +44,7 @@ pub async fn change_password(
 
     let new_hash = crate::domains::identity::helpers::hash_password(&req.new_password)?;
 
+    UserRepo::update_password_hash(&state.db, auth_user.user_id, &new_hash).await?;
     IdentityRepo::update_credential(&state.db, auth_user.user_id, PROVIDER_PASSWORD, &new_hash).await?;
 
     Ok(Json(ApiResponse::<()>::success_message("password changed")))

@@ -191,6 +191,10 @@ async fn handle_refresh_token(
         .await?
         .ok_or(AppError::NotFound("user".into()))?;
 
+    if user.status != 1 {
+        return Err(AppError::Forbidden("account is disabled".into()));
+    }
+
     let user_id_str = user.id.to_string();
     let roles = vec![DEFAULT_ROLE.to_string()];
     let scope_str = Some(stored.scopes.join(" "));
@@ -218,7 +222,8 @@ async fn handle_refresh_token(
 
     Ok(Json(TokenResponse {
         access_token,
-        token_type: TOKEN_TYPE_BEARER.to_string(),        expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
+        token_type: TOKEN_TYPE_BEARER.to_string(),
+        expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
         refresh_token: Some(new_refresh),
         id_token: Some(id_token),
         scope: Some(stored.scopes.join(" ")),

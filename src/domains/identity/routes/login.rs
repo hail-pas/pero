@@ -3,7 +3,7 @@ use crate::domains::identity::models::{LoginRequest, RefreshRequest, TokenRespon
 use crate::domains::identity::repos::{IdentityRepo, UserRepo};
 use crate::shared::constants::identity::{DEFAULT_ROLE, PROVIDER_PASSWORD};
 use crate::shared::error::AppError;
-use crate::shared::extractors::AuthUser;
+use crate::shared::extractors::{AuthUser, ValidatedJson};
 use crate::shared::jwt;
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
@@ -23,7 +23,7 @@ use utoipa;
 )]
 pub async fn login(
     State(state): State<AppState>,
-    Json(req): Json<LoginRequest>,
+    ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
     let user = UserRepo::find_by_username(&state.db, &req.username)
         .await?
@@ -64,7 +64,7 @@ pub async fn login(
 )]
 pub async fn refresh(
     State(state): State<AppState>,
-    Json(req): Json<RefreshRequest>,
+    ValidatedJson(req): ValidatedJson<RefreshRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let parts: Vec<&str> = req.refresh_token.splitn(2, ':').collect();
     if parts.len() != 2 {
@@ -76,6 +76,15 @@ pub async fn refresh(
     let stored = stored.ok_or(AppError::Unauthorized)?;
 
     if stored != req.refresh_token {
+        let prev = session::get_previous_refresh_token(&state.cache, user_id_str).await?;
+        if prev.as_deref() == Some(&req.refresh_token) {
+            tracing::warn!(
+                user_id = user_id_str,
+                "refresh token replay detected, revoking session"
+            );
+            session::revoke_refresh_token(&state.cache, user_id_str).await?;
+            return Err(AppError::Unauthorized);
+        }
         return Err(AppError::Unauthorized);
     }
 
@@ -99,6 +108,15 @@ pub async fn refresh(
     )?;
 
     let new_refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());
+
+    session::store_previous_refresh_token(
+        &state.cache,
+        user_id_str,
+        &stored,
+        state.config.jwt.refresh_ttl_days,
+    )
+    .await?;
+
     session::store_refresh_token(
         &state.cache,
         user_id_str,

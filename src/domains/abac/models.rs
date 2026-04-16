@@ -78,6 +78,7 @@ pub struct CreateConditionRequest {
     pub key: String,
     #[validate(custom(function = "validate_operator"))]
     pub operator: String,
+    #[validate(length(min = 1, max = 1024))]
     pub value: String,
 }
 

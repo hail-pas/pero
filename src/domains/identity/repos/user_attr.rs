@@ -2,6 +2,7 @@ use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
 use utoipa::ToSchema;
+use validator::Validate;
 
 #[derive(Debug, sqlx::FromRow, Serialize, ToSchema)]
 pub struct UserAttribute {
@@ -11,14 +12,17 @@ pub struct UserAttribute {
     pub value: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SetAttributes {
+    #[validate(length(min = 1))]
     pub attributes: Vec<AttributeItem>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct AttributeItem {
+    #[validate(length(min = 1, max = 128))]
     pub key: String,
+    #[validate(length(min = 1, max = 1024))]
     pub value: String,
 }
 

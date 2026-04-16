@@ -34,8 +34,8 @@ pub async fn register(
         &state.db,
         &req.username,
         &req.email,
-        None,
-        None,
+        req.phone.as_deref(),
+        req.nickname.as_deref(),
         Some(&password_hash),
     )
     .await?;

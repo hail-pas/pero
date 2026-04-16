@@ -1,6 +1,7 @@
 use super::super::repos::UserRepo;
 use super::super::repos::user_attr::{SetAttributes, UserAttribute, UserAttributeRepo};
 use crate::shared::error::AppError;
+use crate::shared::extractors::ValidatedJson;
 use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -51,7 +52,7 @@ pub async fn list_attributes(
 pub async fn set_attributes(
     State(state): State<AppState>,
     Path(user_id): Path<uuid::Uuid>,
-    Json(input): Json<SetAttributes>,
+    ValidatedJson(input): ValidatedJson<SetAttributes>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     UserRepo::find_by_id(&state.db, user_id)
         .await?

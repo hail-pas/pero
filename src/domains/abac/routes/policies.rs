@@ -2,6 +2,7 @@ use crate::domains::abac::models::{
     CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest,
 };
 use crate::domains::abac::repos::PolicyRepo;
+use crate::domains::identity::repos::UserRepo;
 use crate::shared::constants::cache_keys;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{Pagination, ValidatedJson};
@@ -296,6 +297,10 @@ pub async fn list_user_policies(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<Vec<PolicyDTO>>>, AppError> {
+    UserRepo::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or(AppError::NotFound("user".into()))?;
+
     let policies = PolicyRepo::list_user_assignments(&state.db, user_id).await?;
     let ids: Vec<Uuid> = policies.iter().map(|p| p.id).collect();
     let conditions_map = PolicyRepo::batch_get_conditions_map(&state.db, &ids).await?;
