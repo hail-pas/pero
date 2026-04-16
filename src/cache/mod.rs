@@ -1,19 +1,65 @@
 pub mod session;
 
+use std::fs;
+
 use crate::config::RedisConfig;
 use crate::shared::error::AppError;
 use redis::Client;
 use redis::aio::ConnectionManager;
+use redis::TlsCertificates;
+
+fn build_clean_url(raw: &str) -> Result<String, AppError> {
+    let mut url = url::Url::parse(raw)
+        .map_err(|e| AppError::Internal(format!("Invalid redis URL: {e}")))?;
+
+    let keep: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| k != "ssl_ca_certs" && k != "ssl_cert_reqs")
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+
+    url.query_pairs_mut().clear();
+    if !keep.is_empty() {
+        let mut q = url.query_pairs_mut();
+        for (k, v) in &keep {
+            q.append_pair(k, v);
+        }
+    }
+
+    Ok(url.into())
+}
 
 pub async fn init_pool(cfg: &RedisConfig) -> Result<ConnectionManager, AppError> {
-    let client = Client::open(cfg.url.as_str())
-        .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))?;
+    let ssl_ca_certs = url::Url::parse(&cfg.url)
+        .ok()
+        .and_then(|u| {
+            u.query_pairs()
+                .find(|(k, _)| k == "ssl_ca_certs")
+                .map(|(_, v)| v.into_owned())
+        });
+
+    let client = if let Some(ca_path) = ssl_ca_certs {
+        let root_cert = fs::read(&ca_path)
+            .map_err(|e| AppError::Internal(format!("Failed to read CA cert {}: {e}", ca_path)))?;
+        let clean_url = build_clean_url(&cfg.url)?;
+        Client::build_with_tls(
+            clean_url.as_str(),
+            TlsCertificates {
+                client_tls: None,
+                root_cert: Some(root_cert),
+            },
+        )
+        .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))?
+    } else {
+        Client::open(cfg.url.as_str())
+            .map_err(|e| AppError::Internal(format!("Redis client init failed: {e}")))?
+    };
 
     let conn = ConnectionManager::new(client)
         .await
         .map_err(|e| AppError::Internal(format!("Redis connection failed: {e}")))?;
 
-    tracing::info!("Redis connected: {}", cfg.url);
+    tracing::info!("Redis connected");
     Ok(conn)
 }
 

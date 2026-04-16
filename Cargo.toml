@@ -52,5 +52,6 @@ sha2 = "0.10"
 # Regex (for ABAC pattern matching)
 regex = "1"
 
-# URL encoding
+# URL
+url = "2"
 urlencoding = "2"
