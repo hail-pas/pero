@@ -30,8 +30,9 @@ pub async fn register(
 
     let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
 
+    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
     let user = UserRepo::create(
-        &state.db,
+        &mut *tx,
         &req.username,
         &req.email,
         req.phone.as_deref(),
@@ -40,7 +41,8 @@ pub async fn register(
     )
     .await?;
 
-    IdentityRepo::create_password(&state.db, user.id, &password_hash).await?;
+    IdentityRepo::create_password(&mut *tx, user.id, &password_hash).await?;
+    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     let token_response = crate::domains::identity::helpers::issue_tokens(&state, &user).await?;
     Ok(Json(ApiResponse::success(token_response)))
@@ -67,8 +69,9 @@ pub async fn create_user(
 
     let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
 
+    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
     let user = UserRepo::create(
-        &state.db,
+        &mut *tx,
         &req.username,
         &req.email,
         req.phone.as_deref(),
@@ -77,7 +80,8 @@ pub async fn create_user(
     )
     .await?;
 
-    IdentityRepo::create_password(&state.db, user.id, &password_hash).await?;
+    IdentityRepo::create_password(&mut *tx, user.id, &password_hash).await?;
+    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(Json(ApiResponse::success(user.into())))
 }

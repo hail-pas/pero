@@ -6,6 +6,45 @@ use validator::Validate;
 
 use crate::shared::constants::oauth2::{self as oauth2_constants, scopes as oauth2_scopes};
 
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantType {
+    AuthorizationCode,
+    RefreshToken,
+}
+
+impl GrantType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GrantType::AuthorizationCode => "authorization_code",
+            GrantType::RefreshToken => "refresh_token",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseType {
+    Code,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum CodeChallengeMethod {
+    #[default]
+    S256,
+    Plain,
+}
+
+impl CodeChallengeMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CodeChallengeMethod::S256 => "S256",
+            CodeChallengeMethod::Plain => "plain",
+        }
+    }
+}
+
 #[derive(Debug, sqlx::FromRow, Serialize, Clone)]
 pub struct OAuth2Client {
     pub id: Uuid,
@@ -57,7 +96,10 @@ pub struct CreateClientRequest {
     pub app_id: Uuid,
     #[validate(length(min = 1, max = 128))]
     pub client_name: String,
-    #[validate(length(min = 1))]
+    #[validate(
+        length(min = 1),
+        custom(function = "crate::shared::validation::validate_redirect_uris")
+    )]
     pub redirect_uris: Vec<String>,
     #[serde(default = "default_grant_types")]
     pub grant_types: Vec<String>,
@@ -81,6 +123,7 @@ fn default_scopes() -> Vec<String> {
 pub struct UpdateClientRequest {
     #[validate(length(min = 1, max = 128))]
     pub client_name: Option<String>,
+    #[validate(custom(function = "crate::shared::validation::validate_redirect_uris"))]
     pub redirect_uris: Option<Vec<String>>,
     pub scopes: Option<Vec<String>>,
     pub enabled: Option<bool>,
@@ -90,26 +133,35 @@ pub struct UpdateClientRequest {
 pub struct AuthorizeQuery {
     #[validate(length(min = 1))]
     pub client_id: String,
-    #[validate(length(min = 1))]
+    #[validate(
+        length(min = 1),
+        custom(function = "crate::shared::validation::validate_redirect_uri")
+    )]
     pub redirect_uri: String,
-    #[validate(length(min = 1))]
-    pub response_type: String,
+    pub response_type: ResponseType,
     pub scope: Option<String>,
     pub state: Option<String>,
     #[validate(length(min = 1, max = 128))]
     pub code_challenge: String,
-    pub code_challenge_method: Option<String>,
+    #[serde(default)]
+    pub code_challenge_method: CodeChallengeMethod,
     pub nonce: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct TokenRequest {
-    pub grant_type: String,
+    pub grant_type: GrantType,
+    #[validate(length(max = 256))]
     pub code: Option<String>,
+    #[validate(length(max = 2048))]
     pub redirect_uri: Option<String>,
+    #[validate(length(max = 128))]
     pub client_id: Option<String>,
+    #[validate(length(max = 256))]
     pub client_secret: Option<String>,
+    #[validate(length(max = 256))]
     pub code_verifier: Option<String>,
+    #[validate(length(max = 256))]
     pub refresh_token: Option<String>,
 }
 
@@ -126,10 +178,13 @@ pub struct TokenResponse {
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RevokeRequest {
-    #[validate(length(min = 1))]
+    #[validate(length(min = 1, max = 256))]
     pub token: String,
+    #[validate(length(max = 32))]
     pub token_type_hint: Option<String>,
+    #[validate(length(max = 128))]
     pub client_id: Option<String>,
+    #[validate(length(max = 256))]
     pub client_secret: Option<String>,
 }
 

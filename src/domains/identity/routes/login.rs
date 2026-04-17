@@ -25,9 +25,25 @@ pub async fn login(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
-    let user = UserRepo::find_by_username(&state.db, &req.username)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
+    use crate::domains::identity::models::IdentifierType;
+    match req.identifier_type {
+        IdentifierType::Email => {
+            crate::shared::validation::validate_email(&req.identifier)
+                .map_err(|_| AppError::Validation("invalid email format".into()))?;
+        }
+        IdentifierType::Phone => {
+            crate::shared::validation::validate_phone(&req.identifier)
+                .map_err(|_| AppError::Validation("invalid phone format".into()))?;
+        }
+        IdentifierType::Username => {}
+    }
+
+    let user = match req.identifier_type {
+        IdentifierType::Email => UserRepo::find_by_email(&state.db, &req.identifier).await?,
+        IdentifierType::Phone => UserRepo::find_by_phone(&state.db, &req.identifier).await?,
+        IdentifierType::Username => UserRepo::find_by_username(&state.db, &req.identifier).await?,
+    }
+    .ok_or(AppError::Unauthorized)?;
 
     if user.status != 1 {
         return Err(AppError::Forbidden("account is disabled".into()));

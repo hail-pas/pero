@@ -3,15 +3,14 @@ use axum::extract::State;
 use chrono::{TimeDelta, Utc};
 
 use crate::domains::identity::repos::UserRepo;
-use crate::domains::oauth2::models::{TokenRequest, TokenResponse};
+use crate::domains::oauth2::models::{GrantType, TokenRequest, TokenResponse};
 use crate::domains::oauth2::pkce;
 use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo, RefreshTokenRepo};
 use crate::shared::constants::identity::DEFAULT_ROLE;
-use crate::shared::constants::oauth2::{
-    GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN, TOKEN_TYPE_BEARER,
-};
+use crate::shared::constants::oauth2::TOKEN_TYPE_BEARER;
 use crate::shared::constants::oauth2::scopes as oauth2_scopes;
 use crate::shared::error::AppError;
+use crate::shared::extractors::ValidatedJson;
 use crate::shared::jwt::{self, IdTokenClaims};
 use crate::shared::state::AppState;
 
@@ -27,12 +26,11 @@ use crate::shared::state::AppState;
 )]
 pub async fn token(
     State(state): State<AppState>,
-    Json(req): Json<TokenRequest>,
+    ValidatedJson(req): ValidatedJson<TokenRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
-    match req.grant_type.as_str() {
-        GRANT_TYPE_AUTH_CODE => handle_authorization_code(&state, &req).await,
-        GRANT_TYPE_REFRESH_TOKEN => handle_refresh_token(&state, &req).await,
-        _ => Err(AppError::BadRequest("unsupported grant_type".into())),
+    match req.grant_type {
+        GrantType::AuthorizationCode => handle_authorization_code(&state, &req).await,
+        GrantType::RefreshToken => handle_refresh_token(&state, &req).await,
     }
 }
 
@@ -52,10 +50,6 @@ async fn handle_authorization_code(
         .client_id
         .as_deref()
         .ok_or(AppError::BadRequest("missing client_id".into()))?;
-    let client_secret = req
-        .client_secret
-        .as_deref()
-        .ok_or(AppError::BadRequest("missing client_secret".into()))?;
     let code_verifier = req
         .code_verifier
         .as_deref()
@@ -65,13 +59,17 @@ async fn handle_authorization_code(
         .await?
         .ok_or(AppError::BadRequest("invalid client_id".into()))?;
 
-    let valid_secret = bcrypt::verify(client_secret, &client.client_secret_hash)
-        .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
-    if !valid_secret {
-        return Err(AppError::Unauthorized);
+    if let Some(secret) = req.client_secret.as_deref() {
+        let valid_secret = bcrypt::verify(secret, &client.client_secret_hash)
+            .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
+        if !valid_secret {
+            return Err(AppError::Unauthorized);
+        }
     }
 
-    let ac = AuthCodeRepo::find_and_consume(&state.db, code)
+    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let ac = AuthCodeRepo::find_and_consume(&mut *tx, code)
         .await?
         .ok_or(AppError::BadRequest(
             "invalid or expired authorization code".into(),
@@ -84,9 +82,16 @@ async fn handle_authorization_code(
         return Err(AppError::BadRequest("redirect_uri mismatch".into()));
     }
 
-    if let (Some(challenge), Some(method)) = (&ac.code_challenge, &ac.code_challenge_method) {
-        if !pkce::verify_pkce(code_verifier, challenge, method) {
-            return Err(AppError::BadRequest("PKCE verification failed".into()));
+    match (&ac.code_challenge, &ac.code_challenge_method) {
+        (Some(challenge), Some(method)) => {
+            if !pkce::verify_pkce(code_verifier, challenge, method) {
+                return Err(AppError::BadRequest("PKCE verification failed".into()));
+            }
+        }
+        _ => {
+            return Err(AppError::BadRequest(
+                "authorization code has no PKCE challenge".into(),
+            ))
         }
     }
 
@@ -108,7 +113,7 @@ async fn handle_authorization_code(
 
     let refresh_token_str = uuid::Uuid::new_v4().to_string().replace('-', "");
     RefreshTokenRepo::create(
-        &state.db,
+        &mut *tx,
         client.id,
         user.id,
         &refresh_token_str,
@@ -116,6 +121,8 @@ async fn handle_authorization_code(
         state.config.oauth2.refresh_token_ttl_days,
     )
     .await?;
+
+    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     let id_token = build_id_token(&state, &user, &ac.scopes, ac.nonce, &client.client_id)?;
 
@@ -185,8 +192,6 @@ async fn handle_refresh_token(
         }
     }
 
-    RefreshTokenRepo::revoke(&state.db, stored.id).await?;
-
     let user = UserRepo::find_by_id(&state.db, stored.user_id)
         .await?
         .ok_or(AppError::NotFound("user".into()))?;
@@ -207,9 +212,13 @@ async fn handle_refresh_token(
         scope_str,
     )?;
 
+    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
+
+    RefreshTokenRepo::revoke(&mut *tx, stored.id).await?;
+
     let new_refresh = uuid::Uuid::new_v4().to_string().replace('-', "");
     RefreshTokenRepo::create(
-        &state.db,
+        &mut *tx,
         client.id,
         user.id,
         &new_refresh,
@@ -217,6 +226,8 @@ async fn handle_refresh_token(
         state.config.oauth2.refresh_token_ttl_days,
     )
     .await?;
+
+    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     let id_token = build_id_token(&state, &user, &stored.scopes, None, &client.client_id)?;
 
@@ -262,7 +273,7 @@ fn build_id_token(
     }
     if scopes.contains(&oauth2_scopes::EMAIL.to_string()) {
         claims.email = Some(user.email.clone());
-        claims.email_verified = Some(true);
+        claims.email_verified = Some(user.email_verified);
     }
     if scopes.contains(&oauth2_scopes::PHONE.to_string()) {
         claims.phone_number = user.phone.clone();

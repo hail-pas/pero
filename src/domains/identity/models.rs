@@ -8,11 +8,13 @@ use validator::Validate;
 pub struct User {
     pub id: Uuid,
     pub username: String,
+    #[serde(skip_serializing)]
     pub password_hash: Option<String>,
     pub email: String,
     pub phone: Option<String>,
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
+    pub email_verified: bool,
     pub status: i16,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -26,6 +28,7 @@ pub struct UserDTO {
     pub phone: Option<String>,
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
+    pub email_verified: bool,
     pub status: i16,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -40,6 +43,7 @@ impl From<User> for UserDTO {
             phone: u.phone,
             nickname: u.nickname,
             avatar_url: u.avatar_url,
+            email_verified: u.email_verified,
             status: u.status,
             created_at: u.created_at,
             updated_at: u.updated_at,
@@ -55,7 +59,10 @@ pub struct RegisterRequest {
     pub email: String,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
-    #[validate(length(max = 20))]
+    #[validate(
+        length(max = 20),
+        custom(function = "crate::shared::validation::validate_phone")
+    )]
     pub phone: Option<String>,
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
@@ -69,7 +76,10 @@ pub struct CreateUserRequest {
     pub email: String,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
-    #[validate(length(max = 20))]
+    #[validate(
+        length(max = 20),
+        custom(function = "crate::shared::validation::validate_phone")
+    )]
     pub phone: Option<String>,
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
@@ -81,11 +91,17 @@ pub struct UpdateUserRequest {
     pub username: Option<String>,
     #[validate(email)]
     pub email: Option<String>,
-    #[validate(length(max = 20))]
+    #[validate(
+        length(max = 20),
+        custom(function = "crate::shared::validation::validate_phone")
+    )]
     pub phone: Option<String>,
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
-    #[validate(length(max = 512))]
+    #[validate(
+        length(max = 512),
+        custom(function = "crate::shared::validation::validate_url")
+    )]
     pub avatar_url: Option<String>,
     #[validate(range(min = 0, max = 1))]
     pub status: Option<i16>,
@@ -95,16 +111,33 @@ pub struct UpdateUserRequest {
 pub struct UpdateMeRequest {
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
-    #[validate(length(max = 512))]
+    #[validate(
+        length(max = 512),
+        custom(function = "crate::shared::validation::validate_url")
+    )]
     pub avatar_url: Option<String>,
-    #[validate(length(max = 20))]
+    #[validate(
+        length(max = 20),
+        custom(function = "crate::shared::validation::validate_phone")
+    )]
     pub phone: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IdentifierType {
+    #[default]
+    Username,
+    Email,
+    Phone,
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
-    #[validate(length(min = 1, max = 64))]
-    pub username: String,
+    #[validate(length(min = 1, max = 255))]
+    pub identifier: String,
+    #[serde(default)]
+    pub identifier_type: IdentifierType,
     #[validate(length(min = 1, max = 128))]
     pub password: String,
 }

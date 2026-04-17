@@ -22,15 +22,22 @@ pub async fn revoke(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RevokeRequest>,
 ) -> Result<Response, AppError> {
-    if let (Some(cid), Some(csecret)) = (&req.client_id, &req.client_secret) {
-        let client = OAuth2ClientRepo::find_by_client_id(&state.db, cid)
-            .await?
-            .ok_or(AppError::BadRequest("invalid client_id".into()))?;
-        let valid = bcrypt::verify(csecret, &client.client_secret_hash)
-            .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
-        if !valid {
-            return Err(AppError::Unauthorized);
-        }
+    let client_id_str = req
+        .client_id
+        .as_deref()
+        .ok_or(AppError::BadRequest("missing client_id".into()))?;
+    let client_secret = req
+        .client_secret
+        .as_deref()
+        .ok_or(AppError::BadRequest("missing client_secret".into()))?;
+
+    let client = OAuth2ClientRepo::find_by_client_id(&state.db, client_id_str)
+        .await?
+        .ok_or(AppError::BadRequest("invalid client_id".into()))?;
+    let valid = bcrypt::verify(client_secret, &client.client_secret_hash)
+        .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
+    if !valid {
+        return Err(AppError::Unauthorized);
     }
 
     if let Some(token) = RefreshTokenRepo::find_by_token(&state.db, &req.token).await? {

@@ -9,14 +9,17 @@ use super::super::models::RefreshToken;
 pub struct RefreshTokenRepo;
 
 impl RefreshTokenRepo {
-    pub async fn create(
-        pool: &PgPool,
+    pub async fn create<'a, E>(
+        executor: E,
         client_id: Uuid,
         user_id: Uuid,
         refresh_token: &str,
         scopes: &[String],
         ttl_days: i64,
-    ) -> Result<RefreshToken, AppError> {
+    ) -> Result<RefreshToken, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let expires_at = Utc::now() + TimeDelta::days(ttl_days);
         let token = sqlx::query_as::<_, RefreshToken>(
             "INSERT INTO oauth2_tokens (client_id, user_id, refresh_token, scopes, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING *",
@@ -26,7 +29,7 @@ impl RefreshTokenRepo {
         .bind(refresh_token)
         .bind(scopes)
         .bind(expires_at)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
         Ok(token)
     }
@@ -44,10 +47,13 @@ impl RefreshTokenRepo {
         .map_err(Into::into)
     }
 
-    pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
+    pub async fn revoke<'a, E>(executor: E, id: Uuid) -> Result<(), AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query("UPDATE oauth2_tokens SET revoked = true WHERE id = $1")
             .bind(id)
-            .execute(pool)
+            .execute(executor)
             .await?;
         Ok(())
     }

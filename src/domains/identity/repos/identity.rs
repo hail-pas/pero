@@ -6,17 +6,20 @@ use uuid::Uuid;
 pub struct IdentityRepo;
 
 impl IdentityRepo {
-    pub async fn create_password(
-        pool: &PgPool,
+    pub async fn create_password<'a, E>(
+        executor: E,
         user_id: Uuid,
         password_hash: &str,
-    ) -> Result<Identity, AppError> {
+    ) -> Result<Identity, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let identity = sqlx::query_as::<_, Identity>(
             "INSERT INTO identities (user_id, provider, credential, verified) VALUES ($1, 'password', $2, true) RETURNING *"
         )
         .bind(user_id)
         .bind(password_hash)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
         Ok(identity)
     }

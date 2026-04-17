@@ -112,8 +112,8 @@ pub async fn create_policy(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreatePolicyRequest>,
 ) -> Result<Json<ApiResponse<PolicyDTO>>, AppError> {
-    let policy = PolicyRepo::create(&state.db, &req).await?;
-    let dto = PolicyDTO::from_policy(&state.db, policy.clone()).await?;
+    let (policy, conditions) = PolicyRepo::create(&state.db, &req).await?;
+    let dto = PolicyDTO::from_policy_with_conditions(policy, conditions);
     invalidate_policy_cache(&state, req.app_id).await?;
     Ok(Json(ApiResponse::success(dto)))
 }
@@ -124,8 +124,8 @@ pub async fn create_policy(
     tag = "ABAC",
     security(("bearer_auth" = [])),
     params(
-        ("page" = i64, Query, description = "Page number"),
-        ("page_size" = i64, Query, description = "Page size"),
+        ("page" = Option<i64>, Query, description = "Page number (default: 1)"),
+        ("page_size" = Option<i64>, Query, description = "Page size (default: 10)"),
     ),
     responses(
         (status = 200, description = "Policy list"),
@@ -196,9 +196,9 @@ pub async fn update_policy(
     Path(id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdatePolicyRequest>,
 ) -> Result<Json<ApiResponse<PolicyDTO>>, AppError> {
-    let updated = PolicyRepo::update(&state.db, id, &req).await?;
-    let dto = PolicyDTO::from_policy(&state.db, updated.clone()).await?;
-    invalidate_policy_cache(&state, updated.app_id).await?;
+    let (updated, conditions) = PolicyRepo::update(&state.db, id, &req).await?;
+    let dto = PolicyDTO::from_policy_with_conditions(updated, conditions);
+    invalidate_policy_cache(&state, dto.app_id).await?;
     Ok(Json(ApiResponse::success(dto)))
 }
 

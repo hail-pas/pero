@@ -9,33 +9,38 @@ use uuid::Uuid;
 pub struct PolicyRepo;
 
 impl PolicyRepo {
-    pub async fn create(pool: &PgPool, req: &CreatePolicyRequest) -> Result<Policy, AppError> {
+    pub async fn create(pool: &PgPool, req: &CreatePolicyRequest) -> Result<(Policy, Vec<PolicyCondition>), AppError> {
+        let mut tx = pool.begin().await?;
+
         let policy = sqlx::query_as::<_, Policy>(
             "INSERT INTO policies (name, description, effect, priority, enabled, app_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
         )
         .bind(&req.name)
         .bind(&req.description)
-        .bind(&req.effect)
+        .bind(req.effect.as_str())
         .bind(req.priority)
         .bind(req.enabled)
         .bind(req.app_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
 
+        let mut conditions = Vec::with_capacity(req.conditions.len());
         for cond in &req.conditions {
-            sqlx::query(
-                "INSERT INTO policy_conditions (policy_id, condition_type, key, operator, value) VALUES ($1, $2, $3, $4, $5)"
+            let c = sqlx::query_as::<_, PolicyCondition>(
+                "INSERT INTO policy_conditions (policy_id, condition_type, key, operator, value) VALUES ($1, $2, $3, $4, $5) RETURNING *"
             )
             .bind(policy.id)
-            .bind(&cond.condition_type)
+            .bind(cond.condition_type.as_str())
             .bind(&cond.key)
-            .bind(&cond.operator)
+            .bind(cond.operator.as_str())
             .bind(&cond.value)
-            .execute(pool)
+            .fetch_one(&mut *tx)
             .await?;
+            conditions.push(c);
         }
 
-        Ok(policy)
+        tx.commit().await?;
+        Ok((policy, conditions))
     }
 
     pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Policy>, AppError> {
@@ -71,14 +76,22 @@ impl PolicyRepo {
         pool: &PgPool,
         id: Uuid,
         req: &UpdatePolicyRequest,
-    ) -> Result<Policy, AppError> {
-        let policy = Self::find_by_id(pool, id)
+    ) -> Result<(Policy, Vec<PolicyCondition>), AppError> {
+        let mut tx = pool.begin().await?;
+
+        let policy = sqlx::query_as::<_, Policy>("SELECT * FROM policies WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or(AppError::NotFound("policy".into()))?;
 
         let name = req.name.as_deref().unwrap_or(&policy.name);
         let description = req.description.as_deref().or(policy.description.as_deref());
-        let effect = req.effect.as_deref().unwrap_or(&policy.effect);
+        let effect = req
+            .effect
+            .as_ref()
+            .map(|e| e.as_str())
+            .unwrap_or(&policy.effect);
         let priority = req.priority.unwrap_or(policy.priority);
         let enabled = req.enabled.unwrap_or(policy.enabled);
         let app_id = req.app_id.as_ref().or(policy.app_id.as_ref());
@@ -93,30 +106,36 @@ impl PolicyRepo {
         .bind(enabled)
         .bind(app_id)
         .bind(id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
 
-        if let Some(conditions) = &req.conditions {
+        let conditions = if let Some(conditions_req) = &req.conditions {
             sqlx::query("DELETE FROM policy_conditions WHERE policy_id = $1")
                 .bind(id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
 
-            for cond in conditions {
-                sqlx::query(
-                    "INSERT INTO policy_conditions (policy_id, condition_type, key, operator, value) VALUES ($1, $2, $3, $4, $5)"
+            let mut conds = Vec::with_capacity(conditions_req.len());
+            for cond in conditions_req {
+                let c = sqlx::query_as::<_, PolicyCondition>(
+                    "INSERT INTO policy_conditions (policy_id, condition_type, key, operator, value) VALUES ($1, $2, $3, $4, $5) RETURNING *"
                 )
                 .bind(id)
-                .bind(&cond.condition_type)
+                .bind(cond.condition_type.as_str())
                 .bind(&cond.key)
-                .bind(&cond.operator)
+                .bind(cond.operator.as_str())
                 .bind(&cond.value)
-                .execute(pool)
+                .fetch_one(&mut *tx)
                 .await?;
+                conds.push(c);
             }
-        }
+            conds
+        } else {
+            PolicyRepo::get_conditions_in_tx(&mut tx, id).await?
+        };
 
-        Ok(updated)
+        tx.commit().await?;
+        Ok((updated, conditions))
     }
 
     pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
@@ -137,6 +156,17 @@ impl PolicyRepo {
         sqlx::query_as::<_, PolicyCondition>("SELECT * FROM policy_conditions WHERE policy_id = $1")
             .bind(policy_id)
             .fetch_all(pool)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn get_conditions_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        policy_id: Uuid,
+    ) -> Result<Vec<PolicyCondition>, AppError> {
+        sqlx::query_as::<_, PolicyCondition>("SELECT * FROM policy_conditions WHERE policy_id = $1")
+            .bind(policy_id)
+            .fetch_all(&mut **tx)
             .await
             .map_err(Into::into)
     }

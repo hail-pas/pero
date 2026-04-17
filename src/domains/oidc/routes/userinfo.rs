@@ -62,7 +62,7 @@ pub async fn userinfo(
             oauth2_scopes::EMAIL.to_string(),
             serde_json::Value::String(user.email.clone()),
         );
-        claims.insert("email_verified".to_string(), serde_json::Value::Bool(true));
+        claims.insert("email_verified".to_string(), serde_json::Value::Bool(user.email_verified));
     }
 
     if scopes.contains(&oauth2_scopes::PHONE) || scopes.is_empty() {

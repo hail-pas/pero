@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(20) UNIQUE,
     nickname VARCHAR(64),
     avatar_url TEXT,
+    email_verified BOOLEAN NOT NULL DEFAULT false,
     status SMALLINT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -40,13 +40,75 @@ pub struct EvalContext {
     pub app_id: Option<Uuid>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyEffect {
+    #[default]
+    Allow,
+    Deny,
+}
+
+impl PolicyEffect {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PolicyEffect::Allow => "allow",
+            PolicyEffect::Deny => "deny",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ConditionType {
+    Subject,
+    Resource,
+    Action,
+    App,
+}
+
+impl ConditionType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConditionType::Subject => "subject",
+            ConditionType::Resource => "resource",
+            ConditionType::Action => "action",
+            ConditionType::App => "app",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ConditionOperator {
+    Eq,
+    In,
+    Wildcard,
+    Regex,
+    Contains,
+    Gt,
+    Lt,
+}
+
+impl ConditionOperator {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConditionOperator::Eq => "eq",
+            ConditionOperator::In => "in",
+            ConditionOperator::Wildcard => "wildcard",
+            ConditionOperator::Regex => "regex",
+            ConditionOperator::Contains => "contains",
+            ConditionOperator::Gt => "gt",
+            ConditionOperator::Lt => "lt",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreatePolicyRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_effect"))]
-    pub effect: String,
+    pub effect: PolicyEffect,
     #[serde(default)]
     pub priority: i32,
     #[serde(default = "default_enabled")]
@@ -61,8 +123,7 @@ pub struct UpdatePolicyRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: Option<String>,
     pub description: Option<String>,
-    #[validate(custom(function = "validate_effect_opt"))]
-    pub effect: Option<String>,
+    pub effect: Option<PolicyEffect>,
     pub priority: Option<i32>,
     pub enabled: Option<bool>,
     pub app_id: Option<Uuid>,
@@ -72,39 +133,12 @@ pub struct UpdatePolicyRequest {
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateConditionRequest {
-    #[validate(custom(function = "validate_condition_type"))]
-    pub condition_type: String,
+    pub condition_type: ConditionType,
     #[validate(length(min = 1, max = 128))]
     pub key: String,
-    #[validate(custom(function = "validate_operator"))]
-    pub operator: String,
+    pub operator: ConditionOperator,
     #[validate(length(min = 1, max = 1024))]
     pub value: String,
-}
-
-fn validate_effect(effect: &str) -> Result<(), validator::ValidationError> {
-    if effect != "allow" && effect != "deny" {
-        return Err(validator::ValidationError::new("invalid_effect"));
-    }
-    Ok(())
-}
-
-fn validate_effect_opt(effect: &str) -> Result<(), validator::ValidationError> {
-    validate_effect(effect)
-}
-
-fn validate_condition_type(ct: &str) -> Result<(), validator::ValidationError> {
-    if !["subject", "resource", "action", "app"].contains(&ct) {
-        return Err(validator::ValidationError::new("invalid_condition_type"));
-    }
-    Ok(())
-}
-
-fn validate_operator(op: &str) -> Result<(), validator::ValidationError> {
-    if !["eq", "in", "wildcard", "regex", "contains", "gt", "lt"].contains(&op) {
-        return Err(validator::ValidationError::new("invalid_operator"));
-    }
-    Ok(())
 }
 
 fn default_enabled() -> bool {

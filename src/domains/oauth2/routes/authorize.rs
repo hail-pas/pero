@@ -1,9 +1,9 @@
 use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use crate::domains::identity::repos::UserRepo;
 use crate::domains::oauth2::models::AuthorizeQuery;
 use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo};
-use crate::shared::constants::oauth2::{PKCE_METHOD_S256, PKCE_METHOD_PLAIN, RESPONSE_TYPE_CODE};
 use crate::shared::error::AppError;
 use crate::shared::extractors::AuthUser;
 use crate::shared::extractors::ValidatedQuery;
@@ -14,8 +14,11 @@ pub async fn authorize(
     auth_user: AuthUser,
     ValidatedQuery(query): ValidatedQuery<AuthorizeQuery>,
 ) -> Result<Response, AppError> {
-    if query.response_type != RESPONSE_TYPE_CODE {
-        return Err(AppError::BadRequest("unsupported response_type".into()));
+    let user = UserRepo::find_by_id(&state.db, auth_user.user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    if user.status != 1 {
+        return Err(AppError::Forbidden("account is disabled".into()));
     }
 
     let client = OAuth2ClientRepo::find_by_client_id(&state.db, &query.client_id)
@@ -51,10 +54,7 @@ pub async fn authorize(
         requested_scopes
     };
 
-    let method = query.code_challenge_method.as_deref().unwrap_or(PKCE_METHOD_S256);
-    if method != PKCE_METHOD_S256 && method != PKCE_METHOD_PLAIN {
-        return Err(AppError::BadRequest("invalid code_challenge_method".into()));
-    }
+    let method = query.code_challenge_method.as_str();
 
     let code = uuid::Uuid::new_v4().to_string().replace('-', "");
 

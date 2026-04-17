@@ -6,14 +6,17 @@ use uuid::Uuid;
 pub struct UserRepo;
 
 impl UserRepo {
-    pub async fn create(
-        pool: &PgPool,
+    pub async fn create<'a, E>(
+        executor: E,
         username: &str,
         email: &str,
         phone: Option<&str>,
         nickname: Option<&str>,
         password_hash: Option<&str>,
-    ) -> Result<User, AppError> {
+    ) -> Result<User, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let user = sqlx::query_as::<_, User>(
             "INSERT INTO users (username, email, phone, nickname, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING *"
         )
@@ -22,7 +25,7 @@ impl UserRepo {
         .bind(phone)
         .bind(nickname)
         .bind(password_hash)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await?;
         Ok(user)
     }
@@ -49,6 +52,27 @@ impl UserRepo {
             .fetch_optional(pool)
             .await?;
         Ok(user)
+    }
+
+    pub async fn find_by_phone(pool: &PgPool, phone: &str) -> Result<Option<User>, AppError> {
+        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE phone = $1")
+            .bind(phone)
+            .fetch_optional(pool)
+            .await?;
+        Ok(user)
+    }
+
+    pub async fn find_by_identifier(pool: &PgPool, identifier: &str) -> Result<Option<User>, AppError> {
+        if let Some(user) = Self::find_by_username(pool, identifier).await? {
+            return Ok(Some(user));
+        }
+        if let Some(user) = Self::find_by_email(pool, identifier).await? {
+            return Ok(Some(user));
+        }
+        if let Some(user) = Self::find_by_phone(pool, identifier).await? {
+            return Ok(Some(user));
+        }
+        Ok(None)
     }
 
     pub async fn list(

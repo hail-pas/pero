@@ -15,7 +15,7 @@ fn default_page() -> i64 {
     1
 }
 fn default_page_size() -> i64 {
-    20
+    10
 }
 
 const MAX_PAGE_SIZE: i64 = 100;

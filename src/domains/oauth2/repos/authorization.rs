@@ -39,15 +39,18 @@ impl AuthCodeRepo {
         Ok(ac)
     }
 
-    pub async fn find_and_consume(
-        pool: &PgPool,
+    pub async fn find_and_consume<'a, E>(
+        executor: E,
         code: &str,
-    ) -> Result<Option<AuthorizationCode>, AppError> {
+    ) -> Result<Option<AuthorizationCode>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let ac = sqlx::query_as::<_, AuthorizationCode>(
             "UPDATE oauth2_authorization_codes SET used = true WHERE code = $1 AND used = false AND expires_at > now() RETURNING *",
         )
         .bind(code)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await?;
 
         Ok(ac)

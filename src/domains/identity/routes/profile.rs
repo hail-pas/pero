@@ -62,8 +62,8 @@ pub async fn update_me(
     tag = "Identity",
     security(("bearer_auth" = [])),
     params(
-        ("page" = i64, Query, description = "Page number"),
-        ("page_size" = i64, Query, description = "Page size"),
+        ("page" = Option<i64>, Query, description = "Page number (default: 1)"),
+        ("page_size" = Option<i64>, Query, description = "Page size (default: 10)"),
     ),
     responses(
         (status = 200, description = "User list", body = ApiResponse<PageData<UserDTO>>),
