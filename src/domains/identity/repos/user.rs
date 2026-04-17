@@ -1,6 +1,7 @@
-use super::super::models::User;
+use super::super::models::{UpdateMeRequest, UpdateUserRequest, User};
 use crate::shared::error::AppError;
-use sqlx::postgres::PgPool;
+use crate::shared::pagination::validate_page;
+use crate::shared::patch::push_optional_column;
 use uuid::Uuid;
 
 pub struct UserRepo;
@@ -12,75 +13,84 @@ impl UserRepo {
         email: &str,
         phone: Option<&str>,
         nickname: Option<&str>,
-        password_hash: Option<&str>,
     ) -> Result<User, AppError>
     where
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
         let user = sqlx::query_as::<_, User>(
-            "INSERT INTO users (username, email, phone, nickname, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING *"
+            "INSERT INTO users (username, email, phone, nickname) VALUES ($1, $2, $3, $4) RETURNING *"
         )
         .bind(username)
         .bind(email)
         .bind(phone)
         .bind(nickname)
-        .bind(password_hash)
         .fetch_one(executor)
         .await?;
         Ok(user)
     }
 
-    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<User>, AppError> {
+    pub async fn find_by_id<'a, E>(executor: E, id: Uuid) -> Result<Option<User>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?;
         Ok(user)
     }
 
-    pub async fn find_by_username(pool: &PgPool, username: &str) -> Result<Option<User>, AppError> {
+    pub async fn find_by_id_or_err<'a, E>(executor: E, id: Uuid) -> Result<User, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
+        Self::find_by_id(executor, id)
+            .await?
+            .ok_or(AppError::NotFound("user".into()))
+    }
+
+    pub async fn find_by_username<'a, E>(
+        executor: E,
+        username: &str,
+    ) -> Result<Option<User>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
             .bind(username)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?;
         Ok(user)
     }
 
-    pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<User>, AppError> {
+    pub async fn find_by_email<'a, E>(executor: E, email: &str) -> Result<Option<User>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
             .bind(email)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?;
         Ok(user)
     }
 
-    pub async fn find_by_phone(pool: &PgPool, phone: &str) -> Result<Option<User>, AppError> {
+    pub async fn find_by_phone<'a, E>(executor: E, phone: &str) -> Result<Option<User>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE phone = $1")
             .bind(phone)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?;
         Ok(user)
-    }
-
-    pub async fn find_by_identifier(pool: &PgPool, identifier: &str) -> Result<Option<User>, AppError> {
-        if let Some(user) = Self::find_by_username(pool, identifier).await? {
-            return Ok(Some(user));
-        }
-        if let Some(user) = Self::find_by_email(pool, identifier).await? {
-            return Ok(Some(user));
-        }
-        if let Some(user) = Self::find_by_phone(pool, identifier).await? {
-            return Ok(Some(user));
-        }
-        Ok(None)
     }
 
     pub async fn list(
-        pool: &PgPool,
+        pool: &sqlx::PgPool,
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<User>, i64), AppError> {
-        let offset = (page - 1) * page_size;
+        let offset = validate_page(page, page_size)?;
         let users = sqlx::query_as::<_, User>(
             "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
@@ -96,70 +106,47 @@ impl UserRepo {
         Ok((users, total))
     }
 
-    pub async fn update(
-        pool: &PgPool,
+    pub async fn update<'a, E>(
+        executor: E,
         id: Uuid,
-        username: Option<&str>,
-        email: Option<&str>,
-        phone: Option<&str>,
-        nickname: Option<&str>,
-        avatar_url: Option<&str>,
-        status: Option<i16>,
-    ) -> Result<User, AppError> {
-        let user = Self::find_by_id(pool, id)
-            .await?
-            .ok_or(AppError::NotFound("user".into()))?;
-
-        let username = username.unwrap_or(&user.username);
-        let email = email.unwrap_or(&user.email);
-        let phone = phone.or(user.phone.as_deref());
-        let nickname = nickname.or(user.nickname.as_deref());
-        let avatar_url = avatar_url.or(user.avatar_url.as_deref());
-        let status = status.unwrap_or(user.status);
-
-        let updated = sqlx::query_as::<_, User>(
-            "UPDATE users SET username = $1, email = $2, phone = $3, nickname = $4, avatar_url = $5, status = $6, updated_at = now() WHERE id = $7 RETURNING *"
-        )
-        .bind(username)
-        .bind(email)
-        .bind(phone)
-        .bind(nickname)
-        .bind(avatar_url)
-        .bind(status)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+        req: &UpdateUserRequest,
+    ) -> Result<User, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
+        let mut builder =
+            sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE users SET updated_at = now()");
+        push_optional_column(&mut builder, "username", &req.username);
+        push_optional_column(&mut builder, "email", &req.email);
+        req.phone.push_column(&mut builder, "phone");
+        req.nickname.push_column(&mut builder, "nickname");
+        req.avatar_url.push_column(&mut builder, "avatar_url");
+        push_optional_column(&mut builder, "status", &req.status);
+        builder.push(" WHERE id = ");
+        builder.push_bind(id);
+        builder.push(" RETURNING *");
+        let updated = builder.build_query_as::<User>().fetch_one(executor).await?;
         Ok(updated)
     }
 
     pub async fn update_me(
-        pool: &PgPool,
+        pool: &sqlx::PgPool,
         id: Uuid,
-        nickname: Option<&str>,
-        avatar_url: Option<&str>,
-        phone: Option<&str>,
+        req: &UpdateMeRequest,
     ) -> Result<User, AppError> {
-        let user = Self::find_by_id(pool, id)
-            .await?
-            .ok_or(AppError::NotFound("user".into()))?;
-
-        let nickname = nickname.or(user.nickname.as_deref());
-        let avatar_url = avatar_url.or(user.avatar_url.as_deref());
-        let phone = phone.or(user.phone.as_deref());
-
-        let updated = sqlx::query_as::<_, User>(
-            "UPDATE users SET nickname = $1, avatar_url = $2, phone = $3, updated_at = now() WHERE id = $4 RETURNING *"
-        )
-        .bind(nickname)
-        .bind(avatar_url)
-        .bind(phone)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+        let mut builder =
+            sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE users SET updated_at = now()");
+        req.nickname.push_column(&mut builder, "nickname");
+        req.avatar_url.push_column(&mut builder, "avatar_url");
+        req.phone.push_column(&mut builder, "phone");
+        builder.push(" WHERE id = ");
+        builder.push_bind(id);
+        builder.push(" RETURNING *");
+        let updated = builder.build_query_as::<User>().fetch_one(pool).await?;
         Ok(updated)
     }
 
-    pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
+    pub async fn delete(pool: &sqlx::PgPool, id: Uuid) -> Result<(), AppError> {
         let result = sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(id)
             .execute(pool)
@@ -167,19 +154,6 @@ impl UserRepo {
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound("user".into()));
         }
-        Ok(())
-    }
-
-    pub async fn update_password_hash(
-        pool: &PgPool,
-        id: Uuid,
-        password_hash: &str,
-    ) -> Result<(), AppError> {
-        sqlx::query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2")
-            .bind(password_hash)
-            .bind(id)
-            .execute(pool)
-            .await?;
         Ok(())
     }
 }

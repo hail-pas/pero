@@ -2,6 +2,8 @@ use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
 use crate::shared::error::AppError;
+use crate::shared::pagination::validate_page;
+use crate::shared::patch::push_optional_column;
 
 use super::super::models::{CreateClientRequest, OAuth2Client, UpdateClientRequest};
 
@@ -37,6 +39,12 @@ impl OAuth2ClientRepo {
             .map_err(Into::into)
     }
 
+    pub async fn find_by_id_or_err(pool: &PgPool, id: Uuid) -> Result<OAuth2Client, AppError> {
+        Self::find_by_id(pool, id)
+            .await?
+            .ok_or(AppError::NotFound("oauth2 client".into()))
+    }
+
     pub async fn find_by_client_id(
         pool: &PgPool,
         client_id: &str,
@@ -53,7 +61,7 @@ impl OAuth2ClientRepo {
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<OAuth2Client>, i64), AppError> {
-        let offset = (page - 1) * page_size;
+        let offset = validate_page(page, page_size)?;
         let clients = sqlx::query_as::<_, OAuth2Client>(
             "SELECT * FROM oauth2_clients ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
@@ -74,25 +82,20 @@ impl OAuth2ClientRepo {
         id: Uuid,
         req: &UpdateClientRequest,
     ) -> Result<OAuth2Client, AppError> {
-        let client = Self::find_by_id(pool, id)
-            .await?
-            .ok_or(AppError::NotFound("oauth2 client".into()))?;
-
-        let client_name = req.client_name.as_deref().unwrap_or(&client.client_name);
-        let redirect_uris = req.redirect_uris.as_ref().unwrap_or(&client.redirect_uris);
-        let scopes = req.scopes.as_ref().unwrap_or(&client.scopes);
-        let enabled = req.enabled.unwrap_or(client.enabled);
-
-        let updated = sqlx::query_as::<_, OAuth2Client>(
-            "UPDATE oauth2_clients SET client_name = $1, redirect_uris = $2, scopes = $3, enabled = $4, updated_at = now() WHERE id = $5 RETURNING *",
-        )
-        .bind(client_name)
-        .bind(redirect_uris)
-        .bind(scopes)
-        .bind(enabled)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "UPDATE oauth2_clients SET updated_at = now()",
+        );
+        push_optional_column(&mut builder, "client_name", &req.client_name);
+        push_optional_column(&mut builder, "redirect_uris", &req.redirect_uris);
+        push_optional_column(&mut builder, "scopes", &req.scopes);
+        push_optional_column(&mut builder, "enabled", &req.enabled);
+        builder.push(" WHERE id = ");
+        builder.push_bind(id);
+        builder.push(" RETURNING *");
+        let updated = builder
+            .build_query_as::<OAuth2Client>()
+            .fetch_one(pool)
+            .await?;
         Ok(updated)
     }
 

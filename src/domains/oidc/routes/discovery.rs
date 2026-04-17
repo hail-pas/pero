@@ -14,8 +14,13 @@ use axum::extract::State;
     )
 )]
 pub async fn discovery(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let doc = state.discovery_doc.get_or_init(|| build_discovery(&state));
+    Json(doc.clone())
+}
+
+fn build_discovery(state: &AppState) -> serde_json::Value {
     let issuer = &state.config.oidc.issuer;
-    Json(serde_json::json!({
+    serde_json::json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/oauth2/authorize"),
         "token_endpoint": format!("{issuer}/oauth2/token"),
@@ -35,5 +40,5 @@ pub async fn discovery(State(state): State<AppState>) -> Json<serde_json::Value>
         ],
         "code_challenge_methods_supported": [oauth2_constants::PKCE_METHOD_S256],
         "grant_types_supported": [oauth2_constants::GRANT_TYPE_AUTH_CODE, oauth2_constants::GRANT_TYPE_REFRESH_TOKEN],
-    }))
+    })
 }

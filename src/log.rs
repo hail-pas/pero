@@ -1,6 +1,6 @@
 use crate::config::LogConfig;
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 pub fn init(cfg: &LogConfig) {
     let file_appender = match cfg.rotation.as_str() {
@@ -8,6 +8,9 @@ pub fn init(cfg: &LogConfig) {
         _ => tracing_appender::rolling::daily(&cfg.dir, "pero.log"),
     };
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    // Intentionally leak the guard: for a long-running server this prevents
+    // the non-blocking writer from being dropped, which would flush on shutdown.
+    // If graceful shutdown is needed, store the guard and call `.flush()` explicitly.
     std::mem::forget(_guard);
 
     let env_filter =

@@ -7,8 +7,10 @@ use crate::domains::oauth2::models::{GrantType, TokenRequest, TokenResponse};
 use crate::domains::oauth2::pkce;
 use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo, RefreshTokenRepo};
 use crate::shared::constants::identity::DEFAULT_ROLE;
-use crate::shared::constants::oauth2::TOKEN_TYPE_BEARER;
 use crate::shared::constants::oauth2::scopes as oauth2_scopes;
+use crate::shared::constants::oauth2::{
+    GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN, TOKEN_TYPE_BEARER,
+};
 use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedJson;
 use crate::shared::jwt::{self, IdTokenClaims};
@@ -32,6 +34,19 @@ pub async fn token(
         GrantType::AuthorizationCode => handle_authorization_code(&state, &req).await,
         GrantType::RefreshToken => handle_refresh_token(&state, &req).await,
     }
+}
+
+fn ensure_client_grant_allowed(
+    client: &crate::domains::oauth2::models::OAuth2Client,
+    grant_type: &str,
+) -> Result<(), AppError> {
+    if client.allows_grant_type(grant_type) {
+        return Ok(());
+    }
+    Err(AppError::BadRequest(format!(
+        "grant_type '{}' not allowed",
+        grant_type
+    )))
 }
 
 async fn handle_authorization_code(
@@ -59,15 +74,24 @@ async fn handle_authorization_code(
         .await?
         .ok_or(AppError::BadRequest("invalid client_id".into()))?;
 
-    if let Some(secret) = req.client_secret.as_deref() {
-        let valid_secret = bcrypt::verify(secret, &client.client_secret_hash)
-            .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
-        if !valid_secret {
-            return Err(AppError::Unauthorized);
-        }
+    if !client.enabled {
+        return Err(AppError::BadRequest("client is disabled".into()));
+    }
+    ensure_client_grant_allowed(&client, GRANT_TYPE_AUTH_CODE)?;
+
+    let secret = req
+        .client_secret
+        .as_deref()
+        .ok_or(AppError::BadRequest("missing client_secret".into()))?;
+    if !client.verify_secret(secret)? {
+        return Err(AppError::Unauthorized);
     }
 
-    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     let ac = AuthCodeRepo::find_and_consume(&mut *tx, code)
         .await?
@@ -91,40 +115,54 @@ async fn handle_authorization_code(
         _ => {
             return Err(AppError::BadRequest(
                 "authorization code has no PKCE challenge".into(),
-            ))
+            ));
         }
     }
 
-    let user = UserRepo::find_by_id(&state.db, ac.user_id)
+    let user = UserRepo::find_by_id(&mut *tx, ac.user_id)
         .await?
         .ok_or(AppError::NotFound("user".into()))?;
+
+    if user.status != 1 {
+        return Err(AppError::Forbidden("account is disabled".into()));
+    }
 
     let user_id_str = user.id.to_string();
     let roles = vec![DEFAULT_ROLE.to_string()];
 
-    let scope_str = Some(ac.scopes.join(" "));
+    let scope_str = ac.scopes.join(" ");
     let access_token = jwt::sign_access_token(
         &user_id_str,
         roles,
         &state.jwt_keys,
         state.config.oauth2.access_token_ttl_minutes,
-        scope_str,
+        Some(scope_str.clone()),
     )?;
 
-    let refresh_token_str = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let refresh_token_str = crate::shared::utils::random_hex_token();
     RefreshTokenRepo::create(
         &mut *tx,
         client.id,
         user.id,
         &refresh_token_str,
         &ac.scopes,
+        ac.auth_time,
         state.config.oauth2.refresh_token_ttl_days,
     )
     .await?;
 
-    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let id_token = build_id_token(&state, &user, &ac.scopes, ac.nonce, &client.client_id)?;
+    let id_token = build_id_token(
+        &state,
+        &user,
+        &ac.scopes,
+        ac.nonce,
+        &client.client_id,
+        ac.auth_time,
+    )?;
 
     Ok(Json(TokenResponse {
         access_token,
@@ -132,7 +170,7 @@ async fn handle_authorization_code(
         expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
         refresh_token: Some(refresh_token_str),
         id_token: Some(id_token),
-        scope: Some(ac.scopes.join(" ")),
+        scope: Some(scope_str),
     }))
 }
 
@@ -145,11 +183,39 @@ async fn handle_refresh_token(
         .as_deref()
         .ok_or(AppError::BadRequest("missing refresh_token".into()))?;
 
-    let stored = RefreshTokenRepo::find_by_token(&state.db, old_refresh).await?;
+    let client_id_str = req
+        .client_id
+        .as_deref()
+        .ok_or(AppError::BadRequest("missing client_id".into()))?;
+    let client = OAuth2ClientRepo::find_by_client_id(&state.db, client_id_str)
+        .await?
+        .ok_or(AppError::BadRequest("invalid client_id".into()))?;
+
+    if !client.enabled {
+        return Err(AppError::BadRequest("client is disabled".into()));
+    }
+    ensure_client_grant_allowed(&client, GRANT_TYPE_REFRESH_TOKEN)?;
+
+    let secret = req
+        .client_secret
+        .as_deref()
+        .ok_or(AppError::BadRequest("missing client_secret".into()))?;
+    if !client.verify_secret(secret)? {
+        return Err(AppError::Unauthorized);
+    }
+
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let stored = RefreshTokenRepo::find_and_revoke_by_token(&mut *tx, old_refresh).await?;
 
     let stored = match stored {
         Some(s) => s,
         None => {
+            drop(tx);
             if let Some(revoked) =
                 RefreshTokenRepo::find_revoked_by_token(&state.db, old_refresh).await?
             {
@@ -172,27 +238,11 @@ async fn handle_refresh_token(
         }
     };
 
-    let client_id_str = req
-        .client_id
-        .as_deref()
-        .ok_or(AppError::BadRequest("missing client_id".into()))?;
-    let client = OAuth2ClientRepo::find_by_client_id(&state.db, client_id_str)
-        .await?
-        .ok_or(AppError::BadRequest("invalid client_id".into()))?;
-
     if client.id != stored.client_id {
         return Err(AppError::BadRequest("client mismatch".into()));
     }
 
-    if let Some(secret) = req.client_secret.as_deref() {
-        let valid = bcrypt::verify(secret, &client.client_secret_hash)
-            .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
-        if !valid {
-            return Err(AppError::Unauthorized);
-        }
-    }
-
-    let user = UserRepo::find_by_id(&state.db, stored.user_id)
+    let user = UserRepo::find_by_id(&mut *tx, stored.user_id)
         .await?
         .ok_or(AppError::NotFound("user".into()))?;
 
@@ -202,34 +252,40 @@ async fn handle_refresh_token(
 
     let user_id_str = user.id.to_string();
     let roles = vec![DEFAULT_ROLE.to_string()];
-    let scope_str = Some(stored.scopes.join(" "));
+    let scope_str = stored.scopes.join(" ");
 
     let access_token = jwt::sign_access_token(
         &user_id_str,
         roles,
         &state.jwt_keys,
         state.config.oauth2.access_token_ttl_minutes,
-        scope_str,
+        Some(scope_str.clone()),
     )?;
 
-    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
-
-    RefreshTokenRepo::revoke(&mut *tx, stored.id).await?;
-
-    let new_refresh = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let new_refresh = crate::shared::utils::random_hex_token();
     RefreshTokenRepo::create(
         &mut *tx,
         client.id,
         user.id,
         &new_refresh,
         &stored.scopes,
+        stored.auth_time,
         state.config.oauth2.refresh_token_ttl_days,
     )
     .await?;
 
-    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let id_token = build_id_token(&state, &user, &stored.scopes, None, &client.client_id)?;
+    let id_token = build_id_token(
+        &state,
+        &user,
+        &stored.scopes,
+        None,
+        &client.client_id,
+        stored.auth_time,
+    )?;
 
     Ok(Json(TokenResponse {
         access_token,
@@ -237,8 +293,32 @@ async fn handle_refresh_token(
         expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
         refresh_token: Some(new_refresh),
         id_token: Some(id_token),
-        scope: Some(stored.scopes.join(" ")),
+        scope: Some(scope_str),
     }))
+}
+
+fn has_scope(scopes: &[String], scope: &str) -> bool {
+    scopes.iter().any(|s| s == scope)
+}
+
+fn apply_scope_claims(
+    claims: &mut IdTokenClaims,
+    user: &crate::domains::identity::models::User,
+    scopes: &[String],
+) {
+    if has_scope(scopes, oauth2_scopes::PROFILE) {
+        claims.name = Some(user.username.clone());
+        claims.nickname = user.nickname.clone();
+        claims.picture = user.avatar_url.clone();
+    }
+    if has_scope(scopes, oauth2_scopes::EMAIL) {
+        claims.email = Some(user.email.clone());
+        claims.email_verified = Some(user.email_verified);
+    }
+    if has_scope(scopes, oauth2_scopes::PHONE) {
+        claims.phone_number = user.phone.clone();
+        claims.phone_number_verified = Some(false);
+    }
 }
 
 fn build_id_token(
@@ -247,6 +327,7 @@ fn build_id_token(
     scopes: &[String],
     nonce: Option<String>,
     client_id: &str,
+    auth_time: i64,
 ) -> Result<String, AppError> {
     let now = Utc::now();
     let mut claims = IdTokenClaims {
@@ -255,7 +336,7 @@ fn build_id_token(
         aud: client_id.to_string(),
         exp: (now + TimeDelta::minutes(state.config.oauth2.access_token_ttl_minutes)).timestamp(),
         iat: now.timestamp(),
-        auth_time: now.timestamp(),
+        auth_time,
         nonce,
         name: None,
         nickname: None,
@@ -266,19 +347,7 @@ fn build_id_token(
         phone_number_verified: None,
     };
 
-    if scopes.contains(&oauth2_scopes::PROFILE.to_string()) {
-        claims.name = Some(user.username.clone());
-        claims.nickname = user.nickname.clone();
-        claims.picture = user.avatar_url.clone();
-    }
-    if scopes.contains(&oauth2_scopes::EMAIL.to_string()) {
-        claims.email = Some(user.email.clone());
-        claims.email_verified = Some(user.email_verified);
-    }
-    if scopes.contains(&oauth2_scopes::PHONE.to_string()) {
-        claims.phone_number = user.phone.clone();
-        claims.phone_number_verified = Some(user.phone.is_some());
-    }
+    apply_scope_claims(&mut claims, user, scopes);
 
     jwt::sign_id_token(&claims, &state.jwt_keys)
 }

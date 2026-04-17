@@ -1,7 +1,6 @@
 use crate::domains::identity::models::{
     CreateUserRequest, RegisterRequest, TokenResponse, UserDTO,
 };
-use crate::domains::identity::repos::{IdentityRepo, UserRepo};
 use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedJson;
 use crate::shared::response::ApiResponse;
@@ -25,24 +24,17 @@ pub async fn register(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
-    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email)
-        .await?;
-
-    let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
-
-    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
-    let user = UserRepo::create(
-        &mut *tx,
+    let mut tx = state.db.begin().await?;
+    let user = crate::domains::identity::helpers::create_user_with_password(
+        &mut tx,
         &req.username,
         &req.email,
         req.phone.as_deref(),
         req.nickname.as_deref(),
-        Some(&password_hash),
+        &req.password,
     )
     .await?;
-
-    IdentityRepo::create_password(&mut *tx, user.id, &password_hash).await?;
-    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.commit().await?;
 
     let token_response = crate::domains::identity::helpers::issue_tokens(&state, &user).await?;
     Ok(Json(ApiResponse::success(token_response)))
@@ -64,24 +56,17 @@ pub async fn create_user(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    crate::domains::identity::helpers::validate_new_user(&state.db, &req.username, &req.email)
-        .await?;
-
-    let password_hash = crate::domains::identity::helpers::hash_password(&req.password)?;
-
-    let mut tx = state.db.begin().await.map_err(|e| AppError::Internal(e.to_string()))?;
-    let user = UserRepo::create(
-        &mut *tx,
+    let mut tx = state.db.begin().await?;
+    let user = crate::domains::identity::helpers::create_user_with_password(
+        &mut tx,
         &req.username,
         &req.email,
         req.phone.as_deref(),
         req.nickname.as_deref(),
-        Some(&password_hash),
+        &req.password,
     )
     .await?;
-
-    IdentityRepo::create_password(&mut *tx, user.id, &password_hash).await?;
-    tx.commit().await.map_err(|e| AppError::Internal(e.to_string()))?;
+    tx.commit().await?;
 
     Ok(Json(ApiResponse::success(user.into())))
 }

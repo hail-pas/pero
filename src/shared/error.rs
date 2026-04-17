@@ -1,7 +1,7 @@
 use crate::shared::response::ApiResponse;
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -57,9 +57,16 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status_code();
+        let message = match &self {
+            AppError::Internal(detail) => {
+                tracing::error!(internal_error = %detail, "internal server error");
+                "internal server error".to_string()
+            }
+            _ => self.to_string(),
+        };
         let body = ApiResponse::<()> {
             code: self.error_code(),
-            message: self.to_string(),
+            message,
             data: None,
         };
         (status, Json(body)).into_response()
@@ -74,15 +81,22 @@ impl From<sqlx::Error> for AppError {
                     AppError::Conflict("duplicate key value violates unique constraint".into())
                 }
                 Some("23503") => AppError::BadRequest("referenced record not found".into()),
-                _ => AppError::Internal(err.to_string()),
+                _ => {
+                    tracing::error!(error = %err, "database error");
+                    AppError::Internal("database error".into())
+                }
             },
-            _ => AppError::Internal(err.to_string()),
+            _ => {
+                tracing::error!(error = %err, "database error");
+                AppError::Internal("database error".into())
+            }
         }
     }
 }
 
 impl From<redis::RedisError> for AppError {
     fn from(err: redis::RedisError) -> Self {
-        AppError::Internal(err.to_string())
+        tracing::error!(error = %err, "redis error");
+        AppError::Internal("cache error".into())
     }
 }

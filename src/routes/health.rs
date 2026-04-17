@@ -1,7 +1,6 @@
 use crate::shared::response::ApiResponse;
 use axum::Json;
 use serde::Serialize;
-use utoipa;
 use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]

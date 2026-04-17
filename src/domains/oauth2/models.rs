@@ -5,21 +5,13 @@ use uuid::Uuid;
 use validator::Validate;
 
 use crate::shared::constants::oauth2::{self as oauth2_constants, scopes as oauth2_scopes};
+use crate::shared::error::AppError;
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantType {
     AuthorizationCode,
     RefreshToken,
-}
-
-impl GrantType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            GrantType::AuthorizationCode => "authorization_code",
-            GrantType::RefreshToken => "refresh_token",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -33,15 +25,11 @@ pub enum ResponseType {
 pub enum CodeChallengeMethod {
     #[default]
     S256,
-    Plain,
 }
 
 impl CodeChallengeMethod {
     pub fn as_str(&self) -> &'static str {
-        match self {
-            CodeChallengeMethod::S256 => "S256",
-            CodeChallengeMethod::Plain => "plain",
-        }
+        "S256"
     }
 }
 
@@ -58,6 +46,17 @@ pub struct OAuth2Client {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl OAuth2Client {
+    pub fn verify_secret(&self, secret: &str) -> Result<bool, AppError> {
+        bcrypt::verify(secret, &self.client_secret_hash)
+            .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))
+    }
+
+    pub fn allows_grant_type(&self, grant_type: &str) -> bool {
+        self.grant_types.iter().any(|value| value == grant_type)
+    }
 }
 
 #[derive(Debug, Serialize, Clone, ToSchema)]
@@ -125,6 +124,7 @@ pub struct UpdateClientRequest {
     pub client_name: Option<String>,
     #[validate(custom(function = "crate::shared::validation::validate_redirect_uris"))]
     pub redirect_uris: Option<Vec<String>>,
+    #[validate(length(min = 1))]
     pub scopes: Option<Vec<String>>,
     pub enabled: Option<bool>,
 }
@@ -199,6 +199,7 @@ pub struct AuthorizationCode {
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
     pub nonce: Option<String>,
+    pub auth_time: i64,
     pub expires_at: DateTime<Utc>,
     pub used: bool,
     pub created_at: DateTime<Utc>,
@@ -212,6 +213,7 @@ pub struct RefreshToken {
     pub user_id: Uuid,
     pub refresh_token: String,
     pub scopes: Vec<String>,
+    pub auth_time: i64,
     pub expires_at: DateTime<Utc>,
     pub revoked: bool,
     pub created_at: DateTime<Utc>,

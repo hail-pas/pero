@@ -96,7 +96,7 @@ async fn login_wrong_password() {
         hyper::Method::POST,
         "/api/identity/login",
         Some(serde_json::json!({
-            "username": fx.username,
+            "identifier": fx.username,
             "password": "wrongpassword1",
         })),
         None,
@@ -114,7 +114,7 @@ async fn login_nonexistent_user() {
         hyper::Method::POST,
         "/api/identity/login",
         Some(serde_json::json!({
-            "username": "nonexistent_user_12345",
+            "identifier": "nonexistent_user_12345",
             "password": "password123",
         })),
         None,
@@ -193,6 +193,110 @@ async fn update_me() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["nickname"], "Test Nickname");
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn update_me_patch_set_then_clear() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        "/api/users/me",
+        Some(serde_json::json!({
+            "nickname": "Nick1",
+            "phone": "+1234567890",
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["nickname"], "Nick1");
+    assert_eq!(body["data"]["phone"], "+1234567890");
+
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        "/api/users/me",
+        Some(serde_json::json!({
+            "nickname": null,
+            "phone": null,
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["data"]["nickname"].is_null());
+    assert!(body["data"]["phone"].is_null());
+
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        "/api/users/me",
+        Some(serde_json::json!({
+            "avatar_url": "https://example.com/avatar.png",
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["avatar_url"], "https://example.com/avatar.png");
+    assert!(
+        body["data"]["nickname"].is_null(),
+        "nickname should stay null"
+    );
+    assert!(body["data"]["phone"].is_null(), "phone should stay null");
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn update_user_patch_tristate() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    ta.grant_api_access(fx.user_id).await;
+
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        &format!("/api/users/{}", fx.user_id),
+        Some(serde_json::json!({
+            "nickname": "Admin Nick",
+            "phone": "+1111111111",
+            "status": 1,
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["nickname"], "Admin Nick");
+    assert_eq!(body["data"]["phone"], "+1111111111");
+    assert_eq!(body["data"]["status"], 1);
+
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        &format!("/api/users/{}", fx.user_id),
+        Some(serde_json::json!({
+            "nickname": null,
+            "status": 0,
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["data"]["nickname"].is_null(),
+        "nickname should be cleared"
+    );
+    assert_eq!(
+        body["data"]["phone"], "+1111111111",
+        "phone should be unchanged"
+    );
+    assert_eq!(body["data"]["status"], 0);
+
     ta.cleanup().await;
 }
 

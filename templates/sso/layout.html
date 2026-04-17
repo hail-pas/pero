@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Pero{% endblock %}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+            background: #f3f2f1;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: #fff;
+            max-width: 440px;
+            width: 100%;
+            padding: 44px 40px;
+            box-shadow: 0 2px 6px rgba(0,0,0,.08);
+        }
+        .logo {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 600;
+            color: #0078d4;
+            margin-bottom: 28px;
+        }
+        h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #323130;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #323130;
+            margin-bottom: 4px;
+        }
+        input[type="text"],
+        input[type="email"],
+        input[type="password"],
+        input[type="tel"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #605e5c;
+            border-radius: 2px;
+            font-size: 14px;
+            color: #323130;
+            outline: none;
+            margin-bottom: 16px;
+        }
+        input:focus {
+            border-color: #0078d4;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            background: #0078d4;
+            color: #fff;
+            border: none;
+            border-radius: 2px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+        }
+        .btn:hover { background: #106ebe; }
+        .links {
+            margin-top: 16px;
+            text-align: center;
+        }
+        .links a {
+            color: #0078d4;
+            font-size: 13px;
+            text-decoration: none;
+        }
+        .links a:hover { text-decoration: underline; }
+        .error-box {
+            background: #fde7e9;
+            color: #a80000;
+            padding: 10px 14px;
+            border-radius: 2px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+        .success-box {
+            background: #dff6dd;
+            color: #107c10;
+            padding: 10px 14px;
+            border-radius: 2px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 16px;
+            border-bottom: 1px solid #edebe9;
+        }
+        .tab {
+            padding: 8px 16px;
+            font-size: 14px;
+            color: #605e5c;
+            cursor: pointer;
+            border: none;
+            background: none;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+            color: #0078d4;
+            border-bottom-color: #0078d4;
+            font-weight: 600;
+        }
+        .scopes-list {
+            list-style: none;
+            margin: 12px 0 20px;
+            padding: 0;
+        }
+        .scopes-list li {
+            padding: 6px 0;
+            font-size: 14px;
+            color: #323130;
+            border-bottom: 1px solid #edebe9;
+        }
+        .btn-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .btn-row .btn { flex: 1; }
+        .btn-cancel {
+            background: #fff;
+            color: #323130;
+            border: 1px solid #8a8886;
+        }
+        .btn-cancel:hover { background: #f3f2f1; }
+        .client-name {
+            font-size: 15px;
+            color: #605e5c;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">Pero</div>
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

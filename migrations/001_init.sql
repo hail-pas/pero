@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS policies (
     priority INT NOT NULL DEFAULT 0,
     enabled BOOLEAN NOT NULL DEFAULT true,
     app_id UUID REFERENCES apps(id),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_policies_priority ON policies(priority);
 
@@ -106,6 +107,7 @@ CREATE TABLE IF NOT EXISTS oauth2_authorization_codes (
     code_challenge_method VARCHAR(16),
     expires_at TIMESTAMPTZ NOT NULL,
     used BOOLEAN NOT NULL DEFAULT false,
+    auth_time BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_auth_codes_client ON oauth2_authorization_codes(client_id);
@@ -120,6 +122,7 @@ CREATE TABLE IF NOT EXISTS oauth2_tokens (
     scopes TEXT[] NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked BOOLEAN NOT NULL DEFAULT false,
+    auth_time BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_tokens_refresh ON oauth2_tokens(refresh_token);

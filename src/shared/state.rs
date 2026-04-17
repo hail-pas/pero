@@ -10,4 +10,6 @@ pub struct AppState {
     pub cache: Pool,
     pub config: Arc<AppConfig>,
     pub jwt_keys: Arc<JwtKeys>,
+    pub discovery_doc: Arc<std::sync::OnceLock<serde_json::Value>>,
+    pub jwks_doc: Arc<std::sync::OnceLock<serde_json::Value>>,
 }

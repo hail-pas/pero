@@ -103,19 +103,22 @@ impl IdentityRepo {
         Ok(count)
     }
 
-    pub async fn update_credential(
-        pool: &PgPool,
+    pub async fn update_credential<'a, E>(
+        executor: E,
         user_id: Uuid,
         provider: &str,
         credential: &str,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let result = sqlx::query(
             "UPDATE identities SET credential = $1, updated_at = now() WHERE user_id = $2 AND provider = $3"
         )
         .bind(credential)
         .bind(user_id)
         .bind(provider)
-        .execute(pool)
+        .execute(executor)
         .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound("identity".into()));

@@ -20,7 +20,8 @@ pub async fn auth_middleware(
 
     let token = auth_header
         .strip_prefix(TOKEN_TYPE_BEARER_PREFIX)
-        .ok_or(AppError::Unauthorized)?;
+        .ok_or(AppError::Unauthorized)?
+        .trim();
 
     let claims = jwt::verify_token(token, &state.jwt_keys)?;
     req.extensions_mut().insert(claims);

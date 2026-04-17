@@ -2,6 +2,7 @@ use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
 use crate::shared::error::AppError;
+use crate::shared::pagination::validate_page;
 
 use super::super::models::{App, CreateAppRequest, UpdateAppRequest};
 
@@ -28,6 +29,12 @@ impl AppRepo {
             .map_err(Into::into)
     }
 
+    pub async fn find_by_id_or_err(pool: &PgPool, id: Uuid) -> Result<App, AppError> {
+        Self::find_by_id(pool, id)
+            .await?
+            .ok_or(AppError::NotFound("app".into()))
+    }
+
     pub async fn find_by_code(pool: &PgPool, code: &str) -> Result<Option<App>, AppError> {
         sqlx::query_as::<_, App>("SELECT * FROM apps WHERE code = $1")
             .bind(code)
@@ -41,7 +48,7 @@ impl AppRepo {
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<App>, i64), AppError> {
-        let offset = (page - 1) * page_size;
+        let offset = validate_page(page, page_size)?;
         let apps = sqlx::query_as::<_, App>(
             "SELECT * FROM apps ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )

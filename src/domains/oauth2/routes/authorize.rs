@@ -1,25 +1,26 @@
 use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::header;
 use axum::response::{IntoResponse, Redirect, Response};
+use validator::Validate;
 
-use crate::domains::identity::repos::UserRepo;
 use crate::domains::oauth2::models::AuthorizeQuery;
-use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo};
+use crate::domains::oauth2::repos::OAuth2ClientRepo;
+use crate::domains::sso::models::{AuthorizeParams, SsoSession};
+use crate::domains::sso::routes::login::set_session_cookie;
+use crate::domains::sso::session::{self, get_session_id};
+use crate::shared::constants::oauth2 as oauth2_constants;
 use crate::shared::error::AppError;
-use crate::shared::extractors::AuthUser;
-use crate::shared::extractors::ValidatedQuery;
 use crate::shared::state::AppState;
 
 pub async fn authorize(
     State(state): State<AppState>,
-    auth_user: AuthUser,
-    ValidatedQuery(query): ValidatedQuery<AuthorizeQuery>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<AuthorizeQuery>,
 ) -> Result<Response, AppError> {
-    let user = UserRepo::find_by_id(&state.db, auth_user.user_id)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-    if user.status != 1 {
-        return Err(AppError::Forbidden("account is disabled".into()));
-    }
+    query
+        .validate()
+        .map_err(|e: validator::ValidationErrors| AppError::Validation(e.to_string()))?;
 
     let client = OAuth2ClientRepo::find_by_client_id(&state.db, &query.client_id)
         .await?
@@ -27,6 +28,12 @@ pub async fn authorize(
 
     if !client.enabled {
         return Err(AppError::BadRequest("client is disabled".into()));
+    }
+    if !client.allows_grant_type(oauth2_constants::GRANT_TYPE_AUTH_CODE) {
+        return Err(AppError::BadRequest(format!(
+            "grant_type '{}' not allowed",
+            oauth2_constants::GRANT_TYPE_AUTH_CODE
+        )));
     }
 
     if !client.redirect_uris.contains(&query.redirect_uri) {
@@ -48,34 +55,40 @@ pub async fn authorize(
         }
     }
 
-    let scopes = if requested_scopes.is_empty() {
-        client.scopes.clone()
-    } else {
-        requested_scopes
+    let params = AuthorizeParams {
+        client_id: query.client_id,
+        redirect_uri: query.redirect_uri,
+        response_type: "code".into(),
+        scope: query.scope,
+        state: query.state,
+        code_challenge: query.code_challenge,
+        code_challenge_method: query.code_challenge_method.as_str().to_string(),
+        nonce: query.nonce,
     };
 
-    let method = query.code_challenge_method.as_str();
-
-    let code = uuid::Uuid::new_v4().to_string().replace('-', "");
-
-    AuthCodeRepo::create(
-        &state.db,
-        &code,
-        client.id,
-        auth_user.user_id,
-        &query.redirect_uri,
-        &scopes,
-        Some(&query.code_challenge),
-        Some(method),
-        query.nonce.as_deref(),
-        state.config.oauth2.auth_code_ttl_minutes,
-    )
-    .await?;
-
-    let mut redirect_url = format!("{}?code={}", query.redirect_uri, code);
-    if let Some(state_param) = &query.state {
-        redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
+    let existing_sid = get_session_id(&headers);
+    if let Some(sid) = existing_sid {
+        if let Some(mut existing) = session::get(&state.cache, &sid).await? {
+            if existing.authenticated && existing.user_id.is_some() {
+                existing.authorize_params = params;
+                session::update(&state.cache, &sid, &existing).await?;
+                return Ok(Redirect::to("/sso/consent").into_response());
+            }
+        }
     }
 
-    Ok(Redirect::temporary(&redirect_url).into_response())
+    let sso = SsoSession {
+        authorize_params: params,
+        user_id: None,
+        authenticated: false,
+        auth_time: None,
+    };
+
+    let session_id = session::create(&state.cache, &sso).await?;
+
+    let mut response = Redirect::to("/sso/login").into_response();
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, set_session_cookie(&session_id));
+    Ok(response)
 }

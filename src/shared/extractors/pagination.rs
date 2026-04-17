@@ -29,10 +29,10 @@ impl<S: Send + Sync> FromRequestParts<S> for Pagination {
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
         if pag.page < 1 {
-            pag.page = 1;
+            return Err(AppError::BadRequest("page must be >= 1".into()));
         }
         if pag.page_size < 1 {
-            pag.page_size = default_page_size();
+            return Err(AppError::BadRequest("page_size must be >= 1".into()));
         }
         if pag.page_size > MAX_PAGE_SIZE {
             pag.page_size = MAX_PAGE_SIZE;

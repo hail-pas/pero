@@ -14,6 +14,7 @@ pub struct Policy {
     pub enabled: bool,
     pub app_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone, ToSchema)]
@@ -139,6 +140,21 @@ pub struct CreateConditionRequest {
     pub operator: ConditionOperator,
     #[validate(length(min = 1, max = 1024))]
     pub value: String,
+}
+
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct EvaluateRequest {
+    #[validate(length(min = 1, max = 512))]
+    pub resource: String,
+    #[validate(length(min = 1, max = 32))]
+    pub action: String,
+    pub app_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EvaluateResponse {
+    pub allowed: bool,
+    pub effect: String,
 }
 
 fn default_enabled() -> bool {

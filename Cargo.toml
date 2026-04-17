@@ -62,6 +62,12 @@ urlencoding = "2"
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
+# Templating (SSO pages)
+askama = "0.15"
+
+# Password input (CLI bootstrap)
+rpassword = "7"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

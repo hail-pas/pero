@@ -15,6 +15,7 @@ impl RefreshTokenRepo {
         user_id: Uuid,
         refresh_token: &str,
         scopes: &[String],
+        auth_time: i64,
         ttl_days: i64,
     ) -> Result<RefreshToken, AppError>
     where
@@ -22,12 +23,13 @@ impl RefreshTokenRepo {
     {
         let expires_at = Utc::now() + TimeDelta::days(ttl_days);
         let token = sqlx::query_as::<_, RefreshToken>(
-            "INSERT INTO oauth2_tokens (client_id, user_id, refresh_token, scopes, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+            "INSERT INTO oauth2_tokens (client_id, user_id, refresh_token, scopes, auth_time, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
         )
         .bind(client_id)
         .bind(user_id)
         .bind(refresh_token)
         .bind(scopes)
+        .bind(auth_time)
         .bind(expires_at)
         .fetch_one(executor)
         .await?;
@@ -43,6 +45,22 @@ impl RefreshTokenRepo {
         )
         .bind(refresh_token)
         .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn find_and_revoke_by_token<'a, E>(
+        executor: E,
+        refresh_token: &str,
+    ) -> Result<Option<RefreshToken>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
+        sqlx::query_as::<_, RefreshToken>(
+            "UPDATE oauth2_tokens SET revoked = true WHERE refresh_token = $1 AND revoked = false AND expires_at > now() RETURNING *",
+        )
+        .bind(refresh_token)
+        .fetch_optional(executor)
         .await
         .map_err(Into::into)
     }
@@ -63,7 +81,7 @@ impl RefreshTokenRepo {
         refresh_token: &str,
     ) -> Result<Option<RefreshToken>, AppError> {
         sqlx::query_as::<_, RefreshToken>(
-            "SELECT * FROM oauth2_tokens WHERE refresh_token = $1 AND revoked = true AND expires_at > now()",
+            "SELECT * FROM oauth2_tokens WHERE refresh_token = $1 AND revoked = true AND expires_at > now() - interval '30 days'",
         )
         .bind(refresh_token)
         .fetch_optional(pool)

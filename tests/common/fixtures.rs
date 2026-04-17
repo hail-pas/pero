@@ -73,11 +73,7 @@ impl TestApp {
         let app_id: uuid::Uuid = body["data"]["id"].as_str().unwrap().parse().unwrap();
         self.track_app(app_id);
 
-        AppFixture {
-            app_id,
-            name,
-            code,
-        }
+        AppFixture { app_id, name, code }
     }
 
     pub async fn create_test_client(
@@ -99,7 +95,11 @@ impl TestApp {
             Some(token),
         )
         .await;
-        assert_eq!(status, hyper::StatusCode::OK, "create client failed: {body:?}");
+        assert_eq!(
+            status,
+            hyper::StatusCode::OK,
+            "create client failed: {body:?}"
+        );
         let client_id: uuid::Uuid = body["data"]["client"]["id"]
             .as_str()
             .unwrap()
@@ -139,11 +139,30 @@ impl TestApp {
             Some(token),
         )
         .await;
-        assert_eq!(status, hyper::StatusCode::OK, "create policy failed: {body:?}");
+        assert_eq!(
+            status,
+            hyper::StatusCode::OK,
+            "create policy failed: {body:?}"
+        );
         let policy_id: uuid::Uuid = body["data"]["id"].as_str().unwrap().parse().unwrap();
         self.track_policy(policy_id);
 
         PolicyFixture { policy_id, name }
+    }
+
+    pub async fn create_test_app_direct(&mut self) -> AppFixture {
+        let name = unique_name("fxapp");
+        let code = unique_name("fxappcode");
+        let app_id: uuid::Uuid =
+            sqlx::query_scalar("INSERT INTO apps (name, code) VALUES ($1, $2) RETURNING id")
+                .bind(&name)
+                .bind(&code)
+                .fetch_one(&self.db)
+                .await
+                .expect("failed to create test app directly");
+        self.track_app(app_id);
+
+        AppFixture { app_id, name, code }
     }
 
     pub async fn grant_api_access(&mut self, user_id: uuid::Uuid) {
@@ -210,7 +229,11 @@ pub async fn register_user_inner(
         None,
     )
     .await;
-    assert_eq!(status, hyper::StatusCode::OK, "register failed: {status} {body:?}");
+    assert_eq!(
+        status,
+        hyper::StatusCode::OK,
+        "register failed: {status} {body:?}"
+    );
     let data = body["data"]
         .as_object()
         .expect("missing data in register response");
@@ -236,13 +259,17 @@ pub async fn login_user_inner(app: &mut axum::Router, username: &str, password: 
         hyper::Method::POST,
         "/api/identity/login",
         Some(serde_json::json!({
-            "username": username,
+            "identifier": username,
             "password": password,
         })),
         None,
     )
     .await;
-    assert_eq!(status, hyper::StatusCode::OK, "login failed: {status} {body:?}");
+    assert_eq!(
+        status,
+        hyper::StatusCode::OK,
+        "login failed: {status} {body:?}"
+    );
     body["data"]["access_token"]
         .as_str()
         .expect("missing access_token")

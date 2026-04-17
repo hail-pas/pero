@@ -1,5 +1,8 @@
 use super::models::{EvalContext, PolicyCondition};
+use regex::RegexBuilder;
 use std::collections::HashMap;
+
+const REGEX_SIZE_LIMIT: usize = 1024;
 
 pub fn eval_condition(
     cond: &PolicyCondition,
@@ -50,8 +53,13 @@ pub fn evaluate(
     for (_, conditions) in policies {
         for cond in conditions {
             if cond.operator == "regex" && !regex_cache.contains_key(&cond.value) {
-                if let Ok(re) = regex::Regex::new(&cond.value) {
-                    regex_cache.insert(cond.value.clone(), re);
+                if cond.value.len() <= REGEX_SIZE_LIMIT {
+                    if let Ok(re) = RegexBuilder::new(&cond.value)
+                        .size_limit(REGEX_SIZE_LIMIT * 10)
+                        .build()
+                    {
+                        regex_cache.insert(cond.value.clone(), re);
+                    }
                 }
             }
         }

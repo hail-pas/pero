@@ -77,9 +77,7 @@ pub async fn get_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
-    let app = AppRepo::find_by_id(&state.db, id)
-        .await?
-        .ok_or(AppError::NotFound("app".into()))?;
+    let app = AppRepo::find_by_id_or_err(&state.db, id).await?;
     Ok(Json(ApiResponse::success(app.into())))
 }
 

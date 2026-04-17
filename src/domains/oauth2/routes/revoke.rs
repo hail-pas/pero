@@ -34,13 +34,15 @@ pub async fn revoke(
     let client = OAuth2ClientRepo::find_by_client_id(&state.db, client_id_str)
         .await?
         .ok_or(AppError::BadRequest("invalid client_id".into()))?;
-    let valid = bcrypt::verify(client_secret, &client.client_secret_hash)
-        .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))?;
+    let valid = client.verify_secret(client_secret)?;
     if !valid {
         return Err(AppError::Unauthorized);
     }
 
     if let Some(token) = RefreshTokenRepo::find_by_token(&state.db, &req.token).await? {
+        if token.client_id != client.id {
+            return Err(AppError::Unauthorized);
+        }
         RefreshTokenRepo::revoke(&state.db, token.id).await?;
     }
     Ok(StatusCode::OK.into_response())

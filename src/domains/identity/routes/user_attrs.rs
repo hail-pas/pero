@@ -7,7 +7,6 @@ use crate::shared::response::ApiResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
-use redis::AsyncCommands;
 use utoipa;
 
 #[utoipa::path(
@@ -98,25 +97,6 @@ pub async fn delete_attribute(
 }
 
 async fn invalidate_user_abac_cache(state: &AppState, user_id: uuid::Uuid) -> Result<(), AppError> {
-    let mut conn = state.cache.get().await.map_err(|e| AppError::Internal(e.to_string()))?;
     let pattern = format!("{}{}:*", cache_keys::ABAC_PREFIX, user_id);
-    let mut cursor: u64 = 0;
-    loop {
-        let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-            .arg(cursor)
-            .arg("MATCH")
-            .arg(&pattern)
-            .arg("COUNT")
-            .arg(100)
-            .query_async(&mut *conn)
-            .await?;
-        if !keys.is_empty() {
-            let _: () = conn.del(&keys).await?;
-        }
-        cursor = new_cursor;
-        if cursor == 0 {
-            break;
-        }
-    }
-    Ok(())
+    crate::cache::delete_by_pattern(&state.cache, &pattern).await
 }

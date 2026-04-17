@@ -1,5 +1,5 @@
 use crate::domains::identity::models::ChangePasswordRequest;
-use crate::domains::identity::repos::{IdentityRepo, UserRepo};
+use crate::domains::identity::repos::IdentityRepo;
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, ValidatedJson};
@@ -42,10 +42,21 @@ pub async fn change_password(
         return Err(AppError::BadRequest("old password is incorrect".into()));
     }
 
+    req.validate_same_password()?;
+
     let new_hash = crate::domains::identity::helpers::hash_password(&req.new_password)?;
 
-    UserRepo::update_password_hash(&state.db, auth_user.user_id, &new_hash).await?;
-    IdentityRepo::update_credential(&state.db, auth_user.user_id, PROVIDER_PASSWORD, &new_hash).await?;
+    let mut tx = state.db.begin().await?;
+    IdentityRepo::update_credential(&mut *tx, auth_user.user_id, PROVIDER_PASSWORD, &new_hash)
+        .await?;
+    tx.commit().await?;
+
+    if let Err(e) =
+        crate::cache::session::revoke_refresh_token(&state.cache, &auth_user.user_id.to_string())
+            .await
+    {
+        tracing::warn!(error = %e, "failed to revoke refresh token after password change");
+    }
 
     Ok(Json(ApiResponse::<()>::success_message("password changed")))
 }

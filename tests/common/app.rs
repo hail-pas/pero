@@ -70,6 +70,8 @@ pub async fn build_app() -> TestApp {
         cache: cache.clone(),
         config: config.clone(),
         jwt_keys: jwt_keys.clone(),
+        discovery_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
+        jwks_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
     });
 
     TestApp {
@@ -90,6 +92,8 @@ pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static
         cache: cache.clone(),
         config: config.clone(),
         jwt_keys: jwt_keys.clone(),
+        discovery_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
+        jwks_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
     });
     (router, guard)
 }
@@ -101,6 +105,26 @@ pub struct TestApp {
     pub config: Arc<AppConfig>,
     cleanup: Vec<CleanupItem>,
     _guard: tokio::runtime::EnterGuard<'static>,
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        if self.cleanup.is_empty() {
+            return;
+        }
+        let db = self.db.clone();
+        let items: Vec<CleanupItem> = self.cleanup.drain(..).collect();
+        tokio::spawn(async move {
+            for item in items {
+                match item {
+                    CleanupItem::Client(id) => cleanup_client(&db, id).await,
+                    CleanupItem::Policy(id) => cleanup_policy(&db, id).await,
+                    CleanupItem::App(id) => cleanup_app(&db, id).await,
+                    CleanupItem::User(id) => cleanup_user(&db, id).await,
+                }
+            }
+        });
+    }
 }
 
 impl TestApp {

@@ -38,7 +38,7 @@ pub async fn userinfo(
         serde_json::Value::String(user.id.to_string()),
     );
 
-    if scopes.contains(&oauth2_scopes::PROFILE) || scopes.is_empty() {
+    if scopes.contains(&oauth2_scopes::PROFILE) {
         claims.insert(
             "name".to_string(),
             serde_json::Value::String(user.username.clone()),
@@ -57,15 +57,18 @@ pub async fn userinfo(
         }
     }
 
-    if scopes.contains(&oauth2_scopes::EMAIL) || scopes.is_empty() {
+    if scopes.contains(&oauth2_scopes::EMAIL) {
         claims.insert(
             oauth2_scopes::EMAIL.to_string(),
             serde_json::Value::String(user.email.clone()),
         );
-        claims.insert("email_verified".to_string(), serde_json::Value::Bool(user.email_verified));
+        claims.insert(
+            "email_verified".to_string(),
+            serde_json::Value::Bool(user.email_verified),
+        );
     }
 
-    if scopes.contains(&oauth2_scopes::PHONE) || scopes.is_empty() {
+    if scopes.contains(&oauth2_scopes::PHONE) {
         if let Some(phone) = &user.phone {
             claims.insert(
                 "phone_number".to_string(),
@@ -73,7 +76,7 @@ pub async fn userinfo(
             );
             claims.insert(
                 "phone_number_verified".to_string(),
-                serde_json::Value::Bool(true),
+                serde_json::Value::Bool(false),
             );
         }
     }

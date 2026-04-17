@@ -25,9 +25,18 @@ async fn main() {
         cache: cache_pool,
         config: Arc::new(cfg),
         jwt_keys: Arc::new(jwt_keys),
+        discovery_doc: Arc::new(std::sync::OnceLock::new()),
+        jwks_doc: Arc::new(std::sync::OnceLock::new()),
     };
 
-    let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
+    let addr = if state.config.server.host.contains(':') {
+        format!(
+            "[{}]:{}",
+            state.config.server.host, state.config.server.port
+        )
+    } else {
+        format!("{}:{}", state.config.server.host, state.config.server.port)
+    };
 
     let app = pero::app::build_router(state);
 
@@ -36,5 +45,36 @@ async fn main() {
         .expect("Failed to bind address");
 
     tracing::info!("Server listening on {}", addr);
-    axum::serve(listener, app).await.expect("Server error");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("Server error");
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            tracing::info!("received Ctrl+C, shutting down");
+        },
+        _ = terminate => {
+            tracing::info!("received SIGTERM, shutting down");
+        },
+    }
 }

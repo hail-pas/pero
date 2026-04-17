@@ -47,17 +47,21 @@ impl UserAttributeRepo {
         user_id: uuid::Uuid,
         items: &[AttributeItem],
     ) -> Result<(), AppError> {
-        for item in items {
-            sqlx::query(
-                "INSERT INTO user_attributes (user_id, key, value) VALUES ($1, $2, $3)
-                 ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
-            )
-            .bind(user_id)
-            .bind(&item.key)
-            .bind(&item.value)
-            .execute(pool)
-            .await?;
+        if items.is_empty() {
+            return Ok(());
         }
+        let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
+        let values: Vec<&str> = items.iter().map(|i| i.value.as_str()).collect();
+        sqlx::query(
+            "INSERT INTO user_attributes (user_id, key, value)
+             SELECT $1, k, v FROM UNNEST($2::text[], $3::text[]) AS t(k, v)
+             ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(user_id)
+        .bind(&keys)
+        .bind(&values)
+        .execute(pool)
+        .await?;
         Ok(())
     }
 

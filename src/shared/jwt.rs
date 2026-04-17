@@ -3,12 +3,13 @@ use crate::shared::constants::jwt as jwt_constants;
 use crate::shared::error::AppError;
 use base64::Engine;
 use chrono::{TimeDelta, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TokenClaims {
     pub sub: String,
+    pub iss: String,
     pub roles: Vec<String>,
     pub exp: i64,
     pub iat: i64,
@@ -48,6 +49,7 @@ pub struct JwtKeys {
     decoding_key: DecodingKey,
     public_n: String,
     public_e: String,
+    issuer: String,
 }
 
 impl JwtKeys {
@@ -79,6 +81,7 @@ impl JwtKeys {
             decoding_key,
             public_n,
             public_e,
+            issuer: oidc_config.issuer.clone(),
         })
     }
 
@@ -104,6 +107,7 @@ pub fn sign_access_token(
     let now = Utc::now();
     let claims = TokenClaims {
         sub: user_id.to_string(),
+        iss: keys.issuer.clone(),
         roles,
         exp: (now + TimeDelta::minutes(ttl_minutes)).timestamp(),
         iat: now.timestamp(),
@@ -116,9 +120,14 @@ pub fn sign_access_token(
 }
 
 pub fn verify_token(token: &str, keys: &JwtKeys) -> Result<TokenClaims, AppError> {
-    let validation = Validation::new(jsonwebtoken::Algorithm::RS256);
-    let token_data = decode::<TokenClaims>(token, &keys.decoding_key, &validation)
-        .map_err(|_| AppError::Unauthorized)?;
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.validate_aud = false;
+    validation.set_issuer(&[&keys.issuer]);
+    let token_data =
+        decode::<TokenClaims>(token, &keys.decoding_key, &validation).map_err(|e| {
+            tracing::warn!(error = %e, "JWT verification failed");
+            AppError::Unauthorized
+        })?;
     Ok(token_data.claims)
 }
 

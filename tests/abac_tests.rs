@@ -122,7 +122,11 @@ async fn assign_unassign_policy() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let items = body["data"].as_array().unwrap();
-    assert!(items.iter().any(|p| p["id"] == policy_fx.policy_id.to_string()));
+    assert!(
+        items
+            .iter()
+            .any(|p| p["id"] == policy_fx.policy_id.to_string())
+    );
 
     let (status, _) = send_request(
         &mut ta.app,

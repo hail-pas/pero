@@ -1,6 +1,6 @@
+use crate::cache::session;
 use crate::domains::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
 use crate::domains::identity::repos::UserRepo;
-use crate::cache::session;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
@@ -23,9 +23,7 @@ pub async fn get_me(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let user = UserRepo::find_by_id(&state.db, auth_user.user_id)
-        .await?
-        .ok_or(AppError::NotFound("user".into()))?;
+    let user = UserRepo::find_by_id_or_err(&state.db, auth_user.user_id).await?;
     Ok(Json(ApiResponse::success(user.into())))
 }
 
@@ -45,14 +43,7 @@ pub async fn update_me(
     auth_user: AuthUser,
     ValidatedJson(req): ValidatedJson<UpdateMeRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let user = UserRepo::update_me(
-        &state.db,
-        auth_user.user_id,
-        req.nickname.as_deref(),
-        req.avatar_url.as_deref(),
-        req.phone.as_deref(),
-    )
-    .await?;
+    let user = UserRepo::update_me(&state.db, auth_user.user_id, &req).await?;
     Ok(Json(ApiResponse::success(user.into())))
 }
 
@@ -99,9 +90,7 @@ pub async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let user = UserRepo::find_by_id(&state.db, id)
-        .await?
-        .ok_or(AppError::NotFound("user".into()))?;
+    let user = UserRepo::find_by_id_or_err(&state.db, id).await?;
     Ok(Json(ApiResponse::success(user.into())))
 }
 
@@ -125,25 +114,19 @@ pub async fn update_user(
     Path(id): Path<uuid::Uuid>,
     ValidatedJson(input): ValidatedJson<UpdateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
+    let mut tx = state.db.begin().await?;
+
     crate::domains::identity::helpers::validate_update_user(
-        &state.db,
+        &mut *tx,
         id,
         input.username.as_deref(),
         input.email.as_deref(),
     )
     .await?;
 
-    let user = UserRepo::update(
-        &state.db,
-        id,
-        input.username.as_deref(),
-        input.email.as_deref(),
-        input.phone.as_deref(),
-        input.nickname.as_deref(),
-        input.avatar_url.as_deref(),
-        input.status,
-    )
-    .await?;
+    let user = UserRepo::update(&mut *tx, id, &input).await?;
+
+    tx.commit().await?;
     Ok(Json(ApiResponse::success(user.into())))
 }
 

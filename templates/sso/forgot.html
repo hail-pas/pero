@@ -1,0 +1,21 @@
+{% extends "sso/layout.html" %}
+
+{% block title %}Forgot password - Pero{% endblock %}
+
+{% block content %}
+<h2>Reset your password</h2>
+{% if let Some(e) = error %}
+<div class="error-box">{{ e }}</div>
+{% endif %}
+{% if let Some(s) = success %}
+<div class="success-box">{{ s }}</div>
+{% endif %}
+<form method="post" action="/sso/forgot-password?{{ query_params }}">
+    <label for="email">Email</label>
+    <input type="email" name="email" id="email" value="{{ email }}" required>
+    <button type="submit" class="btn">Send reset link</button>
+</form>
+<div class="links">
+    <a href="/sso/login?{{ query_params }}">Back to sign in</a>
+</div>
+{% endblock %}

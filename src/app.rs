@@ -1,7 +1,7 @@
 use crate::shared::constants::headers::X_REQUEST_ID;
 use crate::shared::state::AppState;
-use axum::http::header;
 use axum::Router;
+use axum::http::header;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -35,6 +35,35 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/oauth2/keys",
             get(crate::domains::oidc::routes::jwks::jwks),
+        )
+        .route(
+            "/oauth2/authorize",
+            get(crate::domains::oauth2::routes::authorize::authorize),
+        )
+        .route(
+            "/sso/login",
+            get(crate::domains::sso::routes::login::login_get)
+                .post(crate::domains::sso::routes::login::login_post),
+        )
+        .route(
+            "/sso/register",
+            get(crate::domains::sso::routes::register::register_get)
+                .post(crate::domains::sso::routes::register::register_post),
+        )
+        .route(
+            "/sso/consent",
+            get(crate::domains::sso::routes::consent::consent_get)
+                .post(crate::domains::sso::routes::consent::consent_post),
+        )
+        .route(
+            "/sso/forgot-password",
+            get(crate::domains::sso::routes::forgot::forgot_get)
+                .post(crate::domains::sso::routes::forgot::forgot_post),
+        )
+        .route(
+            "/sso/change-password",
+            get(crate::domains::sso::routes::change_password::change_password_get)
+                .post(crate::domains::sso::routes::change_password::change_password_post),
         );
 
     let auth_only = Router::new()
@@ -43,12 +72,12 @@ pub fn build_router(state: AppState) -> Router {
             post(crate::domains::identity::routes::login::logout),
         )
         .route(
-            "/oauth2/authorize",
-            get(crate::domains::oauth2::routes::authorize::authorize),
-        )
-        .route(
             "/oauth2/userinfo",
             get(crate::domains::oidc::routes::userinfo::userinfo),
+        )
+        .route(
+            "/api/abac/evaluate",
+            post(crate::domains::abac::routes::evaluate::evaluate),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -127,6 +156,32 @@ pub fn build_router(state: AppState) -> Router {
             crate::shared::middleware::auth::auth_middleware,
         ));
 
+    let client_api = Router::new()
+        .route(
+            "/api/client/policies",
+            post(crate::domains::abac::routes::client_policies::create_policy)
+                .get(crate::domains::abac::routes::client_policies::list_policies),
+        )
+        .route(
+            "/api/client/policies/{id}",
+            get(crate::domains::abac::routes::client_policies::get_policy)
+                .put(crate::domains::abac::routes::client_policies::update_policy)
+                .delete(crate::domains::abac::routes::client_policies::delete_policy),
+        )
+        .route(
+            "/api/client/users/{user_id}/policies",
+            get(crate::domains::abac::routes::client_policies::list_user_policies),
+        )
+        .route(
+            "/api/client/users/{user_id}/policies/{policy_id}",
+            post(crate::domains::abac::routes::client_policies::assign_policy)
+                .delete(crate::domains::abac::routes::client_policies::unassign_policy),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::shared::middleware::client_auth::client_credentials_middleware,
+        ));
+
     let identity_public = Router::new()
         .route(
             "/api/identity/register",
@@ -176,6 +231,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(authorized)
         .merge(identity_public)
         .merge(identity_authed)
+        .merge(client_api)
         .merge(SwaggerUi::new("/docs").url("/openapi.json", openapi))
         .with_state(state.clone())
         .layer(cors)
@@ -213,18 +269,6 @@ pub fn build_router(state: AppState) -> Router {
         ))
         // CatchPanicLayer: convert panics into 500 responses
         .layer(CatchPanicLayer::new())
-        .layer({
-            let burst = state.config.server.rate_limit_burst as usize;
-            let rps = state.config.server.rate_limit_rps;
-            let limiter = std::sync::Arc::new(tokio::sync::Semaphore::new(burst));
-            crate::shared::middleware::rate_limit::spawn_refill_task(limiter.clone(), burst, rps);
-            tower::layer::layer_fn(move |service| {
-                crate::shared::middleware::rate_limit::RateLimit {
-                    inner: service,
-                    limiter: limiter.clone(),
-                }
-            })
-        })
         // NormalizePathLayer: merge/trim trailing slashes
         .layer(NormalizePathLayer::trim_trailing_slash())
 }
@@ -234,34 +278,58 @@ fn build_cors(cfg: &crate::config::CorsConfig) -> CorsLayer {
     let mut layer = CorsLayer::new();
 
     if cfg.allow_origins.is_empty() {
+        tracing::warn!("CORS allow_origins is empty, denying all cross-origin requests");
+    } else if cfg.allow_origins.iter().any(|o| o == "*") {
         layer = layer.allow_origin(Any);
     } else {
         let origins: Vec<_> = cfg
             .allow_origins
             .iter()
-            .filter_map(|o| o.parse().ok())
+            .filter_map(|o| {
+                let parsed = o.parse().ok();
+                if parsed.is_none() {
+                    tracing::warn!(origin = %o, "invalid CORS origin, ignoring");
+                }
+                parsed
+            })
             .collect();
-        layer = layer.allow_origin(origins);
+        if !origins.is_empty() {
+            layer = layer.allow_origin(origins);
+        }
     }
 
     if cfg.allow_methods.is_empty() {
+        tracing::warn!("CORS allow_methods is empty, using default methods");
         layer = layer.allow_methods(Any);
     } else {
         let methods: Vec<_> = cfg
             .allow_methods
             .iter()
-            .filter_map(|m| m.parse::<Method>().ok())
+            .filter_map(|m| {
+                let parsed = m.parse::<Method>().ok();
+                if parsed.is_none() {
+                    tracing::warn!(method = %m, "invalid CORS method, ignoring");
+                }
+                parsed
+            })
             .collect();
         layer = layer.allow_methods(methods);
     }
 
     if cfg.allow_headers.is_empty() {
+        tracing::warn!("CORS allow_headers is empty, using default headers");
         layer = layer.allow_headers(Any);
     } else {
         let headers: Vec<_> = cfg
             .allow_headers
             .iter()
-            .filter_map(|h| h.parse::<HeaderName>().ok())
+            .filter_map(|h| {
+                let parsed = h.parse::<HeaderName>().ok();
+                if parsed.is_none() {
+                    tracing::warn!(header = %h, "invalid CORS header, ignoring");
+                }
+                parsed
+            })
             .collect();
         layer = layer.allow_headers(headers);
     }

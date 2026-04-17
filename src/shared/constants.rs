@@ -7,6 +7,7 @@ pub mod cache_keys {
     pub const REFRESH_TOKEN_PREFIX: &str = "refresh_token:";
     pub const REFRESH_TOKEN_PREV_PREFIX: &str = "refresh_token_prev:";
     pub const ABAC_PREFIX: &str = "abac:";
+    pub const PASSWORD_RESET_PREFIX: &str = "password_reset:";
 }
 
 pub mod identity {
@@ -22,7 +23,6 @@ pub mod oauth2 {
     pub const TOKEN_TYPE_BEARER: &str = "Bearer";
     pub const TOKEN_TYPE_BEARER_PREFIX: &str = "Bearer ";
     pub const PKCE_METHOD_S256: &str = "S256";
-    pub const PKCE_METHOD_PLAIN: &str = "plain";
 
     pub mod scopes {
         pub const OPENID: &str = "openid";

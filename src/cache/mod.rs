@@ -90,11 +90,16 @@ impl managed::Manager for RedisManager {
             .ping_counter
             .fetch_add(1, Ordering::Relaxed)
             .to_string();
-        redis::cmd("PING")
+        let response: String = redis::cmd("PING")
             .arg(&ping)
-            .query_async::<String>(conn)
+            .query_async(conn)
             .await
             .map_err(|e| managed::RecycleError::Message(std::borrow::Cow::Owned(e.to_string())))?;
+        if response != ping {
+            return Err(managed::RecycleError::Message(std::borrow::Cow::Borrowed(
+                "PING response mismatch",
+            )));
+        }
         Ok(())
     }
 }
@@ -118,20 +123,20 @@ pub async fn init_pool(cfg: &RedisConfig) -> Result<Pool, AppError> {
     Ok(pool)
 }
 
-pub async fn get(pool: &Pool, key: &str) -> Result<Option<String>, AppError> {
-    let mut conn = pool
-        .get()
+async fn acquire(pool: &Pool) -> Result<managed::Object<RedisManager>, AppError> {
+    pool.get()
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(e.to_string()))
+}
+
+pub async fn get(pool: &Pool, key: &str) -> Result<Option<String>, AppError> {
+    let mut conn = acquire(pool).await?;
     let result: Option<String> = redis::cmd("GET").arg(key).query_async(&mut *conn).await?;
     Ok(result)
 }
 
 pub async fn set(pool: &Pool, key: &str, value: &str, ttl_seconds: i64) -> Result<(), AppError> {
-    let mut conn = pool
-        .get()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut conn = acquire(pool).await?;
     redis::cmd("SET")
         .arg(key)
         .arg(value)
@@ -143,10 +148,7 @@ pub async fn set(pool: &Pool, key: &str, value: &str, ttl_seconds: i64) -> Resul
 }
 
 pub async fn del(pool: &Pool, key: &str) -> Result<(), AppError> {
-    let mut conn = pool
-        .get()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut conn = acquire(pool).await?;
     redis::cmd("DEL")
         .arg(key)
         .query_async::<()>(&mut *conn)
@@ -178,4 +180,28 @@ pub async fn set_json<T: serde::Serialize>(
     let json_str = serde_json::to_string(value)
         .map_err(|e| AppError::Internal(format!("cache serialize error: {e}")))?;
     set(pool, key, &json_str, ttl_seconds).await
+}
+
+pub async fn delete_by_pattern(pool: &Pool, pattern: &str) -> Result<(), AppError> {
+    use redis::AsyncCommands;
+    let mut conn = acquire(pool).await?;
+    let mut cursor: u64 = 0;
+    loop {
+        let (new_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(&mut *conn)
+            .await?;
+        if !keys.is_empty() {
+            let _: () = conn.del(&keys).await?;
+        }
+        cursor = new_cursor;
+        if cursor == 0 {
+            break;
+        }
+    }
+    Ok(())
 }

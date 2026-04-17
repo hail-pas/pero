@@ -26,28 +26,24 @@ pub async fn login(
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
     use crate::domains::identity::models::IdentifierType;
-    match req.identifier_type {
-        IdentifierType::Email => {
-            crate::shared::validation::validate_email(&req.identifier)
-                .map_err(|_| AppError::Validation("invalid email format".into()))?;
-        }
-        IdentifierType::Phone => {
-            crate::shared::validation::validate_phone(&req.identifier)
-                .map_err(|_| AppError::Validation("invalid phone format".into()))?;
-        }
-        IdentifierType::Username => {}
-    }
 
     let user = match req.identifier_type {
         IdentifierType::Email => UserRepo::find_by_email(&state.db, &req.identifier).await?,
         IdentifierType::Phone => UserRepo::find_by_phone(&state.db, &req.identifier).await?,
         IdentifierType::Username => UserRepo::find_by_username(&state.db, &req.identifier).await?,
-    }
-    .ok_or(AppError::Unauthorized)?;
+    };
 
-    if user.status != 1 {
-        return Err(AppError::Forbidden("account is disabled".into()));
-    }
+    let user = match user {
+        Some(u) if u.status == 1 => u,
+        Some(_) => return Err(AppError::Forbidden("account is disabled".into())),
+        None => {
+            let _ = bcrypt::verify(
+                &req.password,
+                "$2b$12$TrePSBin7KMS2YzgKJgNXeSKHaFjHOa/XYRm8kqDQoJHqWbsLCDKi",
+            );
+            return Err(AppError::Unauthorized);
+        }
+    };
 
     let identity = IdentityRepo::find_by_user_and_provider(&state.db, user.id, PROVIDER_PASSWORD)
         .await?
@@ -82,11 +78,10 @@ pub async fn refresh(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RefreshRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let parts: Vec<&str> = req.refresh_token.splitn(2, ':').collect();
-    if parts.len() != 2 {
-        return Err(AppError::Unauthorized);
-    }
-    let user_id_str = parts[0];
+    let (user_id_str, _) = req
+        .refresh_token
+        .split_once(':')
+        .ok_or(AppError::Unauthorized)?;
 
     let stored = session::get_refresh_token(&state.cache, user_id_str).await?;
     let stored = stored.ok_or(AppError::Unauthorized)?;

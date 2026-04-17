@@ -1,0 +1,31 @@
+{% extends "sso/layout.html" %}
+
+{% block title %}Create account - Pero{% endblock %}
+
+{% block content %}
+<h2>Create account</h2>
+{% if let Some(name) = client_name %}
+<p class="client-name">for {{ name }}</p>
+{% endif %}
+
+{% if let Some(e) = error %}
+<div class="error-box">{{ e }}</div>
+{% endif %}
+
+<form method="post" action="/sso/register?{{ query_params }}">
+    <label for="username">Username</label>
+    <input type="text" name="username" id="username" value="{{ username }}" required>
+    <label for="email">Email</label>
+    <input type="email" name="email" id="email" value="{{ email }}" required>
+    <label for="password">Password</label>
+    <input type="password" name="password" id="password" required>
+    <label for="nickname">Nickname (optional)</label>
+    <input type="text" name="nickname" id="nickname" value="{{ nickname }}">
+    <label for="phone">Phone (optional)</label>
+    <input type="tel" name="phone" id="phone" value="{{ phone }}">
+    <button type="submit" class="btn">Create account</button>
+</form>
+<div class="links">
+    <a href="/sso/login?{{ query_params }}">Already have an account? Sign in</a>
+</div>
+{% endblock %}

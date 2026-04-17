@@ -16,7 +16,6 @@ where
         let Query(value) = Query::<T>::from_request_parts(parts, state)
             .await
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
         value
             .validate()
             .map_err(|e: validator::ValidationErrors| AppError::Validation(e.to_string()))?;

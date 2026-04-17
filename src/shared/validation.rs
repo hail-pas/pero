@@ -1,11 +1,32 @@
+pub fn validate_length(
+    value: &str,
+    min: usize,
+    max: usize,
+) -> Result<(), validator::ValidationError> {
+    let len = value.len();
+    if len < min || len > max {
+        let mut err = validator::ValidationError::new("length");
+        err.add_param(std::borrow::Cow::Borrowed("min"), &min);
+        err.add_param(std::borrow::Cow::Borrowed("max"), &max);
+        err.add_param(std::borrow::Cow::Borrowed("value"), &len);
+        return Err(err);
+    }
+    Ok(())
+}
+
 pub fn validate_email(email: &str) -> Result<(), validator::ValidationError> {
-    let at = email.find('@');
-    let domain_start = match at {
-        Some(i) if i > 0 => i + 1,
-        _ => return Err(validator::ValidationError::new("invalid_email")),
-    };
-    let domain = &email[domain_start..];
-    if domain.is_empty() || !domain.contains('.') {
+    let parts: Vec<&str> = email.rsplitn(2, '@').collect();
+    if parts.len() != 2 {
+        return Err(validator::ValidationError::new("invalid_email"));
+    }
+    let (domain, local) = (parts[0], parts[1]);
+    if local.is_empty() || domain.is_empty() {
+        return Err(validator::ValidationError::new("invalid_email"));
+    }
+    if !domain.contains('.') || domain.starts_with('.') || domain.ends_with('.') {
+        return Err(validator::ValidationError::new("invalid_email"));
+    }
+    if local.len() > 64 || domain.len() > 255 {
         return Err(validator::ValidationError::new("invalid_email"));
     }
     Ok(())
@@ -51,7 +72,7 @@ pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError
     }
 }
 
-pub fn validate_redirect_uris(uris: &Vec<String>) -> Result<(), validator::ValidationError> {
+pub fn validate_redirect_uris(uris: &[String]) -> Result<(), validator::ValidationError> {
     for uri in uris {
         validate_redirect_uri(uri)?;
     }

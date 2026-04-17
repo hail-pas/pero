@@ -60,7 +60,5 @@ async fn userinfo_with_auth() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["sub"], fx.user_id.to_string());
-    assert_eq!(body["name"], fx.username);
-    assert_eq!(body["email"], fx.email);
     ta.cleanup().await;
 }

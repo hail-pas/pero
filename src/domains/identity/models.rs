@@ -1,8 +1,11 @@
+use crate::shared::error::AppError;
+use crate::shared::patch::{Patch, validate_patch};
+use crate::shared::validation;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
-use validator::Validate;
+use validator::{Validate, ValidationError, ValidationErrors};
 
 #[derive(Debug, sqlx::FromRow, Serialize, Clone)]
 pub struct User {
@@ -68,59 +71,111 @@ pub struct RegisterRequest {
     pub nickname: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-pub struct CreateUserRequest {
-    #[validate(length(min = 3, max = 64))]
-    pub username: String,
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 8, max = 128))]
-    pub password: String,
-    #[validate(
-        length(max = 20),
-        custom(function = "crate::shared::validation::validate_phone")
-    )]
-    pub phone: Option<String>,
-    #[validate(length(min = 1, max = 64))]
-    pub nickname: Option<String>,
-}
+pub type CreateUserRequest = RegisterRequest;
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateUserRequest {
-    #[validate(length(min = 3, max = 64))]
+    #[serde(default)]
     pub username: Option<String>,
-    #[validate(email)]
+    #[serde(default)]
     pub email: Option<String>,
-    #[validate(
-        length(max = 20),
-        custom(function = "crate::shared::validation::validate_phone")
-    )]
-    pub phone: Option<String>,
-    #[validate(length(min = 1, max = 64))]
-    pub nickname: Option<String>,
-    #[validate(
-        length(max = 512),
-        custom(function = "crate::shared::validation::validate_url")
-    )]
-    pub avatar_url: Option<String>,
-    #[validate(range(min = 0, max = 1))]
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub phone: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub nickname: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub avatar_url: Patch<String>,
+    #[serde(default)]
     pub status: Option<i16>,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+impl Validate for UpdateUserRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        let mut errors = ValidationErrors::new();
+        if let Some(ref v) = self.username {
+            if let Err(e) = validation::validate_length(v, 3, 64) {
+                errors.add("username", e);
+            }
+        }
+        if let Some(ref v) = self.email {
+            if let Err(e) = validation::validate_email(v) {
+                errors.add("email", e);
+            }
+        }
+        validate_patch(
+            &self.phone,
+            "phone",
+            |v| validation::validate_phone(v),
+            &mut errors,
+        );
+        validate_patch(
+            &self.nickname,
+            "nickname",
+            |v| validation::validate_length(v, 1, 64),
+            &mut errors,
+        );
+        validate_patch(
+            &self.avatar_url,
+            "avatar_url",
+            |v| validation::validate_url(v),
+            &mut errors,
+        );
+        if let Some(v) = self.status {
+            if !(0..=1).contains(&v) {
+                errors.add("status", ValidationError::new("range"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateMeRequest {
-    #[validate(length(min = 1, max = 64))]
-    pub nickname: Option<String>,
-    #[validate(
-        length(max = 512),
-        custom(function = "crate::shared::validation::validate_url")
-    )]
-    pub avatar_url: Option<String>,
-    #[validate(
-        length(max = 20),
-        custom(function = "crate::shared::validation::validate_phone")
-    )]
-    pub phone: Option<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub nickname: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub avatar_url: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub phone: Patch<String>,
+}
+
+impl Validate for UpdateMeRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        let mut errors = ValidationErrors::new();
+        validate_patch(
+            &self.nickname,
+            "nickname",
+            |v| validation::validate_length(v, 1, 64),
+            &mut errors,
+        );
+        validate_patch(
+            &self.avatar_url,
+            "avatar_url",
+            |v| validation::validate_url(v),
+            &mut errors,
+        );
+        validate_patch(
+            &self.phone,
+            "phone",
+            |v| validation::validate_phone(v),
+            &mut errors,
+        );
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
@@ -161,6 +216,7 @@ pub struct Identity {
     pub user_id: Uuid,
     pub provider: String,
     pub provider_uid: Option<String>,
+    #[serde(skip_serializing)]
     pub credential: Option<String>,
     pub verified: bool,
     pub created_at: DateTime<Utc>,
@@ -182,4 +238,15 @@ pub struct ChangePasswordRequest {
     pub old_password: String,
     #[validate(length(min = 8, max = 128))]
     pub new_password: String,
+}
+
+impl ChangePasswordRequest {
+    pub fn validate_same_password(&self) -> Result<(), AppError> {
+        if self.old_password == self.new_password {
+            return Err(AppError::BadRequest(
+                "new password must differ from old password".into(),
+            ));
+        }
+        Ok(())
+    }
 }

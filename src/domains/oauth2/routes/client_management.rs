@@ -23,8 +23,8 @@ pub async fn create_client(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateClientRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let client_id = uuid::Uuid::new_v4().to_string().replace('-', "");
-    let client_secret = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let client_id = crate::shared::utils::random_hex_token();
+    let client_secret = crate::shared::utils::random_hex_token();
     let client_secret_hash = crate::domains::identity::helpers::hash_password(&client_secret)?;
 
     let client = OAuth2ClientRepo::create(&state.db, &client_id, &client_secret_hash, &req).await?;
@@ -78,9 +78,7 @@ pub async fn get_client(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<OAuth2ClientDTO>>, AppError> {
-    let client = OAuth2ClientRepo::find_by_id(&state.db, id)
-        .await?
-        .ok_or(AppError::NotFound("oauth2 client".into()))?;
+    let client = OAuth2ClientRepo::find_by_id_or_err(&state.db, id).await?;
     Ok(Json(ApiResponse::success(client.into())))
 }
 
