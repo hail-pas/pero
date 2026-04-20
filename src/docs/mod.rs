@@ -1,7 +1,7 @@
+use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+use utoipa::openapi::Server;
 use utoipa::Modify;
 use utoipa::OpenApi;
-use utoipa::openapi::Server;
-use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
 
 use crate::config::DocsConfig;
 
@@ -62,7 +62,6 @@ impl Modify for ServersAddon {
         crate::domains::identity::routes::profile::update_user,
         crate::domains::identity::routes::profile::delete_user,
         crate::domains::identity::routes::password::change_password,
-        crate::domains::identity::routes::binding::bind,
         crate::domains::identity::routes::binding::unbind,
         crate::domains::identity::routes::user_attrs::list_attributes,
         crate::domains::identity::routes::user_attrs::set_attributes,

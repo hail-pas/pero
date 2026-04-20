@@ -165,6 +165,16 @@ impl TestApp {
             Ok(c) => c,
             Err(_) => return,
         };
+
+        let identity_index_key = format!("identity_user_sessions:{user_id}");
+        if let Ok(session_ids) = conn.smembers::<_, Vec<String>>(&identity_index_key).await {
+            for session_id in session_ids {
+                let _: Result<(), redis::RedisError> =
+                    conn.del(format!("identity_session:{session_id}")).await;
+            }
+        }
+        let _: Result<(), redis::RedisError> = conn.del(&identity_index_key).await;
+
         for key in [
             format!("refresh_token:{user_id}"),
             format!("abac:{user_id}:"),

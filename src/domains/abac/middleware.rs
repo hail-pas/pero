@@ -9,6 +9,7 @@ use crate::shared::state::AppState;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 type CachedPolicies = Vec<(Policy, Vec<PolicyCondition>)>;
@@ -34,9 +35,15 @@ pub async fn abac_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Uuid>().ok());
 
-    let mut subject_attrs = PolicyRepo::load_user_attributes(&state.db, user_id).await?;
+    let mut subject_attrs: HashMap<String, Vec<String>> = HashMap::new();
+    for (key, value) in PolicyRepo::load_user_attributes(&state.db, user_id).await? {
+        subject_attrs.entry(key).or_default().push(value);
+    }
     for role in &claims.roles {
-        subject_attrs.push((identity::ROLE_ATTR_KEY.to_string(), role.clone()));
+        subject_attrs
+            .entry(identity::ROLE_ATTR_KEY.to_string())
+            .or_default()
+            .push(role.clone());
     }
 
     let cache_key = format!(

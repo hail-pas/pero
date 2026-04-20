@@ -1,5 +1,6 @@
 use crate::domains::identity::models::ChangePasswordRequest;
 use crate::domains::identity::repos::IdentityRepo;
+use crate::domains::identity::session;
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, ValidatedJson};
@@ -51,10 +52,7 @@ pub async fn change_password(
         .await?;
     tx.commit().await?;
 
-    if let Err(e) =
-        crate::cache::session::revoke_refresh_token(&state.cache, &auth_user.user_id.to_string())
-            .await
-    {
+    if let Err(e) = session::revoke_user_sessions(&state.cache, auth_user.user_id).await {
         tracing::warn!(error = %e, "failed to revoke refresh token after password change");
     }
 

@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::State;
+use std::collections::HashMap;
 
 use crate::domains::abac::engine;
 use crate::domains::abac::models::{EvalContext, EvaluateRequest, EvaluateResponse};
@@ -30,9 +31,15 @@ pub async fn evaluate(
 ) -> Result<Json<ApiResponse<EvaluateResponse>>, AppError> {
     let user_id: Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
 
-    let mut subject_attrs = PolicyRepo::load_user_attributes(&state.db, user_id).await?;
+    let mut subject_attrs: HashMap<String, Vec<String>> = HashMap::new();
+    for (key, value) in PolicyRepo::load_user_attributes(&state.db, user_id).await? {
+        subject_attrs.entry(key).or_default().push(value);
+    }
     for role in &claims.roles {
-        subject_attrs.push((identity::ROLE_ATTR_KEY.to_string(), role.clone()));
+        subject_attrs
+            .entry(identity::ROLE_ATTR_KEY.to_string())
+            .or_default()
+            .push(role.clone());
     }
 
     let policies = PolicyRepo::load_merged_policies(&state.db, user_id, req.app_id).await?;

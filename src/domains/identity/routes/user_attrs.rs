@@ -97,6 +97,12 @@ pub async fn delete_attribute(
 }
 
 async fn invalidate_user_abac_cache(state: &AppState, user_id: uuid::Uuid) -> Result<(), AppError> {
-    let pattern = format!("{}{}:*", cache_keys::ABAC_PREFIX, user_id);
-    crate::cache::delete_by_pattern(&state.cache, &pattern).await
+    let patterns = vec![
+        format!("{}{}:", cache_keys::ABAC_PREFIX, user_id),
+        format!("{}{}:*", cache_keys::ABAC_PREFIX, user_id),
+    ];
+    for pattern in patterns {
+        crate::cache::delete_by_pattern(&state.cache, &pattern).await?;
+    }
+    Ok(())
 }

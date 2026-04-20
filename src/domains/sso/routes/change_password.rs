@@ -1,5 +1,4 @@
 use askama::Template;
-use axum::Form;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -11,6 +10,7 @@ use crate::domains::sso::routes::login::query_from_session;
 use crate::domains::sso::session::{self, get_session_id};
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
+use crate::shared::extractors::ValidatedForm;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
@@ -58,7 +58,7 @@ pub async fn change_password_get(
 pub async fn change_password_post(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Form(form): Form<ChangePasswordForm>,
+    ValidatedForm(form): ValidatedForm<ChangePasswordForm>,
 ) -> Result<Response, AppError> {
     let (_sid, sso) = session::require(&state.cache, &headers).await?;
 
@@ -102,8 +102,7 @@ pub async fn change_password_post(
     IdentityRepo::update_credential(&mut *tx, user_id, PROVIDER_PASSWORD, &new_hash).await?;
     tx.commit().await?;
 
-    if let Err(e) =
-        crate::cache::session::revoke_refresh_token(&state.cache, &user_id.to_string()).await
+    if let Err(e) = crate::domains::identity::session::revoke_user_sessions(&state.cache, user_id).await
     {
         tracing::warn!(error = %e, "failed to revoke refresh token after password change");
     }

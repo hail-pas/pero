@@ -2,6 +2,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
+use crate::domains::oauth2::error;
 use crate::domains::oauth2::models::RevokeRequest;
 use crate::domains::oauth2::repos::{OAuth2ClientRepo, RefreshTokenRepo};
 use crate::shared::error::AppError;
@@ -21,7 +22,14 @@ use crate::shared::state::AppState;
 pub async fn revoke(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RevokeRequest>,
-) -> Result<Response, AppError> {
+) -> Response {
+    match revoke_inner(&state, &req).await {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(e) => error::map_app_error(e),
+    }
+}
+
+async fn revoke_inner(state: &AppState, req: &RevokeRequest) -> Result<(), AppError> {
     let client_id_str = req
         .client_id
         .as_deref()
@@ -45,5 +53,5 @@ pub async fn revoke(
         }
         RefreshTokenRepo::revoke(&state.db, token.id).await?;
     }
-    Ok(StatusCode::OK.into_response())
+    Ok(())
 }

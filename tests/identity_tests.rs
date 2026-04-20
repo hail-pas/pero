@@ -124,6 +124,170 @@ async fn login_nonexistent_user() {
 }
 
 #[tokio::test]
+async fn identity_bind_route_is_not_exposed() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+
+    let (status, _) = send_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/api/identity/bind/github",
+        Some(serde_json::json!({
+            "code": "test-code",
+            "redirect_uri": "http://localhost/callback",
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let openapi = pero::docs::build_openapi(&ta.config.docs);
+    let paths = openapi.paths.paths;
+    assert!(
+        !paths.contains_key("/api/identity/bind/{provider}"),
+        "bind path should be absent from OpenAPI"
+    );
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn identity_login_creates_independent_refresh_sessions() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+
+    let (_, first_refresh_token) = login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
+    let (_, second_refresh_token) =
+        login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
+
+    assert_ne!(first_refresh_token, second_refresh_token);
+    assert!(
+        first_refresh_token.contains('.'),
+        "refresh token should contain session delimiter: {first_refresh_token}"
+    );
+    assert!(
+        !first_refresh_token.contains(&fx.user_id.to_string()),
+        "refresh token should not expose user id: {first_refresh_token}"
+    );
+
+    let first_refresh = refresh_identity_inner(&mut ta.app, &first_refresh_token).await;
+    let second_refresh = refresh_identity_inner(&mut ta.app, &second_refresh_token).await;
+
+    assert_eq!(first_refresh.0, StatusCode::OK, "first refresh: {:?}", first_refresh.1);
+    assert_eq!(
+        second_refresh.0,
+        StatusCode::OK,
+        "second refresh: {:?}",
+        second_refresh.1
+    );
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn identity_refresh_rotation_is_atomic() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    let app = ta.app.clone();
+    let refresh_token = fx.refresh_token.clone();
+
+    let (left, right) = tokio::join!(
+        refresh_identity_with_router(app.clone(), refresh_token.clone()),
+        refresh_identity_with_router(app, refresh_token),
+    );
+
+    let statuses = [left.0, right.0];
+    assert_eq!(
+        statuses.iter().filter(|s| **s == StatusCode::OK).count(),
+        1,
+        "expected exactly one successful refresh, got left={:?} right={:?}",
+        left.1,
+        right.1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|s| **s == StatusCode::UNAUTHORIZED)
+            .count(),
+        1,
+        "expected exactly one unauthorized refresh, got left={:?} right={:?}",
+        left.1,
+        right.1
+    );
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn identity_refresh_replay_revokes_the_session() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+
+    let (status, body) = refresh_identity_inner(&mut ta.app, &fx.refresh_token).await;
+    assert_eq!(status, StatusCode::OK, "initial refresh failed: {body:?}");
+    let rotated_refresh_token = body["data"]["refresh_token"]
+        .as_str()
+        .expect("missing rotated refresh token")
+        .to_string();
+
+    let replay = refresh_identity_inner(&mut ta.app, &fx.refresh_token).await;
+    assert_eq!(
+        replay.0,
+        StatusCode::UNAUTHORIZED,
+        "replay should be unauthorized: {:?}",
+        replay.1
+    );
+
+    let after_replay = refresh_identity_inner(&mut ta.app, &rotated_refresh_token).await;
+    assert_eq!(
+        after_replay.0,
+        StatusCode::UNAUTHORIZED,
+        "rotated token should be revoked after replay: {:?}",
+        after_replay.1
+    );
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn password_change_revokes_all_identity_sessions() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    let (_, second_refresh_token) = login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
+
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        "/api/identity/password/change",
+        Some(serde_json::json!({
+            "old_password": "password123",
+            "new_password": "password456",
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "password change failed: {body:?}");
+
+    let first_refresh = refresh_identity_inner(&mut ta.app, &fx.refresh_token).await;
+    assert_eq!(
+        first_refresh.0,
+        StatusCode::UNAUTHORIZED,
+        "first session should be revoked: {:?}",
+        first_refresh.1
+    );
+
+    let second_refresh = refresh_identity_inner(&mut ta.app, &second_refresh_token).await;
+    assert_eq!(
+        second_refresh.0,
+        StatusCode::UNAUTHORIZED,
+        "second session should be revoked: {:?}",
+        second_refresh.1
+    );
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
 async fn refresh_token_success() {
     let mut ta = build_app().await;
     let fx = ta.register_default_user().await;

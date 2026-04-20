@@ -1,6 +1,6 @@
-use crate::cache::session;
 use crate::domains::identity::models::{TokenResponse, User};
 use crate::domains::identity::repos::{IdentityRepo, UserRepo};
+use crate::domains::identity::session;
 use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
 use crate::shared::jwt;
@@ -19,14 +19,8 @@ pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse
         None,
     )?;
 
-    let refresh_token = format!("{}:{}", user.id, uuid::Uuid::new_v4());
-    session::store_refresh_token(
-        &state.cache,
-        &user_id_str,
-        &refresh_token,
-        state.config.jwt.refresh_ttl_days,
-    )
-    .await?;
+    let (_, refresh_token) =
+        session::create_session(&state.cache, user.id, state.config.jwt.refresh_ttl_days).await?;
 
     Ok(TokenResponse {
         access_token,

@@ -4,44 +4,52 @@ use std::collections::HashMap;
 
 const REGEX_SIZE_LIMIT: usize = 1024;
 
+fn subject_values<'a>(ctx: &'a EvalContext, key: &str) -> impl Iterator<Item = &'a str> {
+    ctx.subject_attrs
+        .get(key)
+        .into_iter()
+        .flat_map(|values| values.iter().map(String::as_str))
+}
+
 pub fn eval_condition(
     cond: &PolicyCondition,
     ctx: &EvalContext,
     regex_cache: &HashMap<String, regex::Regex>,
 ) -> bool {
     let app_id_str = ctx.app_id.map(|id| id.to_string());
-    let target_value = match cond.condition_type.as_str() {
-        "subject" => ctx
-            .subject_attrs
-            .iter()
-            .find(|(k, _)| k == &cond.key)
-            .map(|(_, v)| v.as_str()),
-        "resource" if cond.key == "path" => Some(ctx.resource.as_str()),
-        "action" if cond.key == "method" => Some(ctx.action.as_str()),
-        "app" if cond.key == "app_id" => app_id_str.as_deref(),
-        _ => None,
+    let target_values: Vec<&str> = match cond.condition_type.as_str() {
+        "subject" => subject_values(ctx, &cond.key).collect(),
+        "resource" if cond.key == "path" => vec![ctx.resource.as_str()],
+        "action" if cond.key == "method" => vec![ctx.action.as_str()],
+        "app" if cond.key == "app_id" => app_id_str
+            .as_deref()
+            .into_iter()
+            .collect(),
+        _ => vec![],
     };
 
-    let Some(actual) = target_value else {
+    if target_values.is_empty() {
         return false;
-    };
-
-    match cond.operator.as_str() {
-        "eq" => actual == cond.value,
-        "in" => cond.value.split(',').any(|v| v.trim() == actual),
-        "wildcard" => wildcard_match(&cond.value, actual),
-        "regex" => regex_cache
-            .get(&cond.value)
-            .map_or(false, |re| re.is_match(actual)),
-        "contains" => actual.contains(&cond.value),
-        "gt" => actual.parse::<f64>().ok().map_or(false, |a| {
-            cond.value.parse::<f64>().map_or(false, |b| a > b)
-        }),
-        "lt" => actual.parse::<f64>().ok().map_or(false, |a| {
-            cond.value.parse::<f64>().map_or(false, |b| a < b)
-        }),
-        _ => false,
     }
+
+    target_values.iter().any(|&actual| {
+        match cond.operator.as_str() {
+            "eq" => actual == cond.value,
+            "in" => cond.value.split(',').any(|v| v.trim() == actual),
+            "wildcard" => wildcard_match(&cond.value, actual),
+            "regex" => regex_cache
+                .get(&cond.value)
+                .map_or(false, |re| re.is_match(actual)),
+            "contains" => actual.contains(&cond.value),
+            "gt" => actual.parse::<f64>().ok().map_or(false, |a| {
+                cond.value.parse::<f64>().map_or(false, |b| a > b)
+            }),
+            "lt" => actual.parse::<f64>().ok().map_or(false, |a| {
+                cond.value.parse::<f64>().map_or(false, |b| a < b)
+            }),
+            _ => false,
+        }
+    })
 }
 
 pub fn evaluate(

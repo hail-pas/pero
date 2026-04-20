@@ -1,6 +1,6 @@
-use crate::cache::session;
 use crate::domains::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
 use crate::domains::identity::repos::UserRepo;
+use crate::domains::identity::session;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, Pagination, ValidatedJson};
 use crate::shared::response::{ApiResponse, PageData};
@@ -148,7 +148,7 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
-    session::revoke_refresh_token(&state.cache, &id.to_string()).await?;
+    session::revoke_user_sessions(&state.cache, id).await?;
     UserRepo::delete(&state.db, id).await?;
     Ok(Json(ApiResponse::<()>::success_message("user deleted")))
 }

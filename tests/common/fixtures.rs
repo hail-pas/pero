@@ -275,3 +275,59 @@ pub async fn login_user_inner(app: &mut axum::Router, username: &str, password: 
         .expect("missing access_token")
         .to_string()
 }
+
+pub async fn login_tokens_inner(
+    app: &mut axum::Router,
+    username: &str,
+    password: &str,
+) -> (String, String) {
+    let (status, body) = send_request(
+        app,
+        hyper::Method::POST,
+        "/api/identity/login",
+        Some(serde_json::json!({
+            "identifier": username,
+            "password": password,
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        hyper::StatusCode::OK,
+        "login failed: {status} {body:?}"
+    );
+
+    let access_token = body["data"]["access_token"]
+        .as_str()
+        .expect("missing access_token")
+        .to_string();
+    let refresh_token = body["data"]["refresh_token"]
+        .as_str()
+        .expect("missing refresh_token")
+        .to_string();
+    (access_token, refresh_token)
+}
+
+pub async fn refresh_identity_inner(
+    app: &mut axum::Router,
+    refresh_token: &str,
+) -> (hyper::StatusCode, serde_json::Value) {
+    send_request(
+        app,
+        hyper::Method::POST,
+        "/auth/refresh",
+        Some(serde_json::json!({
+            "refresh_token": refresh_token,
+        })),
+        None,
+    )
+    .await
+}
+
+pub async fn refresh_identity_with_router(
+    mut app: axum::Router,
+    refresh_token: String,
+) -> (hyper::StatusCode, serde_json::Value) {
+    refresh_identity_inner(&mut app, &refresh_token).await
+}

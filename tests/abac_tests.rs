@@ -1,7 +1,109 @@
 mod common;
 
 use common::*;
+use http_body_util::BodyExt;
 use hyper::StatusCode;
+use tower::ServiceExt;
+
+#[tokio::test]
+async fn abac_allows_when_any_role_matches() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+
+    let app_fx = ta.create_test_app_direct().await;
+
+    let policy_id = uuid::Uuid::new_v4();
+    let policy_name = unique_name("role_viewer");
+    sqlx::query(
+        "INSERT INTO policies (id, name, effect, priority, enabled, app_id) VALUES ($1, $2, 'allow', 100, true, $3)",
+    )
+    .bind(policy_id)
+    .bind(&policy_name)
+    .bind(app_fx.app_id)
+    .execute(&ta.db)
+    .await
+    .unwrap();
+    ta.track_policy(policy_id);
+
+    for (ct, key, op, val) in [
+        ("subject", "role", "eq", "viewer"),
+        ("resource", "path", "wildcard", "/api/**"),
+        ("action", "method", "in", "GET,POST,PUT,DELETE"),
+    ] {
+        sqlx::query(
+            "INSERT INTO policy_conditions (policy_id, condition_type, key, operator, value) VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(policy_id)
+        .bind(ct)
+        .bind(key)
+        .bind(op)
+        .bind(val)
+        .execute(&ta.db)
+        .await
+        .unwrap();
+    }
+
+    sqlx::query("INSERT INTO user_policies (user_id, policy_id) VALUES ($1, $2)")
+        .bind(fx.user_id)
+        .bind(policy_id)
+        .execute(&ta.db)
+        .await
+        .unwrap();
+
+    let request: hyper::Request<axum::body::Body> = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .uri("/api/policies?page=1&page_size=10")
+        .header(
+            hyper::header::AUTHORIZATION,
+            format!("Bearer {}", fx.access_token),
+        )
+        .header("x-app-id", app_fx.app_id.to_string())
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = ta.app.clone().oneshot(request).await.unwrap();
+    let (parts, body) = response.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&bytes);
+    println!("第一次结果: status={}, body={}", parts.status, body_str);
+    assert_eq!(
+        parts.status,
+        StatusCode::FORBIDDEN,
+        "should be denied: JWT role is 'user', policy requires 'viewer'"
+    );
+
+    sqlx::query(
+        "INSERT INTO user_attributes (user_id, key, value) VALUES ($1, 'role', 'viewer') ON CONFLICT (user_id, key) DO UPDATE SET value = 'viewer'",
+    )
+    .bind(fx.user_id)
+    .execute(&ta.db)
+    .await
+    .unwrap();
+
+    ta.clear_user_cache(fx.user_id).await;
+
+    let request: hyper::Request<axum::body::Body> = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .uri("/api/policies?page=1&page_size=10")
+        .header(
+            hyper::header::AUTHORIZATION,
+            format!("Bearer {}", fx.access_token),
+        )
+        .header("x-app-id", app_fx.app_id.to_string())
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = ta.app.clone().oneshot(request).await.unwrap();
+    let (parts, body) = response.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8_lossy(&bytes);
+    println!("第二次结果: status={}, body={}", parts.status, body_str);
+    assert_eq!(
+        parts.status,
+        StatusCode::OK,
+        "should be allowed: user_attrs has 'viewer' (multi-valued with JWT 'user')"
+    );
+
+    ta.cleanup().await;
+}
 
 #[tokio::test]
 async fn create_policy() {

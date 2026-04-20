@@ -1,8 +1,10 @@
 use axum::Json;
 use axum::extract::State;
+use axum::response::{IntoResponse, Response};
 use chrono::{TimeDelta, Utc};
 
 use crate::domains::identity::repos::UserRepo;
+use crate::domains::oauth2::error;
 use crate::domains::oauth2::models::{GrantType, TokenRequest, TokenResponse};
 use crate::domains::oauth2::pkce;
 use crate::domains::oauth2::repos::{AuthCodeRepo, OAuth2ClientRepo, RefreshTokenRepo};
@@ -29,10 +31,14 @@ use crate::shared::state::AppState;
 pub async fn token(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<TokenRequest>,
-) -> Result<Json<TokenResponse>, AppError> {
-    match req.grant_type {
+) -> Response {
+    let result = match req.grant_type {
         GrantType::AuthorizationCode => handle_authorization_code(&state, &req).await,
         GrantType::RefreshToken => handle_refresh_token(&state, &req).await,
+    };
+    match result {
+        Ok(json) => json.into_response(),
+        Err(e) => error::map_app_error(e),
     }
 }
 

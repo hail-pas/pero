@@ -123,8 +123,6 @@ async fn token_revoke_flow() {
         "/oauth2/revoke",
         Some(serde_json::json!({
             "token": refresh_token,
-            "client_id": client_fx.client_id_str,
-            "client_secret": client_fx.client_secret,
         })),
         None,
     )
@@ -134,7 +132,7 @@ async fn token_revoke_flow() {
 }
 
 #[tokio::test]
-async fn token_exchange_rejects_disallowed_client_grants() {
+async fn token_exchange_rejects_disallowed_authorization_code_grant() {
     let mut ta = build_app().await;
     let fx = ta.register_default_user().await;
     ta.grant_api_access(fx.user_id).await;
@@ -195,6 +193,16 @@ async fn token_exchange_rejects_disallowed_client_grants() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn token_exchange_rejects_disallowed_refresh_token_grant() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    ta.grant_api_access(fx.user_id).await;
+    let app_fx = ta.create_test_app(&fx.access_token).await;
 
     let (status, body) = send_request(
         &mut ta.app,

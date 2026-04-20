@@ -26,7 +26,8 @@ pub struct SsoSession {
 pub struct LoginForm {
     #[validate(length(min = 1, max = 255))]
     pub identifier: String,
-    pub identifier_type: String,
+    #[serde(default)]
+    pub identifier_type: crate::domains::identity::models::IdentifierType,
     #[validate(length(min = 1, max = 128))]
     pub password: String,
 }

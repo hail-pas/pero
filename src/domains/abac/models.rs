@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -35,7 +37,7 @@ pub struct UserAttribute {
 
 #[derive(Debug, Clone)]
 pub struct EvalContext {
-    pub subject_attrs: Vec<(String, String)>,
+    pub subject_attrs: HashMap<String, Vec<String>>,
     pub resource: String,
     pub action: String,
     pub app_id: Option<Uuid>,

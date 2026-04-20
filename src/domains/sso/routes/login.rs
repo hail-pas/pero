@@ -1,14 +1,15 @@
 use askama::Template;
-use axum::Form;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
+use crate::domains::identity::models::IdentifierType;
 use crate::domains::identity::repos::{IdentityRepo, UserRepo};
 use crate::domains::sso::models::LoginForm;
 use crate::domains::sso::session::{self, COOKIE_NAME, get_session_id};
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
+use crate::shared::extractors::ValidatedForm;
 use crate::shared::state::AppState;
 
 pub fn query_from_session(s: &crate::domains::sso::models::SsoSession) -> String {
@@ -105,13 +106,13 @@ fn error_tpl(
 pub async fn login_post(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Form(form): Form<LoginForm>,
+    ValidatedForm(form): ValidatedForm<LoginForm>,
 ) -> Result<Response, AppError> {
     let (sid, mut sso) = session::require(&state.cache, &headers).await?;
 
-    let user = match form.identifier_type.as_str() {
-        "email" => UserRepo::find_by_email(&state.db, &form.identifier).await?,
-        "phone" => UserRepo::find_by_phone(&state.db, &form.identifier).await?,
+    let user = match form.identifier_type {
+        IdentifierType::Email => UserRepo::find_by_email(&state.db, &form.identifier).await?,
+        IdentifierType::Phone => UserRepo::find_by_phone(&state.db, &form.identifier).await?,
         _ => UserRepo::find_by_username(&state.db, &form.identifier).await?,
     };
 
@@ -121,7 +122,7 @@ pub async fn login_post(
             let qp = query_from_session(&sso);
             return Ok(render_tpl(&error_tpl(
                 form.identifier,
-                form.identifier_type,
+                serde_json::to_string(&form.identifier_type).unwrap_or_default().trim_matches('"').to_string(),
                 "invalid credentials",
                 qp,
             ))?
@@ -133,7 +134,7 @@ pub async fn login_post(
         let qp = query_from_session(&sso);
         return Ok(render_tpl(&error_tpl(
             form.identifier,
-            form.identifier_type,
+            serde_json::to_string(&form.identifier_type).unwrap_or_default().trim_matches('"').to_string(),
             "account is disabled",
             qp,
         ))?
@@ -153,7 +154,7 @@ pub async fn login_post(
         let qp = query_from_session(&sso);
         return Ok(render_tpl(&error_tpl(
             form.identifier,
-            form.identifier_type,
+            serde_json::to_string(&form.identifier_type).unwrap_or_default().trim_matches('"').to_string(),
             "invalid credentials",
             qp,
         ))?
