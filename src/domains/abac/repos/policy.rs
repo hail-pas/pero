@@ -404,16 +404,4 @@ impl PolicyRepo {
         .await?;
         Self::attach_conditions(pool, policies).await
     }
-
-    pub async fn load_merged_policies(
-        pool: &PgPool,
-        user_id: Uuid,
-        app_id: Option<Uuid>,
-    ) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
-        let mut policies = Self::load_policies_for_app(pool, app_id).await?;
-        let mut user_policies = Self::load_user_policies_for_app(pool, user_id, app_id).await?;
-        policies.append(&mut user_policies);
-        policies.sort_by(|a, b| b.0.priority.cmp(&a.0.priority));
-        Ok(policies)
-    }
 }

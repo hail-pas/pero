@@ -123,6 +123,8 @@ async fn token_revoke_flow() {
         "/oauth2/revoke",
         Some(serde_json::json!({
             "token": refresh_token,
+            "client_id": client_fx.client_id_str,
+            "client_secret": client_fx.client_secret,
         })),
         None,
     )

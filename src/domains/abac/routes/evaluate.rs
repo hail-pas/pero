@@ -42,7 +42,7 @@ pub async fn evaluate(
             .push(role.clone());
     }
 
-    let policies = PolicyRepo::load_merged_policies(&state.db, user_id, req.app_id).await?;
+    let policies = PolicyRepo::load_user_policies_for_app(&state.db, user_id, req.app_id).await?;
 
     let ctx = EvalContext {
         subject_attrs,

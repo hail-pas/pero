@@ -57,7 +57,7 @@ pub async fn abac_middleware(
         match cache::get_json::<CachedPolicies>(&state.cache, &cache_key).await {
             Ok(Some(cached)) => cached,
             _ => {
-                let policies = PolicyRepo::load_merged_policies(&state.db, user_id, app_id).await?;
+                let policies = PolicyRepo::load_user_policies_for_app(&state.db, user_id, app_id).await?;
 
                 if let Err(e) = cache::set_json(
                     &state.cache,
