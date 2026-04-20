@@ -235,12 +235,16 @@ impl PolicyRepo {
     ) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
         let policies: Vec<Policy> = match app_id {
             Some(aid) => sqlx::query_as(
-                "SELECT * FROM policies WHERE enabled = true AND app_id = $1 ORDER BY priority DESC"
+                "SELECT * FROM policies WHERE enabled = true AND (app_id = $1 OR app_id IS NULL) ORDER BY priority DESC"
             )
             .bind(aid)
             .fetch_all(pool)
             .await?,
-            None => vec![],
+            None => sqlx::query_as(
+                "SELECT * FROM policies WHERE enabled = true AND app_id IS NULL ORDER BY priority DESC"
+            )
+            .fetch_all(pool)
+            .await?,
         };
         Self::attach_conditions(pool, policies).await
     }
