@@ -337,3 +337,80 @@ async fn sso_consent_rejects_unknown_action() {
 
     ta.cleanup().await;
 }
+
+#[tokio::test]
+async fn sso_consent_revalidates_client_state_before_issuing_code() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    ta.grant_api_access(fx.user_id).await;
+    let app_fx = ta.create_test_app(&fx.access_token).await;
+    let client_fx = ta
+        .create_test_client(app_fx.app_id, &app_fx.code, &fx.access_token)
+        .await;
+
+    let authorize_request = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .uri(format!(
+            "/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&scope=openid+profile",
+            client_fx.client_id_str,
+        ))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let authorize_response = ta.app.clone().oneshot(authorize_request).await.unwrap();
+    assert!(authorize_response.status().is_redirection());
+
+    let session_cookie = authorize_response
+        .headers()
+        .get(hyper::header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .expect("missing session cookie")
+        .to_string();
+    let session_id = session_cookie
+        .strip_prefix("pero_sso_session=")
+        .expect("missing session id");
+
+    let mut sso = pero::domains::sso::session::get(&ta.cache, session_id)
+        .await
+        .unwrap()
+        .expect("missing sso session");
+    sso.user_id = Some(fx.user_id);
+    sso.authenticated = true;
+    sso.auth_time = Some(chrono::Utc::now().timestamp());
+    pero::domains::sso::session::update(&ta.cache, session_id, &sso)
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE oauth2_clients SET enabled = false WHERE id = $1")
+        .bind(client_fx.client_id)
+        .execute(&ta.db)
+        .await
+        .unwrap();
+
+    let request = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .uri("/sso/consent")
+        .header(hyper::header::COOKIE, &session_cookie)
+        .header(
+            hyper::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(axum::body::Body::from("action=allow"))
+        .unwrap();
+    let response = ta.app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let auth_code_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM oauth2_authorization_codes WHERE client_id = $1 AND user_id = $2",
+    )
+    .bind(client_fx.client_id)
+    .bind(fx.user_id)
+    .fetch_one(&ta.db)
+    .await
+    .unwrap();
+    assert_eq!(auth_code_count, 0);
+
+    ta.cleanup().await;
+}

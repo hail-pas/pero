@@ -3,7 +3,6 @@ use crate::shared::error::AppError;
 use chrono::Utc;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const SECONDS_PER_DAY: i64 = 86_400;
@@ -28,7 +27,7 @@ pub fn parse_session_id(refresh_token: &str) -> Result<&str, AppError> {
 }
 
 pub fn hash_refresh_token(refresh_token: &str) -> String {
-    format!("{:x}", Sha256::digest(refresh_token.as_bytes()))
+    crate::shared::utils::sha256_hex(refresh_token)
 }
 
 pub async fn create_session(
@@ -82,10 +81,13 @@ pub async fn rotate_refresh_token(
         if doc.refresh_token_hash ~= expected then
             return 0
         end
+        local user_key = 'identity_user_sessions:' .. doc.user_id
         doc.previous_refresh_token_hash = doc.refresh_token_hash
         doc.refresh_token_hash = next_hash
         doc.rotated_at = now
         redis.call('SET', key, cjson.encode(doc), 'EX', ttl)
+        redis.call('SADD', user_key, doc.session_id)
+        redis.call('EXPIRE', user_key, ttl)
         return 1
     "#;
 
@@ -143,8 +145,13 @@ async fn store_session(
     session: &IdentitySession,
     ttl_days: i64,
 ) -> Result<(), AppError> {
-    crate::cache::set_json(pool, &session_key(&session.session_id), session, ttl_seconds(ttl_days))
-        .await
+    crate::cache::set_json(
+        pool,
+        &session_key(&session.session_id),
+        session,
+        ttl_seconds(ttl_days),
+    )
+    .await
 }
 
 async fn add_user_session_index(

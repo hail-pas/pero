@@ -1,18 +1,14 @@
 use super::engine;
-use super::models::{EvalContext, Policy, PolicyCondition};
-use super::repos::PolicyRepo;
-use crate::cache;
-use crate::shared::constants::{cache_keys, headers, identity};
+use super::models::EvalContext;
+use super::service;
+use crate::shared::constants::headers;
 use crate::shared::error::AppError;
 use crate::shared::jwt::TokenClaims;
 use crate::shared::state::AppState;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use std::collections::HashMap;
 use uuid::Uuid;
-
-type CachedPolicies = Vec<(Policy, Vec<PolicyCondition>)>;
 
 pub async fn abac_middleware(
     State(state): State<AppState>,
@@ -35,44 +31,8 @@ pub async fn abac_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Uuid>().ok());
 
-    let mut subject_attrs: HashMap<String, Vec<String>> = HashMap::new();
-    for (key, value) in PolicyRepo::load_user_attributes(&state.db, user_id).await? {
-        subject_attrs.entry(key).or_default().push(value);
-    }
-    for role in &claims.roles {
-        subject_attrs
-            .entry(identity::ROLE_ATTR_KEY.to_string())
-            .or_default()
-            .push(role.clone());
-    }
-
-    let cache_key = format!(
-        "{}{}:{}",
-        cache_keys::ABAC_PREFIX,
-        user_id,
-        app_id.map(|id| id.to_string()).unwrap_or_default()
-    );
-
-    let policies: CachedPolicies =
-        match cache::get_json::<CachedPolicies>(&state.cache, &cache_key).await {
-            Ok(Some(cached)) => cached,
-            _ => {
-                let policies = PolicyRepo::load_user_policies_for_app(&state.db, user_id, app_id).await?;
-
-                if let Err(e) = cache::set_json(
-                    &state.cache,
-                    &cache_key,
-                    &policies,
-                    state.config.abac.policy_cache_ttl_seconds,
-                )
-                .await
-                {
-                    tracing::warn!(error = %e, "failed to cache ABAC policies");
-                }
-
-                policies
-            }
-        };
+    let subject_attrs = service::build_subject_attrs(&state.db, &claims).await?;
+    let policies = service::load_user_policies(&state, user_id, app_id, true).await?;
 
     let ctx = EvalContext {
         subject_attrs,

@@ -87,6 +87,37 @@ pub async fn send_basic_auth_request(
     (status, body_json)
 }
 
+pub async fn send_form_request(
+    app: &mut Router,
+    method: hyper::Method,
+    uri: &str,
+    form: &[(&str, String)],
+) -> (StatusCode, serde_json::Value) {
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(form.iter().map(|(k, v)| (*k, v.as_str())))
+        .finish();
+
+    let request = hyper::Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from(encoded))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(bytes.to_vec()).unwrap();
+    let body_json = if body_str.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(&body_str).unwrap_or_else(|e| {
+            panic!("Failed to parse response body as JSON: {e}\nBody: {body_str}")
+        })
+    };
+    (status, body_json)
+}
+
 pub async fn send_raw_request(
     app: &mut Router,
     method: hyper::Method,

@@ -1,11 +1,9 @@
 use axum::Json;
 use axum::extract::State;
-use std::collections::HashMap;
 
 use crate::domains::abac::engine;
 use crate::domains::abac::models::{EvalContext, EvaluateRequest, EvaluateResponse};
-use crate::domains::abac::repos::PolicyRepo;
-use crate::shared::constants::identity;
+use crate::domains::abac::service;
 use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedJson;
 use crate::shared::jwt::TokenClaims;
@@ -30,19 +28,8 @@ pub async fn evaluate(
     ValidatedJson(req): ValidatedJson<EvaluateRequest>,
 ) -> Result<Json<ApiResponse<EvaluateResponse>>, AppError> {
     let user_id: Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
-
-    let mut subject_attrs: HashMap<String, Vec<String>> = HashMap::new();
-    for (key, value) in PolicyRepo::load_user_attributes(&state.db, user_id).await? {
-        subject_attrs.entry(key).or_default().push(value);
-    }
-    for role in &claims.roles {
-        subject_attrs
-            .entry(identity::ROLE_ATTR_KEY.to_string())
-            .or_default()
-            .push(role.clone());
-    }
-
-    let policies = PolicyRepo::load_user_policies_for_app(&state.db, user_id, req.app_id).await?;
+    let subject_attrs = service::build_subject_attrs(&state.db, &claims).await?;
+    let policies = service::load_user_policies(&state, user_id, req.app_id, false).await?;
 
     let ctx = EvalContext {
         subject_attrs,

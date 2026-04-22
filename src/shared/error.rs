@@ -76,6 +76,7 @@ impl IntoResponse for AppError {
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
         match &err {
+            sqlx::Error::RowNotFound => AppError::NotFound("resource".into()),
             sqlx::Error::Database(db_err) => match db_err.code().as_deref() {
                 Some("23505") => {
                     AppError::Conflict("duplicate key value violates unique constraint".into())

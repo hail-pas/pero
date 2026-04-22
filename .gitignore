@@ -7,3 +7,4 @@ config/*.toml
 !config/default.toml
 docs/superpowers
 examples
+local

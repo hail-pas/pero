@@ -12,229 +12,20 @@ use tower_http::trace::TraceLayer;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub fn build_router(state: AppState) -> Router {
-    use axum::routing::{delete, get, post};
-
-    // ====================================================================
-    // ── Public: no authentication required ──────────────────────────────
-    // ====================================================================
-    let public = Router::new()
-        .route("/health", get(crate::routes::health::health))
-        // identity
-        .route(
-            "/api/identity/register",
-            post(crate::domains::identity::routes::registration::register),
-        )
-        .route(
-            "/api/identity/login",
-            post(crate::domains::identity::routes::login::login),
-        )
-        .route(
-            "/auth/refresh",
-            post(crate::domains::identity::routes::login::refresh),
-        )
-        // oauth2 / oidc (validate credentials internally)
-        .route(
-            "/oauth2/token",
-            post(crate::domains::oauth2::routes::token::token),
-        )
-        .route(
-            "/oauth2/revoke",
-            post(crate::domains::oauth2::routes::revoke::revoke),
-        )
-        .route(
-            "/oauth2/authorize",
-            get(crate::domains::oauth2::routes::authorize::authorize),
-        )
-        .route(
-            "/.well-known/openid-configuration",
-            get(crate::domains::oidc::routes::discovery::discovery),
-        )
-        .route(
-            "/oauth2/keys",
-            get(crate::domains::oidc::routes::jwks::jwks),
-        )
-        // sso pages
-        .route(
-            "/sso/login",
-            get(crate::domains::sso::routes::login::login_get)
-                .post(crate::domains::sso::routes::login::login_post),
-        )
-        .route(
-            "/sso/register",
-            get(crate::domains::sso::routes::register::register_get)
-                .post(crate::domains::sso::routes::register::register_post),
-        )
-        .route(
-            "/sso/consent",
-            get(crate::domains::sso::routes::consent::consent_get)
-                .post(crate::domains::sso::routes::consent::consent_post),
-        )
-        .route(
-            "/sso/forgot-password",
-            get(crate::domains::sso::routes::forgot::forgot_get)
-                .post(crate::domains::sso::routes::forgot::forgot_post),
-        )
-        .route(
-            "/sso/change-password",
-            get(crate::domains::sso::routes::change_password::change_password_get)
-                .post(crate::domains::sso::routes::change_password::change_password_post),
-        );
-
-    // ====================================================================
-    // ── Login required: bearer token, no ABAC check ────────────────────
-    // ====================================================================
-    let login_required = Router::new()
-        // identity — self-service
-        .route(
-            "/api/users/me",
-            get(crate::domains::identity::routes::profile::get_me)
-                .put(crate::domains::identity::routes::profile::update_me),
-        )
-        .route(
-            "/api/identity/password/change",
-            axum::routing::put(crate::domains::identity::routes::password::change_password),
-        )
-        .route(
-            "/api/identity/unbind/{provider}",
-            delete(crate::domains::identity::routes::binding::unbind),
-        )
-        .route(
-            "/api/identity/identities",
-            get(crate::domains::identity::routes::binding::list_identities),
-        )
-        // auth
-        .route(
-            "/auth/logout",
-            post(crate::domains::identity::routes::login::logout),
-        )
-        // oidc
-        .route(
-            "/oauth2/userinfo",
-            get(crate::domains::oidc::routes::userinfo::userinfo),
-        )
-        // abac evaluate
-        .route(
-            "/api/abac/evaluate",
-            post(crate::domains::abac::routes::evaluate::evaluate),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::shared::middleware::auth::auth_middleware,
-        ));
-
-    // ====================================================================
-    // ── ABAC required: bearer token + policy check ──────────────────────
-    // ====================================================================
-    let abac_required = Router::new()
-        // users (admin CRUD)
-        .route(
-            "/api/users",
-            post(crate::domains::identity::routes::registration::create_user)
-                .get(crate::domains::identity::routes::profile::list_users),
-        )
-        .route(
-            "/api/users/{id}",
-            get(crate::domains::identity::routes::profile::get_user)
-                .put(crate::domains::identity::routes::profile::update_user)
-                .delete(crate::domains::identity::routes::profile::delete_user),
-        )
-        .route(
-            "/api/users/{id}/attributes",
-            get(crate::domains::identity::routes::user_attrs::list_attributes)
-                .put(crate::domains::identity::routes::user_attrs::set_attributes),
-        )
-        .route(
-            "/api/users/{id}/attributes/{key}",
-            delete(crate::domains::identity::routes::user_attrs::delete_attribute),
-        )
-        // apps
-        .route(
-            "/api/apps",
-            post(crate::domains::app::routes::crud::create_app)
-                .get(crate::domains::app::routes::crud::list_apps),
-        )
-        .route(
-            "/api/apps/{id}",
-            get(crate::domains::app::routes::crud::get_app)
-                .put(crate::domains::app::routes::crud::update_app)
-                .delete(crate::domains::app::routes::crud::delete_app),
-        )
-        // oauth2 clients
-        .route(
-            "/api/oauth2/clients",
-            post(crate::domains::oauth2::routes::client_management::create_client)
-                .get(crate::domains::oauth2::routes::client_management::list_clients),
-        )
-        .route(
-            "/api/oauth2/clients/{id}",
-            get(crate::domains::oauth2::routes::client_management::get_client)
-                .put(crate::domains::oauth2::routes::client_management::update_client)
-                .delete(crate::domains::oauth2::routes::client_management::delete_client),
-        )
-        // policies
-        .route(
-            "/api/policies",
-            post(crate::domains::abac::routes::policies::create_policy)
-                .get(crate::domains::abac::routes::policies::list_policies),
-        )
-        .route(
-            "/api/policies/{id}",
-            get(crate::domains::abac::routes::policies::get_policy)
-                .put(crate::domains::abac::routes::policies::update_policy)
-                .delete(crate::domains::abac::routes::policies::delete_policy),
-        )
-        .route(
-            "/api/users/{user_id}/policies",
-            get(crate::domains::abac::routes::policies::list_user_policies),
-        )
-        .route(
-            "/api/users/{user_id}/policies/{policy_id}",
-            post(crate::domains::abac::routes::policies::assign_policy)
-                .delete(crate::domains::abac::routes::policies::unassign_policy),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::domains::abac::middleware::abac_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::shared::middleware::auth::auth_middleware,
-        ));
-
-    // ====================================================================
-    // ── Client credentials required: oauth2 client_auth ─────────────────
-    // ====================================================================
-    let client_required = Router::new()
-        .route(
-            "/api/client/policies",
-            post(crate::domains::abac::routes::client_policies::create_policy)
-                .get(crate::domains::abac::routes::client_policies::list_policies),
-        )
-        .route(
-            "/api/client/policies/{id}",
-            get(crate::domains::abac::routes::client_policies::get_policy)
-                .put(crate::domains::abac::routes::client_policies::update_policy)
-                .delete(crate::domains::abac::routes::client_policies::delete_policy),
-        )
-        .route(
-            "/api/client/users/{user_id}/policies",
-            get(crate::domains::abac::routes::client_policies::list_user_policies),
-        )
-        .route(
-            "/api/client/users/{user_id}/policies/{policy_id}",
-            post(crate::domains::abac::routes::client_policies::assign_policy)
-                .delete(crate::domains::abac::routes::client_policies::unassign_policy),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::shared::middleware::client_auth::client_credentials_middleware,
-        ));
+    let public = build_public_routes();
+    let login_required = build_login_required_routes(&state);
+    let abac_required = build_abac_required_routes(&state);
+    let client_required = build_client_required_routes(&state);
 
     let openapi = crate::docs::build_openapi(&state.config.docs);
 
     let x_request_id = axum::http::HeaderName::from_static(X_REQUEST_ID);
 
     let cors = build_cors(&state.config.cors);
+    let rate_limiter = crate::shared::middleware::rate_limit::RateLimiter::new(
+        state.config.server.rate_limit_rps,
+        state.config.server.rate_limit_burst,
+    );
 
     Router::new()
         .merge(public)
@@ -243,6 +34,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(client_required)
         .merge(SwaggerUi::new("/docs").url("/openapi.json", openapi))
         .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            rate_limiter,
+            crate::shared::middleware::rate_limit::rate_limit_middleware,
+        ))
         .layer(cors)
         // --- tower-http middleware stack (outermost = last applied to request) ---
         // TraceLayer: structured request/response tracing
@@ -280,6 +75,215 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CatchPanicLayer::new())
         // NormalizePathLayer: merge/trim trailing slashes
         .layer(NormalizePathLayer::trim_trailing_slash())
+}
+
+fn build_public_routes() -> Router<AppState> {
+    use axum::routing::{get, post};
+
+    Router::new()
+        .route("/health", get(crate::routes::health::health))
+        .route(
+            "/api/identity/register",
+            post(crate::domains::identity::routes::registration::register),
+        )
+        .route(
+            "/api/identity/login",
+            post(crate::domains::identity::routes::login::login),
+        )
+        .route(
+            "/auth/refresh",
+            post(crate::domains::identity::routes::login::refresh),
+        )
+        .route(
+            "/oauth2/token",
+            post(crate::domains::oauth2::routes::token::token),
+        )
+        .route(
+            "/oauth2/revoke",
+            post(crate::domains::oauth2::routes::revoke::revoke),
+        )
+        .route(
+            "/oauth2/authorize",
+            get(crate::domains::oauth2::routes::authorize::authorize),
+        )
+        .route(
+            "/.well-known/openid-configuration",
+            get(crate::domains::oidc::routes::discovery::discovery),
+        )
+        .route(
+            "/oauth2/keys",
+            get(crate::domains::oidc::routes::jwks::jwks),
+        )
+        .route(
+            "/sso/login",
+            get(crate::domains::sso::routes::login::login_get)
+                .post(crate::domains::sso::routes::login::login_post),
+        )
+        .route(
+            "/sso/register",
+            get(crate::domains::sso::routes::register::register_get)
+                .post(crate::domains::sso::routes::register::register_post),
+        )
+        .route(
+            "/sso/consent",
+            get(crate::domains::sso::routes::consent::consent_get)
+                .post(crate::domains::sso::routes::consent::consent_post),
+        )
+        .route(
+            "/sso/forgot-password",
+            get(crate::domains::sso::routes::forgot::forgot_get)
+                .post(crate::domains::sso::routes::forgot::forgot_post),
+        )
+        .route(
+            "/sso/change-password",
+            get(crate::domains::sso::routes::change_password::change_password_get)
+                .post(crate::domains::sso::routes::change_password::change_password_post),
+        )
+}
+
+fn build_login_required_routes(state: &AppState) -> Router<AppState> {
+    use axum::routing::{delete, get, post, put};
+
+    Router::new()
+        .route(
+            "/api/users/me",
+            get(crate::domains::identity::routes::profile::get_me)
+                .put(crate::domains::identity::routes::profile::update_me),
+        )
+        .route(
+            "/api/identity/password/change",
+            put(crate::domains::identity::routes::password::change_password),
+        )
+        .route(
+            "/api/identity/unbind/{provider}",
+            delete(crate::domains::identity::routes::binding::unbind),
+        )
+        .route(
+            "/api/identity/identities",
+            get(crate::domains::identity::routes::binding::list_identities),
+        )
+        .route(
+            "/auth/logout",
+            post(crate::domains::identity::routes::login::logout),
+        )
+        .route(
+            "/oauth2/userinfo",
+            get(crate::domains::oidc::routes::userinfo::userinfo),
+        )
+        .route(
+            "/api/abac/evaluate",
+            post(crate::domains::abac::routes::evaluate::evaluate),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::shared::middleware::auth::auth_middleware,
+        ))
+}
+
+fn build_abac_required_routes(state: &AppState) -> Router<AppState> {
+    use axum::routing::{delete, get, post};
+
+    Router::new()
+        .route(
+            "/api/users",
+            post(crate::domains::identity::routes::registration::create_user)
+                .get(crate::domains::identity::routes::profile::list_users),
+        )
+        .route(
+            "/api/users/{id}",
+            get(crate::domains::identity::routes::profile::get_user)
+                .put(crate::domains::identity::routes::profile::update_user)
+                .delete(crate::domains::identity::routes::profile::delete_user),
+        )
+        .route(
+            "/api/users/{id}/attributes",
+            get(crate::domains::identity::routes::user_attrs::list_attributes)
+                .put(crate::domains::identity::routes::user_attrs::set_attributes),
+        )
+        .route(
+            "/api/users/{id}/attributes/{key}",
+            delete(crate::domains::identity::routes::user_attrs::delete_attribute),
+        )
+        .route(
+            "/api/apps",
+            post(crate::domains::app::routes::crud::create_app)
+                .get(crate::domains::app::routes::crud::list_apps),
+        )
+        .route(
+            "/api/apps/{id}",
+            get(crate::domains::app::routes::crud::get_app)
+                .put(crate::domains::app::routes::crud::update_app)
+                .delete(crate::domains::app::routes::crud::delete_app),
+        )
+        .route(
+            "/api/oauth2/clients",
+            post(crate::domains::oauth2::routes::client_management::create_client)
+                .get(crate::domains::oauth2::routes::client_management::list_clients),
+        )
+        .route(
+            "/api/oauth2/clients/{id}",
+            get(crate::domains::oauth2::routes::client_management::get_client)
+                .put(crate::domains::oauth2::routes::client_management::update_client)
+                .delete(crate::domains::oauth2::routes::client_management::delete_client),
+        )
+        .route(
+            "/api/policies",
+            post(crate::domains::abac::routes::policies::create_policy)
+                .get(crate::domains::abac::routes::policies::list_policies),
+        )
+        .route(
+            "/api/policies/{id}",
+            get(crate::domains::abac::routes::policies::get_policy)
+                .put(crate::domains::abac::routes::policies::update_policy)
+                .delete(crate::domains::abac::routes::policies::delete_policy),
+        )
+        .route(
+            "/api/users/{user_id}/policies",
+            get(crate::domains::abac::routes::policies::list_user_policies),
+        )
+        .route(
+            "/api/users/{user_id}/policies/{policy_id}",
+            post(crate::domains::abac::routes::policies::assign_policy)
+                .delete(crate::domains::abac::routes::policies::unassign_policy),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::domains::abac::middleware::abac_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::shared::middleware::auth::auth_middleware,
+        ))
+}
+
+fn build_client_required_routes(state: &AppState) -> Router<AppState> {
+    use axum::routing::{get, post};
+
+    Router::new()
+        .route(
+            "/api/client/policies",
+            post(crate::domains::abac::routes::client_policies::create_policy)
+                .get(crate::domains::abac::routes::client_policies::list_policies),
+        )
+        .route(
+            "/api/client/policies/{id}",
+            get(crate::domains::abac::routes::client_policies::get_policy)
+                .put(crate::domains::abac::routes::client_policies::update_policy)
+                .delete(crate::domains::abac::routes::client_policies::delete_policy),
+        )
+        .route(
+            "/api/client/users/{user_id}/policies",
+            get(crate::domains::abac::routes::client_policies::list_user_policies),
+        )
+        .route(
+            "/api/client/users/{user_id}/policies/{policy_id}",
+            post(crate::domains::abac::routes::client_policies::assign_policy)
+                .delete(crate::domains::abac::routes::client_policies::unassign_policy),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::shared::middleware::client_auth::client_credentials_middleware,
+        ))
 }
 
 fn build_cors(cfg: &crate::config::CorsConfig) -> CorsLayer {

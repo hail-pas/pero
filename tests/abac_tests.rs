@@ -1,7 +1,6 @@
 mod common;
 
 use common::*;
-use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::ServiceExt;
 
@@ -61,12 +60,12 @@ async fn abac_allows_when_any_role_matches() {
         .body(axum::body::Body::empty())
         .unwrap();
     let response = ta.app.clone().oneshot(request).await.unwrap();
-    let (parts, body) = response.into_parts();
-    let bytes = body.collect().await.unwrap().to_bytes();
-    let body_str = String::from_utf8_lossy(&bytes);
-    println!("第一次结果: status={}, body={}", parts.status, body_str);
+    // let (parts, body) = response.into_parts();
+    // let bytes = body.collect().await.unwrap().to_bytes();
+    // let body_str = String::from_utf8_lossy(&bytes);
+    // println!("第一次结果: status={}, body={}", parts.status, body_str);
     assert_eq!(
-        parts.status,
+        response.status(),
         StatusCode::FORBIDDEN,
         "should be denied: JWT role is 'user', policy requires 'viewer'"
     );
@@ -92,12 +91,12 @@ async fn abac_allows_when_any_role_matches() {
         .body(axum::body::Body::empty())
         .unwrap();
     let response = ta.app.clone().oneshot(request).await.unwrap();
-    let (parts, body) = response.into_parts();
-    let bytes = body.collect().await.unwrap().to_bytes();
-    let body_str = String::from_utf8_lossy(&bytes);
-    println!("第二次结果: status={}, body={}", parts.status, body_str);
+    // let (parts, body) = response.into_parts();
+    // let bytes = body.collect().await.unwrap().to_bytes();
+    // let body_str = String::from_utf8_lossy(&bytes);
+    // println!("第二次结果: status={}, body={}", parts.status, body_str);
     assert_eq!(
-        parts.status,
+        response.status(),
         StatusCode::OK,
         "should be allowed: user_attrs has 'viewer' (multi-valued with JWT 'user')"
     );
@@ -175,7 +174,7 @@ async fn get_update_delete_policy() {
         hyper::Method::PUT,
         &format!("/api/policies/{}", policy_fx.policy_id),
         Some(serde_json::json!({
-            "name": "updated_policy",
+            "name": unique_name("updated_policy"),
             "priority": 20,
         })),
         Some(&fx.access_token),

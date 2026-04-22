@@ -1,11 +1,14 @@
-use crate::domains::identity::models::{LoginRequest, RefreshRequest, TokenResponse};
-use crate::domains::identity::repos::{IdentityRepo, UserRepo};
+use crate::domains::identity::auth_service::AuthService;
+use crate::domains::identity::models::{
+    LoginRequest, RefreshRequest, RefreshTokenResponse, TokenResponse,
+};
+use crate::domains::identity::repos::UserRepo;
 use crate::domains::identity::session;
-use crate::shared::constants::identity::{DEFAULT_ROLE, PROVIDER_PASSWORD};
+use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, ValidatedJson};
 use crate::shared::jwt;
-use crate::shared::response::ApiResponse;
+use crate::shared::response::{ApiResponse, MessageResponse};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
@@ -25,40 +28,13 @@ pub async fn login(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
-    use crate::domains::identity::models::IdentifierType;
-
-    let user = match req.identifier_type {
-        IdentifierType::Email => UserRepo::find_by_email(&state.db, &req.identifier).await?,
-        IdentifierType::Phone => UserRepo::find_by_phone(&state.db, &req.identifier).await?,
-        IdentifierType::Username => UserRepo::find_by_username(&state.db, &req.identifier).await?,
-    };
-
-    let user = match user {
-        Some(u) if u.status == 1 => u,
-        Some(_) => return Err(AppError::Forbidden("account is disabled".into())),
-        None => {
-            let _ = bcrypt::verify(
-                &req.password,
-                "$2b$12$TrePSBin7KMS2YzgKJgNXeSKHaFjHOa/XYRm8kqDQoJHqWbsLCDKi",
-            );
-            return Err(AppError::Unauthorized);
-        }
-    };
-
-    let identity = IdentityRepo::find_by_user_and_provider(&state.db, user.id, PROVIDER_PASSWORD)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
-    let credential = identity
-        .credential
-        .as_deref()
-        .ok_or(AppError::Unauthorized)?;
-
-    let valid = bcrypt::verify(&req.password, credential)
-        .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
-    if !valid {
-        return Err(AppError::Unauthorized);
-    }
+    let user = AuthService::authenticate_with_password(
+        &state,
+        &req.identifier_type,
+        &req.identifier,
+        &req.password,
+    )
+    .await?;
 
     let token_response = crate::domains::identity::helpers::issue_tokens(&state, &user).await?;
     Ok(Json(ApiResponse::success(token_response)))
@@ -70,14 +46,14 @@ pub async fn login(
     tag = "Identity",
     request_body = RefreshRequest,
     responses(
-        (status = 200, description = "Token refreshed"),
+        (status = 200, description = "Token refreshed", body = ApiResponse<RefreshTokenResponse>),
         (status = 401, description = "Invalid refresh token"),
     )
 )]
 pub async fn refresh(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<RefreshRequest>,
-) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+) -> Result<Json<ApiResponse<RefreshTokenResponse>>, AppError> {
     let session_id = session::parse_session_id(&req.refresh_token)?;
     let stored = session::get_session(&state.cache, session_id)
         .await?
@@ -114,6 +90,8 @@ pub async fn refresh(
         &state.jwt_keys,
         state.config.jwt.access_ttl_minutes,
         None,
+        None,
+        None,
     )?;
 
     let new_refresh_token = session::build_refresh_token(session_id);
@@ -129,10 +107,10 @@ pub async fn refresh(
         return Err(AppError::Unauthorized);
     }
 
-    Ok(Json(ApiResponse::success(serde_json::json!({
-        "access_token": access_token,
-        "refresh_token": new_refresh_token
-    }))))
+    Ok(Json(ApiResponse::success(RefreshTokenResponse {
+        access_token,
+        refresh_token: new_refresh_token,
+    })))
 }
 
 #[utoipa::path(
@@ -141,14 +119,14 @@ pub async fn refresh(
     tag = "Identity",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Logged out", body = serde_json::Value),
+        (status = 200, description = "Logged out", body = MessageResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
 pub async fn logout(
     State(state): State<AppState>,
     auth_user: AuthUser,
-) -> Result<Json<ApiResponse<()>>, AppError> {
+) -> Result<Json<MessageResponse>, AppError> {
     session::revoke_user_sessions(&state.cache, auth_user.user_id).await?;
-    Ok(Json(ApiResponse::<()>::success_message("logged out")))
+    Ok(Json(MessageResponse::success("logged out")))
 }

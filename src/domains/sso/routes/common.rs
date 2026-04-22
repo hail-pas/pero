@@ -18,5 +18,9 @@ pub async fn require_authenticated_sso_session(
 }
 
 pub fn sso_error_redirect(message: &str) -> Result<Response, AppError> {
-    Ok(Redirect::to(&format!("/sso/login?error={}", urlencoding::encode(message))).into_response())
+    Ok(Redirect::to(&format!(
+        "/sso/login?error={}",
+        urlencoding::encode(message)
+    ))
+    .into_response())
 }

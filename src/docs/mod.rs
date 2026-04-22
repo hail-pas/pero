@@ -1,7 +1,7 @@
-use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
-use utoipa::openapi::Server;
 use utoipa::Modify;
 use utoipa::OpenApi;
+use utoipa::openapi::Server;
+use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
 
 use crate::config::DocsConfig;
 

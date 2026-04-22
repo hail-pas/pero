@@ -1,9 +1,8 @@
 use crate::domains::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
-use crate::domains::identity::repos::UserRepo;
-use crate::domains::identity::session;
+use crate::domains::identity::service;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, Pagination, ValidatedJson};
-use crate::shared::response::{ApiResponse, PageData};
+use crate::shared::response::{ApiResponse, MessageResponse, PageData};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -23,8 +22,9 @@ pub async fn get_me(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let user = UserRepo::find_by_id_or_err(&state.db, auth_user.user_id).await?;
-    Ok(Json(ApiResponse::success(user.into())))
+    Ok(Json(ApiResponse::success(
+        service::get_me(&state, auth_user.user_id).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -43,8 +43,9 @@ pub async fn update_me(
     auth_user: AuthUser,
     ValidatedJson(req): ValidatedJson<UpdateMeRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let user = UserRepo::update_me(&state.db, auth_user.user_id, &req).await?;
-    Ok(Json(ApiResponse::success(user.into())))
+    Ok(Json(ApiResponse::success(
+        service::update_me(&state, auth_user.user_id, &req).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -65,11 +66,9 @@ pub async fn list_users(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<UserDTO>>>, AppError> {
-    let (users, total) = UserRepo::list(&state.db, page, page_size).await?;
-    let items: Vec<UserDTO> = users.into_iter().map(UserDTO::from).collect();
-    Ok(Json(ApiResponse::success(PageData::new(
-        items, total, page, page_size,
-    ))))
+    Ok(Json(ApiResponse::success(
+        service::list_users(&state, page, page_size).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -90,8 +89,9 @@ pub async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let user = UserRepo::find_by_id_or_err(&state.db, id).await?;
-    Ok(Json(ApiResponse::success(user.into())))
+    Ok(Json(ApiResponse::success(
+        service::get_user(&state, id).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -114,20 +114,9 @@ pub async fn update_user(
     Path(id): Path<uuid::Uuid>,
     ValidatedJson(input): ValidatedJson<UpdateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
-    let mut tx = state.db.begin().await?;
-
-    crate::domains::identity::helpers::validate_update_user(
-        &mut *tx,
-        id,
-        input.username.as_deref(),
-        input.email.as_deref(),
-    )
-    .await?;
-
-    let user = UserRepo::update(&mut *tx, id, &input).await?;
-
-    tx.commit().await?;
-    Ok(Json(ApiResponse::success(user.into())))
+    Ok(Json(ApiResponse::success(
+        service::update_user(&state, id, &input).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -139,7 +128,7 @@ pub async fn update_user(
         ("id" = uuid::Uuid, Path, description = "User ID"),
     ),
     responses(
-        (status = 200, description = "User deleted", body = serde_json::Value),
+        (status = 200, description = "User deleted", body = MessageResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "User not found"),
     )
@@ -147,8 +136,6 @@ pub async fn update_user(
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
-) -> Result<Json<ApiResponse<()>>, AppError> {
-    session::revoke_user_sessions(&state.cache, id).await?;
-    UserRepo::delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::<()>::success_message("user deleted")))
+) -> Result<Json<MessageResponse>, AppError> {
+    Ok(Json(service::delete_user(&state, id).await?))
 }

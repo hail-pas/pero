@@ -1,19 +1,17 @@
 use crate::domains::abac::models::{CreatePolicyRequest, UpdatePolicyRequest};
-use crate::domains::abac::repos::PolicyRepo;
+pub use crate::domains::abac::service::PolicyDTO;
+use crate::domains::abac::service::{
+    PolicyScope, assign_policy_to_user_in_scope, create_policy_dto, delete_policy_in_scope,
+    get_policy_dto, list_policy_page, list_user_policy_dtos, unassign_policy_from_user_in_scope,
+    update_policy_dto,
+};
 use crate::shared::error::AppError;
 use crate::shared::extractors::{Pagination, ValidatedJson};
-use crate::shared::response::{ApiResponse, PageData};
+use crate::shared::response::{ApiResponse, MessageResponse};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use uuid::Uuid;
-
-pub use super::common::PolicyDTO;
-use super::common::{
-    PolicyScope, assign_policy_to_user_in_scope, build_policy_page, create_policy_dto,
-    delete_policy_in_scope, get_policy_dto, list_user_policy_dtos,
-    unassign_policy_from_user_in_scope, update_policy_dto,
-};
 
 #[utoipa::path(
     post,
@@ -51,9 +49,8 @@ pub async fn create_policy(
 pub async fn list_policies(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
-) -> Result<Json<ApiResponse<PageData<PolicyDTO>>>, AppError> {
-    let (policies, total) = PolicyRepo::list(&state.db, page, page_size).await?;
-    let data = build_policy_page(&state, policies, total, page, page_size).await?;
+) -> Result<Json<ApiResponse<crate::shared::response::PageData<PolicyDTO>>>, AppError> {
+    let data = list_policy_page(&state, PolicyScope::Any, page, page_size).await?;
     Ok(Json(ApiResponse::success(data)))
 }
 
@@ -112,7 +109,7 @@ pub async fn update_policy(
         ("id" = uuid::Uuid, Path, description = "Policy ID"),
     ),
     responses(
-        (status = 200, description = "Policy deleted", body = serde_json::Value),
+        (status = 200, description = "Policy deleted", body = MessageResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Policy not found"),
     )
@@ -120,9 +117,9 @@ pub async fn update_policy(
 pub async fn delete_policy(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<ApiResponse<()>>, AppError> {
+) -> Result<Json<MessageResponse>, AppError> {
     delete_policy_in_scope(&state, id, PolicyScope::Any).await?;
-    Ok(Json(ApiResponse::<()>::success_message("policy deleted")))
+    Ok(Json(MessageResponse::success("policy deleted")))
 }
 
 #[utoipa::path(
@@ -135,7 +132,7 @@ pub async fn delete_policy(
         ("policy_id" = uuid::Uuid, Path, description = "Policy ID"),
     ),
     responses(
-        (status = 200, description = "Policy assigned", body = serde_json::Value),
+        (status = 200, description = "Policy assigned", body = MessageResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "User or policy not found"),
     )
@@ -143,9 +140,9 @@ pub async fn delete_policy(
 pub async fn assign_policy(
     State(state): State<AppState>,
     Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<ApiResponse<()>>, AppError> {
+) -> Result<Json<MessageResponse>, AppError> {
     assign_policy_to_user_in_scope(&state, user_id, policy_id, PolicyScope::Any).await?;
-    Ok(Json(ApiResponse::<()>::success_message("policy assigned")))
+    Ok(Json(MessageResponse::success("policy assigned")))
 }
 
 #[utoipa::path(
@@ -158,7 +155,7 @@ pub async fn assign_policy(
         ("policy_id" = uuid::Uuid, Path, description = "Policy ID"),
     ),
     responses(
-        (status = 200, description = "Policy unassigned", body = serde_json::Value),
+        (status = 200, description = "Policy unassigned", body = MessageResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Assignment not found"),
     )
@@ -166,11 +163,9 @@ pub async fn assign_policy(
 pub async fn unassign_policy(
     State(state): State<AppState>,
     Path((user_id, policy_id)): Path<(Uuid, Uuid)>,
-) -> Result<Json<ApiResponse<()>>, AppError> {
+) -> Result<Json<MessageResponse>, AppError> {
     unassign_policy_from_user_in_scope(&state, user_id, policy_id, PolicyScope::Any).await?;
-    Ok(Json(ApiResponse::<()>::success_message(
-        "policy unassigned",
-    )))
+    Ok(Json(MessageResponse::success("policy unassigned")))
 }
 
 #[utoipa::path(

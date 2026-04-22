@@ -92,11 +92,11 @@ impl OAuth2ClientRepo {
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
-        let updated = builder
+        builder
             .build_query_as::<OAuth2Client>()
-            .fetch_one(pool)
-            .await?;
-        Ok(updated)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(AppError::NotFound("oauth2 client".into()))
     }
 
     pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), AppError> {

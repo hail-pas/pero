@@ -2,10 +2,10 @@ use axum::Json;
 use axum::extract::{Path, State};
 
 use crate::domains::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
-use crate::domains::app::repos::AppRepo;
+use crate::domains::app::service;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{Pagination, ValidatedJson};
-use crate::shared::response::{ApiResponse, PageData};
+use crate::shared::response::{ApiResponse, MessageResponse, PageData};
 use crate::shared::state::AppState;
 
 #[utoipa::path(
@@ -24,14 +24,9 @@ pub async fn create_app(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateAppRequest>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
-    if AppRepo::find_by_code(&state.db, &req.code).await?.is_some() {
-        return Err(AppError::Conflict(format!(
-            "app code '{}' already exists",
-            req.code
-        )));
-    }
-    let app = AppRepo::create(&state.db, &req).await?;
-    Ok(Json(ApiResponse::success(app.into())))
+    Ok(Json(ApiResponse::success(
+        service::create_app(&state, &req).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -52,11 +47,9 @@ pub async fn list_apps(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<AppDTO>>>, AppError> {
-    let (apps, total) = AppRepo::list(&state.db, page, page_size).await?;
-    let items: Vec<AppDTO> = apps.into_iter().map(AppDTO::from).collect();
-    Ok(Json(ApiResponse::success(PageData::new(
-        items, total, page, page_size,
-    ))))
+    Ok(Json(ApiResponse::success(
+        service::list_apps(&state, page, page_size).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -77,8 +70,9 @@ pub async fn get_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
-    let app = AppRepo::find_by_id_or_err(&state.db, id).await?;
-    Ok(Json(ApiResponse::success(app.into())))
+    Ok(Json(ApiResponse::success(
+        service::get_app(&state, id).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -101,8 +95,9 @@ pub async fn update_app(
     Path(id): Path<uuid::Uuid>,
     ValidatedJson(req): ValidatedJson<UpdateAppRequest>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
-    let app = AppRepo::update(&state.db, id, &req).await?;
-    Ok(Json(ApiResponse::success(app.into())))
+    Ok(Json(ApiResponse::success(
+        service::update_app(&state, id, &req).await?,
+    )))
 }
 
 #[utoipa::path(
@@ -114,7 +109,7 @@ pub async fn update_app(
         ("id" = uuid::Uuid, Path, description = "App ID"),
     ),
     responses(
-        (status = 200, description = "App deleted", body = serde_json::Value),
+        (status = 200, description = "App deleted", body = MessageResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "App not found"),
     )
@@ -122,7 +117,6 @@ pub async fn update_app(
 pub async fn delete_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
-) -> Result<Json<ApiResponse<()>>, AppError> {
-    AppRepo::delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::<()>::success_message("app deleted")))
+) -> Result<Json<MessageResponse>, AppError> {
+    Ok(Json(service::delete_app(&state, id).await?))
 }

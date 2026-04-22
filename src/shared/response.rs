@@ -17,12 +17,19 @@ impl<T: Serialize + ToSchema> ApiResponse<T> {
             data: Some(data),
         }
     }
+}
 
-    pub fn success_message(message: &str) -> ApiResponse<()> {
-        ApiResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MessageResponse {
+    pub code: i32,
+    pub message: String,
+}
+
+impl MessageResponse {
+    pub fn success(message: &str) -> Self {
+        Self {
             code: 0,
             message: message.into(),
-            data: None,
         }
     }
 }

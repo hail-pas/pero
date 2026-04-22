@@ -3,12 +3,10 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
-use crate::domains::identity::helpers;
-use crate::domains::identity::repos::IdentityRepo;
+use crate::domains::identity::auth_service::AuthService;
 use crate::domains::sso::models::ChangePasswordForm;
 use crate::domains::sso::routes::login::query_from_session;
 use crate::domains::sso::session::{self, get_session_id};
-use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedForm;
 use crate::shared::state::AppState;
@@ -68,43 +66,20 @@ pub async fn change_password_post(
 
     let user_id = sso.user_id.unwrap();
     let qp = query_from_session(&sso);
-
-    let identity = IdentityRepo::find_by_user_and_provider(&state.db, user_id, PROVIDER_PASSWORD)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
-    let credential = identity.credential.ok_or(AppError::Unauthorized)?;
-
-    let valid = bcrypt::verify(&form.old_password, &credential)
-        .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
-
-    if !valid {
-        let tpl = ChangePasswordTemplate {
-            error: Some("current password is incorrect".into()),
-            success: None,
-            query_params: qp,
-        };
-        return Ok(render_tpl(&tpl)?.into_response());
-    }
-
-    if form.old_password == form.new_password {
-        let tpl = ChangePasswordTemplate {
-            error: Some("new password must differ from current password".into()),
-            success: None,
-            query_params: qp,
-        };
-        return Ok(render_tpl(&tpl)?.into_response());
-    }
-
-    let new_hash = helpers::hash_password(&form.new_password)?;
-
-    let mut tx = state.db.begin().await?;
-    IdentityRepo::update_credential(&mut *tx, user_id, PROVIDER_PASSWORD, &new_hash).await?;
-    tx.commit().await?;
-
-    if let Err(e) = crate::domains::identity::session::revoke_user_sessions(&state.cache, user_id).await
+    if let Err(err) =
+        AuthService::change_password(&state, user_id, &form.old_password, &form.new_password).await
     {
-        tracing::warn!(error = %e, "failed to revoke refresh token after password change");
+        let message = match err {
+            AppError::BadRequest(message) => message,
+            AppError::Unauthorized => "invalid credentials".to_string(),
+            other => return Err(other),
+        };
+        let tpl = ChangePasswordTemplate {
+            error: Some(message),
+            success: None,
+            query_params: qp,
+        };
+        return Ok(render_tpl(&tpl)?.into_response());
     }
 
     let tpl = ChangePasswordTemplate {

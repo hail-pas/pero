@@ -17,6 +17,8 @@ pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse
         &state.jwt_keys,
         state.config.jwt.access_ttl_minutes,
         None,
+        None,
+        None,
     )?;
 
     let (_, refresh_token) =

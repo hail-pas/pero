@@ -1,10 +1,8 @@
+use crate::domains::identity::auth_service::AuthService;
 use crate::domains::identity::models::ChangePasswordRequest;
-use crate::domains::identity::repos::IdentityRepo;
-use crate::domains::identity::session;
-use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::{AuthUser, ValidatedJson};
-use crate::shared::response::ApiResponse;
+use crate::shared::response::MessageResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
@@ -17,7 +15,7 @@ use utoipa;
     security(("bearer_auth" = [])),
     request_body = ChangePasswordRequest,
     responses(
-        (status = 200, description = "Password changed", body = serde_json::Value),
+        (status = 200, description = "Password changed", body = MessageResponse),
         (status = 400, description = "Old password incorrect"),
         (status = 401, description = "Unauthorized"),
     )
@@ -26,35 +24,14 @@ pub async fn change_password(
     State(state): State<AppState>,
     auth_user: AuthUser,
     ValidatedJson(req): ValidatedJson<ChangePasswordRequest>,
-) -> Result<Json<ApiResponse<()>>, AppError> {
-    let identity =
-        IdentityRepo::find_by_user_and_provider(&state.db, auth_user.user_id, PROVIDER_PASSWORD)
-            .await?
-            .ok_or(AppError::NotFound("password identity".into()))?;
+) -> Result<Json<MessageResponse>, AppError> {
+    AuthService::change_password(
+        &state,
+        auth_user.user_id,
+        &req.old_password,
+        &req.new_password,
+    )
+    .await?;
 
-    let credential = identity
-        .credential
-        .as_deref()
-        .ok_or(AppError::NotFound("password identity".into()))?;
-
-    let valid = bcrypt::verify(&req.old_password, credential)
-        .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
-    if !valid {
-        return Err(AppError::BadRequest("old password is incorrect".into()));
-    }
-
-    req.validate_same_password()?;
-
-    let new_hash = crate::domains::identity::helpers::hash_password(&req.new_password)?;
-
-    let mut tx = state.db.begin().await?;
-    IdentityRepo::update_credential(&mut *tx, auth_user.user_id, PROVIDER_PASSWORD, &new_hash)
-        .await?;
-    tx.commit().await?;
-
-    if let Err(e) = session::revoke_user_sessions(&state.cache, auth_user.user_id).await {
-        tracing::warn!(error = %e, "failed to revoke refresh token after password change");
-    }
-
-    Ok(Json(ApiResponse::<()>::success_message("password changed")))
+    Ok(Json(MessageResponse::success("password changed")))
 }

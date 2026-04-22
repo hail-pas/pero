@@ -99,34 +99,35 @@ async fn token_revoke_flow() {
     .await
     .unwrap();
 
-    let (status, body) = send_request(
+    let (status, body) = send_form_request(
         &mut ta.app,
         hyper::Method::POST,
         "/oauth2/token",
-        Some(serde_json::json!({
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "http://localhost:3000/callback",
-            "client_id": client_fx.client_id_str,
-            "client_secret": client_fx.client_secret,
-            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-        })),
-        None,
+        &[
+            ("grant_type", "authorization_code".to_string()),
+            ("code", code),
+            ("redirect_uri", "http://localhost:3000/callback".to_string()),
+            ("client_id", client_fx.client_id_str.clone()),
+            ("client_secret", client_fx.client_secret.clone()),
+            (
+                "code_verifier",
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string(),
+            ),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::OK, "token exchange failed: {body:?}");
     let refresh_token = body["refresh_token"].as_str().unwrap().to_string();
 
-    let (status, _) = send_request(
+    let (status, _) = send_form_request(
         &mut ta.app,
         hyper::Method::POST,
         "/oauth2/revoke",
-        Some(serde_json::json!({
-            "token": refresh_token,
-            "client_id": client_fx.client_id_str,
-            "client_secret": client_fx.client_secret,
-        })),
-        None,
+        &[
+            ("token", refresh_token),
+            ("client_id", client_fx.client_id_str.clone()),
+            ("client_secret", client_fx.client_secret.clone()),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -179,19 +180,21 @@ async fn token_exchange_rejects_disallowed_authorization_code_grant() {
     .await
     .unwrap();
 
-    let (status, _body) = send_request(
+    let (status, _body) = send_form_request(
         &mut ta.app,
         hyper::Method::POST,
         "/oauth2/token",
-        Some(serde_json::json!({
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "http://localhost:3000/callback",
-            "client_id": client_id_str,
-            "client_secret": client_secret,
-            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-        })),
-        None,
+        &[
+            ("grant_type", "authorization_code".to_string()),
+            ("code", code),
+            ("redirect_uri", "http://localhost:3000/callback".to_string()),
+            ("client_id", client_id_str.to_string()),
+            ("client_secret", client_secret.to_string()),
+            (
+                "code_verifier",
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string(),
+            ),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -236,24 +239,23 @@ async fn token_exchange_rejects_disallowed_refresh_token_grant() {
     )
     .bind(client_id)
     .bind(fx.user_id)
-    .bind(&refresh_token)
+    .bind(pero::shared::utils::sha256_hex(&refresh_token))
     .bind(&vec!["openid".to_string()])
     .bind(chrono::Utc::now().timestamp())
     .execute(&ta.db)
     .await
     .unwrap();
 
-    let (status, _body) = send_request(
+    let (status, _body) = send_form_request(
         &mut ta.app,
         hyper::Method::POST,
         "/oauth2/token",
-        Some(serde_json::json!({
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": client_id_str,
-            "client_secret": client_secret,
-        })),
-        None,
+        &[
+            ("grant_type", "refresh_token".to_string()),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id_str.to_string()),
+            ("client_secret", client_secret.to_string()),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

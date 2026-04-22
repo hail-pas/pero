@@ -90,6 +90,12 @@ impl From<OAuth2Client> for OAuth2ClientDTO {
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CreateClientResponse {
+    pub client: OAuth2ClientDTO,
+    pub client_secret: String,
+}
+
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateClientRequest {
     pub app_id: Uuid,

@@ -125,8 +125,11 @@ impl UserRepo {
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
-        let updated = builder.build_query_as::<User>().fetch_one(executor).await?;
-        Ok(updated)
+        builder
+            .build_query_as::<User>()
+            .fetch_optional(executor)
+            .await?
+            .ok_or(AppError::NotFound("user".into()))
     }
 
     pub async fn update_me(
@@ -142,8 +145,11 @@ impl UserRepo {
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
-        let updated = builder.build_query_as::<User>().fetch_one(pool).await?;
-        Ok(updated)
+        builder
+            .build_query_as::<User>()
+            .fetch_optional(pool)
+            .await?
+            .ok_or(AppError::NotFound("user".into()))
     }
 
     pub async fn delete(pool: &sqlx::PgPool, id: Uuid) -> Result<(), AppError> {

@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -57,6 +57,8 @@ pub fn access_denied(message: impl Into<String>) -> Response {
 pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
     match &e {
         crate::shared::error::AppError::BadRequest(msg) => invalid_request(msg),
+        crate::shared::error::AppError::Validation(msg) => invalid_request(msg),
+        crate::shared::error::AppError::Conflict(msg) => invalid_request(msg),
         crate::shared::error::AppError::Unauthorized => invalid_client("authentication failed"),
         crate::shared::error::AppError::Forbidden(msg) => access_denied(msg),
         crate::shared::error::AppError::NotFound(_) => invalid_grant(e.to_string()),

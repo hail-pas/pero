@@ -10,11 +10,16 @@ use serde::{Deserialize, Serialize};
 pub struct TokenClaims {
     pub sub: String,
     pub iss: String,
+    pub aud: Vec<String>,
     pub roles: Vec<String>,
     pub exp: i64,
     pub iat: i64,
     #[serde(default)]
     pub scope: Option<String>,
+    #[serde(default)]
+    pub azp: Option<String>,
+    #[serde(default)]
+    pub app_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -103,15 +108,20 @@ pub fn sign_access_token(
     keys: &JwtKeys,
     ttl_minutes: i64,
     scope: Option<String>,
+    azp: Option<String>,
+    app_id: Option<String>,
 ) -> Result<String, AppError> {
     let now = Utc::now();
     let claims = TokenClaims {
         sub: user_id.to_string(),
         iss: keys.issuer.clone(),
+        aud: vec![jwt_constants::ACCESS_TOKEN_AUDIENCE.to_string()],
         roles,
         exp: (now + TimeDelta::minutes(ttl_minutes)).timestamp(),
         iat: now.timestamp(),
         scope,
+        azp,
+        app_id,
     };
     let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
@@ -121,8 +131,8 @@ pub fn sign_access_token(
 
 pub fn verify_token(token: &str, keys: &JwtKeys) -> Result<TokenClaims, AppError> {
     let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
-    validation.validate_aud = false;
     validation.set_issuer(&[&keys.issuer]);
+    validation.set_audience(&[jwt_constants::ACCESS_TOKEN_AUDIENCE]);
     let token_data =
         decode::<TokenClaims>(token, &keys.decoding_key, &validation).map_err(|e| {
             tracing::warn!(error = %e, "JWT verification failed");

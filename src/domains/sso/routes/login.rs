@@ -3,11 +3,9 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
-use crate::domains::identity::models::IdentifierType;
-use crate::domains::identity::repos::{IdentityRepo, UserRepo};
+use crate::domains::identity::auth_service::AuthService;
 use crate::domains::sso::models::LoginForm;
 use crate::domains::sso::session::{self, COOKIE_NAME, get_session_id};
-use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use crate::shared::extractors::ValidatedForm;
 use crate::shared::state::AppState;
@@ -110,56 +108,42 @@ pub async fn login_post(
 ) -> Result<Response, AppError> {
     let (sid, mut sso) = session::require(&state.cache, &headers).await?;
 
-    let user = match form.identifier_type {
-        IdentifierType::Email => UserRepo::find_by_email(&state.db, &form.identifier).await?,
-        IdentifierType::Phone => UserRepo::find_by_phone(&state.db, &form.identifier).await?,
-        _ => UserRepo::find_by_username(&state.db, &form.identifier).await?,
-    };
-
-    let user = match user {
-        Some(u) => u,
-        None => {
+    let identifier = form.identifier.clone();
+    let identifier_type = serde_json::to_string(&form.identifier_type)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_string();
+    let user = match AuthService::authenticate_with_password(
+        &state,
+        &form.identifier_type,
+        &form.identifier,
+        &form.password,
+    )
+    .await
+    {
+        Ok(user) => user,
+        Err(AppError::Unauthorized) => {
             let qp = query_from_session(&sso);
             return Ok(render_tpl(&error_tpl(
-                form.identifier,
-                serde_json::to_string(&form.identifier_type).unwrap_or_default().trim_matches('"').to_string(),
+                identifier,
+                identifier_type,
                 "invalid credentials",
                 qp,
             ))?
             .into_response());
         }
+        Err(AppError::Forbidden(_)) => {
+            let qp = query_from_session(&sso);
+            return Ok(render_tpl(&error_tpl(
+                identifier,
+                identifier_type,
+                "account is disabled",
+                qp,
+            ))?
+            .into_response());
+        }
+        Err(err) => return Err(err),
     };
-
-    if user.status != 1 {
-        let qp = query_from_session(&sso);
-        return Ok(render_tpl(&error_tpl(
-            form.identifier,
-            serde_json::to_string(&form.identifier_type).unwrap_or_default().trim_matches('"').to_string(),
-            "account is disabled",
-            qp,
-        ))?
-        .into_response());
-    }
-
-    let identity =
-        IdentityRepo::find_by_user_and_provider(&state.db, user.id, PROVIDER_PASSWORD).await?;
-    let credential = identity
-        .and_then(|i| i.credential)
-        .ok_or(AppError::Unauthorized)?;
-
-    let valid = bcrypt::verify(&form.password, &credential)
-        .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
-
-    if !valid {
-        let qp = query_from_session(&sso);
-        return Ok(render_tpl(&error_tpl(
-            form.identifier,
-            serde_json::to_string(&form.identifier_type).unwrap_or_default().trim_matches('"').to_string(),
-            "invalid credentials",
-            qp,
-        ))?
-        .into_response());
-    }
 
     sso.user_id = Some(user.id);
     sso.authenticated = true;

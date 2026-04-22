@@ -36,4 +36,5 @@ pub mod jwt {
     pub const ALG_RS256: &str = "RS256";
     pub const KEY_TYPE_RSA: &str = "RSA";
     pub const KEY_USE_SIG: &str = "sig";
+    pub const ACCESS_TOKEN_AUDIENCE: &str = "pero-api";
 }

@@ -2,6 +2,7 @@ mod common;
 
 use common::*;
 use hyper::StatusCode;
+use redis::AsyncCommands;
 
 #[tokio::test]
 async fn register_success() {
@@ -156,7 +157,8 @@ async fn identity_login_creates_independent_refresh_sessions() {
     let mut ta = build_app().await;
     let fx = ta.register_default_user().await;
 
-    let (_, first_refresh_token) = login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
+    let (_, first_refresh_token) =
+        login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
     let (_, second_refresh_token) =
         login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
 
@@ -173,7 +175,12 @@ async fn identity_login_creates_independent_refresh_sessions() {
     let first_refresh = refresh_identity_inner(&mut ta.app, &first_refresh_token).await;
     let second_refresh = refresh_identity_inner(&mut ta.app, &second_refresh_token).await;
 
-    assert_eq!(first_refresh.0, StatusCode::OK, "first refresh: {:?}", first_refresh.1);
+    assert_eq!(
+        first_refresh.0,
+        StatusCode::OK,
+        "first refresh: {:?}",
+        first_refresh.1
+    );
     assert_eq!(
         second_refresh.0,
         StatusCode::OK,
@@ -253,7 +260,8 @@ async fn identity_refresh_replay_revokes_the_session() {
 async fn password_change_revokes_all_identity_sessions() {
     let mut ta = build_app().await;
     let fx = ta.register_default_user().await;
-    let (_, second_refresh_token) = login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
+    let (_, second_refresh_token) =
+        login_tokens_inner(&mut ta.app, &fx.username, "password123").await;
 
     let (status, body) = send_request(
         &mut ta.app,
@@ -282,6 +290,46 @@ async fn password_change_revokes_all_identity_sessions() {
         StatusCode::UNAUTHORIZED,
         "second session should be revoked: {:?}",
         second_refresh.1
+    );
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn identity_session_index_ttl_tracks_rotated_session_ttl() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    let session_id = pero::domains::identity::session::parse_session_id(&fx.refresh_token)
+        .expect("missing session id")
+        .to_string();
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let (status, body) = refresh_identity_inner(&mut ta.app, &fx.refresh_token).await;
+    assert_eq!(status, StatusCode::OK, "refresh failed: {body:?}");
+
+    let mut conn = ta
+        .cache
+        .get()
+        .await
+        .expect("failed to get redis connection");
+    let session_ttl: i64 = conn
+        .ttl(format!("identity_session:{session_id}"))
+        .await
+        .expect("failed to read session ttl");
+    let index_ttl: i64 = conn
+        .ttl(format!("identity_user_sessions:{}", fx.user_id))
+        .await
+        .expect("failed to read index ttl");
+
+    assert!(
+        session_ttl > 0,
+        "session ttl should be positive: {session_ttl}"
+    );
+    assert!(index_ttl > 0, "index ttl should be positive: {index_ttl}");
+    assert!(
+        (session_ttl - index_ttl).abs() <= 1,
+        "index ttl should track session ttl, session_ttl={session_ttl}, index_ttl={index_ttl}"
     );
 
     ta.cleanup().await;

@@ -204,6 +204,12 @@ pub struct TokenResponse {
     pub user: UserDTO,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RefreshTokenResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RefreshRequest {
     #[validate(length(min = 1))]

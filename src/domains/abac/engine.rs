@@ -21,10 +21,7 @@ pub fn eval_condition(
         "subject" => subject_values(ctx, &cond.key).collect(),
         "resource" if cond.key == "path" => vec![ctx.resource.as_str()],
         "action" if cond.key == "method" => vec![ctx.action.as_str()],
-        "app" if cond.key == "app_id" => app_id_str
-            .as_deref()
-            .into_iter()
-            .collect(),
+        "app" if cond.key == "app_id" => app_id_str.as_deref().into_iter().collect(),
         _ => vec![],
     };
 
@@ -32,8 +29,9 @@ pub fn eval_condition(
         return false;
     }
 
-    target_values.iter().any(|&actual| {
-        match cond.operator.as_str() {
+    target_values
+        .iter()
+        .any(|&actual| match cond.operator.as_str() {
             "eq" => actual == cond.value,
             "in" => cond.value.split(',').any(|v| v.trim() == actual),
             "wildcard" => wildcard_match(&cond.value, actual),
@@ -48,8 +46,7 @@ pub fn eval_condition(
                 cond.value.parse::<f64>().map_or(false, |b| a < b)
             }),
             _ => false,
-        }
-    })
+        })
 }
 
 pub fn evaluate(
