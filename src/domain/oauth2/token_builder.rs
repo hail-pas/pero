@@ -29,14 +29,19 @@ pub fn build_token_response(
         Some(client.client_id.clone()),
         Some(client.app_id.to_string()),
     )?;
-    let id_token = build_id_token(state, user, scopes, nonce, &client.client_id, auth_time)?;
+    let has_openid = scopes.iter().any(|s| s == crate::shared::constants::oauth2::scopes::OPENID);
+    let id_token = if has_openid {
+        Some(build_id_token(state, user, scopes, nonce, &client.client_id, auth_time)?)
+    } else {
+        None
+    };
 
     Ok(TokenResponse {
         access_token,
         token_type: TOKEN_TYPE_BEARER.to_string(),
         expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
         refresh_token: Some(refresh_token),
-        id_token: Some(id_token),
+        id_token,
         scope: Some(scope),
     })
 }

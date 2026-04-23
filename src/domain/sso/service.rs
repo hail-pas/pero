@@ -15,7 +15,7 @@ pub async fn build_consent_view(
     sso: &SsoSession,
 ) -> Result<ConsentViewData, AppError> {
     let client = load_valid_authorization_client(state, sso).await?;
-    let scopes = requested_scopes(sso);
+    let scopes = granted_scopes_for_display(&client, sso);
 
     Ok(ConsentViewData {
         client_name: client.client_name,
@@ -104,10 +104,26 @@ fn granted_scopes(
     client: &crate::domain::oauth2::models::OAuth2Client,
     sso: &SsoSession,
 ) -> Vec<String> {
-    let scopes = requested_scopes(sso);
-    if scopes.is_empty() {
+    let requested = requested_scopes(sso);
+    let effective: Vec<String> = if requested.is_empty() {
         client.scopes.clone()
     } else {
-        scopes
+        requested
+    };
+    effective
+        .into_iter()
+        .filter(|s| client.scopes.iter().any(|cs| cs == s))
+        .collect()
+}
+
+fn granted_scopes_for_display(
+    client: &crate::domain::oauth2::models::OAuth2Client,
+    sso: &SsoSession,
+) -> Vec<String> {
+    let requested = requested_scopes(sso);
+    if requested.is_empty() {
+        client.scopes.clone()
+    } else {
+        requested
     }
 }

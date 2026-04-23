@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
@@ -35,6 +35,7 @@ pub fn invalid_grant(message: impl Into<String>) -> Response {
 pub fn invalid_client(message: impl Into<String>) -> Response {
     (
         StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Basic")],
         Json(OAuth2ErrorBody {
             error: "invalid_client",
             error_description: Some(message.into()),
@@ -56,7 +57,21 @@ pub fn access_denied(message: impl Into<String>) -> Response {
 
 pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
     match &e {
-        crate::shared::error::AppError::BadRequest(msg) => invalid_request(msg),
+        crate::shared::error::AppError::BadRequest(msg) => {
+            if msg.contains("client_id") || msg.contains("client is disabled") {
+                return invalid_client(msg);
+            }
+            if msg.contains("redirect_uri") {
+                return invalid_grant(msg);
+            }
+            if msg.contains("authorization code") || msg.contains("PKCE") {
+                return invalid_grant(msg);
+            }
+            if msg.contains("refresh token") {
+                return invalid_grant(msg);
+            }
+            invalid_request(msg)
+        }
         crate::shared::error::AppError::Validation(msg) => invalid_request(msg),
         crate::shared::error::AppError::Conflict(msg) => invalid_request(msg),
         crate::shared::error::AppError::Unauthorized => invalid_client("authentication failed"),

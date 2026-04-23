@@ -26,8 +26,8 @@ async fn main() {
         cache: cache_pool,
         config: Arc::new(cfg),
         jwt_keys: Arc::new(jwt_keys),
-        discovery_doc: std::sync::OnceLock::new(),
-        jwks_doc: std::sync::OnceLock::new(),
+        discovery_doc: Arc::new(std::sync::OnceLock::new()),
+        jwks_doc: Arc::new(std::sync::OnceLock::new()),
     };
 
     let addr = if state.config.server.host.contains(':') {

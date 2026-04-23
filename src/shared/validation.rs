@@ -3,7 +3,7 @@ pub fn validate_length(
     min: usize,
     max: usize,
 ) -> Result<(), validator::ValidationError> {
-    let len = value.len();
+    let len = value.chars().count();
     if len < min || len > max {
         let mut err = validator::ValidationError::new("length");
         err.add_param(std::borrow::Cow::Borrowed("min"), &min);

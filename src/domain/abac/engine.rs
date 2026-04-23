@@ -59,11 +59,20 @@ pub fn evaluate(
         for cond in conditions {
             if cond.operator == "regex" && !regex_cache.contains_key(&cond.value) {
                 if cond.value.len() <= REGEX_SIZE_LIMIT {
-                    if let Ok(re) = RegexBuilder::new(&cond.value)
+                    match RegexBuilder::new(&cond.value)
                         .size_limit(REGEX_SIZE_LIMIT * 10)
                         .build()
                     {
-                        regex_cache.insert(cond.value.clone(), re);
+                        Ok(re) => {
+                            regex_cache.insert(cond.value.clone(), re);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                pattern = %cond.value,
+                                error = %e,
+                                "failed to compile regex pattern for ABAC condition"
+                            );
+                        }
                     }
                 }
             }
@@ -71,6 +80,13 @@ pub fn evaluate(
     }
 
     for (policy, conditions) in policies {
+        if conditions.is_empty() {
+            tracing::warn!(
+                policy_id = %policy.id,
+                "policy has no conditions, skipping evaluation"
+            );
+            continue;
+        }
         if conditions
             .iter()
             .all(|c| eval_condition(c, ctx, &regex_cache))

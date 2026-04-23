@@ -29,7 +29,9 @@ pub enum CodeChallengeMethod {
 
 impl CodeChallengeMethod {
     pub fn as_str(&self) -> &'static str {
-        "S256"
+        match self {
+            CodeChallengeMethod::S256 => "S256",
+        }
     }
 }
 

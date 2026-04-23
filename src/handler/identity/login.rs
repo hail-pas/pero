@@ -80,7 +80,7 @@ pub async fn refresh(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    if user.status != 1 {
+    if !user.is_active() {
         return Err(AppError::Forbidden("account is disabled".into()));
     }
 

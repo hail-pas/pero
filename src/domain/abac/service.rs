@@ -258,7 +258,7 @@ pub async fn invalidate_policy_cache(
             format!("{}*:", cache_keys::ABAC_PREFIX),
         ]
     } else {
-        vec![format!("{}*", cache_keys::ABAC_PREFIX)]
+        vec![format!("{}*:", cache_keys::ABAC_PREFIX)]
     };
     for pattern in patterns {
         cache::delete_by_pattern(&state.cache, &pattern).await?;

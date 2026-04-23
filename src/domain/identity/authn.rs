@@ -61,8 +61,11 @@ impl AuthService {
     ) -> Result<User, AppError> {
         let user = Self::find_user_by_identifier(state, identifier_type, identifier).await?;
         let user = match user {
-            Some(user) if user.status == 1 => user,
-            Some(_) => return Err(AppError::Forbidden("account is disabled".into())),
+            Some(user) if user.is_active() => user,
+            Some(_) => {
+                Self::constant_time_password_probe(password);
+                return Err(AppError::Unauthorized);
+            }
             None => {
                 Self::constant_time_password_probe(password);
                 return Err(AppError::Unauthorized);

@@ -39,7 +39,7 @@ pub async fn rate_limit_middleware(
         .await?;
 
     if allowed == 0 {
-        return Err(AppError::Forbidden("rate limit exceeded".into()));
+        return Err(AppError::RateLimited);
     }
 
     Ok(next.run(req).await)

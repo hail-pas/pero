@@ -17,7 +17,12 @@ pub async fn load_sso_session(
 ) -> SessionResult {
     session::require(&state.cache, headers)
         .await
-        .map_err(|_| Redirect::to("/oauth2/authorize").into_response())
+        .map_err(|e| match e {
+            AppError::BadRequest(_) | AppError::NotFound(_) | AppError::Unauthorized => {
+                Redirect::to("/oauth2/authorize").into_response()
+            }
+            other => other.into_response(),
+        })
 }
 
 pub async fn require_authenticated_sso_session(
@@ -37,11 +42,11 @@ pub fn render_tpl<T: Template>(tpl: &T) -> Result<Html<String>, AppError> {
         .map_err(|e| AppError::Internal(e.to_string()))
 }
 
-pub fn set_session_cookie(config: &SsoConfig, session_id: &str) -> axum::http::HeaderValue {
+pub fn set_session_cookie(config: &SsoConfig, session_id: &str) -> Result<axum::http::HeaderValue, AppError> {
     build_cookie_header(config, session_id, config.session_ttl_seconds)
 }
 
-pub fn clear_session_cookie(config: &SsoConfig) -> axum::http::HeaderValue {
+pub fn clear_session_cookie(config: &SsoConfig) -> Result<axum::http::HeaderValue, AppError> {
     build_cookie_header(config, "", 0)
 }
 
@@ -57,7 +62,7 @@ fn build_cookie_header(
     config: &SsoConfig,
     session_id: &str,
     max_age: i64,
-) -> axum::http::HeaderValue {
+) -> Result<axum::http::HeaderValue, AppError> {
     let mut cookie = format!(
         "{}={}; Path=/; HttpOnly; SameSite={}; Max-Age={}",
         COOKIE_NAME, session_id, config.cookie_same_site, max_age
@@ -65,5 +70,6 @@ fn build_cookie_header(
     if config.cookie_secure {
         cookie.push_str("; Secure");
     }
-    header::HeaderValue::from_str(&cookie).expect("invalid SSO cookie header")
+    header::HeaderValue::from_str(&cookie)
+        .map_err(|e| AppError::Internal(format!("invalid SSO cookie header: {e}")))
 }

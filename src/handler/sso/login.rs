@@ -91,10 +91,12 @@ pub async fn login_post(
     };
 
     let identifier = form.identifier.clone();
-    let identifier_type = serde_json::to_string(&form.identifier_type)
-        .unwrap_or_default()
-        .trim_matches('"')
-        .to_string();
+    let identifier_type = match form.identifier_type {
+        crate::domain::identity::models::IdentifierType::Username => "username",
+        crate::domain::identity::models::IdentifierType::Email => "email",
+        crate::domain::identity::models::IdentifierType::Phone => "phone",
+    }
+    .to_string();
     let user = match AuthService::authenticate_with_password(
         &state,
         &form.identifier_type,
@@ -110,16 +112,6 @@ pub async fn login_post(
                 identifier,
                 identifier_type,
                 "invalid credentials",
-                qp,
-            ))?
-            .into_response());
-        }
-        Err(AppError::Forbidden(_)) => {
-            let qp = query_from_session(&sso);
-            return Ok(render_tpl(&error_tpl(
-                identifier,
-                identifier_type,
-                "account is disabled",
                 qp,
             ))?
             .into_response());

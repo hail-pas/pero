@@ -5,7 +5,6 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::domain::identity::entity::User;
-use crate::shared::error::AppError;
 use crate::shared::patch::{Patch, validate_patch};
 use crate::shared::validation;
 
@@ -219,13 +218,4 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
-impl ChangePasswordRequest {
-    pub fn validate_same_password(&self) -> Result<(), AppError> {
-        if self.old_password == self.new_password {
-            return Err(AppError::BadRequest(
-                "new password must differ from old password".into(),
-            ));
-        }
-        Ok(())
-    }
-}
+impl ChangePasswordRequest {}

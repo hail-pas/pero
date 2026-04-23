@@ -19,6 +19,12 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
+impl User {
+    pub fn is_active(&self) -> bool {
+        self.status == 1
+    }
+}
+
 #[derive(Debug, sqlx::FromRow, Serialize, Clone, ToSchema)]
 pub struct Identity {
     pub id: Uuid,

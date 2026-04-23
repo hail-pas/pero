@@ -14,6 +14,9 @@ pub enum AppError {
     #[error("forbidden: {0}")]
     Forbidden(String),
 
+    #[error("rate limit exceeded")]
+    RateLimited,
+
     #[error("{0} not found")]
     NotFound(String),
 
@@ -33,6 +36,7 @@ impl AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
+            AppError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
@@ -46,6 +50,7 @@ impl AppError {
             AppError::BadRequest(_) => base + 1,
             AppError::Unauthorized => base + 1,
             AppError::Forbidden(_) => base + 1,
+            AppError::RateLimited => base + 1,
             AppError::NotFound(_) => base + 1,
             AppError::Conflict(_) => base + 1,
             AppError::Validation(_) => base + 2,

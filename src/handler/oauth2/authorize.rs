@@ -68,7 +68,7 @@ pub async fn authorize(
     let mut response = Redirect::to("/sso/login").into_response();
     response
         .headers_mut()
-        .append(header::SET_COOKIE, set_session_cookie(&state.config.sso, &session_id));
+        .append(header::SET_COOKIE, set_session_cookie(&state.config.sso, &session_id)?);
     Ok(response)
 }
 

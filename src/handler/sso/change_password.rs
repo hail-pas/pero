@@ -46,7 +46,9 @@ pub async fn change_password_post(
         Err(response) => return Ok(response),
     };
 
-    let user_id = sso.user_id.unwrap();
+    let user_id = sso
+        .user_id
+        .ok_or(AppError::BadRequest("no user in session".into()))?;
     let qp = query_from_session(&sso);
     if let Err(err) =
         AuthService::change_password(&state, user_id, &form.old_password, &form.new_password).await

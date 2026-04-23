@@ -184,7 +184,7 @@ where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
 {
     let user = require_found(UserRepo::find_by_id(executor, user_id).await?, "user")?;
-    if user.status != 1 {
+    if !user.is_active() {
         return Err(AppError::Forbidden("account is disabled".into()));
     }
     Ok(user)

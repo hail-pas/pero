@@ -55,6 +55,6 @@ pub async fn consent_post(
     let mut response = Redirect::to(&redirect).into_response();
     response
         .headers_mut()
-        .append(axum::http::header::SET_COOKIE, clear_session_cookie(&state.config.sso));
+        .append(axum::http::header::SET_COOKIE, clear_session_cookie(&state.config.sso)?);
     Ok(response)
 }

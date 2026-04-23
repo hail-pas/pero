@@ -29,7 +29,7 @@ pub fn password_must_differ() -> AppError {
 }
 
 pub fn old_password_incorrect() -> AppError {
-    AppError::BadRequest("old password is incorrect".into())
+    AppError::Unauthorized
 }
 
 pub fn username_exists(username: &str) -> AppError {

@@ -70,8 +70,8 @@ pub async fn build_app() -> TestApp {
         cache: cache.clone(),
         config: config.clone(),
         jwt_keys: jwt_keys.clone(),
-        discovery_doc: std::sync::OnceLock::new(),
-        jwks_doc: std::sync::OnceLock::new(),
+        discovery_doc: Arc::new(std::sync::OnceLock::new()),
+        jwks_doc: Arc::new(std::sync::OnceLock::new()),
     });
 
     TestApp {
@@ -92,8 +92,8 @@ pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static
         cache: cache.clone(),
         config: config.clone(),
         jwt_keys: jwt_keys.clone(),
-        discovery_doc: std::sync::OnceLock::new(),
-        jwks_doc: std::sync::OnceLock::new(),
+        discovery_doc: Arc::new(std::sync::OnceLock::new()),
+        jwks_doc: Arc::new(std::sync::OnceLock::new()),
     });
     (router, guard)
 }
