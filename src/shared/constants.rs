@@ -7,13 +7,22 @@ pub mod cache_keys {
     pub const REFRESH_TOKEN_PREFIX: &str = "refresh_token:";
     pub const REFRESH_TOKEN_PREV_PREFIX: &str = "refresh_token_prev:";
     pub const ABAC_PREFIX: &str = "abac:";
+    pub const ABAC_SUBJECT_PREFIX: &str = "abac_subject:";
     pub const PASSWORD_RESET_PREFIX: &str = "password_reset:";
+    pub const IDENTITY_SESSION_PREFIX: &str = "identity_session:";
+    pub const IDENTITY_USER_SESSIONS_PREFIX: &str = "identity_user_sessions:";
+    pub const SSO_SESSION_PREFIX: &str = "sso_session:";
 }
 
 pub mod identity {
     pub const PROVIDER_PASSWORD: &str = "password";
     pub const DEFAULT_ROLE: &str = "user";
     pub const ROLE_ATTR_KEY: &str = "role";
+}
+
+pub mod security {
+    pub const FAKE_BCRYPT_HASH: &str =
+        "$2b$12$TrePSBin7KMS2YzgKJgNXeSKHaFjHOa/XYRm8kqDQoJHqWbsLCDKi";
 }
 
 pub mod oauth2 {

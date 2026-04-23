@@ -2,8 +2,7 @@
 host = "0.0.0.0"
 port = 8080
 request_body_limit_bytes = 1048576
-rate_limit_rps = 100
-rate_limit_burst = 200
+rate_limit_rpm = 888
 
 [database]
 url = "postgres://pero:112358@localhost/pero"
@@ -37,6 +36,11 @@ key_id = "key-2026-01"
 auth_code_ttl_minutes = 10
 access_token_ttl_minutes = 15
 refresh_token_ttl_days = 30
+
+[sso]
+session_ttl_seconds = 600
+cookie_secure = true
+cookie_same_site = "Lax"
 
 [docs]
 servers = [

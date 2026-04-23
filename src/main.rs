@@ -1,4 +1,5 @@
 use pero::config::AppConfig;
+use pero::infra::jwt::JwtKeys;
 use pero::shared::state::AppState;
 use std::sync::Arc;
 
@@ -9,24 +10,24 @@ async fn main() {
         .expect("Failed to install rustls crypto provider");
 
     let cfg = AppConfig::load().expect("Failed to load configuration");
-    pero::log::init(&cfg.log);
+    pero::infra::logging::init(&cfg.log);
 
-    let db_pool = pero::db::init_pool(&cfg.database)
+    let db_pool = pero::infra::db::init_pool(&cfg.database)
         .await
         .expect("Failed to init database");
-    let cache_pool = pero::cache::init_pool(&cfg.redis)
+    let cache_pool = pero::infra::cache::init_pool(&cfg.redis)
         .await
         .expect("Failed to init redis");
 
-    let jwt_keys = pero::shared::jwt::JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
+    let jwt_keys = JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
 
     let state = AppState {
         db: db_pool,
         cache: cache_pool,
         config: Arc::new(cfg),
         jwt_keys: Arc::new(jwt_keys),
-        discovery_doc: Arc::new(std::sync::OnceLock::new()),
-        jwks_doc: Arc::new(std::sync::OnceLock::new()),
+        discovery_doc: std::sync::OnceLock::new(),
+        jwks_doc: std::sync::OnceLock::new(),
     };
 
     let addr = if state.config.server.host.contains(':') {
@@ -38,7 +39,7 @@ async fn main() {
         format!("{}:{}", state.config.server.host, state.config.server.port)
     };
 
-    let app = pero::app::build_router(state);
+    let app = pero::api::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -49,6 +50,9 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("Server error");
+
+    pero::infra::logging::flush();
+    tracing::info!("shutdown complete");
 }
 
 async fn shutdown_signal() {

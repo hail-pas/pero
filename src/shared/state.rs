@@ -1,6 +1,6 @@
-use crate::cache::Pool;
+use crate::infra::cache::Pool;
 use crate::config::AppConfig;
-use crate::shared::jwt::JwtKeys;
+use crate::infra::jwt::JwtKeys;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
@@ -10,6 +10,6 @@ pub struct AppState {
     pub cache: Pool,
     pub config: Arc<AppConfig>,
     pub jwt_keys: Arc<JwtKeys>,
-    pub discovery_doc: Arc<std::sync::OnceLock<serde_json::Value>>,
-    pub jwks_doc: Arc<std::sync::OnceLock<serde_json::Value>>,
+    pub discovery_doc: std::sync::OnceLock<serde_json::Value>,
+    pub jwks_doc: std::sync::OnceLock<serde_json::Value>,
 }

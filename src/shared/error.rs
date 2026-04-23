@@ -1,4 +1,4 @@
-use crate::shared::response::ApiResponse;
+use crate::api::response::ApiResponse;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -100,4 +100,8 @@ impl From<redis::RedisError> for AppError {
         tracing::error!(error = %err, "redis error");
         AppError::Internal("cache error".into())
     }
+}
+
+pub fn require_found<T>(opt: Option<T>, resource: &str) -> Result<T, AppError> {
+    opt.ok_or_else(|| AppError::NotFound(resource.to_string()))
 }

@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub oidc: OidcConfig,
     pub oauth2: OAuth2Config,
     #[serde(default)]
+    pub sso: SsoConfig,
+    #[serde(default)]
     pub docs: DocsConfig,
     #[serde(default)]
     pub cors: CorsConfig,
@@ -32,12 +34,33 @@ pub struct OAuth2Config {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct SsoConfig {
+    pub session_ttl_seconds: i64,
+    pub cookie_secure: bool,
+    pub cookie_same_site: String,
+}
+
+impl Default for SsoConfig {
+    fn default() -> Self {
+        Self {
+            session_ttl_seconds: 600,
+            cookie_secure: true,
+            cookie_same_site: "Lax".into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub request_body_limit_bytes: usize,
-    pub rate_limit_rps: u64,
-    pub rate_limit_burst: u64,
+    #[serde(default = "default_rate_limit_rpm")]
+    pub rate_limit_rpm: u32,
+}
+
+fn default_rate_limit_rpm() -> u32 {
+    60
 }
 
 #[derive(Debug, Deserialize, Clone)]

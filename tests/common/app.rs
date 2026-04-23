@@ -8,9 +8,9 @@ use std::sync::{Arc, OnceLock};
 
 type SharedResources = (
     PgPool,
-    pero::cache::Pool,
+    pero::infra::cache::Pool,
     Arc<AppConfig>,
-    Arc<pero::shared::jwt::JwtKeys>,
+    Arc<pero::infra::jwt::JwtKeys>,
 );
 
 static TEST_RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -40,14 +40,14 @@ fn init_resources() -> SharedResources {
             rt.block_on(async {
                 let cfg = load_test_config().expect("Failed to load test config");
                 let jwt_keys =
-                    pero::shared::jwt::JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
+                    pero::infra::jwt::JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
                 let config = Arc::new(cfg);
                 let jwt_keys = Arc::new(jwt_keys);
 
-                let db = pero::db::init_pool(&config.database)
+                let db = pero::infra::db::init_pool(&config.database)
                     .await
                     .expect("Failed to init DB");
-                let cache = pero::cache::init_pool(&config.redis)
+                let cache = pero::infra::cache::init_pool(&config.redis)
                     .await
                     .expect("Failed to init Redis");
 
@@ -65,13 +65,13 @@ pub fn shared_resources() -> &'static SharedResources {
 pub async fn build_app() -> TestApp {
     let guard = ensure_rt().enter();
     let (db, cache, config, jwt_keys) = shared_resources();
-    let app = pero::app::build_router(AppState {
+    let app = pero::api::build_router(AppState {
         db: db.clone(),
         cache: cache.clone(),
         config: config.clone(),
         jwt_keys: jwt_keys.clone(),
-        discovery_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
-        jwks_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
+        discovery_doc: std::sync::OnceLock::new(),
+        jwks_doc: std::sync::OnceLock::new(),
     });
 
     TestApp {
@@ -87,13 +87,13 @@ pub async fn build_app() -> TestApp {
 pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static>) {
     let guard = ensure_rt().enter();
     let (db, cache, config, jwt_keys) = shared_resources();
-    let router = pero::app::build_router(AppState {
+    let router = pero::api::build_router(AppState {
         db: db.clone(),
         cache: cache.clone(),
         config: config.clone(),
         jwt_keys: jwt_keys.clone(),
-        discovery_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
-        jwks_doc: std::sync::Arc::new(std::sync::OnceLock::new()),
+        discovery_doc: std::sync::OnceLock::new(),
+        jwks_doc: std::sync::OnceLock::new(),
     });
     (router, guard)
 }
@@ -101,7 +101,7 @@ pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static
 pub struct TestApp {
     pub app: axum::Router,
     pub db: PgPool,
-    pub cache: pero::cache::Pool,
+    pub cache: pero::infra::cache::Pool,
     pub config: Arc<AppConfig>,
     cleanup: Vec<CleanupItem>,
     _guard: tokio::runtime::EnterGuard<'static>,
@@ -177,36 +177,9 @@ impl TestApp {
 
         for key in [
             format!("refresh_token:{user_id}"),
-            format!("abac:{user_id}:"),
+            format!("abac_subject:{user_id}"),
         ] {
-            if key.ends_with(':') {
-                let mut cursor: u64 = 0;
-                loop {
-                    let result: Result<(u64, Vec<String>), redis::RedisError> = redis::cmd("SCAN")
-                        .arg(cursor)
-                        .arg("MATCH")
-                        .arg(format!("{key}*"))
-                        .arg("COUNT")
-                        .arg(100)
-                        .query_async(&mut *conn)
-                        .await;
-
-                    let Ok((next_cursor, keys)) = result else {
-                        break;
-                    };
-
-                    if !keys.is_empty() {
-                        let _: Result<(), redis::RedisError> = conn.del(&keys).await;
-                    }
-
-                    cursor = next_cursor;
-                    if cursor == 0 {
-                        break;
-                    }
-                }
-            } else {
-                let _: Result<(), redis::RedisError> = conn.del(&key).await;
-            }
+            let _: Result<(), redis::RedisError> = conn.del(&key).await;
         }
     }
 }

@@ -1,6 +1,6 @@
 use pero::config::AppConfig;
-use pero::domains::identity::helpers;
-use pero::domains::identity::repos::{IdentityRepo, UserRepo};
+use pero::domain::identity::service;
+use pero::domain::identity::store::{IdentityRepo, UserRepo};
 use std::io::{self, Write};
 
 fn prompt(label: &str) -> String {
@@ -54,9 +54,9 @@ async fn main() {
         .expect("Failed to install rustls crypto provider");
 
     let cfg = AppConfig::load().expect("Failed to load configuration");
-    pero::log::init(&cfg.log);
+    pero::infra::logging::init(&cfg.log);
 
-    let pool = pero::db::init_pool(&cfg.database)
+    let pool = pero::infra::db::init_pool(&cfg.database)
         .await
         .expect("Failed to connect to database");
 
@@ -126,7 +126,7 @@ async fn main() {
     if !confirm("Create this admin user?") {
         println!("Skipped.");
     } else {
-        let password_hash = helpers::hash_password(&password).expect("Failed to hash password");
+        let password_hash = service::hash_password(&password).expect("Failed to hash password");
         let mut tx = pool.begin().await.expect("Failed to begin transaction");
 
         let user = UserRepo::create(&mut *tx, &username, &email, None, Some(&nickname))
@@ -183,9 +183,9 @@ async fn main() {
                 }
             })
             .collect();
-        let app = pero::domains::app::repos::AppRepo::create(
+        let app = pero::domain::app::store::AppRepo::create(
             &pool,
-            &pero::domains::app::models::CreateAppRequest {
+            &pero::domain::app::models::CreateAppRequest {
                 name: client_name.clone(),
                 code,
                 description: None,
@@ -197,13 +197,13 @@ async fn main() {
         let client_id_str = uuid::Uuid::new_v4().to_string().replace('-', "");
         let client_secret = uuid::Uuid::new_v4().to_string().replace('-', "");
         let client_secret_hash =
-            helpers::hash_password(&client_secret).expect("Failed to hash client secret");
+            service::hash_password(&client_secret).expect("Failed to hash client secret");
 
-        let client = pero::domains::oauth2::repos::OAuth2ClientRepo::create(
+        let client = pero::domain::oauth2::store::OAuth2ClientRepo::create(
             &pool,
             &client_id_str,
             &client_secret_hash,
-            &pero::domains::oauth2::models::CreateClientRequest {
+            &pero::domain::oauth2::models::CreateClientRequest {
                 app_id: app.id,
                 client_name: client_name.clone(),
                 redirect_uris: vec![redirect_uri.clone()],
