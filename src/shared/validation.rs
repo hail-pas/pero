@@ -26,7 +26,7 @@ pub fn validate_email(email: &str) -> Result<(), validator::ValidationError> {
     if !domain.contains('.') || domain.starts_with('.') || domain.ends_with('.') {
         return Err(validator::ValidationError::new("invalid_email"));
     }
-    if local.len() > 64 || domain.len() > 255 {
+    if local.len() > 64 || domain.len() > 190 || email.len() > 255 {
         return Err(validator::ValidationError::new("invalid_email"));
     }
     Ok(())

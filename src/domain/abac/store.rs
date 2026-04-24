@@ -44,12 +44,22 @@ impl PolicyRepo {
         Ok((policy, conditions))
     }
 
-    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Policy>, AppError> {
+    pub async fn find_by_id<'a, E>(executor: E, id: Uuid) -> Result<Option<Policy>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, Policy>("SELECT * FROM policies WHERE id = $1")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await
             .map_err(Into::into)
+    }
+
+    pub async fn find_by_id_or_err<'a, E>(executor: E, id: Uuid) -> Result<Policy, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
+        require_found(Self::find_by_id(executor, id).await?, "policy")
     }
 
     pub async fn list(
@@ -65,7 +75,7 @@ impl PolicyRepo {
         id: Uuid,
         req: &UpdatePolicyRequest,
     ) -> Result<(Policy, Vec<PolicyCondition>), AppError> {
-        let policy = require_found(Self::find_by_id(pool, id).await?, "policy")?;
+        let policy = Self::find_by_id_or_err(pool, id).await?;
         Self::update_with_policy(pool, id, req, &policy).await
     }
 
@@ -105,17 +115,20 @@ impl PolicyRepo {
             PolicyConditionRepo::delete_for_policy(&mut tx, id).await?;
             PolicyConditionRepo::create_batch_in_tx(&mut tx, id, conditions_req).await?
         } else {
-            PolicyConditionRepo::get_for_policy_in_tx(&mut tx, id).await?
+            PolicyConditionRepo::get_for_policy(&mut *tx, id).await?
         };
 
         tx.commit().await?;
         Ok((updated, conditions))
     }
 
-    pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), AppError> {
+    pub async fn delete<'a, E>(executor: E, id: Uuid) -> Result<(), AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         let result = sqlx::query("DELETE FROM policies WHERE id = $1")
             .bind(id)
-            .execute(pool)
+            .execute(executor)
             .await?;
         if result.rows_affected() == 0 {
             return Err(error::policy_not_found());
@@ -151,15 +164,10 @@ impl PolicyRepo {
         Ok(attrs.into_iter().map(|a| (a.key, a.value)).collect())
     }
 
-    pub async fn load_policies(
+    pub async fn select_policies(
         pool: &PgPool,
         filter: PolicyFilter,
-    ) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
-        let policies = Self::select_policies(pool, filter).await?;
-        Self::attach_conditions(pool, policies).await
-    }
-
-    async fn select_policies(pool: &PgPool, filter: PolicyFilter) -> Result<Vec<Policy>, AppError> {
+    ) -> Result<Vec<Policy>, AppError> {
         let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT p.* FROM policies p",
         );
@@ -228,23 +236,6 @@ impl PolicyRepo {
 
         Ok((policies, total))
     }
-
-    pub async fn load_user_policies_for_app(
-        pool: &PgPool,
-        user_id: Uuid,
-        app_id: Option<Uuid>,
-    ) -> Result<Vec<(Policy, Vec<PolicyCondition>)>, AppError> {
-        Self::load_policies(
-            pool,
-            PolicyFilter {
-                user_id: Some(user_id),
-                app_id,
-                include_global: app_id.is_some(),
-                enabled_only: true,
-            },
-        )
-        .await
-    }
 }
 
 fn push_clause_separator(
@@ -284,28 +275,18 @@ impl PolicyConditionRepo {
         Ok(result)
     }
 
-    pub async fn get_for_policy(
-        pool: &PgPool,
+    pub async fn get_for_policy<'a, E>(
+        executor: E,
         policy_id: Uuid,
-    ) -> Result<Vec<PolicyCondition>, AppError> {
+    ) -> Result<Vec<PolicyCondition>, AppError>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PolicyCondition>(
             "SELECT * FROM policy_conditions WHERE policy_id = $1",
         )
         .bind(policy_id)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
-    }
-
-    pub async fn get_for_policy_in_tx(
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        policy_id: Uuid,
-    ) -> Result<Vec<PolicyCondition>, AppError> {
-        sqlx::query_as::<_, PolicyCondition>(
-            "SELECT * FROM policy_conditions WHERE policy_id = $1",
-        )
-        .bind(policy_id)
-        .fetch_all(&mut **tx)
+        .fetch_all(executor)
         .await
         .map_err(Into::into)
     }
@@ -350,23 +331,8 @@ impl UserPolicyRepo {
         user_id: Uuid,
         policy_id: Uuid,
     ) -> Result<(), AppError> {
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM policies WHERE id = $1)")
-                .bind(policy_id)
-                .fetch_one(pool)
-                .await?;
-        if !exists {
-            return Err(error::policy_not_found());
-        }
-
-        let user_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-                .bind(user_id)
-                .fetch_one(pool)
-                .await?;
-        if !user_exists {
-            return Err(AppError::NotFound("user".into()));
-        }
+        PolicyRepo::find_by_id_or_err(pool, policy_id).await?;
+        crate::domain::identity::store::UserRepo::find_by_id_or_err(pool, user_id).await?;
 
         sqlx::query(
             "INSERT INTO user_policies (user_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -393,39 +359,5 @@ impl UserPolicyRepo {
             return Err(AppError::NotFound("user_policy assignment".into()));
         }
         Ok(())
-    }
-
-    pub async fn list_user_policies(
-        pool: &PgPool,
-        user_id: Uuid,
-    ) -> Result<Vec<Policy>, AppError> {
-        sqlx::query_as::<_, Policy>(
-            "SELECT p.* FROM policies p
-             INNER JOIN user_policies up ON up.policy_id = p.id
-             WHERE up.user_id = $1
-             ORDER BY p.priority DESC",
-        )
-        .bind(user_id)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
-    }
-
-    pub async fn list_user_policies_by_app(
-        pool: &PgPool,
-        user_id: Uuid,
-        app_id: Uuid,
-    ) -> Result<Vec<Policy>, AppError> {
-        sqlx::query_as::<_, Policy>(
-            "SELECT p.* FROM policies p
-             INNER JOIN user_policies up ON up.policy_id = p.id
-             WHERE up.user_id = $1 AND p.app_id = $2
-             ORDER BY p.priority DESC",
-        )
-        .bind(user_id)
-        .bind(app_id)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
     }
 }

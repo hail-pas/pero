@@ -57,10 +57,16 @@ pub struct ServerConfig {
     pub request_body_limit_bytes: usize,
     #[serde(default = "default_rate_limit_rpm")]
     pub rate_limit_rpm: u32,
+    #[serde(default = "default_cleanup_interval_secs")]
+    pub cleanup_interval_secs: u64,
 }
 
 fn default_rate_limit_rpm() -> u32 {
     60
+}
+
+fn default_cleanup_interval_secs() -> u64 {
+    3600
 }
 
 #[derive(Debug, Deserialize, Clone)]

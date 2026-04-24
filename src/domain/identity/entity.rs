@@ -7,8 +7,6 @@ use uuid::Uuid;
 pub struct User {
     pub id: Uuid,
     pub username: String,
-    #[serde(skip_serializing)]
-    pub password_hash: Option<String>,
     pub email: String,
     pub phone: Option<String>,
     pub nickname: Option<String>,
@@ -30,7 +28,7 @@ pub struct Identity {
     pub id: Uuid,
     pub user_id: Uuid,
     pub provider: String,
-    pub provider_uid: Option<String>,
+    pub provider_uid: String,
     #[serde(skip_serializing)]
     pub credential: Option<String>,
     pub verified: bool,

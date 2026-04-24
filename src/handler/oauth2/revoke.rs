@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use crate::domain::oauth2::error;
@@ -20,8 +20,10 @@ use crate::shared::state::AppState;
 )]
 pub async fn revoke(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ValidatedForm(req): ValidatedForm<RevokeRequest>,
 ) -> Response {
+    let req = service::resolve_client_credentials(&headers, req);
     match service::revoke_token(&state, &req).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => error::map_app_error(e),

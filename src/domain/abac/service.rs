@@ -1,5 +1,5 @@
 use super::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
-use super::store::{PolicyConditionRepo, PolicyRepo, UserPolicyRepo};
+use super::store::{PolicyConditionRepo, PolicyFilter, PolicyRepo, UserPolicyRepo};
 use crate::infra::cache;
 use crate::domain::identity::store::UserRepo;
 use crate::shared::constants::{cache_keys, identity};
@@ -201,12 +201,20 @@ pub async fn list_user_policy_dtos(
 ) -> Result<Vec<PolicyDTO>, AppError> {
     UserRepo::find_by_id_or_err(&state.db, user_id).await?;
 
-    let policies = match scope {
-        PolicyScope::Any => UserPolicyRepo::list_user_policies(&state.db, user_id).await?,
-        PolicyScope::App(app_id) => {
-            UserPolicyRepo::list_user_policies_by_app(&state.db, user_id, app_id).await?
-        }
+    let app_id = match scope {
+        PolicyScope::Any => None,
+        PolicyScope::App(app_id) => Some(app_id),
     };
+    let policies = PolicyRepo::select_policies(
+        &state.db,
+        PolicyFilter {
+            user_id: Some(user_id),
+            app_id,
+            include_global: app_id.is_some(),
+            enabled_only: false,
+        },
+    )
+    .await?;
     let attached = PolicyRepo::attach_conditions(&state.db, policies).await?;
     Ok(PolicyDTO::from_attached(attached))
 }
@@ -217,8 +225,19 @@ pub async fn load_user_policies(
     app_id: Option<Uuid>,
     use_cache: bool,
 ) -> Result<AttachedPolicies, AppError> {
+    let load = || async {
+        let filter = PolicyFilter {
+            user_id: Some(user_id),
+            app_id,
+            include_global: app_id.is_some(),
+            enabled_only: true,
+        };
+        let policies = PolicyRepo::select_policies(&state.db, filter).await?;
+        PolicyRepo::attach_conditions(&state.db, policies).await
+    };
+
     if !use_cache {
-        return PolicyRepo::load_user_policies_for_app(&state.db, user_id, app_id).await;
+        return load().await;
     }
 
     let cache_key = format!(
@@ -231,8 +250,7 @@ pub async fn load_user_policies(
     match cache::get_json::<AttachedPolicies>(&state.cache, &cache_key).await {
         Ok(Some(cached)) => Ok(cached),
         _ => {
-            let policies =
-                PolicyRepo::load_user_policies_for_app(&state.db, user_id, app_id).await?;
+            let policies = load().await?;
             if let Err(e) = cache::set_json(
                 &state.cache,
                 &cache_key,

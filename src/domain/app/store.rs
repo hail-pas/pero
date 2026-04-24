@@ -1,6 +1,7 @@
 use crate::domain::app::models::{App, CreateAppRequest, UpdateAppRequest};
 use crate::shared::error::{AppError, require_found};
 use crate::shared::pagination::{paginate, APPS};
+use crate::shared::patch::push_optional_column;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
@@ -48,22 +49,19 @@ impl AppRepo {
     }
 
     pub async fn update(pool: &PgPool, id: Uuid, req: &UpdateAppRequest) -> Result<App, AppError> {
-        let app = require_found(Self::find_by_id(pool, id).await?, "app")?;
-
-        let name = req.name.as_deref().unwrap_or(&app.name);
-        let description = req.description.as_deref().or(app.description.as_deref());
-        let enabled = req.enabled.unwrap_or(app.enabled);
-
-        let updated = sqlx::query_as::<_, App>(
-            "UPDATE apps SET name = $1, description = $2, enabled = $3, updated_at = now() WHERE id = $4 RETURNING *",
-        )
-        .bind(name)
-        .bind(description)
-        .bind(enabled)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-        Ok(updated)
+        let mut builder =
+            sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE apps SET updated_at = now()");
+        push_optional_column(&mut builder, "name", &req.name);
+        push_optional_column(&mut builder, "description", &req.description);
+        push_optional_column(&mut builder, "enabled", &req.enabled);
+        builder.push(" WHERE id = ");
+        builder.push_bind(id);
+        builder.push(" RETURNING *");
+        let result = builder
+            .build_query_as::<App>()
+            .fetch_optional(pool)
+            .await?;
+        require_found(result, "app")
     }
 
     pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), AppError> {

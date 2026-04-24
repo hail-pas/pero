@@ -2,6 +2,7 @@ use pero::config::AppConfig;
 use pero::infra::jwt::JwtKeys;
 use pero::shared::state::AppState;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -20,6 +21,12 @@ async fn main() {
         .expect("Failed to init redis");
 
     let jwt_keys = JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
+
+    let cleanup_interval = Duration::from_secs(cfg.server.cleanup_interval_secs);
+    let janitor_db = db_pool.clone();
+    tokio::spawn(async move {
+        pero::infra::janitor::run(janitor_db, cleanup_interval).await;
+    });
 
     let state = AppState {
         db: db_pool,

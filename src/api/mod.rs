@@ -4,7 +4,10 @@ pub mod health;
 pub mod middleware;
 pub mod response;
 
-use crate::shared::constants::headers::X_REQUEST_ID;
+use std::time::Duration;
+
+use crate::shared::constants::headers::{X_PROCESS_TIME, X_REQUEST_ID};
+use crate::shared::error::ErrorInfo;
 use crate::shared::state::AppState;
 use axum::Router;
 use axum::http::header;
@@ -15,7 +18,33 @@ use tower_http::normalize_path::NormalizePathLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::sensitive_headers::SetSensitiveHeadersLayer;
 use tower_http::trace::TraceLayer;
+use tracing::Span;
 use utoipa_swagger_ui::SwaggerUi;
+
+#[derive(Clone)]
+struct OnResponseLog;
+
+impl<B> tower_http::trace::OnResponse<B> for OnResponseLog {
+    fn on_response(self, response: &axum::http::Response<B>, latency: Duration, span: &Span) {
+        let status = response.status();
+        let ms = latency.as_millis();
+        let info = response.extensions().get::<ErrorInfo>();
+
+        if status.is_server_error() {
+            match info {
+                Some(i) => tracing::error!(parent: span, status = %status, latency = ms, code = i.code, message = %i.message),
+                None => tracing::error!(parent: span, status = %status, latency = ms),
+            }
+        } else if status.is_client_error() {
+            match info {
+                Some(i) => tracing::warn!(parent: span, status = %status, latency = ms, code = i.code, message = %i.message),
+                None => tracing::warn!(parent: span, status = %status, latency = ms),
+            }
+        } else {
+            tracing::info!(parent: span, status = %status, latency = ms);
+        }
+    }
+}
 
 pub fn build_router(state: AppState) -> Router {
     let public = build_public_routes(&state);
@@ -41,23 +70,29 @@ pub fn build_router(state: AppState) -> Router {
         // TraceLayer: structured request/response tracing
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(
-                    tower_http::trace::DefaultMakeSpan::new()
-                        .level(tracing::Level::INFO)
-                        .include_headers(true),
-                )
+                .make_span_with(|request: &axum::extract::Request| {
+                    if request.method() == axum::http::Method::OPTIONS {
+                        tracing::trace_span!("request")
+                    } else {
+                        tracing::info_span!(
+                            "request",
+                            method = %request.method(),
+                            path = %request.uri().path(),
+                        )
+                    }
+                })
                 .on_request(tower_http::trace::DefaultOnRequest::new().level(tracing::Level::INFO))
-                .on_response(
-                    tower_http::trace::DefaultOnResponse::new()
-                        .level(tracing::Level::INFO)
-                        .include_headers(true),
-                )
+                .on_response(OnResponseLog)
                 .on_failure(
                     tower_http::trace::DefaultOnFailure::new().level(tracing::Level::ERROR),
                 ),
         )
         // PropagateRequestIdLayer: copy x-request-id from request to response
         .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
+        // ResponseTimeLayer: measure request processing time and set x-process-time header
+        .layer(axum::middleware::from_fn(
+            crate::api::middleware::response_time::response_time_middleware,
+        ))
         // SetRequestIdLayer: generate x-request-id if not present
         .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
         // SetSensitiveHeadersLayer: mask Authorization and Cookie headers in traces
@@ -352,6 +387,11 @@ fn build_cors(cfg: &crate::config::CorsConfig) -> CorsLayer {
             .collect();
         layer = layer.allow_headers(headers);
     }
+
+    layer = layer.expose_headers([
+        axum::http::HeaderName::from_static(X_REQUEST_ID),
+        axum::http::HeaderName::from_static(X_PROCESS_TIME),
+    ]);
 
     layer
 }

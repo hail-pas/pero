@@ -133,11 +133,11 @@ pub struct AuthorizeQuery {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct TokenRequest {
     pub grant_type: GrantType,
-    #[validate(length(max = 256))]
+    #[validate(length(max = 128))]
     pub code: Option<String>,
     #[validate(length(max = 2048))]
     pub redirect_uri: Option<String>,
-    #[validate(length(max = 128))]
+    #[validate(length(max = 64))]
     pub client_id: Option<String>,
     #[validate(length(max = 256))]
     pub client_secret: Option<String>,
@@ -168,4 +168,22 @@ pub struct RevokeRequest {
     pub client_id: Option<String>,
     #[validate(length(max = 256))]
     pub client_secret: Option<String>,
+}
+
+pub trait ClientCredentials {
+    fn set_client_credentials(&mut self, client_id: String, client_secret: String);
+}
+
+impl ClientCredentials for TokenRequest {
+    fn set_client_credentials(&mut self, client_id: String, client_secret: String) {
+        self.client_id = Some(client_id);
+        self.client_secret = Some(client_secret);
+    }
+}
+
+impl ClientCredentials for RevokeRequest {
+    fn set_client_credentials(&mut self, client_id: String, client_secret: String) {
+        self.client_id = Some(client_id);
+        self.client_secret = Some(client_secret);
+    }
 }

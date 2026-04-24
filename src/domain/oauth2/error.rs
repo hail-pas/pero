@@ -3,6 +3,8 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+use crate::shared::error::ResponseErrorExt;
+
 #[derive(Debug, Serialize)]
 pub struct OAuth2ErrorBody {
     pub error: &'static str,
@@ -10,49 +12,42 @@ pub struct OAuth2ErrorBody {
     pub error_description: Option<String>,
 }
 
-pub fn invalid_request(message: impl Into<String>) -> Response {
+fn oauth_error(status: StatusCode, code: i32, error: &'static str, message: String) -> Response {
     (
-        StatusCode::BAD_REQUEST,
+        status,
         Json(OAuth2ErrorBody {
-            error: "invalid_request",
-            error_description: Some(message.into()),
+            error,
+            error_description: Some(message.clone()),
         }),
     )
         .into_response()
+        .with_error_info(code, message)
+}
+
+pub fn invalid_request(message: impl Into<String>) -> Response {
+    oauth_error(StatusCode::BAD_REQUEST, 40001, "invalid_request", message.into())
 }
 
 pub fn invalid_grant(message: impl Into<String>) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(OAuth2ErrorBody {
-            error: "invalid_grant",
-            error_description: Some(message.into()),
-        }),
-    )
-        .into_response()
+    oauth_error(StatusCode::BAD_REQUEST, 40002, "invalid_grant", message.into())
 }
 
 pub fn invalid_client(message: impl Into<String>) -> Response {
+    let msg = message.into();
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, "Basic")],
         Json(OAuth2ErrorBody {
             error: "invalid_client",
-            error_description: Some(message.into()),
+            error_description: Some(msg.clone()),
         }),
     )
         .into_response()
+        .with_error_info(40101, msg)
 }
 
 pub fn access_denied(message: impl Into<String>) -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(OAuth2ErrorBody {
-            error: "access_denied",
-            error_description: Some(message.into()),
-        }),
-    )
-        .into_response()
+    oauth_error(StatusCode::FORBIDDEN, 40301, "access_denied", message.into())
 }
 
 pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
@@ -87,6 +82,7 @@ pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
                 }),
             )
                 .into_response()
+                .with_error_info(50001, "server_error")
         }
     }
 }

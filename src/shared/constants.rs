@@ -1,6 +1,7 @@
 pub mod headers {
     pub const X_REQUEST_ID: &str = "x-request-id";
     pub const X_APP_ID: &str = "x-app-id";
+    pub const X_PROCESS_TIME: &str = "x-process-time";
 }
 
 pub mod cache_keys {

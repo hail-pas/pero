@@ -9,11 +9,10 @@ CREATE TABLE IF NOT EXISTS apps (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Users (extended)
+-- Users
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(64) NOT NULL UNIQUE,
-    password_hash VARCHAR(255),
     email VARCHAR(255) NOT NULL UNIQUE,
     phone VARCHAR(20) UNIQUE,
     nickname VARCHAR(64),
@@ -29,14 +28,14 @@ CREATE TABLE IF NOT EXISTS identities (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider VARCHAR(32) NOT NULL,
-    provider_uid VARCHAR(255),
+    provider_uid VARCHAR(255) NOT NULL DEFAULT '',
     credential TEXT,
     verified BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(provider, provider_uid)
 );
-CREATE INDEX idx_identities_user ON identities(user_id);
+CREATE INDEX idx_identities_user_provider ON identities(user_id, provider);
 
 -- User attributes (ABAC subject attributes)
 CREATE TABLE IF NOT EXISTS user_attributes (
@@ -46,7 +45,6 @@ CREATE TABLE IF NOT EXISTS user_attributes (
     value TEXT NOT NULL,
     UNIQUE(user_id, key)
 );
-CREATE INDEX idx_user_attributes_user_id ON user_attributes(user_id);
 
 -- Policies (with app scope)
 CREATE TABLE IF NOT EXISTS policies (
@@ -61,12 +59,13 @@ CREATE TABLE IF NOT EXISTS policies (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_policies_priority ON policies(priority);
+CREATE INDEX idx_policies_app_id ON policies(app_id);
 
 -- Policy conditions
 CREATE TABLE IF NOT EXISTS policy_conditions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     policy_id UUID NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
-    condition_type VARCHAR(16) NOT NULL CHECK (condition_type IN ('subject', 'resource', 'action')),
+    condition_type VARCHAR(16) NOT NULL CHECK (condition_type IN ('subject', 'resource', 'action', 'app')),
     key VARCHAR(128) NOT NULL,
     operator VARCHAR(16) NOT NULL CHECK (operator IN ('eq', 'in', 'wildcard', 'regex', 'gt', 'lt', 'contains')),
     value TEXT NOT NULL
@@ -94,6 +93,7 @@ CREATE TABLE IF NOT EXISTS oauth2_clients (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX idx_oauth2_clients_app_id ON oauth2_clients(app_id);
 
 -- OAuth2 authorization codes
 CREATE TABLE IF NOT EXISTS oauth2_authorization_codes (
@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS oauth2_authorization_codes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_auth_codes_client ON oauth2_authorization_codes(client_id);
+CREATE INDEX idx_auth_codes_user_id ON oauth2_authorization_codes(user_id);
 CREATE INDEX idx_auth_codes_expires ON oauth2_authorization_codes(expires_at);
 
 -- OAuth2 tokens (refresh tokens)
@@ -125,5 +126,6 @@ CREATE TABLE IF NOT EXISTS oauth2_tokens (
     auth_time BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_tokens_refresh ON oauth2_tokens(refresh_token);
 CREATE INDEX idx_tokens_user ON oauth2_tokens(user_id);
+CREATE INDEX idx_tokens_client_id ON oauth2_tokens(client_id);
+CREATE INDEX idx_tokens_user_client ON oauth2_tokens(user_id, client_id);

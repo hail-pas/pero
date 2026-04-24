@@ -10,6 +10,7 @@ use crate::shared::state::AppState;
 
 pub use crate::domain::oauth2::token_exchange::{exchange_token, revoke_token};
 
+use crate::domain::oauth2::dto::ClientCredentials;
 use crate::shared::constants::oauth2 as oauth2_constants;
 use crate::shared::constants::security::FAKE_BCRYPT_HASH;
 use crate::shared::error::AppError;
@@ -181,4 +182,19 @@ pub fn ensure_authorization_client_ready(
     }
 
     Ok(())
+}
+
+pub fn resolve_client_credentials<T: ClientCredentials>(
+    headers: &axum::http::HeaderMap,
+    mut req: T,
+) -> T {
+    if let Some(auth) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Ok((id, secret)) = parse_basic_client_auth_header(auth) {
+            req.set_client_credentials(id, secret);
+        }
+    }
+    req
 }

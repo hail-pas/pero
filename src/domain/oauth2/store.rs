@@ -133,20 +133,6 @@ impl RefreshTokenRepo {
         Ok(token)
     }
 
-    pub async fn find_by_token(
-        pool: &PgPool,
-        refresh_token: &str,
-    ) -> Result<Option<RefreshToken>, AppError> {
-        let token_hash = Self::token_hash(refresh_token);
-        sqlx::query_as::<_, RefreshToken>(
-            "SELECT * FROM oauth2_tokens WHERE refresh_token = $1 AND revoked = false AND expires_at > now()",
-        )
-        .bind(token_hash)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
-    }
-
     pub async fn find_active_for_update<'a, E>(
         executor: E,
         refresh_token: &str,
@@ -210,6 +196,15 @@ impl RefreshTokenRepo {
             .execute(pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn purge_expired(pool: &PgPool) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            "DELETE FROM oauth2_tokens WHERE expires_at < now()",
+        )
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }
 
@@ -276,5 +271,14 @@ impl AuthCodeRepo {
         .await?;
 
         Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn purge_expired(pool: &PgPool) -> Result<u64, AppError> {
+        let result = sqlx::query(
+            "DELETE FROM oauth2_authorization_codes WHERE expires_at < now()",
+        )
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }

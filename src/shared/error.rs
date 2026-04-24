@@ -59,6 +59,26 @@ impl AppError {
     }
 }
 
+#[derive(Clone)]
+pub struct ErrorInfo {
+    pub code: i32,
+    pub message: String,
+}
+
+pub trait ResponseErrorExt: Sized {
+    fn with_error_info(self, code: i32, message: impl Into<String>) -> Self;
+}
+
+impl ResponseErrorExt for axum::response::Response {
+    fn with_error_info(mut self, code: i32, message: impl Into<String>) -> Self {
+        self.extensions_mut().insert(ErrorInfo {
+            code,
+            message: message.into(),
+        });
+        self
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status_code();
@@ -69,12 +89,15 @@ impl IntoResponse for AppError {
             }
             _ => self.to_string(),
         };
+        let code = self.error_code();
         let body = ApiResponse::<()> {
-            code: self.error_code(),
-            message,
+            code,
+            message: message.clone(),
             data: None,
         };
-        (status, Json(body)).into_response()
+        (status, Json(body))
+            .into_response()
+            .with_error_info(code, message)
     }
 }
 

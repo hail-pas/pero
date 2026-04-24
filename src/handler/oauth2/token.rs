@@ -4,6 +4,7 @@ use crate::domain::oauth2::service;
 use crate::api::extractors::ValidatedForm;
 use crate::shared::state::AppState;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 
 #[utoipa::path(
@@ -18,8 +19,10 @@ use axum::response::{IntoResponse, Response};
 )]
 pub async fn token(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ValidatedForm(req): ValidatedForm<TokenRequest>,
 ) -> Response {
+    let req = service::resolve_client_credentials(&headers, req);
     match service::exchange_token(&state, &req).await {
         Ok(response) => axum::Json(response).into_response(),
         Err(e) => error::map_app_error(e),
