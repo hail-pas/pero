@@ -188,7 +188,7 @@ impl IdentityRepo {
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
         let identity = sqlx::query_as::<_, Identity>(
-            "INSERT INTO identities (user_id, provider, credential, verified) VALUES ($1, 'password', $2, true) RETURNING *"
+            "INSERT INTO identities (user_id, provider, provider_uid, credential, verified) VALUES ($1, 'password', $1, $2, true) RETURNING *"
         )
         .bind(user_id)
         .bind(password_hash)

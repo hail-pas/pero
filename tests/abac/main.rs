@@ -372,7 +372,7 @@ async fn client_list_policies() {
     let mut ta = build_app().await;
     let (_, _, client_fx) = setup_app_with_client(&mut ta).await;
 
-    let (status, _) = send_basic_auth_request(
+    let (status, resp) = send_basic_auth_request(
         &mut ta.app,
         hyper::Method::POST,
         "/api/client/policies",
@@ -387,6 +387,7 @@ async fn client_list_policies() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    ta.track_policy(resp["data"]["id"].as_str().unwrap().parse().unwrap());
 
     let (status, body) = send_basic_auth_request(
         &mut ta.app,
