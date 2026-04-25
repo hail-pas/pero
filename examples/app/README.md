@@ -19,14 +19,6 @@ uv sync
 
 ### 2. Register the app with Pero
 
-Run the setup script with an admin token:
-
-```bash
-ADMIN_TOKEN=<your-admin-token> ./setup.sh
-```
-
-This outputs `OAUTH2_CLIENT_ID` and `OAUTH2_CLIENT_SECRET` — export them:
-
 ```bash
 # create with pero bootstrap
 export OAUTH2_CLIENT_ID=""
