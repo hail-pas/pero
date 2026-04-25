@@ -6,12 +6,15 @@ use common::*;
 use http_body_util::BodyExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use pero::config::OidcConfig;
+use pero::domain::app::models::UpdateAppRequest;
 use pero::domain::oauth2::error::map_app_error;
-use pero::shared::error::AppError;
 use pero::infra::jwt::{JwtKeys, verify_token};
+use pero::shared::error::AppError;
+use pero::shared::patch::Patch;
 use serde::Serialize;
 use std::path::PathBuf;
 use tower::ServiceExt;
+use validator::{Validate, ValidationErrors};
 
 #[tokio::test]
 async fn health_check() {
@@ -85,6 +88,27 @@ fn load_test_keys() -> JwtKeys {
 fn sqlx_row_not_found_maps_to_not_found() {
     let err = AppError::from(sqlx::Error::RowNotFound);
     assert!(matches!(err, AppError::NotFound(_)));
+}
+
+#[test]
+fn patch_validate_required_rejects_null_values() {
+    let patch = Patch::<String>::Null;
+    let mut errors = ValidationErrors::new();
+
+    patch.validate_required("name", &mut errors, |_| Ok(()));
+
+    assert!(errors.field_errors().contains_key("name"));
+}
+
+#[test]
+fn app_update_rejects_null_for_required_patch_fields() {
+    let req: UpdateAppRequest = serde_json::from_value(serde_json::json!({
+        "name": null,
+        "enabled": null
+    }))
+    .expect("valid app update json");
+
+    assert!(req.validate().is_err());
 }
 
 #[tokio::test]

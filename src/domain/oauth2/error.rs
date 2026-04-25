@@ -25,11 +25,21 @@ fn oauth_error(status: StatusCode, code: i32, error: &'static str, message: Stri
 }
 
 pub fn invalid_request(message: impl Into<String>) -> Response {
-    oauth_error(StatusCode::BAD_REQUEST, 40001, "invalid_request", message.into())
+    oauth_error(
+        StatusCode::BAD_REQUEST,
+        40001,
+        "invalid_request",
+        message.into(),
+    )
 }
 
 pub fn invalid_grant(message: impl Into<String>) -> Response {
-    oauth_error(StatusCode::BAD_REQUEST, 40002, "invalid_grant", message.into())
+    oauth_error(
+        StatusCode::BAD_REQUEST,
+        40002,
+        "invalid_grant",
+        message.into(),
+    )
 }
 
 pub fn invalid_client(message: impl Into<String>) -> Response {
@@ -47,7 +57,12 @@ pub fn invalid_client(message: impl Into<String>) -> Response {
 }
 
 pub fn access_denied(message: impl Into<String>) -> Response {
-    oauth_error(StatusCode::FORBIDDEN, 40301, "access_denied", message.into())
+    oauth_error(
+        StatusCode::FORBIDDEN,
+        40301,
+        "access_denied",
+        message.into(),
+    )
 }
 
 pub fn map_app_error(e: crate::shared::error::AppError) -> Response {

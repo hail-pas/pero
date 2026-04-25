@@ -1,11 +1,11 @@
 use crate::domain::identity::models::User;
 use crate::domain::identity::store::UserRepo;
 use crate::domain::oauth2::error_ext;
-use crate::domain::oauth2::service::{InvalidClientError, authenticate_client};
 use crate::domain::oauth2::models::{
     AuthorizationCode, GrantType, RevokeRequest, TokenRequest, TokenResponse,
 };
 use crate::domain::oauth2::pkce;
+use crate::domain::oauth2::service::{InvalidClientError, authenticate_client};
 use crate::domain::oauth2::store::{AuthCodeRepo, RefreshTokenRepo};
 use crate::domain::oauth2::token_builder::build_token_response;
 use crate::shared::constants::oauth2::{GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN};

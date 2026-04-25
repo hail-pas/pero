@@ -3,10 +3,10 @@ use chrono::{TimeDelta, Utc};
 use crate::domain::identity::models::User;
 use crate::domain::oauth2::models::{OAuth2Client, TokenResponse};
 use crate::domain::oidc::claims::ScopedClaims;
+use crate::infra::jwt::{self, IdTokenClaims};
 use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::constants::oauth2::TOKEN_TYPE_BEARER;
 use crate::shared::error::AppError;
-use crate::infra::jwt::{self, IdTokenClaims};
 use crate::shared::state::AppState;
 
 pub fn build_token_response(
@@ -29,9 +29,18 @@ pub fn build_token_response(
         Some(client.client_id.clone()),
         Some(client.app_id.to_string()),
     )?;
-    let has_openid = scopes.iter().any(|s| s == crate::shared::constants::oauth2::scopes::OPENID);
+    let has_openid = scopes
+        .iter()
+        .any(|s| s == crate::shared::constants::oauth2::scopes::OPENID);
     let id_token = if has_openid {
-        Some(build_id_token(state, user, scopes, nonce, &client.client_id, auth_time)?)
+        Some(build_id_token(
+            state,
+            user,
+            scopes,
+            nonce,
+            &client.client_id,
+            auth_time,
+        )?)
     } else {
         None
     };

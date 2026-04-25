@@ -1,3 +1,11 @@
+use serde::Deserialize;
+
+pub fn empty_string_as_none<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.filter(|s| !s.trim().is_empty()))
+}
+
 pub fn random_hex_token() -> String {
     uuid::Uuid::new_v4().to_string().replace('-', "")
 }

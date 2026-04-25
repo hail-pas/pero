@@ -78,3 +78,10 @@ pub fn validate_redirect_uris(uris: &[String]) -> Result<(), validator::Validati
     }
     Ok(())
 }
+
+pub fn validate_non_empty_items(items: &[String]) -> Result<(), validator::ValidationError> {
+    if items.iter().any(|item| item.trim().is_empty()) {
+        return Err(validator::ValidationError::new("empty_item"));
+    }
+    Ok(())
+}

@@ -2,7 +2,10 @@ pub mod dto;
 pub mod entity;
 pub mod error;
 pub mod error_ext;
-pub mod models;
+pub mod models {
+    pub use super::dto::*;
+    pub use super::entity::*;
+}
 pub mod pkce;
 pub mod service;
 pub mod store;

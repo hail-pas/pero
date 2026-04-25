@@ -4,7 +4,11 @@ mod common;
 use common::*;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
+use pero::domain::social::entity::UpdateSocialProviderRequest;
+use pero::domain::social::service::username_candidate;
+use pero::domain::social::userinfo::map_userinfo_response;
 use tower::ServiceExt;
+use validator::Validate;
 
 async fn prepare_sso_session_cookie(ta: &mut TestApp) -> String {
     let admin_fx = ta.register_default_user().await;
@@ -57,6 +61,59 @@ async fn count_cache_keys(cache: &pero::infra::cache::Pool, pattern: &str) -> us
     }
 
     total
+}
+
+#[test]
+fn social_provider_update_validates_urls_and_required_patch_fields() {
+    let req: UpdateSocialProviderRequest = serde_json::from_value(serde_json::json!({
+        "display_name": "GitHub",
+        "client_id": "client",
+        "client_secret": "secret",
+        "authorize_url": "not a url",
+        "token_url": null,
+        "userinfo_url": "https://api.example.com/user",
+        "scopes": ["user:email", ""],
+        "enabled": true
+    }))
+    .expect("valid social provider update json");
+
+    let errors = req.validate().expect_err("invalid social provider update");
+    assert!(errors.field_errors().contains_key("authorize_url"));
+    assert!(errors.field_errors().contains_key("token_url"));
+    assert!(errors.field_errors().contains_key("scopes"));
+}
+
+#[test]
+fn social_userinfo_mapping_requires_provider_uid() {
+    let result = map_userinfo_response("github", &serde_json::json!({ "login": "octo" }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn social_userinfo_mapping_returns_provider_uid() {
+    let info = map_userinfo_response(
+        "google",
+        &serde_json::json!({
+            "sub": "google-user-1",
+            "email": "user@example.com",
+            "name": "Example User"
+        }),
+    )
+    .expect("valid google userinfo");
+
+    assert_eq!(info.provider, "google");
+    assert_eq!(info.provider_uid, "google-user-1");
+    assert_eq!(info.email.as_deref(), Some("user@example.com"));
+}
+
+#[test]
+fn username_candidate_truncates_by_chars_not_bytes() {
+    let base = "用户".repeat(80);
+    let candidate = username_candidate(&base, Some(12), 64);
+
+    assert!(candidate.ends_with("_12"));
+    assert!(candidate.chars().count() <= 64);
 }
 
 #[tokio::test]
@@ -415,9 +472,14 @@ async fn sso_consent_rejects_unknown_action() {
     sso.user_id = Some(fx.user_id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    pero::domain::sso::session::update(&ta.cache, session_id, &sso, ta.config.sso.session_ttl_seconds)
-        .await
-        .unwrap();
+    pero::domain::sso::session::update(
+        &ta.cache,
+        session_id,
+        &sso,
+        ta.config.sso.session_ttl_seconds,
+    )
+    .await
+    .unwrap();
 
     let request = hyper::Request::builder()
         .method(hyper::Method::POST)
@@ -487,9 +549,14 @@ async fn sso_consent_revalidates_client_state_before_issuing_code() {
     sso.user_id = Some(fx.user_id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    pero::domain::sso::session::update(&ta.cache, session_id, &sso, ta.config.sso.session_ttl_seconds)
-        .await
-        .unwrap();
+    pero::domain::sso::session::update(
+        &ta.cache,
+        session_id,
+        &sso,
+        ta.config.sso.session_ttl_seconds,
+    )
+    .await
+    .unwrap();
 
     sqlx::query("UPDATE oauth2_clients SET enabled = false WHERE id = $1")
         .bind(client_fx.client_id)

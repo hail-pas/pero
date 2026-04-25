@@ -6,5 +6,8 @@ keys/
 config/*.toml
 !config/default.toml
 docs/superpowers
+.opencode
+.claude
 examples
 local
+.ruff_cache

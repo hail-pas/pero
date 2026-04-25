@@ -1,8 +1,8 @@
+use crate::api::response::{MessageResponse, PageData};
 use crate::domain::app::error;
 use crate::domain::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
 use crate::domain::app::store::AppRepo;
 use crate::shared::error::AppError;
-use crate::api::response::{MessageResponse, PageData};
 use crate::shared::state::AppState;
 
 pub async fn create_app(state: &AppState, req: &CreateAppRequest) -> Result<AppDTO, AppError> {

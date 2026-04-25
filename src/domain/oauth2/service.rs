@@ -1,11 +1,11 @@
 use base64::Engine;
 
+use crate::api::response::PageData;
 use crate::domain::oauth2::error_ext;
 use crate::domain::oauth2::models::{
     CreateClientRequest, OAuth2Client, OAuth2ClientDTO, UpdateClientRequest,
 };
 use crate::domain::oauth2::store::OAuth2ClientRepo;
-use crate::api::response::PageData;
 use crate::shared::state::AppState;
 
 pub use crate::domain::oauth2::token_exchange::{exchange_token, revoke_token};
@@ -72,7 +72,10 @@ pub fn parse_basic_client_auth_header(auth_header: &str) -> Result<(String, Stri
     Ok((client_id.to_string(), client_secret.to_string()))
 }
 
-pub fn ensure_client_grant_allowed(client: &OAuth2Client, grant_type: &str) -> Result<(), AppError> {
+pub fn ensure_client_grant_allowed(
+    client: &OAuth2Client,
+    grant_type: &str,
+) -> Result<(), AppError> {
     if client.allows_grant_type(grant_type) {
         return Ok(());
     }

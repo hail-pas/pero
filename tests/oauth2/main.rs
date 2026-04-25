@@ -3,6 +3,8 @@ mod common;
 
 use common::*;
 use hyper::StatusCode;
+use pero::domain::oauth2::models::UpdateClientRequest;
+use validator::Validate;
 
 async fn create_app_with_client(ta: &mut TestApp, token: &str) -> (AppFixture, ClientFixture) {
     let app_fx = ta.create_test_app(token).await;
@@ -10,6 +12,18 @@ async fn create_app_with_client(ta: &mut TestApp, token: &str) -> (AppFixture, C
         .create_test_client(app_fx.app_id, &app_fx.code, token)
         .await;
     (app_fx, client_fx)
+}
+
+#[test]
+fn client_update_rejects_null_for_required_patch_fields() {
+    let req: UpdateClientRequest = serde_json::from_value(serde_json::json!({
+        "client_name": null,
+        "scopes": null,
+        "enabled": null
+    }))
+    .expect("valid client update json");
+
+    assert!(req.validate().is_err());
 }
 
 #[tokio::test]
@@ -172,12 +186,16 @@ async fn revoke_returns_ok_for_token_owned_by_another_client() {
     .await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
 
-    let revoked: bool = sqlx::query_scalar("SELECT revoked FROM oauth2_tokens WHERE refresh_token = $1")
-        .bind(pero::shared::utils::sha256_hex(&refresh_token))
-        .fetch_one(&ta.db)
-        .await
-        .unwrap();
-    assert!(!revoked, "other client's revoke request must not revoke token");
+    let revoked: bool =
+        sqlx::query_scalar("SELECT revoked FROM oauth2_tokens WHERE refresh_token = $1")
+            .bind(pero::shared::utils::sha256_hex(&refresh_token))
+            .fetch_one(&ta.db)
+            .await
+            .unwrap();
+    assert!(
+        !revoked,
+        "other client's revoke request must not revoke token"
+    );
 
     ta.cleanup().await;
 }
