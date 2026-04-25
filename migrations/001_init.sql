@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS policies (
     effect VARCHAR(16) NOT NULL CHECK (effect IN ('allow', 'deny')),
     priority INT NOT NULL DEFAULT 0,
     enabled BOOLEAN NOT NULL DEFAULT true,
-    app_id UUID REFERENCES apps(id),
+    app_id UUID REFERENCES apps(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -129,3 +129,19 @@ CREATE TABLE IF NOT EXISTS oauth2_tokens (
 CREATE INDEX idx_tokens_user ON oauth2_tokens(user_id);
 CREATE INDEX idx_tokens_client_id ON oauth2_tokens(client_id);
 CREATE INDEX idx_tokens_user_client ON oauth2_tokens(user_id, client_id);
+
+-- Social Provider
+CREATE TABLE IF NOT EXISTS social_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(32) NOT NULL UNIQUE,
+    display_name VARCHAR(64) NOT NULL,
+    client_id VARCHAR(255) NOT NULL,
+    client_secret TEXT NOT NULL,
+    authorize_url TEXT NOT NULL,
+    token_url TEXT NOT NULL,
+    userinfo_url TEXT NOT NULL,
+    scopes TEXT[] NOT NULL DEFAULT '{}',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

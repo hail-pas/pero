@@ -6,6 +6,7 @@ pub mod response;
 
 use std::time::Duration;
 
+use crate::domain::abac::models::RouteScope;
 use crate::shared::constants::headers::{X_PROCESS_TIME, X_REQUEST_ID};
 use crate::shared::error::ErrorInfo;
 use crate::shared::state::AppState;
@@ -32,12 +33,16 @@ impl<B> tower_http::trace::OnResponse<B> for OnResponseLog {
 
         if status.is_server_error() {
             match info {
-                Some(i) => tracing::error!(parent: span, status = %status, latency = ms, code = i.code, message = %i.message),
+                Some(i) => {
+                    tracing::error!(parent: span, status = %status, latency = ms, code = i.code, message = %i.message)
+                }
                 None => tracing::error!(parent: span, status = %status, latency = ms),
             }
         } else if status.is_client_error() {
             match info {
-                Some(i) => tracing::warn!(parent: span, status = %status, latency = ms, code = i.code, message = %i.message),
+                Some(i) => {
+                    tracing::warn!(parent: span, status = %status, latency = ms, code = i.code, message = %i.message)
+                }
                 None => tracing::warn!(parent: span, status = %status, latency = ms),
             }
         } else {
@@ -119,10 +124,7 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/.well-known/openid-configuration",
             get(crate::handler::oidc::discovery::discovery),
         )
-        .route(
-            "/oauth2/keys",
-            get(crate::handler::oidc::jwks::jwks),
-        )
+        .route("/oauth2/keys", get(crate::handler::oidc::jwks::jwks))
         .route(
             "/oauth2/authorize",
             get(crate::handler::oauth2::authorize::authorize),
@@ -131,6 +133,10 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/sso/consent",
             get(crate::handler::sso::consent::consent_get)
                 .post(crate::handler::sso::consent::consent_post),
+        )
+        .route(
+            "/api/social-providers/enabled",
+            get(crate::handler::social::public::list_enabled_providers),
         );
 
     let rate_limited = Router::new()
@@ -146,18 +152,14 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/auth/refresh",
             post(crate::handler::identity::login::refresh),
         )
-        .route(
-            "/oauth2/token",
-            post(crate::handler::oauth2::token::token),
-        )
+        .route("/oauth2/token", post(crate::handler::oauth2::token::token))
         .route(
             "/oauth2/revoke",
             post(crate::handler::oauth2::revoke::revoke),
         )
         .route(
             "/sso/login",
-            get(crate::handler::sso::login::login_get)
-                .post(crate::handler::sso::login::login_post),
+            get(crate::handler::sso::login::login_get).post(crate::handler::sso::login::login_post),
         )
         .route(
             "/sso/register",
@@ -173,6 +175,14 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/sso/change-password",
             get(crate::handler::sso::change_password::change_password_get)
                 .post(crate::handler::sso::change_password::change_password_post),
+        )
+        .route(
+            "/sso/social/{provider}/login",
+            get(crate::handler::social::initiate::social_login),
+        )
+        .route(
+            "/sso/social/{provider}/callback",
+            get(crate::handler::social::callback::social_callback),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -247,8 +257,7 @@ fn build_abac_required_routes(state: &AppState) -> Router<AppState> {
         )
         .route(
             "/api/apps",
-            post(crate::handler::app::crud::create_app)
-                .get(crate::handler::app::crud::list_apps),
+            post(crate::handler::app::crud::create_app).get(crate::handler::app::crud::list_apps),
         )
         .route(
             "/api/apps/{id}",
@@ -287,9 +296,26 @@ fn build_abac_required_routes(state: &AppState) -> Router<AppState> {
             post(crate::handler::abac::policies::assign_policy)
                 .delete(crate::handler::abac::policies::unassign_policy),
         )
+        .route(
+            "/api/social-providers",
+            post(crate::handler::social::management::create_provider)
+                .get(crate::handler::social::management::list_providers),
+        )
+        .route(
+            "/api/social-providers/{id}",
+            get(crate::handler::social::management::get_provider)
+                .put(crate::handler::social::management::update_provider)
+                .delete(crate::handler::social::management::delete_provider),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::abac::abac_middleware,
+        ))
+        .layer(axum::middleware::from_fn(
+            |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+                req.extensions_mut().insert(RouteScope::Admin);
+                next.run(req).await
+            },
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

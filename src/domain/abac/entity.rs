@@ -34,10 +34,17 @@ pub struct UserAttribute {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteScope {
+    Admin,
+    App,
+}
+
 #[derive(Debug, Clone)]
 pub struct EvalContext {
     pub subject_attrs: HashMap<String, Vec<String>>,
     pub resource: String,
     pub action: String,
     pub app_id: Option<Uuid>,
+    pub route_scope: RouteScope,
 }

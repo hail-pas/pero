@@ -1,9 +1,9 @@
 use crate::domain::abac::engine;
-use crate::domain::abac::models::EvalContext;
+use crate::domain::abac::models::{EvalContext, RouteScope};
 use crate::domain::abac::service;
+use crate::infra::jwt::TokenClaims;
 use crate::shared::constants::headers;
 use crate::shared::error::AppError;
-use crate::infra::jwt::TokenClaims;
 use crate::shared::state::AppState;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
@@ -31,6 +31,12 @@ pub async fn abac_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Uuid>().ok());
 
+    let route_scope = req
+        .extensions()
+        .get::<RouteScope>()
+        .copied()
+        .unwrap_or(RouteScope::Admin);
+
     let subject_attrs = service::build_subject_attrs(&state, user_id, &claims.roles).await?;
     let policies = service::load_user_policies(&state, user_id, app_id, true).await?;
 
@@ -39,6 +45,7 @@ pub async fn abac_middleware(
         resource: path,
         action: req.method().to_string(),
         app_id,
+        route_scope,
     };
 
     let effect = engine::evaluate(&policies, &ctx, &state.config.abac.default_action);

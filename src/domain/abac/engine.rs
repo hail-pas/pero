@@ -1,4 +1,4 @@
-use super::models::{EvalContext, PolicyCondition};
+use super::models::{EvalContext, PolicyCondition, RouteScope};
 use regex::RegexBuilder;
 use std::collections::HashMap;
 
@@ -87,6 +87,9 @@ pub fn evaluate(
             );
             continue;
         }
+        if !is_scope_compatible(policy, ctx) {
+            continue;
+        }
         if conditions
             .iter()
             .all(|c| eval_condition(c, ctx, &regex_cache))
@@ -95,6 +98,15 @@ pub fn evaluate(
         }
     }
     default_action.to_string()
+}
+
+fn is_scope_compatible(policy: &super::models::Policy, ctx: &EvalContext) -> bool {
+    match (ctx.route_scope, policy.app_id) {
+        (RouteScope::Admin, Some(_)) => false,
+        (RouteScope::Admin, None) => true,
+        (RouteScope::App, Some(policy_app_id)) => ctx.app_id == Some(policy_app_id),
+        (RouteScope::App, None) => true,
+    }
 }
 
 fn wildcard_match(pattern: &str, path: &str) -> bool {

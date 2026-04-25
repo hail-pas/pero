@@ -1,13 +1,13 @@
 use axum::Json;
 use axum::extract::State;
 
+use crate::api::extractors::AuthUser;
+use crate::api::extractors::ValidatedJson;
+use crate::api::response::ApiResponse;
 use crate::domain::abac::engine;
-use crate::domain::abac::models::{EvalContext, EvaluateRequest, EvaluateResponse};
+use crate::domain::abac::models::{EvalContext, EvaluateRequest, EvaluateResponse, RouteScope};
 use crate::domain::abac::service;
 use crate::shared::error::AppError;
-use crate::api::extractors::ValidatedJson;
-use crate::api::extractors::AuthUser;
-use crate::api::response::ApiResponse;
 use crate::shared::state::AppState;
 
 #[utoipa::path(
@@ -26,14 +26,21 @@ pub async fn evaluate(
     auth_user: AuthUser,
     ValidatedJson(req): ValidatedJson<EvaluateRequest>,
 ) -> Result<Json<ApiResponse<EvaluateResponse>>, AppError> {
-    let subject_attrs = service::build_subject_attrs(&state, auth_user.user_id, &auth_user.roles).await?;
-    let policies = service::load_user_policies(&state, auth_user.user_id, req.app_id, false).await?;
+    let subject_attrs =
+        service::build_subject_attrs(&state, auth_user.user_id, &auth_user.roles).await?;
+    let policies =
+        service::load_user_policies(&state, auth_user.user_id, req.app_id, false).await?;
 
     let ctx = EvalContext {
         subject_attrs,
         resource: req.resource,
         action: req.action,
         app_id: req.app_id,
+        route_scope: if req.app_id.is_some() {
+            RouteScope::App
+        } else {
+            RouteScope::Admin
+        },
     };
 
     let effect = engine::evaluate(&policies, &ctx, &state.config.abac.default_action);
