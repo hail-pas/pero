@@ -160,15 +160,13 @@ pub async fn get_json<T: serde::de::DeserializeOwned>(
 ) -> Result<Option<T>, AppError> {
     let raw = get(pool, key).await?;
     match raw {
-        Some(json_str) => {
-            match serde_json::from_str::<T>(&json_str) {
-                Ok(val) => Ok(Some(val)),
-                Err(e) => {
-                    tracing::warn!(key = key, error = %e, "cache deserialization failed, treating as cache miss");
-                    Ok(None)
-                }
+        Some(json_str) => match serde_json::from_str::<T>(&json_str) {
+            Ok(val) => Ok(Some(val)),
+            Err(e) => {
+                tracing::warn!(key = key, error = %e, "cache deserialization failed, treating as cache miss");
+                Ok(None)
             }
-        }
+        },
         None => Ok(None),
     }
 }

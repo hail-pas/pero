@@ -1,8 +1,8 @@
 use axum::http::HeaderMap;
 
+use crate::domain::sso::models::SsoSession;
 use crate::infra::cache;
 use crate::infra::cache::Pool;
-use crate::domain::sso::models::SsoSession;
 use crate::shared::constants::cache_keys::SSO_SESSION_PREFIX;
 use crate::shared::error::AppError;
 

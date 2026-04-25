@@ -6,9 +6,10 @@ use validator::Validate;
 
 use crate::domain::oauth2::models::AuthorizeQuery;
 use crate::domain::oauth2::service;
+use crate::domain::social::store::SocialProviderRepo;
 use crate::domain::sso::models::{AuthorizeParams, SsoSession};
-use crate::handler::sso::common::set_session_cookie;
 use crate::domain::sso::session::{self, get_session_id};
+use crate::handler::sso::common::set_session_cookie;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -27,10 +28,12 @@ pub async fn authorize(
     let requested_scopes = crate::shared::utils::parse_scopes(query.scope.as_deref());
 
     if let Err(err) = service::ensure_authorization_client_ready(&client, &requested_scopes) {
-        return Ok(
-            redirect_error_response(&query.redirect_uri, authorization_error_code(&err), query.state.as_deref())
-                .into_response(),
-        );
+        return Ok(redirect_error_response(
+            &query.redirect_uri,
+            authorization_error_code(&err),
+            query.state.as_deref(),
+        )
+        .into_response());
     }
 
     let params = AuthorizeParams {
@@ -49,8 +52,13 @@ pub async fn authorize(
         if let Some(mut existing) = session::get(&state.cache, &sid).await? {
             if existing.authenticated && existing.user_id.is_some() {
                 existing.authorize_params = params;
-                session::update(&state.cache, &sid, &existing, state.config.sso.session_ttl_seconds)
-                    .await?;
+                session::update(
+                    &state.cache,
+                    &sid,
+                    &existing,
+                    state.config.sso.session_ttl_seconds,
+                )
+                .await?;
                 return Ok(Redirect::to("/sso/consent").into_response());
             }
         }
@@ -63,12 +71,28 @@ pub async fn authorize(
         auth_time: None,
     };
 
-    let session_id = session::create(&state.cache, &sso, state.config.sso.session_ttl_seconds).await?;
+    let session_id =
+        session::create(&state.cache, &sso, state.config.sso.session_ttl_seconds).await?;
+
+    if let Some(ref hint) = query.login_hint {
+        if SocialProviderRepo::find_enabled_by_name(&state.db, hint)
+            .await?
+            .is_some()
+        {
+            let mut response = Redirect::to(&format!("/sso/social/{}/login", hint)).into_response();
+            response.headers_mut().append(
+                header::SET_COOKIE,
+                set_session_cookie(&state.config.sso, &session_id)?,
+            );
+            return Ok(response);
+        }
+    }
 
     let mut response = Redirect::to("/sso/login").into_response();
-    response
-        .headers_mut()
-        .append(header::SET_COOKIE, set_session_cookie(&state.config.sso, &session_id)?);
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        set_session_cookie(&state.config.sso, &session_id)?,
+    );
     Ok(response)
 }
 

@@ -3,12 +3,12 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 
+use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::authn::AuthService;
 use crate::domain::sso::models::ChangePasswordForm;
 use crate::handler::sso::common::{render_tpl, require_authenticated_sso_session};
 use crate::handler::sso::login::query_from_session;
 use crate::shared::error::AppError;
-use crate::api::extractors::ValidatedForm;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]

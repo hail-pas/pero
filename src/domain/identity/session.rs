@@ -177,11 +177,7 @@ impl UserSessionIndex {
         Ok(())
     }
 
-    async fn remove(
-        pool: &Pool,
-        user_id: Uuid,
-        session_id: &str,
-    ) -> Result<(), AppError> {
+    async fn remove(pool: &Pool, user_id: Uuid, session_id: &str) -> Result<(), AppError> {
         let mut conn = cache::with_conn(pool).await?;
         let key = user_sessions_key(user_id);
         let _: usize = conn.srem(&key, session_id).await?;

@@ -133,3 +133,13 @@ impl From<redis::RedisError> for AppError {
 pub fn require_found<T>(opt: Option<T>, resource: &str) -> Result<T, AppError> {
     opt.ok_or_else(|| AppError::NotFound(resource.to_string()))
 }
+
+pub fn require_rows_affected(
+    result: sqlx::postgres::PgQueryResult,
+    resource: &str,
+) -> Result<(), AppError> {
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(resource.to_string()));
+    }
+    Ok(())
+}

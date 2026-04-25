@@ -147,6 +147,46 @@
             margin-bottom: 12px;
             text-align: center;
         }
+        .social-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 0;
+        }
+        .btn-social {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #8a8886;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            color: #323130;
+            background: #fff;
+            transition: background 0.15s;
+        }
+        .btn-social:hover { background: #f3f2f1; }
+        .btn-github { border-color: #24292e; color: #24292e; }
+        .btn-github:hover { background: #24292e; color: #fff; }
+        .btn-google { border-color: #4285f4; color: #4285f4; }
+        .btn-google:hover { background: #4285f4; color: #fff; }
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 20px 0;
+            color: #8a8886;
+            font-size: 13px;
+        }
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid #edebe9;
+        }
+        .divider span { padding: 0 12px; }
     </style>
 </head>
 <body>

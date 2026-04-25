@@ -1,8 +1,7 @@
 use crate::domain::identity::error;
 use crate::domain::identity::models::{Identity, UpdateMeRequest, UpdateUserRequest, User};
 use crate::shared::error::{AppError, require_found};
-use crate::shared::pagination::{paginate, USERS};
-use crate::shared::patch::push_optional_column;
+use crate::shared::pagination::{USERS, paginate};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
 use utoipa::ToSchema;
@@ -128,12 +127,12 @@ impl UserRepo {
     {
         let mut builder =
             sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE users SET updated_at = now()");
-        push_optional_column(&mut builder, "username", &req.username);
-        push_optional_column(&mut builder, "email", &req.email);
+        req.username.push_column(&mut builder, "username");
+        req.email.push_column(&mut builder, "email");
         req.phone.push_column(&mut builder, "phone");
         req.nickname.push_column(&mut builder, "nickname");
         req.avatar_url.push_column(&mut builder, "avatar_url");
-        push_optional_column(&mut builder, "status", &req.status);
+        req.status.push_column(&mut builder, "status");
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
@@ -339,11 +338,7 @@ impl UserAttributeRepo {
         Ok(())
     }
 
-    pub async fn delete_by_user(
-        pool: &PgPool,
-        user_id: Uuid,
-        key: &str,
-    ) -> Result<(), AppError> {
+    pub async fn delete_by_user(pool: &PgPool, user_id: Uuid, key: &str) -> Result<(), AppError> {
         sqlx::query("DELETE FROM user_attributes WHERE user_id = $1 AND key = $2")
             .bind(user_id)
             .bind(key)

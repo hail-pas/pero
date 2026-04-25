@@ -3,13 +3,13 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::authn::AuthService;
 use crate::domain::sso::models::RegisterForm;
+use crate::domain::sso::session;
 use crate::handler::sso::common::{load_sso_session, render_tpl};
 use crate::handler::sso::login::query_from_session;
-use crate::domain::sso::session;
 use crate::shared::error::AppError;
-use crate::api::extractors::ValidatedForm;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
@@ -87,7 +87,13 @@ pub async fn register_post(
     sso.user_id = Some(user.id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    session::update(&state.cache, &sid, &sso, state.config.sso.session_ttl_seconds).await?;
+    session::update(
+        &state.cache,
+        &sid,
+        &sso,
+        state.config.sso.session_ttl_seconds,
+    )
+    .await?;
 
     Ok(Redirect::to("/sso/consent").into_response())
 }

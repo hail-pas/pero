@@ -5,11 +5,11 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::domain::sso::models::ConsentAction;
+use crate::domain::sso::service;
 use crate::handler::sso::common::{
     clear_session_cookie, render_tpl, require_authenticated_sso_session,
 };
 use crate::handler::sso::login::query_from_session;
-use crate::domain::sso::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -53,8 +53,9 @@ pub async fn consent_post(
 
     let redirect = service::handle_consent_action(&state, &sid, &sso, action.action).await?;
     let mut response = Redirect::to(&redirect).into_response();
-    response
-        .headers_mut()
-        .append(axum::http::header::SET_COOKIE, clear_session_cookie(&state.config.sso)?);
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        clear_session_cookie(&state.config.sso)?,
+    );
     Ok(response)
 }

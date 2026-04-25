@@ -1,5 +1,5 @@
-use crate::domain::oauth2::store::AuthCodeRepo;
 use crate::domain::oauth2::service as oauth2_service;
+use crate::domain::oauth2::store::AuthCodeRepo;
 use crate::domain::sso::models::{ConsentDecision, SsoSession};
 use crate::domain::sso::session;
 use crate::shared::error::AppError;

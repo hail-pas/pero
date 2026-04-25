@@ -1,14 +1,17 @@
 use askama::Template;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
+use serde::Deserialize;
 
-use crate::domain::identity::authn::AuthService;
-use crate::domain::sso::models::LoginForm;
-use crate::handler::sso::common::{load_sso_session, render_tpl};
-use crate::domain::sso::session;
-use crate::shared::error::AppError;
 use crate::api::extractors::ValidatedForm;
+use crate::domain::identity::authn::AuthService;
+use crate::domain::social::entity::SocialProviderPublic;
+use crate::domain::social::store::SocialProviderRepo;
+use crate::domain::sso::models::LoginForm;
+use crate::domain::sso::session;
+use crate::handler::sso::common::{load_sso_session, render_tpl};
+use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
 pub fn query_from_session(s: &crate::domain::sso::models::SsoSession) -> String {
@@ -40,29 +43,58 @@ pub struct LoginTemplate {
     pub identifier_type: String,
     pub error: Option<String>,
     pub query_params: String,
+    pub social_providers: Vec<SocialProviderPublic>,
+}
+
+async fn load_social_providers(state: &AppState) -> Vec<SocialProviderPublic> {
+    match SocialProviderRepo::list_enabled(&state.db).await {
+        Ok(providers) => providers.iter().map(SocialProviderPublic::from).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginQuery {
+    pub error: Option<String>,
 }
 
 pub async fn login_get(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<LoginQuery>,
 ) -> Result<Response, AppError> {
-    let (_sid, sso) = match load_sso_session(&state, &headers).await {
-        Ok(value) => value,
-        Err(response) => return Ok(response),
-    };
+    let session = load_sso_session(&state, &headers).await;
 
-    if sso.authenticated && sso.user_id.is_some() {
-        return Ok(Redirect::to("/sso/consent").into_response());
+    match (session, query.error) {
+        (Ok((_sid, sso)), _) => {
+            if sso.authenticated && sso.user_id.is_some() {
+                return Ok(Redirect::to("/sso/consent").into_response());
+            }
+            let social_providers = load_social_providers(&state).await;
+            let tpl = LoginTemplate {
+                client_name: None,
+                identifier: String::new(),
+                identifier_type: "username".into(),
+                error: None,
+                query_params: query_from_session(&sso),
+                social_providers,
+            };
+            Ok(render_tpl(&tpl)?.into_response())
+        }
+        (Err(_), Some(error)) => {
+            let social_providers = load_social_providers(&state).await;
+            let tpl = LoginTemplate {
+                client_name: None,
+                identifier: String::new(),
+                identifier_type: "username".into(),
+                error: Some(error),
+                query_params: String::new(),
+                social_providers,
+            };
+            Ok(render_tpl(&tpl)?.into_response())
+        }
+        (Err(redirect), None) => Ok(redirect),
     }
-
-    let tpl = LoginTemplate {
-        client_name: None,
-        identifier: String::new(),
-        identifier_type: "username".into(),
-        error: None,
-        query_params: query_from_session(&sso),
-    };
-    Ok(render_tpl(&tpl)?.into_response())
 }
 
 fn error_tpl(
@@ -70,6 +102,7 @@ fn error_tpl(
     identifier_type: String,
     error: &str,
     qp: String,
+    social_providers: Vec<SocialProviderPublic>,
 ) -> LoginTemplate {
     LoginTemplate {
         client_name: None,
@@ -77,6 +110,7 @@ fn error_tpl(
         identifier_type,
         error: Some(error.into()),
         query_params: qp,
+        social_providers,
     }
 }
 
@@ -97,6 +131,7 @@ pub async fn login_post(
         crate::domain::identity::models::IdentifierType::Phone => "phone",
     }
     .to_string();
+    let social_providers = load_social_providers(&state).await;
     let user = match AuthService::authenticate_with_password(
         &state,
         &form.identifier_type,
@@ -113,6 +148,7 @@ pub async fn login_post(
                 identifier_type,
                 "invalid credentials",
                 qp,
+                social_providers,
             ))?
             .into_response());
         }
@@ -122,7 +158,13 @@ pub async fn login_post(
     sso.user_id = Some(user.id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    session::update(&state.cache, &sid, &sso, state.config.sso.session_ttl_seconds).await?;
+    session::update(
+        &state.cache,
+        &sid,
+        &sso,
+        state.config.sso.session_ttl_seconds,
+    )
+    .await?;
 
     Ok(Redirect::to("/sso/consent").into_response())
 }

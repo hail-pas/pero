@@ -40,11 +40,19 @@ pub struct RegisterForm {
     pub email: String,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(
         length(max = 20),
         custom(function = "crate::shared::validation::validate_phone")
     )]
     pub phone: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
 }

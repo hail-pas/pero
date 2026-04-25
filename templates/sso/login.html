@@ -12,6 +12,22 @@
 <div class="error-box">{{ e }}</div>
 {% endif %}
 
+{% if query_params.is_empty() %}
+<div class="links" style="text-align:center;margin-top:1rem;">
+<p style="color:#666;">Please try again from your application.</p>
+</div>
+{% else %}
+{% if !social_providers.is_empty() %}
+<div class="social-buttons">
+{% for sp in social_providers %}
+<a href="/sso/social/{{ sp.name }}/login?{{ query_params }}" class="btn-social btn-{{ sp.name }}">
+<span class="social-icon">{{ sp.display_name }}</span>
+</a>
+{% endfor %}
+</div>
+<div class="divider"><span>or</span></div>
+{% endif %}
+
 <form method="post" action="/sso/login?{{ query_params }}">
     <div class="tabs" id="id-tabs">
         <button type="button" class="tab {% if identifier_type == "email" %}{% else %}{% if identifier_type == "phone" %}{% else %}active{% endif %}{% endif %}" data-type="username" onclick="switchTab('username')">Username</button>
@@ -30,6 +46,7 @@
     &nbsp;&middot;&nbsp;
     <a href="/sso/forgot-password?{{ query_params }}">Forgot password?</a>
 </div>
+{% endif %}
 <script>
 function switchTab(type) {
     document.getElementById('identifier_type').value = type;

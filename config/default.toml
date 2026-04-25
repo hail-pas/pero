@@ -27,7 +27,7 @@ default_action = "deny"
 policy_cache_ttl_seconds = 300
 
 [oidc]
-issuer = "https://auth.example.com"
+issuer = "http://localhost:8080"
 private_key_path = "./config/keys/private.pem"
 public_key_path = "./config/keys/public.pem"
 key_id = "key-2026-01"
@@ -39,7 +39,7 @@ refresh_token_ttl_days = 30
 
 [sso]
 session_ttl_seconds = 600
-cookie_secure = true
+cookie_secure = false
 cookie_same_site = "Lax"
 
 [docs]

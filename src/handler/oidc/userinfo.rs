@@ -1,7 +1,7 @@
+use crate::api::extractors::AuthUser;
 use crate::domain::identity::store::UserRepo;
 use crate::domain::oidc::claims::ScopedClaims;
 use crate::shared::error::{AppError, require_found};
-use crate::api::extractors::AuthUser;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
@@ -53,7 +53,10 @@ pub async fn userinfo(
         map.insert("phone_number".to_string(), serde_json::Value::String(v));
     }
     if let Some(v) = claims.phone_number_verified {
-        map.insert("phone_number_verified".to_string(), serde_json::Value::Bool(v));
+        map.insert(
+            "phone_number_verified".to_string(),
+            serde_json::Value::Bool(v),
+        );
     }
 
     Ok(Json(serde_json::Value::Object(map)))

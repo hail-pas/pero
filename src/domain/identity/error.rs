@@ -13,7 +13,10 @@ pub fn provider_already_bound(provider: &str) -> AppError {
 }
 
 pub fn provider_binding_not_implemented(provider: &str) -> AppError {
-    AppError::BadRequest(format!("provider '{}' binding not yet implemented", provider))
+    AppError::BadRequest(format!(
+        "provider '{}' binding not yet implemented",
+        provider
+    ))
 }
 
 pub fn cannot_unbind_password() -> AppError {

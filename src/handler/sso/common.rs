@@ -11,10 +11,7 @@ use crate::shared::state::AppState;
 
 pub type SessionResult = Result<(String, SsoSession), Response>;
 
-pub async fn load_sso_session(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> SessionResult {
+pub async fn load_sso_session(state: &AppState, headers: &HeaderMap) -> SessionResult {
     session::require(&state.cache, headers)
         .await
         .map_err(|e| match e {
@@ -42,7 +39,10 @@ pub fn render_tpl<T: Template>(tpl: &T) -> Result<Html<String>, AppError> {
         .map_err(|e| AppError::Internal(e.to_string()))
 }
 
-pub fn set_session_cookie(config: &SsoConfig, session_id: &str) -> Result<axum::http::HeaderValue, AppError> {
+pub fn set_session_cookie(
+    config: &SsoConfig,
+    session_id: &str,
+) -> Result<axum::http::HeaderValue, AppError> {
     build_cookie_header(config, session_id, config.session_ttl_seconds)
 }
 

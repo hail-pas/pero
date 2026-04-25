@@ -1,8 +1,8 @@
 use crate::domain::identity::error;
-use crate::domain::identity::service;
 use crate::domain::identity::models::{IdentifierType, User};
-use crate::domain::identity::store::{IdentityRepo, UserRepo};
+use crate::domain::identity::service;
 use crate::domain::identity::session;
+use crate::domain::identity::store::{IdentityRepo, UserRepo};
 use crate::domain::oauth2::store::RefreshTokenRepo;
 use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
@@ -13,7 +13,10 @@ pub struct AuthService;
 
 impl AuthService {
     fn constant_time_password_probe(password: &str) {
-        let _ = bcrypt::verify(password, crate::shared::constants::security::FAKE_BCRYPT_HASH);
+        let _ = bcrypt::verify(
+            password,
+            crate::shared::constants::security::FAKE_BCRYPT_HASH,
+        );
     }
 
     async fn find_user_by_identifier(
