@@ -1,8 +1,8 @@
-use crate::domain::identity::store::{SetAttributes, UserAttribute};
-use crate::domain::identity::service;
-use crate::shared::error::AppError;
 use crate::api::extractors::ValidatedJson;
 use crate::api::response::{ApiResponse, MessageResponse};
+use crate::domain::identity::service;
+use crate::domain::identity::store::{SetAttributes, UserAttribute};
+use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};

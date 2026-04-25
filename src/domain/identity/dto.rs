@@ -5,7 +5,7 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::domain::identity::entity::User;
-use crate::shared::patch::{Patch, validate_patch};
+use crate::shared::patch::Patch;
 use crate::shared::validation;
 
 #[derive(Debug, Serialize, Clone, ToSchema)]
@@ -47,11 +47,19 @@ pub struct RegisterRequest {
     pub email: String,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(
         length(max = 20),
         custom(function = "crate::shared::validation::validate_phone")
     )]
     pub phone: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
 }
@@ -61,9 +69,11 @@ pub type CreateUserRequest = RegisterRequest;
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateUserRequest {
     #[serde(default)]
-    pub username: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub username: Patch<String>,
     #[serde(default)]
-    pub email: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub email: Patch<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
     pub phone: Patch<String>,
@@ -74,45 +84,35 @@ pub struct UpdateUserRequest {
     #[schema(value_type = Option<String>)]
     pub avatar_url: Patch<String>,
     #[serde(default)]
-    pub status: Option<i16>,
+    #[schema(value_type = Option<i16>)]
+    pub status: Patch<i16>,
 }
 
 impl Validate for UpdateUserRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
-        if let Some(ref v) = self.username {
-            if let Err(e) = validation::validate_length(v, 3, 64) {
-                errors.add("username", e);
+
+        self.username
+            .validate_required("username", &mut errors, |v| {
+                validation::validate_length(v, 3, 64)
+            });
+        self.email
+            .validate_required("email", &mut errors, |v| validation::validate_email(v));
+        self.phone
+            .validate("phone", &mut errors, |v| validation::validate_phone(v));
+        self.nickname.validate("nickname", &mut errors, |v| {
+            validation::validate_length(v, 1, 64)
+        });
+        self.avatar_url
+            .validate("avatar_url", &mut errors, |v| validation::validate_url(v));
+        self.status.validate_required("status", &mut errors, |v| {
+            if (0..=1).contains(v) {
+                Ok(())
+            } else {
+                Err(ValidationError::new("range"))
             }
-        }
-        if let Some(ref v) = self.email {
-            if let Err(e) = validation::validate_email(v) {
-                errors.add("email", e);
-            }
-        }
-        validate_patch(
-            &self.phone,
-            "phone",
-            |v| validation::validate_phone(v),
-            &mut errors,
-        );
-        validate_patch(
-            &self.nickname,
-            "nickname",
-            |v| validation::validate_length(v, 1, 64),
-            &mut errors,
-        );
-        validate_patch(
-            &self.avatar_url,
-            "avatar_url",
-            |v| validation::validate_url(v),
-            &mut errors,
-        );
-        if let Some(v) = self.status {
-            if !(0..=1).contains(&v) {
-                errors.add("status", ValidationError::new("range"));
-            }
-        }
+        });
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -137,24 +137,13 @@ pub struct UpdateMeRequest {
 impl Validate for UpdateMeRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
-        validate_patch(
-            &self.nickname,
-            "nickname",
-            |v| validation::validate_length(v, 1, 64),
-            &mut errors,
-        );
-        validate_patch(
-            &self.avatar_url,
-            "avatar_url",
-            |v| validation::validate_url(v),
-            &mut errors,
-        );
-        validate_patch(
-            &self.phone,
-            "phone",
-            |v| validation::validate_phone(v),
-            &mut errors,
-        );
+        self.nickname.validate("nickname", &mut errors, |v| {
+            validation::validate_length(v, 1, 64)
+        });
+        self.avatar_url
+            .validate("avatar_url", &mut errors, |v| validation::validate_url(v));
+        self.phone
+            .validate("phone", &mut errors, |v| validation::validate_phone(v));
         if errors.is_empty() {
             Ok(())
         } else {

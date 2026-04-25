@@ -2,10 +2,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
-use validator::Validate;
+use validator::{Validate, ValidationError, ValidationErrors};
+
+use crate::shared::patch::Patch;
 
 use crate::domain::oauth2::entity::OAuth2Client;
 use crate::shared::constants::oauth2::{self as oauth2_constants, scopes as oauth2_scopes};
+use crate::shared::validation;
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -100,15 +103,48 @@ fn default_scopes() -> Vec<String> {
     ]
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateClientRequest {
-    #[validate(length(min = 1, max = 128))]
-    pub client_name: Option<String>,
-    #[validate(custom(function = "crate::shared::validation::validate_redirect_uris"))]
-    pub redirect_uris: Option<Vec<String>>,
-    #[validate(length(min = 1))]
-    pub scopes: Option<Vec<String>>,
-    pub enabled: Option<bool>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub client_name: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<Vec<String>>)]
+    pub redirect_uris: Patch<Vec<String>>,
+    #[serde(default)]
+    #[schema(value_type = Option<Vec<String>>)]
+    pub scopes: Patch<Vec<String>>,
+    #[serde(default)]
+    #[schema(value_type = Option<bool>)]
+    pub enabled: Patch<bool>,
+}
+
+impl Validate for UpdateClientRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        let mut errors = ValidationErrors::new();
+        self.client_name
+            .validate_required("client_name", &mut errors, |v| {
+                validation::validate_length(v, 1, 128)
+            });
+        self.redirect_uris
+            .validate_required("redirect_uris", &mut errors, |v| {
+                validation::validate_redirect_uris(v)
+            });
+        self.scopes.validate_required("scopes", &mut errors, |v| {
+            if v.is_empty() {
+                return Err(ValidationError::new("length"));
+            }
+            validation::validate_non_empty_items(v)?;
+            Ok(())
+        });
+        self.enabled
+            .validate_required("enabled", &mut errors, |_| Ok(()));
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
@@ -128,6 +164,7 @@ pub struct AuthorizeQuery {
     #[serde(default)]
     pub code_challenge_method: CodeChallengeMethod,
     pub nonce: Option<String>,
+    pub login_hint: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]

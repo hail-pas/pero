@@ -1,6 +1,6 @@
+use crate::infra::jwt;
 use crate::shared::constants::oauth2::TOKEN_TYPE_BEARER_PREFIX;
 use crate::shared::error::AppError;
-use crate::infra::jwt;
 use crate::shared::state::AppState;
 use axum::extract::{Request, State};
 use axum::http::header;

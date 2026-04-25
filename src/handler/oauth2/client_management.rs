@@ -1,13 +1,13 @@
 use axum::Json;
 use axum::extract::{Path, State};
 
+use crate::api::extractors::{Pagination, ValidatedJson};
+use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::domain::oauth2::models::{
     CreateClientRequest, CreateClientResponse, OAuth2ClientDTO, UpdateClientRequest,
 };
 use crate::domain::oauth2::service;
 use crate::shared::error::AppError;
-use crate::api::extractors::{Pagination, ValidatedJson};
-use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::shared::state::AppState;
 
 #[utoipa::path(

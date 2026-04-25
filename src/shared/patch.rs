@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use validator::{Validate, ValidationError, ValidationErrors};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Patch<T> {
@@ -42,13 +43,47 @@ impl<T> Patch<T> {
         matches!(self, Patch::Absent)
     }
 
-    pub fn validate_set(
-        &self,
-        f: impl FnOnce(&T) -> Result<(), validator::ValidationError>,
-    ) -> Result<(), validator::ValidationError> {
+    pub fn as_set(&self) -> Option<&T> {
         match self {
-            Patch::Set(v) => f(v),
-            _ => Ok(()),
+            Patch::Set(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn into_set(self) -> Option<T> {
+        match self {
+            Patch::Set(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn validate(
+        &self,
+        field: &'static str,
+        errors: &mut ValidationErrors,
+        f: impl FnOnce(&T) -> Result<(), ValidationError>,
+    ) {
+        if let Patch::Set(v) = self {
+            if let Err(err) = f(v) {
+                errors.add(field, err);
+            }
+        }
+    }
+
+    pub fn validate_required(
+        &self,
+        field: &'static str,
+        errors: &mut ValidationErrors,
+        f: impl FnOnce(&T) -> Result<(), ValidationError>,
+    ) {
+        match self {
+            Patch::Absent => {}
+            Patch::Null => errors.add(field, ValidationError::new("required")),
+            Patch::Set(v) => {
+                if let Err(err) = f(v) {
+                    errors.add(field, err);
+                }
+            }
         }
     }
 
@@ -59,6 +94,10 @@ impl<T> Patch<T> {
     ) where
         T: 'args + Clone + sqlx::Encode<'args, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
     {
+        debug_assert!(
+            is_valid_identifier(column),
+            "invalid SQL column name: {column}"
+        );
         match self {
             Patch::Absent => {}
             Patch::Null => {
@@ -76,28 +115,27 @@ impl<T> Patch<T> {
     }
 }
 
-pub fn validate_patch<T>(
-    patch: &Patch<T>,
-    field: &'static str,
-    f: impl FnOnce(&T) -> Result<(), validator::ValidationError>,
-    errors: &mut validator::ValidationErrors,
-) {
-    if let Err(e) = patch.validate_set(f) {
-        errors.add(field, e);
+impl<T: Validate> Patch<Vec<T>> {
+    pub fn validate_nested(&self, field: &'static str, errors: &mut ValidationErrors) {
+        if let Patch::Set(items) = self {
+            for (idx, item) in items.iter().enumerate() {
+                if let Err(nested) = item.validate() {
+                    let mut err = ValidationError::new("nested");
+                    err.message = Some(format!("{field}[{idx}] is invalid: {nested}").into());
+                    errors.add(field, err);
+                }
+            }
+        }
     }
 }
 
-pub fn push_optional_column<'args, T>(
-    builder: &mut sqlx::QueryBuilder<'args, sqlx::Postgres>,
-    column: &str,
-    opt: &Option<T>,
-) where
-    T: 'args + Clone + sqlx::Encode<'args, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    if let Some(v) = opt {
-        builder.push(", ");
-        builder.push(column);
-        builder.push(" = ");
-        builder.push_bind(v.clone());
-    }
+fn is_valid_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && s.as_bytes().iter().enumerate().all(|(i, b)| {
+            if i == 0 {
+                b.is_ascii_lowercase() || *b == b'_'
+            } else {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_'
+            }
+        })
 }

@@ -1,15 +1,15 @@
+use crate::api::extractors::{AuthUser, ValidatedJson};
+use crate::api::response::{ApiResponse, MessageResponse};
 use crate::domain::identity::authn::AuthService;
 use crate::domain::identity::models::{
     LoginRequest, RefreshRequest, RefreshTokenResponse, TokenResponse,
 };
-use crate::domain::identity::store::UserRepo;
 use crate::domain::identity::session;
+use crate::domain::identity::store::UserRepo;
 use crate::domain::oauth2::store::RefreshTokenRepo;
+use crate::infra::jwt;
 use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
-use crate::api::extractors::{AuthUser, ValidatedJson};
-use crate::infra::jwt;
-use crate::api::response::{ApiResponse, MessageResponse};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;

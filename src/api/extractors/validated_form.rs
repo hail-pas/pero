@@ -18,9 +18,6 @@ where
         let Form(value) = Form::<T>::from_request(req, state)
             .await
             .map_err(|e| AppError::Validation(e.to_string()))?;
-        value
-            .validate()
-            .map_err(|e: validator::ValidationErrors| AppError::Validation(e.to_string()))?;
-        Ok(Self(value))
+        Ok(Self(super::validate_request(value)?))
     }
 }

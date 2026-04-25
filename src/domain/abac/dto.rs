@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
-use validator::Validate;
+use validator::{Validate, ValidationErrors};
+
+use crate::shared::patch::Patch;
+use crate::shared::validation;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -70,6 +73,10 @@ impl ConditionOperator {
 pub struct CreatePolicyRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     pub description: Option<String>,
     pub effect: PolicyEffect,
     #[serde(default)]
@@ -81,17 +88,57 @@ pub struct CreatePolicyRequest {
     pub conditions: Vec<CreateConditionRequest>,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdatePolicyRequest {
-    #[validate(length(min = 1, max = 128))]
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub effect: Option<PolicyEffect>,
-    pub priority: Option<i32>,
-    pub enabled: Option<bool>,
-    pub app_id: Option<Uuid>,
-    #[validate(nested)]
-    pub conditions: Option<Vec<CreateConditionRequest>>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub name: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub description: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<PolicyEffect>)]
+    pub effect: Patch<PolicyEffect>,
+    #[serde(default)]
+    #[schema(value_type = Option<i32>)]
+    pub priority: Patch<i32>,
+    #[serde(default)]
+    #[schema(value_type = Option<bool>)]
+    pub enabled: Patch<bool>,
+    #[serde(default)]
+    #[schema(value_type = Option<Uuid>)]
+    pub app_id: Patch<Uuid>,
+    #[serde(default)]
+    #[schema(value_type = Option<Vec<CreateConditionRequest>>)]
+    pub conditions: Patch<Vec<CreateConditionRequest>>,
+}
+
+impl Validate for UpdatePolicyRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        let mut errors = ValidationErrors::new();
+
+        self.name.validate_required("name", &mut errors, |v| {
+            validation::validate_length(v, 1, 128)
+        });
+
+        self.effect
+            .validate_required("effect", &mut errors, |_| Ok(()));
+        self.priority
+            .validate_required("priority", &mut errors, |_| Ok(()));
+        self.enabled
+            .validate_required("enabled", &mut errors, |_| Ok(()));
+
+        match &self.conditions {
+            Patch::Null => errors.add("conditions", validator::ValidationError::new("required")),
+            _ => self.conditions.validate_nested("conditions", &mut errors),
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]

@@ -1,8 +1,8 @@
+use crate::api::extractors::{AuthUser, Pagination, ValidatedJson};
+use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::domain::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
 use crate::domain::identity::service;
 use crate::shared::error::AppError;
-use crate::api::extractors::{AuthUser, Pagination, ValidatedJson};
-use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};

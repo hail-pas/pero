@@ -1,10 +1,10 @@
-use crate::domain::abac::models::{CreatePolicyRequest, UpdatePolicyRequest};
-use crate::domain::abac::service::PolicyDTO;
-use crate::handler::abac::handlers;
-use crate::domain::abac::service::PolicyScope;
-use crate::shared::error::AppError;
 use crate::api::extractors::{AuthClient, Pagination, ValidatedJson};
 use crate::api::response::{ApiResponse, MessageResponse, PageData};
+use crate::domain::abac::models::{CreatePolicyRequest, UpdatePolicyRequest};
+use crate::domain::abac::service::PolicyDTO;
+use crate::domain::abac::service::PolicyScope;
+use crate::handler::abac::handlers;
+use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -26,7 +26,13 @@ pub async fn create_policy(
     AuthClient(client): AuthClient,
     ValidatedJson(req): ValidatedJson<CreatePolicyRequest>,
 ) -> Result<Json<ApiResponse<PolicyDTO>>, AppError> {
-    handlers::create(&state, req, PolicyScope::App(client.app_id), Some(client.app_id)).await
+    handlers::create(
+        &state,
+        req,
+        PolicyScope::App(client.app_id),
+        Some(client.app_id),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -90,7 +96,14 @@ pub async fn update_policy(
     Path(id): Path<Uuid>,
     ValidatedJson(req): ValidatedJson<UpdatePolicyRequest>,
 ) -> Result<Json<ApiResponse<PolicyDTO>>, AppError> {
-    handlers::update(&state, id, req, PolicyScope::App(client.app_id), Some(client.app_id)).await
+    handlers::update(
+        &state,
+        id,
+        req,
+        PolicyScope::App(client.app_id),
+        Some(client.app_id),
+    )
+    .await
 }
 
 #[utoipa::path(

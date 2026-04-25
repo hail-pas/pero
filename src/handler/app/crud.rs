@@ -1,11 +1,11 @@
 use axum::Json;
 use axum::extract::{Path, State};
 
+use crate::api::extractors::{Pagination, ValidatedJson};
+use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::domain::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
 use crate::domain::app::service;
 use crate::shared::error::AppError;
-use crate::api::extractors::{Pagination, ValidatedJson};
-use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::shared::state::AppState;
 
 #[utoipa::path(

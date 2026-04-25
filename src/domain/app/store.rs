@@ -1,7 +1,6 @@
 use crate::domain::app::models::{App, CreateAppRequest, UpdateAppRequest};
-use crate::shared::error::{AppError, require_found};
-use crate::shared::pagination::{paginate, APPS};
-use crate::shared::patch::push_optional_column;
+use crate::shared::error::{AppError, require_found, require_rows_affected};
+use crate::shared::pagination::{APPS, paginate};
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
@@ -51,16 +50,13 @@ impl AppRepo {
     pub async fn update(pool: &PgPool, id: Uuid, req: &UpdateAppRequest) -> Result<App, AppError> {
         let mut builder =
             sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE apps SET updated_at = now()");
-        push_optional_column(&mut builder, "name", &req.name);
-        push_optional_column(&mut builder, "description", &req.description);
-        push_optional_column(&mut builder, "enabled", &req.enabled);
+        req.name.push_column(&mut builder, "name");
+        req.description.push_column(&mut builder, "description");
+        req.enabled.push_column(&mut builder, "enabled");
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
-        let result = builder
-            .build_query_as::<App>()
-            .fetch_optional(pool)
-            .await?;
+        let result = builder.build_query_as::<App>().fetch_optional(pool).await?;
         require_found(result, "app")
     }
 
@@ -69,9 +65,6 @@ impl AppRepo {
             .bind(id)
             .execute(pool)
             .await?;
-        if result.rows_affected() == 0 {
-            return Err(AppError::NotFound("app".into()));
-        }
-        Ok(())
+        require_rows_affected(result, "app")
     }
 }

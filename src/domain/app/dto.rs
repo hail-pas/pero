@@ -2,9 +2,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
-use validator::Validate;
+use validator::{Validate, ValidationErrors};
 
 use crate::domain::app::entity::App;
+use crate::shared::patch::Patch;
+use crate::shared::validation;
 
 #[derive(Debug, Serialize, Clone, ToSchema)]
 pub struct AppDTO {
@@ -37,17 +39,47 @@ pub struct CreateAppRequest {
     pub name: String,
     #[validate(length(min = 1, max = 64), custom(function = "validate_app_code"))]
     pub code: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(length(max = 512))]
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateAppRequest {
-    #[validate(length(min = 1, max = 128))]
-    pub name: Option<String>,
-    #[validate(length(max = 512))]
-    pub description: Option<String>,
-    pub enabled: Option<bool>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub name: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
+    pub description: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<bool>)]
+    pub enabled: Patch<bool>,
+}
+
+impl Validate for UpdateAppRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        let mut errors = ValidationErrors::new();
+
+        self.name.validate_required("name", &mut errors, |v| {
+            validation::validate_length(v, 1, 128)
+        });
+
+        self.description.validate("description", &mut errors, |v| {
+            validation::validate_length(v, 0, 512)
+        });
+        self.enabled
+            .validate_required("enabled", &mut errors, |_| Ok(()));
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 fn validate_app_code(code: &str) -> Result<(), validator::ValidationError> {

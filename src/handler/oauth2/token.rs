@@ -1,7 +1,7 @@
+use crate::api::extractors::ValidatedForm;
 use crate::domain::oauth2::error;
 use crate::domain::oauth2::models::TokenRequest;
 use crate::domain::oauth2::service;
-use crate::api::extractors::ValidatedForm;
 use crate::shared::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;

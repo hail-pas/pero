@@ -5,9 +5,8 @@ use uuid::Uuid;
 use crate::domain::oauth2::models::{
     AuthorizationCode, CreateClientRequest, OAuth2Client, RefreshToken, UpdateClientRequest,
 };
-use crate::shared::error::{AppError, require_found};
-use crate::shared::pagination::{paginate, OAUTH2_CLIENTS};
-use crate::shared::patch::push_optional_column;
+use crate::shared::error::{AppError, require_found, require_rows_affected};
+use crate::shared::pagination::{OAUTH2_CLIENTS, paginate};
 
 pub struct OAuth2ClientRepo;
 
@@ -72,10 +71,10 @@ impl OAuth2ClientRepo {
         let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "UPDATE oauth2_clients SET updated_at = now()",
         );
-        push_optional_column(&mut builder, "client_name", &req.client_name);
-        push_optional_column(&mut builder, "redirect_uris", &req.redirect_uris);
-        push_optional_column(&mut builder, "scopes", &req.scopes);
-        push_optional_column(&mut builder, "enabled", &req.enabled);
+        req.client_name.push_column(&mut builder, "client_name");
+        req.redirect_uris.push_column(&mut builder, "redirect_uris");
+        req.scopes.push_column(&mut builder, "scopes");
+        req.enabled.push_column(&mut builder, "enabled");
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
@@ -91,10 +90,7 @@ impl OAuth2ClientRepo {
             .bind(id)
             .execute(pool)
             .await?;
-        if result.rows_affected() == 0 {
-            return Err(AppError::NotFound("oauth2 client".into()));
-        }
-        Ok(())
+        require_rows_affected(result, "oauth2 client")
     }
 }
 
@@ -199,11 +195,9 @@ impl RefreshTokenRepo {
     }
 
     pub async fn purge_expired(pool: &PgPool) -> Result<u64, AppError> {
-        let result = sqlx::query(
-            "DELETE FROM oauth2_tokens WHERE expires_at < now()",
-        )
-        .execute(pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM oauth2_tokens WHERE expires_at < now()")
+            .execute(pool)
+            .await?;
         Ok(result.rows_affected())
     }
 }
@@ -274,11 +268,9 @@ impl AuthCodeRepo {
     }
 
     pub async fn purge_expired(pool: &PgPool) -> Result<u64, AppError> {
-        let result = sqlx::query(
-            "DELETE FROM oauth2_authorization_codes WHERE expires_at < now()",
-        )
-        .execute(pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
+            .execute(pool)
+            .await?;
         Ok(result.rows_affected())
     }
 }

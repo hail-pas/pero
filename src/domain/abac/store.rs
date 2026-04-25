@@ -4,7 +4,8 @@ use crate::domain::abac::models::{
     UserAttribute,
 };
 use crate::shared::error::{AppError, require_found};
-use crate::shared::pagination::{offset, paginate, POLICIES};
+use crate::shared::pagination::{POLICIES, offset, paginate};
+use crate::shared::patch::Patch;
 use sqlx::postgres::PgPool;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -13,7 +14,6 @@ use uuid::Uuid;
 pub struct PolicyFilter {
     pub user_id: Option<Uuid>,
     pub app_id: Option<Uuid>,
-    pub include_global: bool,
     pub enabled_only: bool,
 }
 
@@ -38,7 +38,8 @@ impl PolicyRepo {
         .fetch_one(&mut *tx)
         .await?;
 
-        let conditions = PolicyConditionRepo::create_batch_in_tx(&mut tx, policy.id, &req.conditions).await?;
+        let conditions =
+            PolicyConditionRepo::create_batch_in_tx(&mut tx, policy.id, &req.conditions).await?;
 
         tx.commit().await?;
         Ok((policy, conditions))
@@ -87,16 +88,24 @@ impl PolicyRepo {
     ) -> Result<(Policy, Vec<PolicyCondition>), AppError> {
         let mut tx = pool.begin().await?;
 
-        let name = req.name.as_deref().unwrap_or(&policy.name);
-        let description = req.description.as_deref().or(policy.description.as_deref());
+        let name = req
+            .name
+            .as_set()
+            .map(|s| s.as_str())
+            .unwrap_or(&policy.name);
+        let description = req
+            .description
+            .as_set()
+            .map(|s| s.as_str())
+            .or_else(|| policy.description.as_deref());
         let effect = req
             .effect
-            .as_ref()
+            .as_set()
             .map(|e| e.as_str())
             .unwrap_or(&policy.effect);
-        let priority = req.priority.unwrap_or(policy.priority);
-        let enabled = req.enabled.unwrap_or(policy.enabled);
-        let app_id = req.app_id.as_ref().or(policy.app_id.as_ref());
+        let priority = req.priority.as_set().copied().unwrap_or(policy.priority);
+        let enabled = req.enabled.as_set().copied().unwrap_or(policy.enabled);
+        let app_id = req.app_id.as_set().or(policy.app_id.as_ref());
 
         let updated = sqlx::query_as::<_, Policy>(
             "UPDATE policies SET name = $1, description = $2, effect = $3, priority = $4, enabled = $5, app_id = $6, updated_at = now() WHERE id = $7 RETURNING *"
@@ -111,7 +120,7 @@ impl PolicyRepo {
         .fetch_one(&mut *tx)
         .await?;
 
-        let conditions = if let Some(conditions_req) = &req.conditions {
+        let conditions = if let Patch::Set(conditions_req) = &req.conditions {
             PolicyConditionRepo::delete_for_policy(&mut tx, id).await?;
             PolicyConditionRepo::create_batch_in_tx(&mut tx, id, conditions_req).await?
         } else {
@@ -168,9 +177,7 @@ impl PolicyRepo {
         pool: &PgPool,
         filter: PolicyFilter,
     ) -> Result<Vec<Policy>, AppError> {
-        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT p.* FROM policies p",
-        );
+        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new("SELECT p.* FROM policies p");
 
         if filter.user_id.is_some() {
             builder.push(" INNER JOIN user_policies up ON up.policy_id = p.id");
@@ -187,22 +194,16 @@ impl PolicyRepo {
             builder.push("p.enabled = true");
         }
         match filter.app_id {
-            Some(app_id) if filter.include_global => {
+            Some(app_id) => {
                 push_clause_separator(&mut builder, &mut has_clause);
                 builder.push("(p.app_id = ");
                 builder.push_bind(app_id);
                 builder.push(" OR p.app_id IS NULL)");
             }
-            Some(app_id) => {
-                push_clause_separator(&mut builder, &mut has_clause);
-                builder.push("p.app_id = ");
-                builder.push_bind(app_id);
-            }
-            None if !filter.include_global => {
+            None => {
                 push_clause_separator(&mut builder, &mut has_clause);
                 builder.push("p.app_id IS NULL");
             }
-            None => {}
         }
 
         builder.push(" ORDER BY p.priority DESC");
@@ -282,13 +283,11 @@ impl PolicyConditionRepo {
     where
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
-        sqlx::query_as::<_, PolicyCondition>(
-            "SELECT * FROM policy_conditions WHERE policy_id = $1",
-        )
-        .bind(policy_id)
-        .fetch_all(executor)
-        .await
-        .map_err(Into::into)
+        sqlx::query_as::<_, PolicyCondition>("SELECT * FROM policy_conditions WHERE policy_id = $1")
+            .bind(policy_id)
+            .fetch_all(executor)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn batch_get_map(
@@ -326,11 +325,7 @@ impl PolicyConditionRepo {
 pub struct UserPolicyRepo;
 
 impl UserPolicyRepo {
-    pub async fn assign(
-        pool: &PgPool,
-        user_id: Uuid,
-        policy_id: Uuid,
-    ) -> Result<(), AppError> {
+    pub async fn assign(pool: &PgPool, user_id: Uuid, policy_id: Uuid) -> Result<(), AppError> {
         PolicyRepo::find_by_id_or_err(pool, policy_id).await?;
         crate::domain::identity::store::UserRepo::find_by_id_or_err(pool, user_id).await?;
 
@@ -344,17 +339,12 @@ impl UserPolicyRepo {
         Ok(())
     }
 
-    pub async fn unassign(
-        pool: &PgPool,
-        user_id: Uuid,
-        policy_id: Uuid,
-    ) -> Result<(), AppError> {
-        let result =
-            sqlx::query("DELETE FROM user_policies WHERE user_id = $1 AND policy_id = $2")
-                .bind(user_id)
-                .bind(policy_id)
-                .execute(pool)
-                .await?;
+    pub async fn unassign(pool: &PgPool, user_id: Uuid, policy_id: Uuid) -> Result<(), AppError> {
+        let result = sqlx::query("DELETE FROM user_policies WHERE user_id = $1 AND policy_id = $2")
+            .bind(user_id)
+            .bind(policy_id)
+            .execute(pool)
+            .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound("user_policy assignment".into()));
         }

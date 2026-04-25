@@ -1,8 +1,8 @@
+use crate::api::extractors::{AuthUser, ValidatedJson};
+use crate::api::response::{ApiResponse, MessageResponse};
 use crate::domain::identity::models::{BindRequest, Identity};
 use crate::domain::identity::service;
 use crate::shared::error::AppError;
-use crate::api::extractors::{AuthUser, ValidatedJson};
-use crate::api::response::{ApiResponse, MessageResponse};
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};

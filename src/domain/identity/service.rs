@@ -1,16 +1,18 @@
+use crate::api::response::{MessageResponse, PageData};
 use crate::domain::abac;
 use crate::domain::identity::error;
 use crate::domain::identity::models::{
     BindRequest, CreateUserRequest, Identity, RegisterRequest, TokenResponse, UpdateMeRequest,
     UpdateUserRequest, User, UserDTO,
 };
-use crate::domain::identity::store::{IdentityRepo, SetAttributes, UserAttribute, UserAttributeRepo, UserRepo};
 use crate::domain::identity::session;
+use crate::domain::identity::store::{
+    IdentityRepo, SetAttributes, UserAttribute, UserAttributeRepo, UserRepo,
+};
 use crate::domain::oauth2::store::RefreshTokenRepo;
+use crate::infra::jwt;
 use crate::shared::constants::identity::{DEFAULT_ROLE, PROVIDER_PASSWORD};
 use crate::shared::error::AppError;
-use crate::api::response::{MessageResponse, PageData};
-use crate::infra::jwt;
 use crate::shared::state::AppState;
 use uuid::Uuid;
 
@@ -84,8 +86,13 @@ pub async fn update_user(
 ) -> Result<UserDTO, AppError> {
     let mut tx = state.db.begin().await?;
 
-    validate_update_user(&mut *tx, id, req.username.as_deref(), req.email.as_deref())
-        .await?;
+    validate_update_user(
+        &mut *tx,
+        id,
+        req.username.as_set().map(|s| s.as_str()),
+        req.email.as_set().map(|s| s.as_str()),
+    )
+    .await?;
 
     let user = UserRepo::update(&mut *tx, id, req).await?;
     tx.commit().await?;
@@ -248,11 +255,11 @@ where
     .bind(id)
     .fetch_one(executor)
     .await?;
-    if check.username_conflict {
-        return Err(error::username_exists(username.unwrap()));
+    if let (true, Some(username)) = (check.username_conflict, username) {
+        return Err(error::username_exists(username));
     }
-    if check.email_conflict {
-        return Err(error::email_exists(email.unwrap()));
+    if let (true, Some(email)) = (check.email_conflict, email) {
+        return Err(error::email_exists(email));
     }
     Ok(())
 }

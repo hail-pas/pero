@@ -1,5 +1,5 @@
-use crate::shared::error::AppError;
 use crate::infra::jwt::TokenClaims;
+use crate::shared::error::AppError;
 
 #[derive(Debug, Clone)]
 pub struct AuthUser {

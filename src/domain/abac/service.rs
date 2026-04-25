@@ -1,10 +1,11 @@
 use super::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
 use super::store::{PolicyConditionRepo, PolicyFilter, PolicyRepo, UserPolicyRepo};
-use crate::infra::cache;
+use crate::api::response::PageData;
 use crate::domain::identity::store::UserRepo;
+use crate::infra::cache;
 use crate::shared::constants::{cache_keys, identity};
 use crate::shared::error::{AppError, require_found};
-use crate::api::response::PageData;
+use crate::shared::patch::Patch;
 use crate::shared::state::AppState;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -150,7 +151,7 @@ pub async fn update_policy_dto(
 ) -> Result<PolicyDTO, AppError> {
     let policy = load_policy_in_scope(state, id, scope).await?;
     if let Some(app_id) = forced_app_id {
-        req.app_id = Some(app_id);
+        req.app_id = Patch::Set(app_id);
     }
     let (updated, conditions) =
         PolicyRepo::update_with_policy(&state.db, id, &req, &policy).await?;
@@ -210,7 +211,6 @@ pub async fn list_user_policy_dtos(
         PolicyFilter {
             user_id: Some(user_id),
             app_id,
-            include_global: app_id.is_some(),
             enabled_only: false,
         },
     )
@@ -229,7 +229,6 @@ pub async fn load_user_policies(
         let filter = PolicyFilter {
             user_id: Some(user_id),
             app_id,
-            include_global: app_id.is_some(),
             enabled_only: true,
         };
         let policies = PolicyRepo::select_policies(&state.db, filter).await?;

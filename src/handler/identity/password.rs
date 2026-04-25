@@ -1,8 +1,8 @@
+use crate::api::extractors::{AuthUser, ValidatedJson};
+use crate::api::response::MessageResponse;
 use crate::domain::identity::authn::AuthService;
 use crate::domain::identity::models::ChangePasswordRequest;
 use crate::shared::error::AppError;
-use crate::api::extractors::{AuthUser, ValidatedJson};
-use crate::api::response::MessageResponse;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;

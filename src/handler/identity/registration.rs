@@ -1,10 +1,8 @@
-use crate::domain::identity::models::{
-    CreateUserRequest, RegisterRequest, TokenResponse, UserDTO,
-};
-use crate::domain::identity::service;
-use crate::shared::error::AppError;
 use crate::api::extractors::ValidatedJson;
 use crate::api::response::ApiResponse;
+use crate::domain::identity::models::{CreateUserRequest, RegisterRequest, TokenResponse, UserDTO};
+use crate::domain::identity::service;
+use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
