@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pero Example App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div id="app">
+    <nav class="bg-white shadow">
+      <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <span class="text-lg font-bold text-gray-800">Pero Example App</span>
+        <div class="flex items-center gap-3">
+          <template v-if="user">
+            <a href="/?page=profile" class="text-sm text-gray-600 hover:text-blue-600">Profile</a>
+            <a href="/?page=permissions" class="text-sm text-gray-600 hover:text-blue-600">Permissions</a>
+            <a href="/?page=orders" class="text-sm text-gray-600 hover:text-blue-600">Orders</a>
+            <span class="text-sm text-gray-400">|</span>
+            <span class="text-sm text-gray-600">{{ user.nickname || user.email || 'User' }}</span>
+            <a href="/logout" class="text-sm text-red-600 hover:underline">Logout</a>
+          </template>
+          <a v-else href="/login"
+             class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium hover:bg-blue-700">
+            Sign in
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <div v-if="error" class="max-w-5xl mx-auto px-4 mt-4">
+      <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded flex justify-between">
+        <span>{{ error }}</span>
+        <button @click="error = ''" class="font-bold">&times;</button>
+      </div>
+    </div>
+
+    <div class="max-w-5xl mx-auto px-4 py-8">
+      <!-- Home -->
+      <div v-if="currentPage === 'home'">
+        <div v-if="loading" class="text-center py-20 text-gray-500">Loading...</div>
+        <div v-else-if="!user" class="text-center py-20">
+          <h1 class="text-3xl font-bold text-gray-800 mb-4">Welcome</h1>
+          <p class="text-gray-600 mb-8">Sign in with your Pero User Center account to continue.</p>
+          <a href="/login"
+             class="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700">
+            Sign in with Pero
+          </a>
+          <div v-if="socialProviders.length" class="mt-6 flex flex-col items-center gap-3">
+            <div class="flex items-center w-full max-w-xs my-2">
+              <div class="flex-1 border-t border-gray-300"></div>
+              <span class="px-3 text-gray-400 text-sm">or</span>
+              <div class="flex-1 border-t border-gray-300"></div>
+            </div>
+            <a v-for="sp in socialProviders" :key="sp.name" :href="'/social-login?provider=' + sp.name"
+               class="inline-flex items-center gap-2 bg-gray-800 text-white px-6 py-2.5 rounded-lg hover:bg-gray-900 font-medium">
+              <span class="text-sm">{{ sp.display_name }}</span>
+            </a>
+          </div>
+        </div>
+        <div v-else class="text-center py-20">
+          <h1 class="text-3xl font-bold text-gray-800 mb-4">Welcome back</h1>
+          <p class="text-gray-600 mb-2">Signed in as {{ user.nickname || user.email || 'User' }}</p>
+          <div class="flex justify-center gap-4 mt-6">
+            <a href="/?page=profile"
+               class="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700">Profile</a>
+            <a href="/?page=permissions"
+               class="bg-green-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-700">Permissions</a>
+            <a href="/?page=orders"
+               class="bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700">Orders</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Profile -->
+      <div v-if="currentPage === 'profile'">
+        <div v-if="!user" class="text-center py-20 text-gray-500">
+          <a href="/login" class="text-blue-600 hover:underline">Sign in</a>
+        </div>
+        <div v-else class="bg-white rounded-lg shadow">
+          <div class="flex items-center justify-between px-6 py-4 border-b">
+            <h2 class="text-xl font-bold text-gray-800">Profile</h2>
+            <a href="/?page=edit"
+               class="text-sm bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg">Edit Profile</a>
+          </div>
+          <table class="w-full">
+            <tbody>
+              <tr v-for="(value, key) in user" :key="key" class="border-b last:border-b-0">
+                <td class="px-6 py-4 text-sm font-medium text-gray-500 w-1/4">{{ key }}</td>
+                <td class="px-6 py-4 text-sm text-gray-900">{{ value ?? '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Edit Profile -->
+      <div v-if="currentPage === 'edit'">
+        <div v-if="!user" class="text-center py-20 text-gray-500">
+          <a href="/login" class="text-blue-600 hover:underline">Sign in</a>
+        </div>
+        <div v-else class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-xl font-bold text-gray-800">Edit Profile</h2>
+          </div>
+          <div class="p-6 max-w-lg">
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Nickname</label>
+              <input v-model="form.nickname" type="text" maxlength="64"
+                     class="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div class="mb-6">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input v-model="form.phone" type="tel" maxlength="20" placeholder="+1234567890"
+                     class="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div class="flex items-center gap-3">
+              <button @click="saveProfile" :disabled="saving"
+                      class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {{ saving ? 'Saving...' : 'Save' }}
+              </button>
+              <a href="/?page=profile" class="text-sm text-gray-600 hover:underline">Cancel</a>
+            </div>
+            <p v-if="saveError" class="mt-4 text-sm text-red-600">{{ saveError }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Permission Demo -->
+      <div v-if="currentPage === 'permissions'">
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-xl font-bold text-gray-800">Permission Check Demo</h2>
+            <p class="text-gray-500 text-sm mt-1">
+              Enter a resource path and HTTP method. The app calls
+              <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">POST /api/abac/evaluate</code>
+              on pero to check if the current user is allowed.
+            </p>
+          </div>
+
+          <div class="p-6">
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Resource</label>
+              <input v-model="permCheck.resource" type="text" placeholder="/api/protected/orders"
+                     class="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500" />
+            </div>
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Action (HTTP method)</label>
+              <select v-model="permCheck.action"
+                      class="w-full border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500">
+                <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+              </select>
+            </div>
+            <button @click="checkPermission" :disabled="permLoading"
+                    class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50">
+              {{ permLoading ? 'Checking...' : 'Check Permission' }}
+            </button>
+
+            <div v-if="permResult !== null" class="mt-4 p-4 rounded-lg"
+                 :class="permResult ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'">
+              <div class="flex items-center gap-2">
+                <span class="text-2xl">{{ permResult ? '✓' : '✗' }}</span>
+                <div>
+                  <p class="font-semibold" :class="permResult ? 'text-green-800' : 'text-red-800'">
+                    {{ permResult ? 'ALLOWED' : 'DENIED' }}
+                  </p>
+                  <p class="text-sm text-gray-600">
+                    {{ permCheck.action }} {{ permCheck.resource }}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p v-if="permError" class="mt-4 text-sm text-red-600">{{ permError }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Orders Demo (protected resource) -->
+      <div v-if="currentPage === 'orders'">
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-xl font-bold text-gray-800">Orders (Protected Resource)</h2>
+            <p class="text-gray-500 text-sm mt-1">
+              This page calls <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">GET /api/protected/orders</code>
+              which first checks permission via pero before returning data.
+            </p>
+          </div>
+
+          <div v-if="ordersLoading" class="text-center py-10 text-gray-500">Loading orders...</div>
+
+          <div v-else-if="ordersError" class="px-6 py-4">
+            <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+              {{ ordersError }}
+            </div>
+          </div>
+
+          <div v-else-if="orders">
+            <table class="w-full">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="o in orders" :key="o.id" class="border-b last:border-b-0">
+                  <td class="px-6 py-4 text-sm font-mono text-gray-800">{{ o.id }}</td>
+                  <td class="px-6 py-4 text-sm text-gray-800">{{ o.item }}</td>
+                  <td class="px-6 py-4 text-sm text-gray-800">{{ o.quantity }}</td>
+                  <td class="px-6 py-4">
+                    <span class="text-xs px-2 py-1 rounded-full"
+                          :class="{
+                            'bg-green-100 text-green-800': o.status === 'delivered',
+                            'bg-blue-100 text-blue-800': o.status === 'shipped',
+                            'bg-yellow-100 text-yellow-800': o.status === 'pending',
+                          }">{{ o.status }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, reactive, onMounted, watch } = Vue;
+
+    createApp({
+      setup() {
+        const user = ref(null);
+        const loading = ref(true);
+        const error = ref('');
+        const currentPage = ref('home');
+        const form = reactive({ nickname: '', phone: '' });
+        const formOriginal = reactive({ nickname: '', phone: '' });
+        const saving = ref(false);
+        const saveError = ref('');
+
+        const permCheck = reactive({ resource: '/api/protected/orders', action: 'GET' });
+        const permLoading = ref(false);
+        const permResult = ref(null);
+        const permError = ref('');
+
+        const orders = ref(null);
+        const ordersLoading = ref(false);
+        const ordersError = ref('');
+        const socialProviders = ref([]);
+
+        function parseQuery() {
+          const params = new URLSearchParams(window.location.search);
+          const page = params.get('page');
+          const err = params.get('error');
+          if (err) error.value = err;
+          if (['profile', 'edit', 'permissions', 'orders'].includes(page)) {
+            currentPage.value = page;
+          } else {
+            currentPage.value = 'home';
+          }
+        }
+
+        async function fetchUser() {
+          try {
+            const resp = await fetch('/api/me');
+            if (resp.ok) user.value = await resp.json();
+          } catch {} finally { loading.value = false; }
+        }
+
+        function initForm() {
+          if (user.value && currentPage.value === 'edit') {
+            form.nickname = user.value.nickname || '';
+            form.phone = user.value.phone || '';
+            formOriginal.nickname = form.nickname;
+            formOriginal.phone = form.phone;
+          }
+        }
+
+        async function saveProfile() {
+          saving.value = true; saveError.value = '';
+          const body = {};
+          if (form.nickname !== formOriginal.nickname) {
+            body.nickname = form.nickname === '' ? null : form.nickname;
+          }
+          if (form.phone !== formOriginal.phone) {
+            body.phone = form.phone === '' ? null : form.phone;
+          }
+          try {
+            const resp = await fetch('/api/me', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (resp.ok) {
+              user.value = await resp.json();
+              window.location.href = '/?page=profile';
+            } else {
+              const d = await resp.json();
+              saveError.value = d.error || 'Update failed';
+            }
+          } catch (e) { saveError.value = e.message; }
+          finally { saving.value = false; }
+        }
+
+        async function checkPermission() {
+          permLoading.value = true; permResult.value = null; permError.value = '';
+          try {
+            const resp = await fetch('/api/permission/check', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ resource: permCheck.resource, action: permCheck.action }),
+            });
+            const d = await resp.json();
+            if (resp.ok) {
+              permResult.value = d.allowed;
+            } else {
+              permError.value = d.error || 'Check failed';
+            }
+          } catch (e) { permError.value = e.message; }
+          finally { permLoading.value = false; }
+        }
+
+        async function fetchOrders() {
+          ordersLoading.value = true; ordersError.value = '';
+          try {
+            const resp = await fetch('/api/protected/orders');
+            if (resp.ok) {
+              const d = await resp.json();
+              orders.value = d.orders;
+            } else if (resp.status === 403) {
+              ordersError.value = 'Access denied by policy — this user does not have permission to view orders.';
+            } else {
+              const d = await resp.json();
+              ordersError.value = d.error || 'Failed to load orders';
+            }
+          } catch (e) { ordersError.value = e.message; }
+          finally { ordersLoading.value = false; }
+        }
+
+        onMounted(() => {
+          parseQuery();
+          fetchUser().then(() => {
+            if (currentPage.value === 'orders' && user.value) fetchOrders();
+          });
+          fetch('/api/social-providers')
+            .then(r => r.ok ? r.json() : {data: []})
+            .then(d => { socialProviders.value = d.data || []; })
+            .catch(() => {});
+        });
+
+        watch([user, currentPage], () => { initForm(); }, { immediate: true });
+
+        return {
+          user, loading, error, currentPage, form, saving, saveError, saveProfile,
+          permCheck, permLoading, permResult, permError, checkPermission,
+          orders, ordersLoading, ordersError, socialProviders,
+        };
+      },
+    }).mount('#app');
+  </script>
+</body>
+</html>

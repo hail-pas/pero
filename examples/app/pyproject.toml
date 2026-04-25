@@ -1,0 +1,13 @@
+[project]
+name = "pero-example-app"
+version = "0.1.0"
+description = "Example app integrating with Pero User Center via OAuth2"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28",
+]
+
+[dependency-groups]
+dev = []

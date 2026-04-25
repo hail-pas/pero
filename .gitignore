@@ -8,6 +8,8 @@ config/*.toml
 docs/superpowers
 .opencode
 .claude
-examples
 local
 .ruff_cache
+examples/**/__pycache__
+examples/**/.venv
+examples/**/.python-version
