@@ -303,7 +303,7 @@ async fn forgot_password_does_not_store_reset_tokens() {
             hyper::header::CONTENT_TYPE,
             "application/x-www-form-urlencoded",
         )
-        .body(axum::body::Body::from("email=test@example.com"))
+        .body(axum::body::Body::from("identifier=test@example.com"))
         .unwrap();
     let response = ta.app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -314,16 +314,6 @@ async fn forgot_password_does_not_store_reset_tokens() {
         "forgot-password should not store reset tokens"
     );
 
-    ta.cleanup().await;
-}
-
-#[tokio::test]
-async fn sso_change_password_page_without_session_redirects() {
-    let mut ta = build_app().await;
-
-    let (status, _) =
-        send_raw_request(&mut ta.app, hyper::Method::GET, "/sso/change-password").await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
     ta.cleanup().await;
 }
 
@@ -425,7 +415,7 @@ async fn sso_forgot_password_rejects_invalid_email() {
             hyper::header::CONTENT_TYPE,
             "application/x-www-form-urlencoded",
         )
-        .body(axum::body::Body::from("email=not-an-email"))
+        .body(axum::body::Body::from("identifier=not-an-email"))
         .unwrap();
     let response = ta.app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);

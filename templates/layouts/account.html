@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Pero User Center{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="account-body">
+  <div class="app-shell">
+    <header class="app-header">
+      <button class="icon-button mobile-only" type="button" data-nav-toggle aria-label="Open navigation">☰</button>
+      <a class="brand compact" href="/account/profile"><span class="logo-mark">P</span><span>Pero</span></a>
+      <div class="header-actions">
+        <div class="top-tools">
+          <button class="lang-pill is-active" type="button" data-lang="zh">中</button>
+          <button class="lang-pill" type="button" data-lang="en">EN</button>
+        </div>
+        <button class="header-user logout-trigger" type="button" data-logout title="退出登录" aria-label="退出登录">
+          <span class="avatar sm">{{ user_initial }}</span>
+          <span class="desktop-only">{{ user_name }}</span>
+        </button>
+      </div>
+    </header>
+
+    <aside class="sidebar" data-sidebar>
+      <nav>
+        <a href="/account/profile" class="nav-item {% if active == "profile" %}is-active{% endif %}"><span>⌂</span><span data-i18n="nav.profile">个人中心</span></a>
+        <a href="/account/change-password" class="nav-item {% if active == "change_password" %}is-active{% endif %}"><span>🔒</span><span data-i18n="nav.changePassword">修改密码</span></a>
+        <a href="/account/social-accounts" class="nav-item {% if active == "social_accounts" %}is-active{% endif %}"><span>⌘</span><span data-i18n="nav.socialAccounts">社交账号</span></a>
+        <a href="/account/authorizations" class="nav-item {% if active == "authorizations" %}is-active{% endif %}"><span>▣</span><span data-i18n="nav.authorizations">授权管理</span></a>
+        <a href="/account/sessions" class="nav-item {% if active == "sessions" %}is-active{% endif %}"><span>◈</span><span data-i18n="nav.sessions">会话管理</span></a>
+      </nav>
+    </aside>
+
+    <section class="content-pane">
+      {% block content %}{% endblock %}
+    </section>
+  </div>
+  <div class="sidebar-backdrop" data-nav-backdrop></div>
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
+  <script src="/static/js/i18n.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

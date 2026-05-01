@@ -17,6 +17,7 @@ pub struct UserDTO {
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
     pub email_verified: bool,
+    pub phone_verified: bool,
     pub status: i16,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -32,6 +33,7 @@ impl From<User> for UserDTO {
             nickname: u.nickname,
             avatar_url: u.avatar_url,
             email_verified: u.email_verified,
+            phone_verified: u.phone_verified,
             status: u.status,
             created_at: u.created_at,
             updated_at: u.updated_at,
@@ -125,6 +127,9 @@ impl Validate for UpdateUserRequest {
 pub struct UpdateMeRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
+    pub email: Patch<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>)]
     pub nickname: Patch<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
@@ -137,6 +142,8 @@ pub struct UpdateMeRequest {
 impl Validate for UpdateMeRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
+        self.email
+            .validate_required("email", &mut errors, |v| validation::validate_email(v));
         self.nickname.validate("nickname", &mut errors, |v| {
             validation::validate_length(v, 1, 64)
         });

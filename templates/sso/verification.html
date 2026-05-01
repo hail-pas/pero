@@ -1,0 +1,63 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Pero · Verification{% endblock %}
+{% block content %}
+<div class="auth-card status-card" data-verification data-active-status="{{ status }}">
+  <div class="status-topline">
+    <a class="brand compact" href="/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <div class="segmented-control" aria-label="Verification scene">
+      {% if channel == "email" %}
+      <button type="button" class="is-active" data-scene="verify_email" data-i18n="verify.sceneEmail">验证邮箱</button>
+      <button type="button" data-scene="change_email" data-i18n="verify.sceneChangeEmail">修改邮箱</button>
+      {% else %}
+      <button type="button" class="is-active" data-scene="verify_phone" data-i18n="verify.scenePhone">验证手机号</button>
+      <button type="button" data-scene="change_phone" data-i18n="verify.sceneChangePhone">修改手机号</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="state-switcher" aria-label="Demo status switcher">
+    <button class="chip" type="button" data-status-switch="success" data-i18n="verify.successState">成功</button>
+    <button class="chip" type="button" data-status-switch="expired" data-i18n="verify.expiredState">过期</button>
+    <button class="chip" type="button" data-status-switch="invalid" data-i18n="verify.invalidState">无效</button>
+  </div>
+
+  <section class="status-panel" data-state-panel="success">
+    <div class="status-illustration success">✓</div>
+    {% if channel == "email" %}
+      <h2 data-i18n="verify.emailSuccessTitle">验证成功！</h2>
+      <p data-i18n="verify.emailSuccessDesc">你的邮箱已成功验证。</p>
+    {% else %}
+      <h2 data-i18n="verify.phoneSuccessTitle">验证成功！</h2>
+      <p data-i18n="verify.phoneSuccessDesc">你的手机号已成功验证。</p>
+    {% endif %}
+    <div class="account-pill">{{ account }}</div>
+    <a class="btn primary" href="/login" data-i18n="common.backToLogin">返回登录</a>
+  </section>
+
+  <section class="status-panel" data-state-panel="expired">
+    <div class="status-illustration warning">⌛</div>
+    {% if channel == "email" %}
+      <h2 data-i18n="verify.emailExpiredTitle">链接已过期</h2>
+      <p data-i18n="verify.emailExpiredDesc">此验证链接已过期，请重新发送新的验证邮件。</p>
+      <button class="btn secondary" type="button" data-toast-message="验证邮件已重新发送" data-i18n="verify.resendEmail">重新发送验证邮件</button>
+    {% else %}
+      <h2 data-i18n="verify.phoneExpiredTitle">验证码已过期</h2>
+      <p data-i18n="verify.phoneExpiredDesc">验证码已过期，请重新获取验证码。</p>
+      <button class="btn secondary" type="button" data-toast-message="验证码已重新发送" data-i18n="verify.resendCode">重新获取验证码</button>
+    {% endif %}
+  </section>
+
+  <section class="status-panel" data-state-panel="invalid">
+    <div class="status-illustration danger">!</div>
+    {% if channel == "email" %}
+      <h2 data-i18n="verify.emailInvalidTitle">链接无效</h2>
+      <p data-i18n="verify.emailInvalidDesc">该链接无效或已被使用。</p>
+      <button class="btn secondary" type="button" data-toast-message="已请求新的验证邮件" data-i18n="verify.requestNewEmail">重新请求验证邮件</button>
+    {% else %}
+      <h2 data-i18n="verify.phoneInvalidTitle">验证码无效</h2>
+      <p data-i18n="verify.phoneInvalidDesc">验证码不正确，请检查后重试。</p>
+      <button class="btn secondary" type="button" data-toast-message="验证码已重新发送" data-i18n="verify.resendCode">重新获取验证码</button>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

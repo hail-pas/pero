@@ -1,0 +1,34 @@
+{% extends "layouts/account.html" %}
+{% block title %}Pero · Session Management{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1 data-i18n="sessions.title">会话管理</h1><p data-i18n="sessions.subtitle">管理您当前登录的设备和会话</p></div></div>
+
+<section class="card-panel">
+  <div class="table-toolbar danger-toolbar">
+    <label class="checkbox"><input type="checkbox" data-select-all="sessions" /> <span data-i18n="common.selectAll">全选</span></label>
+    <span><span data-selected-count="sessions">0</span> <span data-i18n="common.selected">项已选择</span></span>
+    <button class="btn danger small" type="button" data-bulk-action="sessions" disabled data-i18n="sessions.batchLogout">批量登出</button>
+    <button class="btn danger-outline small push-right" type="button" data-toast-message="已登出所有其他会话" data-i18n="sessions.logoutOthers">登出所有其他会话</button>
+    <button class="btn danger small" type="button" data-toast-message="已登出所有会话" data-i18n="sessions.logoutAll">登出所有会话</button>
+  </div>
+  <div class="responsive-table">
+    <table>
+      <thead><tr><th></th><th>Session ID</th><th data-i18n="sessions.device">设备 / 浏览器</th><th data-i18n="sessions.location">位置</th><th data-i18n="field.createdAt">创建时间</th><th data-i18n="sessions.status">状态</th><th data-i18n="common.action">操作</th></tr></thead>
+      <tbody>
+      {% for session in sessions %}
+        <tr class="{% if session.current %}current-row{% endif %}{% if session.expired %} expired-row{% endif %}">
+          <td>{% if session.current %}<span class="current-dot" title="current"></span>{% else %}<input type="checkbox" data-row-checkbox="sessions" {% if session.expired %}disabled{% endif %}/>{% endif %}</td>
+          <td><code>{{ session.session_id }}</code></td>
+          <td>{{ session.device }}</td>
+          <td>{{ session.location }}</td>
+          <td>{{ session.created_at }}</td>
+          <td>{% if session.current %}<span class="badge info" data-i18n="sessions.current">当前会话</span>{% else %}{% if session.expired %}<span class="badge muted" data-i18n="sessions.expired">已过期</span>{% else %}<span class="badge success" data-i18n="sessions.active">活跃</span>{% endif %}{% endif %}</td>
+          <td>{% if session.current %}<span class="muted" data-i18n="sessions.cannotLogoutSelf">无法登出</span>{% else %}{% if session.expired %}<span class="muted">—</span>{% else %}<button class="btn secondary tiny" type="button" data-row-remove data-i18n="sessions.logout">登出</button>{% endif %}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="notice info"><strong>i</strong><span data-i18n="sessions.note">登出会话后，该设备需要重新登录。当前会话受到保护，不能在此处登出自己。</span></div>
+</section>
+{% endblock %}

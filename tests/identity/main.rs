@@ -466,6 +466,34 @@ async fn update_me_patch_set_then_clear() {
 }
 
 #[tokio::test]
+async fn update_me_email_resets_verification_state() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
+        .bind(fx.user_id)
+        .execute(&ta.db)
+        .await
+        .unwrap();
+
+    let updated_email = format!("updated-{}", fx.email);
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::PUT,
+        "/api/users/me",
+        Some(serde_json::json!({
+            "email": updated_email,
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["email"], updated_email);
+    assert_eq!(body["data"]["email_verified"], false);
+
+    ta.cleanup().await;
+}
+
+#[tokio::test]
 async fn update_user_patch_tristate() {
     let mut ta = build_app().await;
     let fx = ta.register_default_user().await;

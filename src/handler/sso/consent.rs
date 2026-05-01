@@ -4,22 +4,24 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use crate::domain::identity::store::UserRepo;
 use crate::domain::sso::models::ConsentAction;
 use crate::domain::sso::service;
 use crate::handler::sso::common::{
     clear_session_cookie, render_tpl, require_authenticated_sso_session,
 };
-use crate::handler::sso::login::query_from_session;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
-#[template(path = "sso/consent.html")]
-pub struct ConsentTemplate {
+#[template(path = "sso/authorization.html")]
+pub struct AuthorizationTemplate {
     pub client_name: String,
+    pub client_url: String,
     pub scopes: Vec<String>,
-    pub error: Option<String>,
-    pub query_params: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub user_initial: String,
 }
 
 pub async fn consent_get(
@@ -32,11 +34,17 @@ pub async fn consent_get(
     };
 
     let consent = service::build_consent_view(&state, &sso).await?;
-    let tpl = ConsentTemplate {
+    let user = UserRepo::find_by_id(&state.db, sso.user_id.ok_or(AppError::Unauthorized)?)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    let tpl = AuthorizationTemplate {
         client_name: consent.client_name,
+        client_url: sso.authorize_params.redirect_uri.clone(),
         scopes: consent.scopes,
-        error: None,
-        query_params: query_from_session(&sso),
+        user_name: crate::handler::account::common::user_display_name(&user),
+        user_email: user.email.clone(),
+        user_initial: crate::handler::account::common::user_initial(&user),
     };
     Ok(render_tpl(&tpl)?.into_response())
 }

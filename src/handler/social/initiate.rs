@@ -4,6 +4,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::domain::social::error::provider_not_found;
 use crate::domain::social::service;
+use crate::handler::social::social_callback_url;
 use crate::handler::sso::common::load_sso_session;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
@@ -18,11 +19,7 @@ pub async fn social_login(
         Err(response) => return Ok(response),
     };
 
-    let redirect_uri = format!(
-        "{}/sso/social/{}/callback",
-        state.config.oidc.issuer.trim_end_matches('/'),
-        provider
-    );
+    let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
 
     let (url, _state_token) =
         service::build_authorize_url(&state, &provider, &sid, &redirect_uri).await?;
@@ -52,9 +49,8 @@ pub async fn social_bind(
     .ok_or(provider_not_found())?;
 
     let redirect_uri = format!(
-        "{}/sso/social/{}/callback?bind_user={}",
-        state.config.oidc.issuer.trim_end_matches('/'),
-        provider,
+        "{}?bind_user={}",
+        social_callback_url(&state.config.oidc.issuer, &provider),
         user_id.0
     );
 

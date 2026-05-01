@@ -149,6 +149,10 @@ pub fn build_refresh_token(session_id: &str) -> String {
     format!("{session_id}.{secret}")
 }
 
+pub async fn list_user_session_ids(pool: &Pool, user_id: Uuid) -> Result<Vec<String>, AppError> {
+    UserSessionIndex::load(pool, user_id).await
+}
+
 fn session_key(session_id: &str) -> String {
     format!("{}{session_id}", cache_keys::IDENTITY_SESSION_PREFIX)
 }
@@ -188,7 +192,7 @@ impl UserSessionIndex {
         Ok(())
     }
 
-    async fn load(pool: &Pool, user_id: Uuid) -> Result<Vec<String>, AppError> {
+    pub async fn load(pool: &Pool, user_id: Uuid) -> Result<Vec<String>, AppError> {
         let mut conn = cache::with_conn(pool).await?;
         let key = user_sessions_key(user_id);
         let session_ids: Vec<String> = conn.smembers(&key).await?;

@@ -51,6 +51,14 @@ pub fn validate_phone(phone: &str) -> Result<(), validator::ValidationError> {
     Ok(())
 }
 
+pub fn validate_email_or_phone(value: &str) -> Result<(), validator::ValidationError> {
+    if value.contains('@') {
+        validate_email(value)
+    } else {
+        validate_phone(value)
+    }
+}
+
 pub fn validate_url(url: &str) -> Result<(), validator::ValidationError> {
     if url::Url::parse(url).is_err() {
         return Err(validator::ValidationError::new("invalid_url"));

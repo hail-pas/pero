@@ -35,9 +35,42 @@ pub struct OAuth2Config {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct SsoConfig {
+    #[serde(default = "default_sso_session_ttl")]
     pub session_ttl_seconds: i64,
+    #[serde(default = "default_sso_cookie_secure")]
     pub cookie_secure: bool,
+    #[serde(default = "default_sso_cookie_same_site")]
     pub cookie_same_site: String,
+    #[serde(default = "default_sso_default_locale")]
+    pub default_locale: String,
+    #[serde(default = "default_sso_password_reset_ttl")]
+    pub password_reset_ttl_seconds: i64,
+    #[serde(default = "default_sso_email_verify_ttl")]
+    pub email_verify_ttl_seconds: i64,
+    #[serde(default = "default_sso_phone_verify_ttl")]
+    pub phone_verify_ttl_seconds: i64,
+}
+
+fn default_sso_session_ttl() -> i64 {
+    600
+}
+fn default_sso_cookie_secure() -> bool {
+    true
+}
+fn default_sso_cookie_same_site() -> String {
+    "Lax".into()
+}
+fn default_sso_default_locale() -> String {
+    "en".into()
+}
+fn default_sso_password_reset_ttl() -> i64 {
+    1800
+}
+fn default_sso_email_verify_ttl() -> i64 {
+    86400
+}
+fn default_sso_phone_verify_ttl() -> i64 {
+    1800
 }
 
 impl Default for SsoConfig {
@@ -46,6 +79,10 @@ impl Default for SsoConfig {
             session_ttl_seconds: 600,
             cookie_secure: true,
             cookie_same_site: "Lax".into(),
+            default_locale: "en".into(),
+            password_reset_ttl_seconds: 1800,
+            email_verify_ttl_seconds: 86400,
+            phone_verify_ttl_seconds: 1800,
         }
     }
 }

@@ -150,6 +150,13 @@ impl UserRepo {
     ) -> Result<User, AppError> {
         let mut builder =
             sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE users SET updated_at = now()");
+        if req.email.as_set().is_some() {
+            builder.push(", email_verified = false");
+        }
+        if req.phone.as_set().is_some() || matches!(req.phone, crate::shared::patch::Patch::Null) {
+            builder.push(", phone_verified = false");
+        }
+        req.email.push_column(&mut builder, "email");
         req.nickname.push_column(&mut builder, "nickname");
         req.avatar_url.push_column(&mut builder, "avatar_url");
         req.phone.push_column(&mut builder, "phone");
@@ -170,6 +177,48 @@ impl UserRepo {
             .await?;
         if result.rows_affected() == 0 {
             return Err(error::user_not_found());
+        }
+        Ok(())
+    }
+
+    pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> Result<(), AppError> {
+        let result =
+            sqlx::query("UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1")
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+        if result.rows_affected() == 0 {
+            return Err(error::user_not_found());
+        }
+        Ok(())
+    }
+
+    pub async fn set_phone_verified(pool: &PgPool, user_id: Uuid) -> Result<(), AppError> {
+        let result =
+            sqlx::query("UPDATE users SET phone_verified = true, updated_at = now() WHERE id = $1")
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+        if result.rows_affected() == 0 {
+            return Err(error::user_not_found());
+        }
+        Ok(())
+    }
+
+    pub async fn update_password_by_identity(
+        pool: &PgPool,
+        user_id: Uuid,
+        new_password_hash: &str,
+    ) -> Result<(), AppError> {
+        let result = sqlx::query(
+            "UPDATE identities SET credential = $1, updated_at = now() WHERE user_id = $2 AND provider = 'password'",
+        )
+        .bind(new_password_hash)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(error::identity_not_found());
         }
         Ok(())
     }

@@ -1,4 +1,5 @@
 pub mod abac;
+pub mod account;
 pub mod app;
 pub mod identity;
 pub mod oauth2;

@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 use crate::domain::social::service;
 use crate::domain::sso::session;
+use crate::handler::social::social_callback_url;
+use crate::handler::sso::common::mark_sso_authenticated;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -37,11 +39,7 @@ pub async fn social_callback(
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("missing state parameter".into()))?;
 
-    let redirect_uri = format!(
-        "{}/sso/social/{}/callback",
-        state.config.oidc.issuer.trim_end_matches('/'),
-        provider
-    );
+    let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
     if let Some(bind_user_id) = query.bind_user.as_deref() {
         return handle_bind_callback(&state, code, state_token, bind_user_id).await;
     }
@@ -61,16 +59,7 @@ pub async fn social_callback(
         .await?
         .ok_or_else(|| AppError::BadRequest("SSO session expired".into()))?;
 
-    sso.user_id = Some(user.id);
-    sso.authenticated = true;
-    sso.auth_time = Some(chrono::Utc::now().timestamp());
-    session::update(
-        &state.cache,
-        sso_sid,
-        &sso,
-        state.config.sso.session_ttl_seconds,
-    )
-    .await?;
+    mark_sso_authenticated(&state, sso_sid, &mut sso, user.id).await?;
 
     Ok(Redirect::to("/sso/consent").into_response())
 }

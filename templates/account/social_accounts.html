@@ -1,0 +1,40 @@
+{% extends "layouts/account.html" %}
+{% block title %}Pero · Social Accounts{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1 data-i18n="social.title">社交账号</h1><p data-i18n="social.subtitle">管理您绑定的第三方社交账号</p></div></div>
+
+<section class="card-panel">
+  <div class="section-heading"><h2 data-i18n="social.boundTitle">已绑定的账号</h2></div>
+  <div class="responsive-table">
+    <table>
+      <thead><tr><th data-i18n="social.provider">提供商</th><th data-i18n="social.displayName">显示名称</th><th data-i18n="field.createdAt">绑定时间</th><th data-i18n="common.action">操作</th></tr></thead>
+      <tbody>
+      {% for provider in providers %}
+        {% if provider.bound %}
+        <tr data-provider-row="{{ provider.key }}">
+          <td><span class="provider-icon {{ provider.key }}">{{ provider.icon }}</span> {{ provider.name }}</td>
+          <td>{{ provider.display_name }}</td>
+          <td>{{ provider.created_at }}</td>
+          <td><button class="btn danger tiny" type="button" data-unbind data-i18n="social.unbind">解绑</button></td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card-panel">
+  <div class="section-heading"><h2 data-i18n="social.unboundTitle">未绑定的账号</h2></div>
+  <div class="provider-list">
+    {% for provider in providers %}
+      {% if provider.unbound %}
+      <div class="provider-card" data-provider-row="{{ provider.key }}">
+        <div><span class="provider-icon {{ provider.key }}">{{ provider.icon }}</span><strong>{{ provider.name }}</strong><p data-i18n="social.bindHint">使用该账号快速登录 Pero</p></div>
+        <button class="btn secondary small" type="button" data-bind data-i18n="social.bind">绑定</button>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

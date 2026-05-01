@@ -4,12 +4,20 @@ pub mod headers {
     pub const X_PROCESS_TIME: &str = "x-process-time";
 }
 
+pub mod cookies {
+    pub const SSO_SESSION: &str = "pero_sso_session";
+    pub const ACCOUNT_TOKEN: &str = "pero_account_token";
+    pub const LOCALE: &str = "pero_locale";
+}
+
 pub mod cache_keys {
     pub const REFRESH_TOKEN_PREFIX: &str = "refresh_token:";
     pub const REFRESH_TOKEN_PREV_PREFIX: &str = "refresh_token_prev:";
     pub const ABAC_PREFIX: &str = "abac:";
     pub const ABAC_SUBJECT_PREFIX: &str = "abac_subject:";
     pub const PASSWORD_RESET_PREFIX: &str = "password_reset:";
+    pub const EMAIL_VERIFY_PREFIX: &str = "email_verify:";
+    pub const PHONE_VERIFY_PREFIX: &str = "phone_verify:";
     pub const IDENTITY_SESSION_PREFIX: &str = "identity_session:";
     pub const IDENTITY_USER_SESSIONS_PREFIX: &str = "identity_user_sessions:";
     pub const SSO_SESSION_PREFIX: &str = "sso_session:";

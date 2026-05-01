@@ -41,6 +41,7 @@ refresh_token_ttl_days = 30
 session_ttl_seconds = 600
 cookie_secure = false
 cookie_same_site = "Lax"
+default_locale = "en"
 
 [docs]
 servers = [

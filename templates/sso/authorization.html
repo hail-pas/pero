@@ -1,0 +1,53 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Pero · Authorization{% endblock %}
+{% block content %}
+<div class="auth-card consent-card consent-simple">
+  <div class="consent-header simple">
+    <a class="brand compact" href="/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <span class="badge verified" data-i18n="auth.oidc">OIDC / SSO 授权</span>
+  </div>
+
+  <div class="page-heading centered compact-heading">
+    <h2 data-i18n="auth.title">授权访问你的账号？</h2>
+    <p data-i18n="auth.subtitle">应用请求访问你的 Pero 账号。</p>
+  </div>
+
+  <section class="consent-app-card">
+    <div class="app-pair">
+      <span class="app-icon pero">P</span>
+      <span class="connection-line" aria-hidden="true"></span>
+      <span class="app-icon">D</span>
+    </div>
+    <div>
+      <h3>{{ client_name }}</h3>
+      <p>{{ client_url }}</p>
+    </div>
+    <span class="badge success" data-i18n="common.verified">已验证</span>
+  </section>
+
+  <div class="consent-stack">
+    <section class="card-panel compact-panel">
+      <h3 data-i18n="auth.scopesTitle">此应用将获得以下权限：</h3>
+      <ul class="scope-list permission-list">
+        {% for scope in scopes %}
+          <li><span>✓</span>{{ scope }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="card-panel compact-panel account-consent-panel">
+      <div class="section-title compact-title"><span class="avatar photo">{{ user_initial }}</span><div><h3 data-i18n="auth.yourAccount">你的账号</h3><p>{{ user_email }}</p></div></div>
+      <dl class="meta-grid slim">
+        <dt data-i18n="auth.accountType">账号类型</dt><dd data-i18n="auth.workAccount">工作账号</dd>
+        <dt data-i18n="auth.organization">所属组织</dt><dd>Pero Technologies</dd>
+      </dl>
+    </section>
+  </div>
+
+  <div class="notice info consent-notice"><strong>⛨</strong><span data-i18n="auth.securityNote">我们只会在你同意的情况下共享信息；你可以随时在账号设置中撤销访问权限。</span></div>
+  <div class="button-row center consent-actions">
+    <button class="btn secondary" type="button" onclick="history.back()" data-i18n="common.cancel">取消</button>
+    <button class="btn primary" type="button" data-toast-message="已允许访问 / Access allowed" data-i18n="auth.allow">允许访问</button>
+  </div>
+</div>
+{% endblock %}

@@ -1,4 +1,26 @@
+use askama::Template;
+use axum::http::HeaderMap;
+use axum::response::Html;
 use serde::Deserialize;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+use crate::infra::cache::Pool;
+use crate::shared::error::AppError;
+
+pub fn render_tpl<T: Template>(tpl: &T) -> Result<Html<String>, AppError> {
+    tpl.render()
+        .map(Html)
+        .map_err(|e| AppError::Internal(e.to_string()))
+}
+
+pub fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    cookie_header.split(';').find_map(|c| {
+        let c = c.trim();
+        c.strip_prefix(&format!("{name}=")).map(|v| v.to_string())
+    })
+}
 
 pub fn empty_string_as_none<'de, D: serde::Deserializer<'de>>(
     d: D,
@@ -23,4 +45,31 @@ pub fn parse_scopes(scope: Option<&str>) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect()
+}
+
+pub async fn generate_token_and_cache<T: Serialize>(
+    pool: &Pool,
+    prefix: &str,
+    payload: &T,
+    ttl: i64,
+) -> Result<String, AppError> {
+    let token = random_hex_token();
+    let key = format!("{prefix}{token}");
+    crate::infra::cache::set_json(pool, &key, payload, ttl).await?;
+    Ok(token)
+}
+
+pub async fn validate_cached_token<T: DeserializeOwned>(
+    pool: &Pool,
+    prefix: &str,
+    token: &str,
+) -> Option<T> {
+    if token.is_empty() {
+        return None;
+    }
+    let key = format!("{prefix}{token}");
+    crate::infra::cache::get_json(pool, &key)
+        .await
+        .ok()
+        .flatten()
 }

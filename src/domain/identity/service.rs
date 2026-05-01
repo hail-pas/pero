@@ -62,6 +62,9 @@ pub async fn update_me(
     user_id: uuid::Uuid,
     req: &UpdateMeRequest,
 ) -> Result<UserDTO, AppError> {
+    if let Some(email) = req.email.as_set() {
+        validate_update_user(&state.db, user_id, None, Some(email)).await?;
+    }
     Ok(UserRepo::update_me(&state.db, user_id, req).await?.into())
 }
 

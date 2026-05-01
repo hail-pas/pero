@@ -1,13 +1,15 @@
-use askama::Template;
 use axum::http::HeaderMap;
 use axum::http::header;
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::config::SsoConfig;
 use crate::domain::sso::models::SsoSession;
-use crate::domain::sso::session::{self, COOKIE_NAME};
+use crate::domain::sso::session;
+use crate::shared::constants::cookies::SSO_SESSION;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
+
+pub use crate::shared::utils::render_tpl;
 
 pub type SessionResult = Result<(String, SsoSession), Response>;
 
@@ -33,12 +35,6 @@ pub async fn require_authenticated_sso_session(
     Ok((sid, sso))
 }
 
-pub fn render_tpl<T: Template>(tpl: &T) -> Result<Html<String>, AppError> {
-    tpl.render()
-        .map(Html)
-        .map_err(|e| AppError::Internal(e.to_string()))
-}
-
 pub fn set_session_cookie(
     config: &SsoConfig,
     session_id: &str,
@@ -50,12 +46,22 @@ pub fn clear_session_cookie(config: &SsoConfig) -> Result<axum::http::HeaderValu
     build_cookie_header(config, "", 0)
 }
 
-pub fn sso_error_redirect(message: &str) -> Result<Response, AppError> {
-    Ok(Redirect::to(&format!(
-        "/sso/login?error={}",
-        urlencoding::encode(message)
-    ))
-    .into_response())
+pub async fn mark_sso_authenticated(
+    state: &AppState,
+    session_id: &str,
+    sso: &mut SsoSession,
+    user_id: uuid::Uuid,
+) -> Result<(), AppError> {
+    sso.user_id = Some(user_id);
+    sso.authenticated = true;
+    sso.auth_time = Some(chrono::Utc::now().timestamp());
+    session::update(
+        &state.cache,
+        session_id,
+        sso,
+        state.config.sso.session_ttl_seconds,
+    )
+    .await
 }
 
 fn build_cookie_header(
@@ -65,7 +71,7 @@ fn build_cookie_header(
 ) -> Result<axum::http::HeaderValue, AppError> {
     let mut cookie = format!(
         "{}={}; Path=/; HttpOnly; SameSite={}; Max-Age={}",
-        COOKIE_NAME, session_id, config.cookie_same_site, max_age
+        SSO_SESSION, session_id, config.cookie_same_site, max_age
     );
     if config.cookie_secure {
         cookie.push_str("; Secure");

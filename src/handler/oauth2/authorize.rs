@@ -8,10 +8,12 @@ use crate::domain::oauth2::models::AuthorizeQuery;
 use crate::domain::oauth2::service;
 use crate::domain::social::store::SocialProviderRepo;
 use crate::domain::sso::models::{AuthorizeParams, SsoSession};
-use crate::domain::sso::session::{self, get_session_id};
+use crate::domain::sso::session;
 use crate::handler::sso::common::set_session_cookie;
+use crate::shared::constants::cookies::SSO_SESSION;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
+use crate::shared::utils::extract_cookie;
 
 pub async fn authorize(
     State(state): State<AppState>,
@@ -47,7 +49,7 @@ pub async fn authorize(
         nonce: query.nonce,
     };
 
-    let existing_sid = get_session_id(&headers);
+    let existing_sid = extract_cookie(&headers, SSO_SESSION);
     if let Some(sid) = existing_sid {
         if let Some(mut existing) = session::get(&state.cache, &sid).await? {
             if existing.authenticated && existing.user_id.is_some() {

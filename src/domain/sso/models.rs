@@ -59,8 +59,11 @@ pub struct RegisterForm {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ForgotPasswordForm {
-    #[validate(email)]
-    pub email: String,
+    #[validate(
+        length(min = 3, max = 255),
+        custom(function = "crate::shared::validation::validate_email_or_phone")
+    )]
+    pub identifier: String,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -81,4 +84,12 @@ pub enum ConsentDecision {
 #[derive(Debug, Deserialize)]
 pub struct ConsentAction {
     pub action: ConsentDecision,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ResetPasswordForm {
+    #[validate(length(min = 8, max = 128))]
+    pub new_password: String,
+    #[validate(length(min = 8, max = 128))]
+    pub confirm_password: String,
 }

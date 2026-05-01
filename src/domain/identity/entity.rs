@@ -12,6 +12,7 @@ pub struct User {
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
     pub email_verified: bool,
+    pub phone_verified: bool,
     pub status: i16,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

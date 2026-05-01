@@ -70,6 +70,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(client_required)
         .merge(SwaggerUi::new("/docs").url("/openapi.json", openapi))
         .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::shared::i18n::locale_middleware,
+        ))
         .layer(cors)
         // --- tower-http middleware stack (outermost = last applied to request) ---
         // TraceLayer: structured request/response tracing
@@ -172,10 +176,20 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
                 .post(crate::handler::sso::forgot::forgot_post),
         )
         .route(
-            "/sso/change-password",
-            get(crate::handler::sso::change_password::change_password_get)
-                .post(crate::handler::sso::change_password::change_password_post),
+            "/sso/reset-password",
+            get(crate::handler::sso::reset_password::reset_password_get)
+                .post(crate::handler::sso::reset_password::reset_password_post),
         )
+        .route(
+            "/sso/verify-email",
+            get(crate::handler::sso::verification::verify_email_get),
+        )
+        .route(
+            "/sso/verify-phone",
+            get(crate::handler::sso::verification::verify_phone_get)
+                .post(crate::handler::sso::verification::verify_phone_post),
+        )
+        .route("/sso/error", get(crate::handler::sso::error::error_get))
         .route(
             "/sso/social/{provider}/login",
             get(crate::handler::social::initiate::social_login),
@@ -183,6 +197,52 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
         .route(
             "/sso/social/{provider}/callback",
             get(crate::handler::social::callback::social_callback),
+        )
+        .route(
+            "/account/profile",
+            get(crate::handler::account::profile::profile_get)
+                .post(crate::handler::account::profile::profile_post),
+        )
+        .route(
+            "/account/profile/send-verify-email",
+            post(crate::handler::account::profile::send_verify_email_post),
+        )
+        .route(
+            "/account/profile/send-verify-phone",
+            post(crate::handler::account::profile::send_verify_phone_post),
+        )
+        .route(
+            "/account/social",
+            get(crate::handler::account::social::social_get),
+        )
+        .route(
+            "/account/social/unbind",
+            post(crate::handler::account::social::unbind_post),
+        )
+        .route(
+            "/account/change-password",
+            get(crate::handler::account::password::change_password_get)
+                .post(crate::handler::account::password::change_password_post),
+        )
+        .route(
+            "/account/authorizations",
+            get(crate::handler::account::authorizations::authorizations_get),
+        )
+        .route(
+            "/account/authorizations/revoke",
+            post(crate::handler::account::authorizations::revoke_post),
+        )
+        .route(
+            "/account/sessions",
+            get(crate::handler::account::sessions::sessions_get),
+        )
+        .route(
+            "/account/sessions/delete",
+            post(crate::handler::account::sessions::delete_session_post),
+        )
+        .route(
+            "/account/sessions/delete-all",
+            post(crate::handler::account::sessions::delete_all_post),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -224,6 +284,14 @@ fn build_login_required_routes(state: &AppState) -> Router<AppState> {
         .route(
             "/api/abac/evaluate",
             post(crate::handler::abac::evaluate::evaluate),
+        )
+        .route(
+            "/api/identity/send-verify-email",
+            post(crate::handler::sso::verification::send_verify_email_post),
+        )
+        .route(
+            "/api/identity/send-verify-phone",
+            post(crate::handler::sso::verification::send_verify_phone_post),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

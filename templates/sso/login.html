@@ -1,61 +1,54 @@
-{% extends "sso/layout.html" %}
-
-{% block title %}Sign in - Pero{% endblock %}
-
+{% extends "layouts/auth.html" %}
+{% block title %}Pero · Login{% endblock %}
 {% block content %}
-<h2>Sign in</h2>
-{% if let Some(name) = client_name %}
-<p class="client-name">to {{ name }}</p>
-{% endif %}
+<div class="auth-card split-card login-card">
+  <section class="auth-hero-panel">
+    <a class="brand compact" href="/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <h2 data-i18n="login.title">欢迎登录</h2>
+    <p class="accent-copy">Welcome back</p>
+    <p data-i18n="login.desc">很高兴再次见到你，请使用你的 Pero 账号继续访问。</p>
+    <div class="glass-illustration cube" aria-hidden="true"></div>
+  </section>
 
-{% if let Some(e) = error %}
-<div class="error-box">{{ e }}</div>
-{% endif %}
+  <section class="form-panel">
+    {% if !error.is_empty() %}
+    <div class="notice info"><strong>!</strong><span>{{ error }}</span></div>
+    {% endif %}
+    <form class="stack" data-form="login" novalidate>
+      <label class="field">
+        <span data-i18n="field.identifier">唯一标识</span>
+        <span class="identifier-control">
+          <select name="identifier_type" aria-label="Identifier type">
+            <option value="username" data-i18n="field.identifierUsername">用户名</option>
+            <option value="email" data-i18n="field.identifierEmail">邮箱</option>
+            <option value="phone" data-i18n="field.identifierPhone">手机号</option>
+          </select>
+          <input name="identifier" required autocomplete="username" placeholder="请输入唯一标识" data-i18n-placeholder="field.identifierPlaceholder" />
+        </span>
+      </label>
+      <label class="field has-action">
+        <span data-i18n="field.password">密码</span>
+        <input name="password" required type="password" autocomplete="current-password" placeholder="Password" data-i18n-placeholder="field.passwordPlaceholder" />
+        <button class="input-action" type="button" data-toggle-password>👁</button>
+      </label>
+      <div class="form-row between login-options">
+        <label class="checkbox"><input type="checkbox" /> <span data-i18n="login.remember">记住我</span></label>
+        <a href="/forgot-password" data-i18n="login.forgot">忘记密码？</a>
+      </div>
+      <button class="btn primary full" type="submit" data-i18n="login.submit">登录</button>
+    </form>
 
-{% if query_params.is_empty() %}
-<div class="links" style="text-align:center;margin-top:1rem;">
-<p style="color:#666;">Please try again from your application.</p>
-</div>
-{% else %}
-{% if !social_providers.is_empty() %}
-<div class="social-buttons">
-{% for sp in social_providers %}
-<a href="/sso/social/{{ sp.name }}/login?{{ query_params }}" class="btn-social btn-{{ sp.name }}">
-<span class="social-icon">{{ sp.display_name }}</span>
-</a>
-{% endfor %}
-</div>
-<div class="divider"><span>or</span></div>
-{% endif %}
-
-<form method="post" action="/sso/login?{{ query_params }}">
-    <div class="tabs" id="id-tabs">
-        <button type="button" class="tab {% if identifier_type == "email" %}{% else %}{% if identifier_type == "phone" %}{% else %}active{% endif %}{% endif %}" data-type="username" onclick="switchTab('username')">Username</button>
-        <button type="button" class="tab {% if identifier_type == "email" %}active{% endif %}" data-type="email" onclick="switchTab('email')">Email</button>
-        <button type="button" class="tab {% if identifier_type == "phone" %}active{% endif %}" data-type="phone" onclick="switchTab('phone')">Phone</button>
+    <div class="divider"><span data-i18n="login.continueWith">或使用以下方式登录</span></div>
+    <div class="provider-grid compact-providers">
+      {% for provider in providers %}
+        <button type="button" class="provider-button" data-provider="{{ provider.key }}">
+          <span class="provider-icon {{ provider.key }}">{{ provider.icon }}</span>
+          <span class="sr-only">{{ provider.name }}</span>
+        </button>
+      {% endfor %}
     </div>
-    <input type="hidden" name="identifier_type" id="identifier_type" value="{{ identifier_type }}">
-    <label for="identifier" id="identifier-label">Username</label>
-    <input type="text" name="identifier" id="identifier" value="{{ identifier }}" autocomplete="username" required maxlength="255">
-    <label for="password">Password</label>
-    <input type="password" name="password" id="password" autocomplete="current-password" required maxlength="128">
-    <button type="submit" class="btn">Sign in</button>
-</form>
-<div class="links">
-    <a href="/sso/register?{{ query_params }}">Create an account</a>
-    &nbsp;&middot;&nbsp;
-    <a href="/sso/forgot-password?{{ query_params }}">Forgot password?</a>
+    <p class="fine-print" data-i18n="login.agreement">登录即表示您同意我们的服务条款和隐私政策。</p>
+    <p class="switch-link"><span data-i18n="login.noAccount">还没有账号？</span> <a href="/register" data-i18n="login.registerNow">立即注册</a></p>
+  </section>
 </div>
-{% endif %}
-<script>
-function switchTab(type) {
-    document.getElementById('identifier_type').value = type;
-    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelector('.tab[data-type="' + type + '"]').classList.add('active');
-    var label = document.getElementById('identifier-label');
-    if (type === 'email') label.textContent = 'Email';
-    else if (type === 'phone') label.textContent = 'Phone';
-    else label.textContent = 'Username';
-}
-</script>
 {% endblock %}

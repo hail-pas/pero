@@ -194,12 +194,50 @@ impl RefreshTokenRepo {
         Ok(())
     }
 
+    pub async fn list_active_by_user(
+        pool: &PgPool,
+        user_id: Uuid,
+    ) -> Result<Vec<UserAuthorization>, AppError> {
+        sqlx::query_as::<_, UserAuthorization>(
+            r#"SELECT c.client_name, t.scopes, t.created_at, t.id as token_id
+               FROM oauth2_tokens t
+               JOIN oauth2_clients c ON t.client_id = c.id
+               WHERE t.user_id = $1 AND t.revoked = false AND t.expires_at > now()
+               ORDER BY t.created_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn revoke_for_user(pool: &PgPool, id: Uuid, user_id: Uuid) -> Result<(), AppError> {
+        let result =
+            sqlx::query("UPDATE oauth2_tokens SET revoked = true WHERE id = $1 AND user_id = $2")
+                .bind(id)
+                .bind(user_id)
+                .execute(pool)
+                .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound("authorization".into()));
+        }
+        Ok(())
+    }
+
     pub async fn purge_expired(pool: &PgPool) -> Result<u64, AppError> {
         let result = sqlx::query("DELETE FROM oauth2_tokens WHERE expires_at < now()")
             .execute(pool)
             .await?;
         Ok(result.rows_affected())
     }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct UserAuthorization {
+    pub client_name: String,
+    pub scopes: Vec<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub token_id: Uuid,
 }
 
 pub struct AuthCodeRepo;
