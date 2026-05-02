@@ -95,6 +95,8 @@ pub async fn create_client(
     state: &AppState,
     req: &CreateClientRequest,
 ) -> Result<CreatedClient, AppError> {
+    crate::domain::app::store::AppRepo::find_by_id_or_err(&state.db, req.app_id).await?;
+
     let client_id = crate::shared::utils::random_hex_token();
     let client_secret = crate::shared::utils::random_hex_token();
     let client_secret_hash = crate::domain::identity::service::hash_password(&client_secret)?;

@@ -99,11 +99,12 @@ pub async fn authorize(
 }
 
 fn redirect_error_response(redirect_uri: &str, error: &str, state: Option<&str>) -> Redirect {
-    let mut location = format!("{redirect_uri}?error={error}");
-    if let Some(state) = state {
-        location.push_str("&state=");
-        location.push_str(&urlencoding::encode(state));
+    let mut params: Vec<(&str, &str)> = vec![("error", error)];
+    if let Some(s) = state {
+        params.push(("state", s));
     }
+    let location = crate::shared::utils::append_query_params(redirect_uri, &params)
+        .unwrap_or_else(|_| format!("{redirect_uri}?error={error}"));
     Redirect::to(&location)
 }
 

@@ -4,7 +4,9 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::api::extractors::ValidatedForm;
+use crate::domain::identity::session;
 use crate::domain::identity::store::UserRepo;
+use crate::domain::oauth2::RefreshTokenRepo;
 use crate::domain::sso::models::ResetPasswordForm;
 use crate::handler::sso::common::render_tpl;
 use crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX;
@@ -79,6 +81,8 @@ pub async fn reset_password_post(
 
     let key = format!("{PASSWORD_RESET_PREFIX}{token}");
     crate::infra::cache::del(&state.cache, &key).await?;
+    session::revoke_user_sessions(&state.cache, user_id).await?;
+    RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await?;
 
     let tpl = ResetPasswordTemplate {
         token: String::new(),

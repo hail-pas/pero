@@ -25,27 +25,22 @@ pub async fn end_session(
     Query(query): Query<EndSessionQuery>,
     _headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let mut user_id_to_logout: Option<uuid::Uuid> = None;
-    let mut redirect_uri = query.post_logout_redirect_uri;
+    let user_id_to_logout: Option<uuid::Uuid> = None;
+
+    let mut redirect_uri: Option<String> = None;
 
     if let Some(ref id_token_str) = query.id_token_hint {
-        if let Ok(id_claims) = crate::infra::jwt::verify_id_token(id_token_str, &state.jwt_keys) {
-            if let Ok(uid) = id_claims.sub.parse::<uuid::Uuid>() {
-                user_id_to_logout = Some(uid);
+        let id_claims = crate::infra::jwt::verify_id_token(id_token_str, &state.jwt_keys)?;
+        if let Some(ref uri) = query.post_logout_redirect_uri {
+            let client = OAuth2ClientRepo::find_by_client_id(&state.db, &id_claims.aud)
+                .await?
+                .ok_or(AppError::BadRequest("unknown client".into()))?;
+
+            if !client.post_logout_redirect_uris.iter().any(|u| u == uri) {
+                return Err(AppError::BadRequest("post_logout_redirect_uri not registered".into()));
             }
 
-            if let Some(ref uri) = redirect_uri {
-                let client = OAuth2ClientRepo::find_by_client_id(&state.db, &id_claims.aud)
-                    .await?
-                    .ok_or(AppError::BadRequest("unknown client".into()))?;
-                if !client.post_logout_redirect_uris.iter().any(|u| u == uri) {
-                    return Err(AppError::BadRequest(
-                        "post_logout_redirect_uri not registered".into(),
-                    ));
-                }
-            }
-        } else {
-            redirect_uri = None;
+            redirect_uri = Some(uri.clone());
         }
     }
 

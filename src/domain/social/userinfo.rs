@@ -73,7 +73,10 @@ pub async fn fetch_userinfo(
 
     let mut info = map_userinfo_response(&provider.name, &raw)?;
     if provider.name == "github" && info.email.is_none() {
-        info.email = fetch_github_email(&client, access_token).await;
+        if let Some((email, verified)) = fetch_github_email(&client, access_token).await {
+            info.email = Some(email);
+            info.email_verified = verified;
+        }
     }
 
     Ok(info)
@@ -113,7 +116,7 @@ pub fn map_userinfo_response(
     Ok(info)
 }
 
-async fn fetch_github_email(client: &reqwest::Client, access_token: &str) -> Option<String> {
+async fn fetch_github_email(client: &reqwest::Client, access_token: &str) -> Option<(String, bool)> {
     #[derive(Debug, serde::Deserialize)]
     struct GitHubEmail {
         email: String,
@@ -137,7 +140,7 @@ async fn fetch_github_email(client: &reqwest::Client, access_token: &str) -> Opt
     emails
         .iter()
         .find(|e| e.primary && e.verified)
-        .map(|e| e.email.clone())
+        .map(|e| (e.email.clone(), true))
 }
 
 fn map_github(raw: &serde_json::Value, provider_uid: String) -> SocialUserInfo {
@@ -145,6 +148,7 @@ fn map_github(raw: &serde_json::Value, provider_uid: String) -> SocialUserInfo {
         provider: "github".into(),
         provider_uid,
         email: raw["email"].as_str().map(String::from),
+        email_verified: false,
         username: raw["login"].as_str().map(String::from),
         display_name: raw["name"].as_str().map(String::from),
         avatar_url: raw["avatar_url"].as_str().map(String::from),
@@ -156,6 +160,7 @@ fn map_google(raw: &serde_json::Value, provider_uid: &str) -> SocialUserInfo {
         provider: "google".into(),
         provider_uid: provider_uid.to_string(),
         email: raw["email"].as_str().map(String::from),
+        email_verified: raw["email_verified"].as_bool().unwrap_or(false),
         username: None,
         display_name: raw["name"].as_str().map(String::from),
         avatar_url: raw["picture"].as_str().map(String::from),
@@ -171,6 +176,7 @@ fn map_generic(
         provider: provider_name.into(),
         provider_uid,
         email: raw["email"].as_str().map(String::from),
+        email_verified: raw["email_verified"].as_bool().unwrap_or(false),
         username: raw["username"]
             .as_str()
             .or_else(|| raw["login"].as_str())

@@ -17,7 +17,7 @@ pub fn build_token_response(
     auth_time: i64,
     nonce: Option<String>,
     sid: Option<String>,
-    refresh_token: String,
+    refresh_token: Option<String>,
 ) -> Result<TokenResponse, AppError> {
     let user_id_str = user.id.to_string();
     let scope = scopes.join(" ");
@@ -52,7 +52,7 @@ pub fn build_token_response(
         access_token,
         token_type: TOKEN_TYPE_BEARER.to_string(),
         expires_in: state.config.oauth2.access_token_ttl_minutes * 60,
-        refresh_token: Some(refresh_token),
+        refresh_token,
         id_token,
         scope: Some(scope),
     })

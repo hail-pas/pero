@@ -209,3 +209,17 @@ impl UserSessionIndex {
         cache::del(pool, &user_sessions_key(user_id)).await
     }
 }
+
+
+pub async fn verify_user_session(
+    pool: &Pool,
+    session_id: &str,
+    expected_user_id: Uuid,
+) -> Result<IdentitySession, AppError> {
+    let session = get_session(pool, session_id).await?
+        .ok_or(AppError::Unauthorized)?;
+    if session.user_id != expected_user_id {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(session)
+}

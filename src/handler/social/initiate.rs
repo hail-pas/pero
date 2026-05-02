@@ -49,8 +49,9 @@ pub async fn social_bind(
     .ok_or(provider_not_found())?;
 
     let redirect_uri = format!(
-        "{}?bind_user={}",
-        social_callback_url(&state.config.oidc.issuer, &provider),
+        "{}/sso/social/{}/bind-callback?bind_user={}",
+        state.config.oidc.issuer.trim_end_matches('/'),
+        provider,
         user_id.0
     );
 
@@ -72,14 +73,15 @@ pub async fn social_bind(
             .await?
             .ok_or(provider_not_found())?;
 
-    let redirect_uri_encoded = urlencoding::encode(&redirect_uri);
-    let url = format!(
-        "{}?client_id={}&response_type=code&state={}&redirect_uri={}",
-        _provider.authorize_url,
-        urlencoding::encode(&_provider.client_id),
-        urlencoding::encode(&state_token),
-        redirect_uri_encoded,
-    );
+    let url = crate::shared::utils::append_query_params(
+        &_provider.authorize_url,
+        &[
+            ("client_id", &_provider.client_id),
+            ("response_type", "code"),
+            ("state", &state_token),
+            ("redirect_uri", &redirect_uri),
+        ],
+    )?;
 
     Ok(Redirect::to(&url).into_response())
 }

@@ -212,6 +212,10 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/sso/social/{provider}/callback",
             get(crate::handler::social::callback::social_callback),
         )
+        .route(
+            "/sso/social/{provider}/bind-callback",
+            get(crate::handler::social::callback::social_bind_callback),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::rate_limit::rate_limit_middleware,

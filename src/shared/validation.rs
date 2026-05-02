@@ -93,3 +93,11 @@ pub fn validate_non_empty_items(items: &[String]) -> Result<(), validator::Valid
     }
     Ok(())
 }
+
+
+pub fn validate_pkce_verifier(v: &str) -> Result<(), validator::ValidationError> {
+    if !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c)) {
+        return Err(validator::ValidationError::new("pkce_verifier_charset"));
+    }
+    Ok(())
+}

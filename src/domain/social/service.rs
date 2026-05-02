@@ -87,22 +87,20 @@ pub async fn build_authorize_url(
     )
     .await?;
 
-    let scopes = if provider.scopes.is_empty() {
-        String::new()
-    } else {
-        urlencoding::encode(&provider.scopes.join(" ")).into()
-    };
-
-    let mut url = format!(
-        "{}?client_id={}&response_type=code&state={}&redirect_uri={}",
-        provider.authorize_url,
-        urlencoding::encode(&provider.client_id),
-        urlencoding::encode(&state_token),
-        urlencoding::encode(redirect_uri),
-    );
-    if !scopes.is_empty() {
-        url.push_str(&format!("&scope={scopes}"));
+    let mut params: Vec<(&str, String)> = vec![
+        ("client_id", provider.client_id.clone()),
+        ("response_type", "code".to_string()),
+        ("state", state_token.clone()),
+        ("redirect_uri", redirect_uri.to_string()),
+    ];
+    if !provider.scopes.is_empty() {
+        params.push(("scope", provider.scopes.join(" ")));
     }
+
+    let url = crate::shared::utils::append_query_params(
+        &provider.authorize_url,
+        &params.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>(),
+    )?;
 
     Ok((url, state_token))
 }
@@ -132,22 +130,20 @@ pub async fn build_account_login_url(
     )
     .await?;
 
-    let scopes = if provider.scopes.is_empty() {
-        String::new()
-    } else {
-        urlencoding::encode(&provider.scopes.join(" ")).into()
-    };
-
-    let mut url = format!(
-        "{}?client_id={}&response_type=code&state={}&redirect_uri={}",
-        provider.authorize_url,
-        urlencoding::encode(&provider.client_id),
-        urlencoding::encode(&state_token),
-        urlencoding::encode(redirect_uri),
-    );
-    if !scopes.is_empty() {
-        url.push_str(&format!("&scope={scopes}"));
+    let mut params: Vec<(&str, String)> = vec![
+        ("client_id", provider.client_id.clone()),
+        ("response_type", "code".to_string()),
+        ("state", state_token.clone()),
+        ("redirect_uri", redirect_uri.to_string()),
+    ];
+    if !provider.scopes.is_empty() {
+        params.push(("scope", provider.scopes.join(" ")));
     }
+
+    let url = crate::shared::utils::append_query_params(
+        &provider.authorize_url,
+        &params.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>(),
+    )?;
 
     Ok((url, state_token))
 }
@@ -197,26 +193,28 @@ pub async fn find_or_create_user(
         return Ok(user);
     }
 
-    if let Some(ref email) = info.email {
-        if let Some(user) = UserRepo::find_by_email(&state.db, email).await? {
-            if !user.is_active() {
-                return Err(AppError::Unauthorized);
+    if info.is_trusted_provider() && info.email_verified {
+        if let Some(ref email) = info.email {
+            if let Some(user) = UserRepo::find_by_email(&state.db, email).await? {
+                if !user.is_active() {
+                    return Err(AppError::Unauthorized);
+                }
+                sqlx::query(
+                    "INSERT INTO identities (user_id, provider, provider_uid, verified) VALUES ($1, $2, $3, true)",
+                )
+                .bind(user.id)
+                .bind(&info.provider)
+                .bind(&info.provider_uid)
+                .execute(&state.db)
+                .await?;
+                if !user.email_verified {
+                    sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
+                        .bind(user.id)
+                        .execute(&state.db)
+                        .await?;
+                }
+                return Ok(user);
             }
-            sqlx::query(
-                "INSERT INTO identities (user_id, provider, provider_uid, verified) VALUES ($1, $2, $3, true)",
-            )
-            .bind(user.id)
-            .bind(&info.provider)
-            .bind(&info.provider_uid)
-            .execute(&state.db)
-            .await?;
-            if !user.email_verified {
-                sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
-                    .bind(user.id)
-                    .execute(&state.db)
-                    .await?;
-            }
-            return Ok(user);
         }
     }
 

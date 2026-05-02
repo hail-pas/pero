@@ -96,9 +96,15 @@ pub async fn update_me(
     user_id: uuid::Uuid,
     req: &UpdateMeRequest,
 ) -> Result<UserDTO, AppError> {
-    if let Some(email) = req.email.as_set() {
-        validate_update_user(&state.db, user_id, None, Some(email)).await?;
-    }
+
+    validate_update_user(
+        &state.db,
+        user_id,
+        None,
+        req.email.as_set().map(|s| s.as_str()),
+        req.phone.as_set().map(|s| s.as_str()),
+    )
+    .await?;
     let current = UserRepo::find_by_id(&state.db, user_id)
         .await?
         .ok_or_else(|| error::user_not_found())?;
@@ -137,6 +143,7 @@ pub async fn update_user(
         id,
         req.username.as_set().map(|s| s.as_str()),
         req.email.as_set().map(|s| s.as_str()),
+        req.phone.as_set().map(|s| s.as_str()),
     )
     .await?;
 
@@ -148,8 +155,22 @@ pub async fn update_user(
     let reset_phone =
         should_reset_admin_phone_verified(req, &current.phone.clone().unwrap_or_default());
 
+    let disabling = match req.status {
+        Patch::Set(status) if status == 0 && current.is_active() => true,
+        _ => false,
+    };
+
     let user = UserRepo::update(&mut *tx, id, req, reset_email, reset_phone).await?;
     tx.commit().await?;
+
+    if disabling {
+        if let Err(e) = session::revoke_user_sessions(&state.cache, id).await {
+            tracing::warn!(error = %e, "failed to revoke sessions after user disable");
+        }
+        if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, id).await {
+            tracing::warn!(error = %e, "failed to revoke oauth2 tokens after user disable");
+        }
+    }
 
     Ok(user.into())
 }
@@ -274,6 +295,7 @@ pub async fn validate_new_user<'a, E>(
     executor: E,
     username: &str,
     email: Option<&str>,
+    phone: Option<&str>,
 ) -> Result<(), AppError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
@@ -281,20 +303,28 @@ where
     #[derive(sqlx::FromRow)]
     struct Check {
         username_exists: bool,
-        email_exists: Option<bool>,
+        email_exists: bool,
+        phone_exists: bool,
     }
     let check: Check = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1) AS username_exists, ($2::text IS NULL OR EXISTS(SELECT 1 FROM users WHERE email = $2)) AS email_exists"
+        "SELECT \
+            EXISTS(SELECT 1 FROM users WHERE username = $1) AS username_exists, \
+            COALESCE(($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE email = $2)), false) AS email_exists, \
+            COALESCE(($3::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE phone = $3)), false) AS phone_exists"
     )
     .bind(username)
     .bind(email)
+    .bind(phone)
     .fetch_one(executor)
     .await?;
     if check.username_exists {
         return Err(error::username_exists(username));
     }
-    if check.email_exists == Some(true) {
+    if check.email_exists {
         return Err(error::email_exists(email.unwrap_or("")));
+    }
+    if check.phone_exists {
+        return Err(error::phone_exists(phone.unwrap_or("")));
     }
     Ok(())
 }
@@ -304,6 +334,7 @@ pub async fn validate_update_user<'a, E>(
     id: Uuid,
     username: Option<&str>,
     email: Option<&str>,
+    phone: Option<&str>,
 ) -> Result<(), AppError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
@@ -312,20 +343,28 @@ where
     struct Check {
         username_conflict: bool,
         email_conflict: bool,
+        phone_conflict: bool,
     }
     let check: Check = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 AND id != $3) AS username_conflict, EXISTS(SELECT 1 FROM users WHERE email = $2 AND id != $3) AS email_conflict"
+        "SELECT \
+            COALESCE(($1::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE username = $1 AND id != $4)), false) AS username_conflict, \
+            COALESCE(($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE email = $2 AND id != $4)), false) AS email_conflict, \
+            COALESCE(($3::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE phone = $3 AND id != $4)), false) AS phone_conflict"
     )
     .bind(username)
     .bind(email)
+    .bind(phone)
     .bind(id)
     .fetch_one(executor)
     .await?;
-    if let (true, Some(username)) = (check.username_conflict, username) {
-        return Err(error::username_exists(username));
+    if check.username_conflict {
+        return Err(error::username_exists(username.unwrap_or("")));
     }
-    if let (true, Some(email)) = (check.email_conflict, email) {
-        return Err(error::email_exists(email));
+    if check.email_conflict {
+        return Err(error::email_exists(email.unwrap_or("")));
+    }
+    if check.phone_conflict {
+        return Err(error::phone_exists(phone.unwrap_or("")));
     }
     Ok(())
 }
@@ -344,7 +383,7 @@ pub async fn create_user_with_password(
     password: &str,
 ) -> Result<User, AppError> {
     let password_hash = hash_password(password)?;
-    validate_new_user(&mut **tx, username, email).await?;
+    validate_new_user(&mut **tx, username, email, phone).await?;
     let user = UserRepo::create(&mut **tx, username, email, phone, nickname).await?;
     IdentityRepo::create_password(&mut **tx, user.id, &password_hash).await?;
     Ok(user)

@@ -6,6 +6,7 @@ pub struct AuthUser {
     pub user_id: uuid::Uuid,
     pub roles: Vec<String>,
     pub scope: Option<String>,
+    pub app_id: Option<String>,
 }
 
 impl AuthUser {
@@ -15,6 +16,7 @@ impl AuthUser {
             user_id,
             roles: claims.roles.clone(),
             scope: claims.scope.clone(),
+            app_id: claims.app_id.clone(),
         })
     }
 }

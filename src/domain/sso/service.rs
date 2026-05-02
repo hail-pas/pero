@@ -1,9 +1,11 @@
+use crate::domain::identity::UserRepo;
 use crate::domain::oauth2::service as oauth2_service;
 use crate::domain::oauth2::store::AuthCodeRepo;
 use crate::domain::sso::models::{ConsentDecision, SsoSession};
 use crate::domain::sso::session;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
+use crate::shared::utils::append_query_params;
 
 pub struct ConsentViewData {
     pub client_name: String,
@@ -45,6 +47,14 @@ pub async fn handle_consent_action(
         .user_id
         .ok_or(AppError::BadRequest("user not authenticated".into()))?;
 
+    let user = UserRepo::find_by_id(&state.db, user_id).await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if !user.is_active() {
+        session::delete(&state.cache, sid).await?;
+        return Err(AppError::Unauthorized);
+    }
+
     let client = load_valid_authorization_client(state, sso).await?;
     let scopes = granted_scopes(&client, sso);
 
@@ -77,7 +87,12 @@ pub async fn handle_consent_action(
 }
 
 fn build_redirect(base: &str, first_param: &str, state: &Option<String>) -> String {
-    let mut redirect = format!("{base}?{first_param}");
+    let params: Vec<(&str, &str)> = first_param.split('&').filter_map(|p| {
+        let mut parts = p.splitn(2, '=');
+        Some((parts.next()?, parts.next()?))
+    }).collect();
+
+    let mut redirect = append_query_params(base, &params).unwrap_or_else(|_| base.to_string());
     if let Some(state) = state {
         redirect.push_str(&format!("&state={}", urlencoding::encode(state)));
     }

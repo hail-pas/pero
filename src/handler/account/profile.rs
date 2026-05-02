@@ -7,6 +7,7 @@ use validator::Validate;
 
 use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::models::UpdateMeRequest;
+use crate::domain::identity::store::VerifyPayload;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, UserView};
 use crate::shared::constants::cache_keys::{EMAIL_VERIFY_PREFIX, PHONE_VERIFY_PREFIX};
@@ -106,10 +107,19 @@ pub async fn send_verify_email_post(
         return Err(crate::domain::identity::error::email_already_verified());
     }
 
+    let email = match user.email.clone() {
+        Some(email) => email,
+        None => return Err(crate::domain::identity::error::email_not_set()),
+    };
+
+    let payload = VerifyPayload {
+        user_id: user.id,
+        value: email.to_string(),
+    };
     let token = crate::shared::utils::generate_token_and_cache(
         &state.cache,
         EMAIL_VERIFY_PREFIX,
-        &user.id.to_string(),
+        &payload,
         state.config.sso.email_verify_ttl_seconds,
     )
     .await?;
@@ -133,7 +143,10 @@ pub async fn send_verify_phone_post(
         return Err(crate::domain::identity::error::phone_already_verified());
     }
 
-    let payload = serde_json::json!({ "user_id": user.id, "phone": phone.clone() });
+    let payload = VerifyPayload {
+        user_id: user.id,
+        value: phone.to_string(),
+    };
     let token = crate::shared::utils::generate_token_and_cache(
         &state.cache,
         PHONE_VERIFY_PREFIX,

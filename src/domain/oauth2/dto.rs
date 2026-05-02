@@ -88,11 +88,49 @@ pub struct CreateClientRequest {
     )]
     pub redirect_uris: Vec<String>,
     #[serde(default = "default_grant_types")]
+    #[validate(custom(function = "validate_grant_types"))]
     pub grant_types: Vec<String>,
     #[serde(default = "default_scopes")]
+    #[validate(custom(function = "validate_allowed_scopes"))]
     pub scopes: Vec<String>,
     #[serde(default)]
+    #[validate(custom(function = "crate::shared::validation::validate_redirect_uris"))]
     pub post_logout_redirect_uris: Vec<String>,
+}
+
+fn validate_grant_types(types: &[String]) -> Result<(), ValidationError> {
+    let allowed = [
+        oauth2_constants::GRANT_TYPE_AUTH_CODE,
+        oauth2_constants::GRANT_TYPE_REFRESH_TOKEN,
+    ];
+    for gt in types {
+        if !allowed.contains(&gt.as_str()) {
+            let mut err = ValidationError::new("invalid_grant_type");
+            err.message = Some(format!("'{}' is not a valid grant_type", gt).into());
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
+fn validate_allowed_scopes(scopes: &[String]) -> Result<(), ValidationError> {
+    if scopes.is_empty() {
+        return Err(ValidationError::new("length"));
+    }
+    let allowed = [
+        oauth2_scopes::OPENID,
+        oauth2_scopes::PROFILE,
+        oauth2_scopes::EMAIL,
+        oauth2_scopes::PHONE,
+    ];
+    for scope in scopes {
+        if !allowed.contains(&scope.as_str()) {
+            let mut err = ValidationError::new("invalid_scope");
+            err.message = Some(format!("'{}' is not an allowed scope", scope).into());
+            return Err(err);
+        }
+    }
+    Ok(())
 }
 
 fn default_grant_types() -> Vec<String> {
@@ -117,6 +155,9 @@ pub struct UpdateClientRequest {
     pub redirect_uris: Patch<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
+    pub grant_types: Patch<Vec<String>>,
+    #[serde(default)]
+    #[schema(value_type = Option<Vec<String>>)]
     pub scopes: Patch<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
@@ -137,12 +178,14 @@ impl Validate for UpdateClientRequest {
             .validate_required("redirect_uris", &mut errors, |v| {
                 validation::validate_redirect_uris(v)
             });
+        self.grant_types.validate("grant_types", &mut errors, |v| {
+            validate_grant_types(v)
+        });
         self.scopes.validate_required("scopes", &mut errors, |v| {
             if v.is_empty() {
                 return Err(ValidationError::new("length"));
             }
-            validation::validate_non_empty_items(v)?;
-            Ok(())
+            validate_allowed_scopes(v)
         });
         self.post_logout_redirect_uris
             .validate("post_logout_redirect_uris", &mut errors, |v| {
@@ -189,7 +232,10 @@ pub struct TokenRequest {
     pub client_id: Option<String>,
     #[validate(length(max = 256))]
     pub client_secret: Option<String>,
-    #[validate(length(max = 256))]
+    #[validate(
+        length(min = 43, max = 128),
+        custom(function = "crate::shared::validation::validate_pkce_verifier")
+    )]
     pub code_verifier: Option<String>,
     #[validate(length(max = 256))]
     pub refresh_token: Option<String>,

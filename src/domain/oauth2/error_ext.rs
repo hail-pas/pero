@@ -1,11 +1,11 @@
 use crate::shared::error::AppError;
 
 pub fn invalid_client_id() -> AppError {
-    AppError::BadRequest("invalid client_id".into())
+    AppError::NotFound("oauth2 client".into())
 }
 
 pub fn client_disabled() -> AppError {
-    AppError::BadRequest("client is disabled".into())
+    AppError::Forbidden("client is disabled".into())
 }
 
 pub fn invalid_redirect_uri() -> AppError {
@@ -49,5 +49,5 @@ pub fn missing_field(name: &str) -> AppError {
 }
 
 pub fn user_not_authenticated() -> AppError {
-    AppError::BadRequest("user not authenticated".into())
+    AppError::Forbidden("user not authenticated".into())
 }

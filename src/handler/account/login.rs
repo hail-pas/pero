@@ -10,6 +10,7 @@ use crate::handler::account::common::{extract_cookie, render_tpl};
 use crate::handler::social::{ProviderView, load_provider_views, social_callback_url};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
+use crate::shared::utils::safe_local_path;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginQuery {
@@ -116,7 +117,7 @@ pub async fn account_social_login(
         &state,
         &provider,
         &redirect_uri,
-        next.as_deref(),
+        next.as_deref().and_then(safe_local_path).as_deref(),
     )
     .await?;
     Ok(Redirect::to(&url).into_response())

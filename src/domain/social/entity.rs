@@ -224,7 +224,14 @@ pub struct SocialUserInfo {
     pub provider: String,
     pub provider_uid: String,
     pub email: Option<String>,
+    pub email_verified: bool,
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+}
+
+impl SocialUserInfo {
+    pub fn is_trusted_provider(&self) -> bool {
+        matches!(self.provider.as_str(), "google" | "github" | "microsoft" | "apple")
+    }
 }

@@ -30,6 +30,12 @@ pub struct AttributeItem {
     pub value: String,
 }
 
+#[derive(Debug, serde::Serialize, Deserialize)]
+pub struct VerifyPayload {
+    pub user_id: Uuid,
+    pub value: String,
+}
+
 pub struct UserRepo;
 
 impl UserRepo {
@@ -191,10 +197,11 @@ impl UserRepo {
         Ok(())
     }
 
-    pub async fn set_email_verified(pool: &PgPool, user_id: Uuid) -> Result<(), AppError> {
+    pub async fn set_email_verified(pool: &PgPool, payload: VerifyPayload) -> Result<(), AppError> {
         let result =
-            sqlx::query("UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1")
-                .bind(user_id)
+            sqlx::query("UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1 AND email = $2")
+                .bind(payload.user_id)
+                .bind(payload.value)
                 .execute(pool)
                 .await?;
         if result.rows_affected() == 0 {
@@ -203,10 +210,11 @@ impl UserRepo {
         Ok(())
     }
 
-    pub async fn set_phone_verified(pool: &PgPool, user_id: Uuid) -> Result<(), AppError> {
+    pub async fn set_phone_verified(pool: &PgPool, payload: VerifyPayload) -> Result<(), AppError> {
         let result =
-            sqlx::query("UPDATE users SET phone_verified = true, updated_at = now() WHERE id = $1")
-                .bind(user_id)
+            sqlx::query("UPDATE users SET phone_verified = true, updated_at = now() WHERE id = $1 AND phone = $2")
+                .bind(payload.user_id)
+                .bind(payload.value)
                 .execute(pool)
                 .await?;
         if result.rows_affected() == 0 {

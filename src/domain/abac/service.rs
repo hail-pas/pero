@@ -153,10 +153,14 @@ pub async fn update_policy_dto(
     if let Some(app_id) = forced_app_id {
         req.app_id = Patch::Set(app_id);
     }
+    let old_app_id = policy.app_id;
     let (updated, conditions) =
         PolicyRepo::update_with_policy(&state.db, id, &req, &policy).await?;
     let dto = PolicyDTO::from_policy_with_conditions(updated, conditions);
     invalidate_policy_cache_best_effort(state, dto.app_id).await;
+    if dto.app_id != old_app_id {
+        invalidate_policy_cache_best_effort(state, old_app_id).await;
+    }
     Ok(dto)
 }
 

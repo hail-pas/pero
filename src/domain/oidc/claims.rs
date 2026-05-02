@@ -46,7 +46,7 @@ impl ScopedClaims {
                 None
             },
             phone_number_verified: if has(oauth2_scopes::PHONE) {
-                Some(false)
+                Some(user.phone_verified)
             } else {
                 None
             },

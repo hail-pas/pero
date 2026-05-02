@@ -1,39 +1,55 @@
 use axum::http::HeaderMap;
 
+use crate::domain::identity::entity::User;
+use crate::domain::identity::session::{self, IdentitySession};
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
-pub use crate::shared::utils::{extract_cookie, render_tpl};
+pub use crate::shared::utils::{append_query_params, extract_cookie, render_tpl};
+
+pub async fn get_verified_account(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(User, IdentitySession), AppError> {
+    let token = extract_cookie(headers, ACCOUNT_TOKEN).ok_or(AppError::Unauthorized)?;
+    let claims = crate::infra::jwt::verify_token(&token, &state.jwt_keys)
+        .map_err(|_| AppError::Unauthorized)?;
+
+    let sid = claims.sid.ok_or(AppError::Unauthorized)?;
+    let identity_session = session::get_session(&state.cache, &sid)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if identity_session.user_id.to_string() != claims.sub {
+        return Err(AppError::Unauthorized);
+    }
+
+    let user = crate::domain::identity::store::UserRepo::find_by_id(&state.db, identity_session.user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if !user.is_active() {
+        return Err(AppError::Unauthorized);
+    }
+
+    Ok((user, identity_session))
+}
 
 pub async fn get_account_user_id(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<uuid::Uuid, AppError> {
-    let token = extract_cookie(headers, ACCOUNT_TOKEN).ok_or(AppError::Unauthorized)?;
-    let claims = crate::infra::jwt::verify_token(&token, &state.jwt_keys)
-        .map_err(|_| AppError::Unauthorized)?;
-
-    if let Some(ref sid) = claims.sid {
-        let exists = crate::domain::identity::session::get_session(&state.cache, sid)
-            .await?
-            .is_some();
-        if !exists {
-            return Err(AppError::Unauthorized);
-        }
-    }
-
-    claims.sub.parse().map_err(|_| AppError::Unauthorized)
+    let (user, _) = get_verified_account(state, headers).await?;
+    Ok(user.id)
 }
 
 pub async fn get_account_user(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<crate::domain::identity::entity::User, AppError> {
-    let user_id = get_account_user_id(state, headers).await?;
-    crate::domain::identity::store::UserRepo::find_by_id(&state.db, user_id)
-        .await?
-        .ok_or(AppError::Unauthorized)
+) -> Result<User, AppError> {
+    let (user, _) = get_verified_account(state, headers).await?;
+    Ok(user)
 }
 
 #[derive(Debug)]

@@ -4,6 +4,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use crate::domain::identity::session::verify_user_session;
 use crate::domain::identity::store::UserRepo;
 use crate::domain::sso::models::ConsentAction;
 use crate::domain::sso::service;
@@ -67,6 +68,14 @@ pub async fn consent_post(
     )
     .and_then(|token| crate::infra::jwt::decode_token_claims_unverified(&token).ok())
     .and_then(|claims| claims.sid);
+
+    if let Some(account_sid) = account_sid.as_deref() {
+        verify_user_session(
+            &state.cache,
+            account_sid,
+            sso.user_id.ok_or(AppError::Unauthorized)?
+        ).await?;
+    }
 
     let redirect =
         service::handle_consent_action(&state, &sid, &sso, action.action, account_sid.as_deref())

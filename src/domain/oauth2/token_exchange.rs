@@ -12,6 +12,7 @@ use crate::shared::constants::oauth2::{GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_
 use crate::shared::error::{AppError, require_found};
 use crate::shared::state::AppState;
 
+
 pub async fn exchange_token(
     state: &AppState,
     req: &TokenRequest,
@@ -72,17 +73,22 @@ async fn exchange_authorization_code(
     }
 
     let user = load_active_user(&mut *tx, auth_code.user_id).await?;
-    let refresh_token = crate::shared::utils::random_hex_token();
-    RefreshTokenRepo::create(
-        &mut *tx,
-        client.id,
-        user.id,
-        &refresh_token,
-        &auth_code.scopes,
-        auth_code.auth_time,
-        state.config.oauth2.refresh_token_ttl_days,
-    )
-    .await?;
+    let refresh_token = if client.allows_grant_type(GRANT_TYPE_REFRESH_TOKEN) {
+        let rt = crate::shared::utils::random_hex_token();
+        RefreshTokenRepo::create(
+            &mut *tx,
+            client.id,
+            user.id,
+            &rt,
+            &auth_code.scopes,
+            auth_code.auth_time,
+            state.config.oauth2.refresh_token_ttl_days,
+        )
+        .await?;
+        Some(rt)
+    } else {
+        None
+    };
 
     tx.commit().await?;
 
@@ -130,17 +136,22 @@ async fn exchange_refresh_token(
     RefreshTokenRepo::revoke(&mut *tx, stored.id).await?;
     let user = load_active_user(&mut *tx, stored.user_id).await?;
 
-    let new_refresh = crate::shared::utils::random_hex_token();
-    RefreshTokenRepo::create(
-        &mut *tx,
-        client.id,
-        user.id,
-        &new_refresh,
-        &stored.scopes,
-        stored.auth_time,
-        state.config.oauth2.refresh_token_ttl_days,
-    )
-    .await?;
+    let new_refresh = if client.allows_grant_type(GRANT_TYPE_REFRESH_TOKEN) {
+        let rt = crate::shared::utils::random_hex_token();
+        RefreshTokenRepo::create(
+            &mut *tx,
+            client.id,
+            user.id,
+            &rt,
+            &stored.scopes,
+            stored.auth_time,
+            state.config.oauth2.refresh_token_ttl_days,
+        )
+        .await?;
+        Some(rt)
+    } else {
+        None
+    };
 
     tx.commit().await?;
 

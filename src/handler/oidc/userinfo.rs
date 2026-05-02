@@ -1,6 +1,7 @@
 use crate::api::extractors::AuthUser;
 use crate::domain::identity::store::UserRepo;
 use crate::domain::oidc::claims::ScopedClaims;
+use crate::shared::constants::oauth2::scopes::OPENID;
 use crate::shared::error::{AppError, require_found};
 use crate::shared::state::AppState;
 use axum::Json;
@@ -20,6 +21,17 @@ pub async fn userinfo(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<serde_json::Value>, AppError> {
+
+    let has_openid = auth_user
+        .scope
+        .as_deref()
+        .map(|s| s.split_whitespace().any(|v| v == OPENID.to_string()))
+        .unwrap_or(false);
+
+    if !has_openid {
+        return Err(AppError::Forbidden("openid scope required".into()));
+    }
+
     let user = require_found(
         UserRepo::find_by_id(&state.db, auth_user.user_id).await?,
         "user",

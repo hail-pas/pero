@@ -42,11 +42,20 @@ pub async fn delete_session_post(
     headers: HeaderMap,
     axum::Form(form): axum::Form<DeleteSessionForm>,
 ) -> Result<Response, AppError> {
-    let _user_id = common::get_account_user_id(&state, &headers).await?;
     if current_session_id_from_cookie(&headers).as_deref() == Some(form.session_id.as_str()) {
         return Err(AppError::BadRequest(
             "Cannot terminate current session.".into(),
         ));
+    }
+
+    let user_id = common::get_account_user_id(&state, &headers).await?;
+
+    let target = session::get_session(&state.cache, &form.session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("session not found".into()))?;
+
+    if target.user_id != user_id {
+        return Err(AppError::NotFound("session not found".into()));
     }
 
     session::revoke_session(&state.cache, &form.session_id).await?;
@@ -84,13 +93,9 @@ pub async fn logout_post(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    if let Some(token) = common::extract_cookie(&headers, ACCOUNT_TOKEN) {
-        if let Ok(claims) = crate::infra::jwt::decode_token_claims_unverified(&token) {
-            if let Some(ref sid) = claims.sid {
-                let _ = session::revoke_session(&state.cache, sid).await;
-            }
-        }
-    }
+    let (_user, identity_session) = common::get_verified_account(&state, &headers).await?;
+
+    let _ = session::revoke_session(&state.cache, &identity_session.session_id).await;
 
     let mut response = axum::Json(crate::api::response::MessageResponse::success(
         "Signed out.",

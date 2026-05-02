@@ -43,12 +43,20 @@ pub fn email_exists(email: &str) -> AppError {
     AppError::Conflict(format!("email '{}' already exists", email))
 }
 
+pub fn phone_exists(phone: &str) -> AppError {
+    AppError::Conflict(format!("phone '{}' already exists", phone))
+}
+
 pub fn invalid_or_expired_token() -> AppError {
     AppError::BadRequest("invalid or expired token".into())
 }
 
 pub fn email_already_verified() -> AppError {
     AppError::BadRequest("email already verified".into())
+}
+
+pub fn email_not_set() -> AppError {
+    AppError::BadRequest("email not set".into())
 }
 
 pub fn phone_already_verified() -> AppError {

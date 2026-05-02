@@ -74,6 +74,7 @@ impl OAuth2ClientRepo {
         );
         req.client_name.push_column(&mut builder, "client_name");
         req.redirect_uris.push_column(&mut builder, "redirect_uris");
+        req.grant_types.push_column(&mut builder, "grant_types");
         req.scopes.push_column(&mut builder, "scopes");
         req.post_logout_redirect_uris
             .push_column(&mut builder, "post_logout_redirect_uris");

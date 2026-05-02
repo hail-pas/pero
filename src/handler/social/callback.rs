@@ -16,6 +16,14 @@ pub struct CallbackQuery {
     pub state: Option<String>,
     pub error: Option<String>,
     pub error_description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BindCallbackQuery {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
     pub bind_user: Option<String>,
 }
 
@@ -28,7 +36,9 @@ pub async fn social_callback(
     if let Some(error) = query.error {
         let msg = query.error_description.as_deref().unwrap_or(&error);
         return Ok(
-            Redirect::to(&format!("/sso/login?error={}", urlencoding::encode(msg))).into_response(),
+            crate::shared::utils::append_query_params("/sso/login", &[("error", msg)])
+                .map(|u| Redirect::to(&u).into_response())
+                .unwrap_or_else(|_| Redirect::to("/sso/login").into_response()),
         );
     }
 
@@ -42,10 +52,6 @@ pub async fn social_callback(
         .ok_or_else(|| AppError::BadRequest("missing state parameter".into()))?;
 
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
-    if let Some(bind_user_id) = query.bind_user.as_deref() {
-        return handle_bind_callback(&state, code, state_token, bind_user_id).await;
-    }
-
     let (user_info, social_state) =
         service::handle_callback(&state, code, state_token, &redirect_uri).await?;
 
@@ -91,13 +97,30 @@ pub async fn social_callback(
     Ok(response)
 }
 
-async fn handle_bind_callback(
-    state: &AppState,
-    code: &str,
-    state_token: &str,
-    bind_user_id: &str,
+pub async fn social_bind_callback(
+    State(state): State<AppState>,
+    Path(_provider): Path<String>,
+    Query(query): Query<BindCallbackQuery>,
 ) -> Result<Response, AppError> {
-    service::bind_social_identity(state, code, state_token, bind_user_id).await?;
+    if let Some(error) = query.error {
+        let msg = query.error_description.as_deref().unwrap_or(&error);
+        return Err(AppError::BadRequest(format!("social bind failed: {msg}")));
+    }
+
+    let code = query
+        .code
+        .as_deref()
+        .ok_or_else(|| AppError::BadRequest("missing authorization code".into()))?;
+    let state_token = query
+        .state
+        .as_deref()
+        .ok_or_else(|| AppError::BadRequest("missing state parameter".into()))?;
+    let bind_user_id = query
+        .bind_user
+        .as_deref()
+        .ok_or_else(|| AppError::BadRequest("missing bind_user parameter".into()))?;
+
+    service::bind_social_identity(&state, code, state_token, bind_user_id).await?;
 
     Ok(Redirect::to("/?message=social_account_linked").into_response())
 }
