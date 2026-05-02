@@ -52,7 +52,7 @@ pub async fn social_callback(
 
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
     let (user_info, social_state) =
-        service::handle_callback(&state, code, state_token, &redirect_uri).await?;
+        service::handle_callback(&state, code, state_token, &provider, &redirect_uri).await?;
 
     let user = service::find_or_create_user(&state, &user_info).await?;
 

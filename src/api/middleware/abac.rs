@@ -28,13 +28,20 @@ pub async fn abac_middleware(
     let app_id_from_token = claims.app_id.as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
-    let app_id = if app_id_from_token.is_some() {
-        app_id_from_token
-    } else {
-        req.headers()
-            .get(headers::X_APP_ID)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<Uuid>().ok())
+    let header_app_id = req.headers()
+        .get(headers::X_APP_ID)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<Uuid>().ok());
+
+    let app_id = match (app_id_from_token, header_app_id) {
+        (Some(from_token), Some(from_header)) => {
+            if from_token != from_header {
+                return Err(AppError::Forbidden("app_id mismatch between token and header".into()));
+            }
+            Some(from_token)
+        }
+        (Some(from_token), None) => Some(from_token),
+        (None, from_header) => from_header,
     };
 
     let route_scope = req

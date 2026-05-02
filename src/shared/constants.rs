@@ -21,6 +21,7 @@ pub mod cache_keys {
     pub const IDENTITY_SESSION_PREFIX: &str = "identity_session:";
     pub const IDENTITY_USER_SESSIONS_PREFIX: &str = "identity_user_sessions:";
     pub const SSO_SESSION_PREFIX: &str = "sso_session:";
+    pub const CSRF_PREFIX: &str = "csrf:";
 }
 
 pub mod identity {

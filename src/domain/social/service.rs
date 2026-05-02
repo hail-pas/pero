@@ -152,6 +152,7 @@ pub async fn handle_callback(
     state: &AppState,
     code: &str,
     state_token: &str,
+    callback_provider: &str,
     redirect_uri: &str,
 ) -> Result<(SocialUserInfo, SocialState), AppError> {
     let key = format!("social_state:{state_token}");
@@ -160,6 +161,10 @@ pub async fn handle_callback(
         .ok_or_else(social_state_invalid)?;
 
     cache::del(&state.cache, &key).await?;
+
+    if social_state.provider != callback_provider {
+        return Err(AppError::BadRequest("provider path does not match state".into()));
+    }
 
     let provider = SocialProviderRepo::find_by_name(&state.db, &social_state.provider)
         .await?

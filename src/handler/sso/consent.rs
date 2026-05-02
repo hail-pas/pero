@@ -24,13 +24,14 @@ pub struct AuthorizationTemplate {
     pub user_email: String,
     pub user_initial: String,
     pub user_avatar_url: String,
+    pub csrf_token: String,
 }
 
 pub async fn consent_get(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let (_sid, sso) = match require_authenticated_sso_session(&state, &headers).await {
+    let (sid, sso) = match require_authenticated_sso_session(&state, &headers).await {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -40,6 +41,8 @@ pub async fn consent_get(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
+    let csrf_token = crate::shared::csrf::create_csrf_token(&state, &sid).await?;
+
     let tpl = AuthorizationTemplate {
         client_name: consent.client_name,
         client_url: sso.authorize_params.redirect_uri.clone(),
@@ -48,6 +51,7 @@ pub async fn consent_get(
         user_email: user.email.clone().unwrap_or_default(),
         user_initial: crate::handler::account::common::user_initial(&user),
         user_avatar_url: crate::handler::account::common::user_avatar_url(&user),
+        csrf_token,
     };
     Ok(render_tpl(&tpl)?.into_response())
 }
@@ -61,6 +65,8 @@ pub async fn consent_post(
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
+
+    crate::shared::csrf::verify_csrf_token(&state, &sid, &action.csrf_token).await?;
 
     let account_sid = crate::shared::utils::extract_cookie(
         &headers,

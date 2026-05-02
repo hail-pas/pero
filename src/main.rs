@@ -13,6 +13,8 @@ async fn main() {
     let cfg = AppConfig::load().expect("Failed to load configuration");
     pero::infra::logging::init(&cfg.log);
 
+    validate_production_config(&cfg);
+
     let db_pool = pero::infra::db::init_pool(&cfg.database)
         .await
         .expect("Failed to init database");
@@ -60,6 +62,26 @@ async fn main() {
 
     pero::infra::logging::flush();
     tracing::info!("shutdown complete");
+}
+
+fn validate_production_config(cfg: &AppConfig) {
+    let run_mode = std::env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
+    if run_mode != "production" {
+        return;
+    }
+
+    if !cfg.sso.cookie_secure {
+        tracing::error!("FATAL: cookie_secure must be true in production");
+        std::process::exit(1);
+    }
+    if cfg.cors.allow_origins.iter().any(|o| o == "*") {
+        tracing::error!("FATAL: CORS allow_origins must not be '*' in production");
+        std::process::exit(1);
+    }
+    if !cfg.oidc.issuer.starts_with("https://") {
+        tracing::error!("FATAL: OIDC issuer must use HTTPS in production");
+        std::process::exit(1);
+    }
 }
 
 async fn shutdown_signal() {

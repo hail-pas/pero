@@ -88,6 +88,8 @@ pub enum ConsentDecision {
 #[derive(Debug, Deserialize)]
 pub struct ConsentAction {
     pub action: ConsentDecision,
+    #[serde(default)]
+    pub csrf_token: String,
 }
 
 #[derive(Debug, Deserialize, Validate)]

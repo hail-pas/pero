@@ -51,10 +51,12 @@
   <div class="button-row center consent-actions">
     <form method="post" action="/sso/consent">
       <input type="hidden" name="action" value="deny" />
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <button class="btn secondary" type="submit" data-i18n="common.cancel">取消</button>
     </form>
     <form method="post" action="/sso/consent">
       <input type="hidden" name="action" value="allow" />
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <button class="btn primary" type="submit" data-i18n="auth.allow">允许访问</button>
     </form>
   </div>

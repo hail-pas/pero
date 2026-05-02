@@ -26,51 +26,96 @@ pub async fn end_session(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let mut redirect_uri: Option<String> = None;
+    let cookie_sid = extract_cookie_sid(&state, &headers);
 
     if let Some(ref id_token_str) = query.id_token_hint {
-        let id_claims = crate::infra::jwt::verify_id_token(id_token_str, &state.jwt_keys)?;
-
-        let user_id: uuid::Uuid = id_claims
-            .sub
-            .parse()
-            .map_err(|_| AppError::BadRequest("invalid id_token_hint sub".into()))?;
+        let id_claims = match crate::infra::jwt::verify_id_token(id_token_str, &state.jwt_keys) {
+            Ok(c) => c,
+            Err(_) => {
+                return end_session_cleanup(&state, &query, None, cookie_sid).await;
+            }
+        };
 
         if let Some(ref uri) = query.post_logout_redirect_uri {
-            let client = OAuth2ClientRepo::find_by_client_id(&state.db, &id_claims.aud)
+            let client = match OAuth2ClientRepo::find_by_client_id(&state.db, &id_claims.aud)
                 .await?
-                .ok_or(AppError::BadRequest("unknown client".into()))?;
+            {
+                Some(c) => c,
+                None => {
+                    return end_session_cleanup(&state, &query, None, cookie_sid).await;
+                }
+            };
 
-            if !client.post_logout_redirect_uris.iter().any(|u| u == uri) {
-                return Err(AppError::BadRequest(
-                    "post_logout_redirect_uri not registered".into(),
-                ));
+            if let Ok(verified) = crate::infra::jwt::verify_id_token_for_client(
+                id_token_str,
+                &state.jwt_keys,
+                &client.client_id,
+            ) {
+                if client
+                    .post_logout_redirect_uris
+                    .iter()
+                    .any(|u| u == uri)
+                {
+                    redirect_uri = Some(uri.clone());
+                    let target_sid = verified.sid.as_deref().or(cookie_sid.as_deref());
+                    revoke_single_session(&state, &verified.sub, target_sid).await;
+                }
             }
-
-            redirect_uri = Some(uri.clone());
-        }
-
-        if let Some(ref sid) = id_claims.sid {
-            let _ = session::revoke_session(&state.cache, sid).await;
         } else {
-            let _ = session::revoke_user_sessions(&state.cache, user_id).await;
+            let target_sid = id_claims.sid.as_deref().or(cookie_sid.as_deref());
+            revoke_single_session(&state, &id_claims.sub, target_sid).await;
         }
+    } else {
+        revoke_single_session_from_cookie(&state, &headers).await;
+    }
 
+    end_session_cleanup(&state, &query, redirect_uri, cookie_sid).await
+}
+
+async fn revoke_single_session(
+    state: &AppState,
+    sub: &str,
+    sid: Option<&str>,
+) {
+    if let Some(sid) = sid {
+        let _ = session::revoke_session(&state.cache, sid).await;
+    }
+    if let Ok(user_id) = sub.parse::<uuid::Uuid>() {
         if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await {
             tracing::warn!(error = %e, "failed to revoke oauth2 tokens during end_session");
         }
-    } else if let Some(token) = crate::shared::utils::extract_cookie(&headers, ACCOUNT_TOKEN) {
+    }
+}
+
+async fn revoke_single_session_from_cookie(state: &AppState, headers: &HeaderMap) {
+    if let Some(token) = crate::shared::utils::extract_cookie(headers, ACCOUNT_TOKEN) {
         if let Ok(claims) = crate::infra::jwt::verify_token(&token, &state.jwt_keys) {
             if let Some(ref sid) = claims.sid {
                 let _ = session::revoke_session(&state.cache, sid).await;
             }
             if let Ok(user_id) = claims.sub.parse::<uuid::Uuid>() {
-                if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await {
+                if let Err(e) =
+                    RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await
+                {
                     tracing::warn!(error = %e, "failed to revoke oauth2 tokens during end_session");
                 }
             }
         }
     }
+}
 
+fn extract_cookie_sid(_state: &AppState, headers: &HeaderMap) -> Option<String> {
+    let token = crate::shared::utils::extract_cookie(headers, ACCOUNT_TOKEN)?;
+    let claims = crate::infra::jwt::decode_token_claims_unverified(&token).ok()?;
+    claims.sid
+}
+
+async fn end_session_cleanup(
+    state: &AppState,
+    query: &EndSessionQuery,
+    redirect_uri: Option<String>,
+    _cookie_sid: Option<String>,
+) -> Result<Response, AppError> {
     let clear_cookie =
         crate::handler::sso::common::build_cookie(ACCOUNT_TOKEN, "", &state.config.sso, 0)?;
 

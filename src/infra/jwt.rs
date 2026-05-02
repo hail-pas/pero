@@ -176,3 +176,19 @@ pub fn verify_id_token(token: &str, keys: &JwtKeys) -> Result<IdTokenClaims, App
         })?;
     Ok(token_data.claims)
 }
+
+pub fn verify_id_token_for_client(
+    token: &str,
+    keys: &JwtKeys,
+    expected_client_id: &str,
+) -> Result<IdTokenClaims, AppError> {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_issuer(&[&keys.issuer]);
+    validation.set_audience(&[expected_client_id]);
+    let token_data =
+        decode::<IdTokenClaims>(token, &keys.decoding_key, &validation).map_err(|e| {
+            tracing::warn!(error = %e, "ID token verification failed for client");
+            AppError::Unauthorized
+        })?;
+    Ok(token_data.claims)
+}
