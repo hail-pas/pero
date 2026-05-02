@@ -27,6 +27,7 @@ fn build_discovery(state: &AppState) -> serde_json::Value {
         "userinfo_endpoint": format!("{issuer}/oauth2/userinfo"),
         "jwks_uri": format!("{issuer}/oauth2/keys"),
         "revocation_endpoint": format!("{issuer}/oauth2/revoke"),
+        "end_session_endpoint": format!("{issuer}/oauth2/session/end"),
         "response_types_supported": [oauth2_constants::RESPONSE_TYPE_CODE],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": [jwt_constants::ALG_RS256],

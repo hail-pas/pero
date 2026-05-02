@@ -13,6 +13,7 @@ use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use utoipa;
 
 #[utoipa::path(
@@ -27,6 +28,7 @@ use utoipa;
 )]
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
     let user = AuthService::authenticate_with_password(
@@ -37,7 +39,8 @@ pub async fn login(
     )
     .await?;
 
-    let token_response = crate::domain::identity::service::issue_tokens(&state, &user).await?;
+    let token_response =
+        crate::domain::identity::service::issue_tokens(&state, &user, &headers).await?;
     Ok(Json(ApiResponse::success(token_response)))
 }
 
@@ -90,6 +93,7 @@ pub async fn refresh(
         roles,
         &state.jwt_keys,
         state.config.jwt.access_ttl_minutes,
+        None,
         None,
         None,
         None,

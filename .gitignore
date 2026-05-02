@@ -13,3 +13,4 @@ local
 examples/**/__pycache__
 examples/**/.venv
 examples/**/.python-version
+ui/static/js/i18n.js

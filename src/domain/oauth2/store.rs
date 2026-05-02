@@ -18,7 +18,7 @@ impl OAuth2ClientRepo {
         req: &CreateClientRequest,
     ) -> Result<OAuth2Client, AppError> {
         let client = sqlx::query_as::<_, OAuth2Client>(
-            "INSERT INTO oauth2_clients (app_id, client_id, client_secret_hash, client_name, redirect_uris, grant_types, scopes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+            "INSERT INTO oauth2_clients (app_id, client_id, client_secret_hash, client_name, redirect_uris, grant_types, scopes, post_logout_redirect_uris) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
         )
         .bind(req.app_id)
         .bind(client_id)
@@ -27,6 +27,7 @@ impl OAuth2ClientRepo {
         .bind(&req.redirect_uris)
         .bind(&req.grant_types)
         .bind(&req.scopes)
+        .bind(&req.post_logout_redirect_uris)
         .fetch_one(pool)
         .await?;
         Ok(client)
@@ -74,6 +75,8 @@ impl OAuth2ClientRepo {
         req.client_name.push_column(&mut builder, "client_name");
         req.redirect_uris.push_column(&mut builder, "redirect_uris");
         req.scopes.push_column(&mut builder, "scopes");
+        req.post_logout_redirect_uris
+            .push_column(&mut builder, "post_logout_redirect_uris");
         req.enabled.push_column(&mut builder, "enabled");
         builder.push(" WHERE id = ");
         builder.push_bind(id);
@@ -253,12 +256,13 @@ impl AuthCodeRepo {
         code_challenge: Option<&str>,
         code_challenge_method: Option<&str>,
         nonce: Option<&str>,
+        sid: Option<&str>,
         auth_time: i64,
         ttl_minutes: i64,
     ) -> Result<AuthorizationCode, AppError> {
         let expires_at = Utc::now() + TimeDelta::minutes(ttl_minutes);
         let ac = sqlx::query_as::<_, AuthorizationCode>(
-            "INSERT INTO oauth2_authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, auth_time, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
+            "INSERT INTO oauth2_authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, sid, auth_time, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *",
         )
         .bind(code)
         .bind(client_id)
@@ -268,6 +272,7 @@ impl AuthCodeRepo {
         .bind(code_challenge)
         .bind(code_challenge_method)
         .bind(nonce)
+        .bind(sid)
         .bind(auth_time)
         .bind(expires_at)
         .fetch_one(pool)

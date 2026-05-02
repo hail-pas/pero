@@ -20,6 +20,8 @@ pub struct TokenClaims {
     pub azp: Option<String>,
     #[serde(default)]
     pub app_id: Option<String>,
+    #[serde(default)]
+    pub sid: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -46,6 +48,8 @@ pub struct IdTokenClaims {
     pub phone_number: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phone_number_verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
 }
 
 pub struct JwtKeys {
@@ -110,6 +114,7 @@ pub fn sign_access_token(
     scope: Option<String>,
     azp: Option<String>,
     app_id: Option<String>,
+    sid: Option<String>,
 ) -> Result<String, AppError> {
     let now = Utc::now();
     let claims = TokenClaims {
@@ -122,6 +127,7 @@ pub fn sign_access_token(
         scope,
         azp,
         app_id,
+        sid,
     };
     let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
@@ -141,9 +147,32 @@ pub fn verify_token(token: &str, keys: &JwtKeys) -> Result<TokenClaims, AppError
     Ok(token_data.claims)
 }
 
+pub fn decode_token_claims_unverified(token: &str) -> Result<TokenClaims, AppError> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(AppError::Unauthorized);
+    }
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|_| AppError::Unauthorized)?;
+    serde_json::from_slice(&payload).map_err(|_| AppError::Unauthorized)
+}
+
 pub fn sign_id_token(claims: &IdTokenClaims, keys: &JwtKeys) -> Result<String, AppError> {
     let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(keys.key_id.clone());
     encode(&header, claims, &keys.encoding_key)
         .map_err(|e| AppError::Internal(format!("ID token sign failed: {e}")))
+}
+
+pub fn verify_id_token(token: &str, keys: &JwtKeys) -> Result<IdTokenClaims, AppError> {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_issuer(&[&keys.issuer]);
+    validation.validate_aud = false;
+    let token_data =
+        decode::<IdTokenClaims>(token, &keys.decoding_key, &validation).map_err(|e| {
+            tracing::warn!(error = %e, "ID token verification failed");
+            AppError::Unauthorized
+        })?;
+    Ok(token_data.claims)
 }

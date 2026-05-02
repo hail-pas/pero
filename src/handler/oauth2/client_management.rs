@@ -17,7 +17,7 @@ use crate::shared::state::AppState;
     security(("bearer_auth" = [])),
     request_body = crate::domain::oauth2::models::CreateClientRequest,
     responses(
-        (status = 200, description = "Client created"),
+        (status = 200, description = "Client created", body = ApiResponse<CreateClientResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -43,7 +43,7 @@ pub async fn create_client(
         ("page_size" = Option<i64>, Query, description = "Page size (default: 10)"),
     ),
     responses(
-        (status = 200, description = "Client list"),
+        (status = 200, description = "Client list", body = ApiResponse<PageData<OAuth2ClientDTO>>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -65,7 +65,7 @@ pub async fn list_clients(
         ("id" = uuid::Uuid, Path, description = "Client ID"),
     ),
     responses(
-        (status = 200, description = "Client details"),
+        (status = 200, description = "Client details", body = ApiResponse<OAuth2ClientDTO>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Client not found"),
     )
@@ -89,7 +89,7 @@ pub async fn get_client(
     ),
     request_body = crate::domain::oauth2::models::UpdateClientRequest,
     responses(
-        (status = 200, description = "Client updated"),
+        (status = 200, description = "Client updated", body = ApiResponse<OAuth2ClientDTO>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Client not found"),
     )

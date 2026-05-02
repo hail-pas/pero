@@ -1,0 +1,30 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Pero · Register{% endblock %}
+{% block content %}
+<div class="auth-card split-card">
+  <section class="auth-hero-panel">
+    <a class="brand compact" href="/sso/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <h2 data-i18n="register.title">创建账户</h2>
+    <p class="accent-copy" data-i18n="register.accentCopy">Create your account</p>
+    <p data-i18n="register.desc">快速开始，探索更强大的身份能力</p>
+    <div class="glass-illustration cube small" aria-hidden="true"></div>
+  </section>
+
+  <section class="form-panel">
+    {% if !error.is_empty() %}
+    <div class="notice info"><strong>!</strong><span data-server-message="{{ error }}">{{ error }}</span></div>
+    {% endif %}
+    <form class="stack" method="post" action="/sso/register" data-password-confirm novalidate>
+      <label class="field"><span data-i18n="field.username">用户名（3-64 个字符）</span><input name="username" minlength="3" maxlength="64" required placeholder="Username" data-i18n-placeholder="field.usernamePlaceholder" /></label>
+      <label class="field"><span data-i18n="field.email">邮箱（可选）</span><input name="email" type="email" placeholder="name@example.com" data-i18n-placeholder="field.emailPlaceholder" /></label>
+      <label class="field has-action"><span data-i18n="field.passwordRuleShort">密码（8-128 个字符）</span><input name="password" type="password" minlength="8" maxlength="128" required data-password-strength placeholder="Password" data-i18n-placeholder="field.passwordPlaceholder" /><button class="input-action" type="button" data-toggle-password>👁</button></label>
+      <div class="password-meter" data-password-meter><span></span><span></span><span></span><span></span></div>
+      <label class="field"><span data-i18n="field.nicknameOptional">昵称（可选）</span><input name="nickname" placeholder="Nickname" data-i18n-placeholder="field.nicknamePlaceholder" /></label>
+      <label class="field"><span data-i18n="field.phoneOptional">手机号（可选）</span><input name="phone" inputmode="tel" placeholder="+86 138 0000 8888" data-i18n-placeholder="field.phonePlaceholder" /></label>
+      <label class="checkbox"><input type="checkbox" required /> <span data-i18n="register.terms">我已阅读并同意服务条款和隐私政策</span></label>
+      <button class="btn primary full" type="submit" data-i18n="register.submit">创建账户</button>
+      <p class="switch-link"><span data-i18n="register.haveAccount">已有账户？</span> <a href="/sso/login" data-i18n="register.goLogin">去登录</a></p>
+    </form>
+  </section>
+</div>
+{% endblock %}

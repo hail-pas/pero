@@ -13,18 +13,20 @@ use crate::domain::oauth2::store::RefreshTokenRepo;
 use crate::infra::jwt;
 use crate::shared::constants::identity::{DEFAULT_ROLE, PROVIDER_PASSWORD};
 use crate::shared::error::AppError;
+use crate::shared::patch::Patch;
 use crate::shared::state::AppState;
 use uuid::Uuid;
 
 pub async fn register_user(
     state: &AppState,
     req: &RegisterRequest,
+    headers: &axum::http::HeaderMap,
 ) -> Result<TokenResponse, AppError> {
     let mut tx = state.db.begin().await?;
     let user = create_user_with_password(
         &mut tx,
         &req.username,
-        &req.email,
+        req.email.as_deref(),
         req.phone.as_deref(),
         req.nickname.as_deref(),
         &req.password,
@@ -32,7 +34,7 @@ pub async fn register_user(
     .await?;
     tx.commit().await?;
 
-    issue_tokens(state, &user).await
+    issue_tokens(state, &user, headers).await
 }
 
 pub async fn create_user(state: &AppState, req: &CreateUserRequest) -> Result<UserDTO, AppError> {
@@ -40,7 +42,7 @@ pub async fn create_user(state: &AppState, req: &CreateUserRequest) -> Result<Us
     let user = create_user_with_password(
         &mut tx,
         &req.username,
-        &req.email,
+        req.email.as_deref(),
         req.phone.as_deref(),
         req.nickname.as_deref(),
         &req.password,
@@ -57,6 +59,38 @@ pub async fn get_me(state: &AppState, user_id: uuid::Uuid) -> Result<UserDTO, Ap
         .into())
 }
 
+fn should_reset_email_verified(req: &UpdateMeRequest, current: &str) -> bool {
+    match &req.email {
+        Patch::Set(v) => v != current,
+        Patch::Null => !current.is_empty(),
+        Patch::Absent => false,
+    }
+}
+
+fn should_reset_phone_verified(req: &UpdateMeRequest, current: &str) -> bool {
+    match &req.phone {
+        Patch::Set(v) => v != current,
+        Patch::Null => !current.is_empty(),
+        Patch::Absent => false,
+    }
+}
+
+fn should_reset_admin_email_verified(req: &UpdateUserRequest, current: &str) -> bool {
+    match &req.email {
+        Patch::Set(v) => v != current,
+        Patch::Null => !current.is_empty(),
+        Patch::Absent => false,
+    }
+}
+
+fn should_reset_admin_phone_verified(req: &UpdateUserRequest, current: &str) -> bool {
+    match &req.phone {
+        Patch::Set(v) => v != current,
+        Patch::Null => !current.is_empty(),
+        Patch::Absent => false,
+    }
+}
+
 pub async fn update_me(
     state: &AppState,
     user_id: uuid::Uuid,
@@ -65,7 +99,16 @@ pub async fn update_me(
     if let Some(email) = req.email.as_set() {
         validate_update_user(&state.db, user_id, None, Some(email)).await?;
     }
-    Ok(UserRepo::update_me(&state.db, user_id, req).await?.into())
+    let current = UserRepo::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or_else(|| error::user_not_found())?;
+    let reset_email = should_reset_email_verified(req, &current.email.clone().unwrap_or_default());
+    let reset_phone = should_reset_phone_verified(req, &current.phone.clone().unwrap_or_default());
+    Ok(
+        UserRepo::update_me(&state.db, user_id, req, reset_email, reset_phone)
+            .await?
+            .into(),
+    )
 }
 
 pub async fn list_users(
@@ -97,7 +140,15 @@ pub async fn update_user(
     )
     .await?;
 
-    let user = UserRepo::update(&mut *tx, id, req).await?;
+    let current = UserRepo::find_by_id(&mut *tx, id)
+        .await?
+        .ok_or_else(|| error::user_not_found())?;
+    let reset_email =
+        should_reset_admin_email_verified(req, &current.email.clone().unwrap_or_default());
+    let reset_phone =
+        should_reset_admin_phone_verified(req, &current.phone.clone().unwrap_or_default());
+
+    let user = UserRepo::update(&mut *tx, id, req, reset_email, reset_phone).await?;
     tx.commit().await?;
 
     Ok(user.into())
@@ -183,7 +234,11 @@ pub async fn delete_user_attribute(
     Ok(MessageResponse::success("attribute deleted"))
 }
 
-pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse, AppError> {
+pub async fn issue_tokens(
+    state: &AppState,
+    user: &User,
+    headers: &axum::http::HeaderMap,
+) -> Result<TokenResponse, AppError> {
     let user_id_str = user.id.to_string();
     let roles = vec![DEFAULT_ROLE.to_string()];
 
@@ -195,10 +250,18 @@ pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse
         None,
         None,
         None,
+        None,
     )?;
 
-    let (_, refresh_token) =
-        session::create_session(&state.cache, user.id, state.config.jwt.refresh_ttl_days).await?;
+    let (device, location) = crate::shared::utils::parse_user_agent(headers);
+    let (_, refresh_token) = session::create_session(
+        &state.cache,
+        user.id,
+        state.config.jwt.refresh_ttl_days,
+        &device,
+        &location,
+    )
+    .await?;
 
     Ok(TokenResponse {
         access_token,
@@ -210,7 +273,7 @@ pub async fn issue_tokens(state: &AppState, user: &User) -> Result<TokenResponse
 pub async fn validate_new_user<'a, E>(
     executor: E,
     username: &str,
-    email: &str,
+    email: Option<&str>,
 ) -> Result<(), AppError>
 where
     E: sqlx::Executor<'a, Database = sqlx::Postgres>,
@@ -218,10 +281,10 @@ where
     #[derive(sqlx::FromRow)]
     struct Check {
         username_exists: bool,
-        email_exists: bool,
+        email_exists: Option<bool>,
     }
     let check: Check = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1) AS username_exists, EXISTS(SELECT 1 FROM users WHERE email = $2) AS email_exists"
+        "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1) AS username_exists, ($2::text IS NULL OR EXISTS(SELECT 1 FROM users WHERE email = $2)) AS email_exists"
     )
     .bind(username)
     .bind(email)
@@ -230,8 +293,8 @@ where
     if check.username_exists {
         return Err(error::username_exists(username));
     }
-    if check.email_exists {
-        return Err(error::email_exists(email));
+    if check.email_exists == Some(true) {
+        return Err(error::email_exists(email.unwrap_or("")));
     }
     Ok(())
 }
@@ -275,7 +338,7 @@ pub fn hash_password(password: &str) -> Result<String, AppError> {
 pub async fn create_user_with_password(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     username: &str,
-    email: &str,
+    email: Option<&str>,
     phone: Option<&str>,
     nickname: Option<&str>,
     password: &str,

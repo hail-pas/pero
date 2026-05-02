@@ -31,7 +31,7 @@ impl ScopedClaims {
                 None
             },
             email: if has(oauth2_scopes::EMAIL) {
-                Some(user.email.clone())
+                user.email.clone()
             } else {
                 None
             },

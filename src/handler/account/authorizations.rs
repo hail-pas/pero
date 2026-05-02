@@ -6,16 +6,14 @@ use serde::Deserialize;
 
 use crate::domain::oauth2::store::RefreshTokenRepo;
 use crate::handler::account::common;
-use crate::handler::account::common::{ClientView, user_display_name, user_initial};
+use crate::handler::account::common::{AccountLayout, ClientView};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
 #[template(path = "account/authorizations.html")]
 pub struct AuthorizationsTemplate {
-    pub active: String,
-    pub user_initial: String,
-    pub user_name: String,
+    pub layout: AccountLayout,
     pub clients: Vec<ClientView>,
 }
 
@@ -28,6 +26,7 @@ pub async fn authorizations_get(
     let clients: Vec<ClientView> = auths
         .iter()
         .map(|a| ClientView {
+            token_id: a.token_id.to_string(),
             client_name: a.client_name.clone(),
             scopes: a.scopes.join(", "),
             created_at: a.created_at.format("%Y-%m-%d %H:%M").to_string(),
@@ -35,9 +34,7 @@ pub async fn authorizations_get(
         .collect();
 
     let tpl = AuthorizationsTemplate {
-        active: "authorizations".into(),
-        user_initial: user_initial(&user),
-        user_name: user_display_name(&user),
+        layout: AccountLayout::new("authorizations", &user),
         clients,
     };
     Ok(common::render_tpl(&tpl)?.into_response())

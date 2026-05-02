@@ -36,7 +36,7 @@ impl UserRepo {
     pub async fn create<'a, E>(
         executor: E,
         username: &str,
-        email: &str,
+        email: Option<&str>,
         phone: Option<&str>,
         nickname: Option<&str>,
     ) -> Result<User, AppError>
@@ -121,12 +121,20 @@ impl UserRepo {
         executor: E,
         id: Uuid,
         req: &UpdateUserRequest,
+        reset_email_verified: bool,
+        reset_phone_verified: bool,
     ) -> Result<User, AppError>
     where
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
         let mut builder =
             sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE users SET updated_at = now()");
+        if reset_email_verified {
+            builder.push(", email_verified = false");
+        }
+        if reset_phone_verified {
+            builder.push(", phone_verified = false");
+        }
         req.username.push_column(&mut builder, "username");
         req.email.push_column(&mut builder, "email");
         req.phone.push_column(&mut builder, "phone");
@@ -147,13 +155,15 @@ impl UserRepo {
         pool: &sqlx::PgPool,
         id: Uuid,
         req: &UpdateMeRequest,
+        reset_email_verified: bool,
+        reset_phone_verified: bool,
     ) -> Result<User, AppError> {
         let mut builder =
             sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE users SET updated_at = now()");
-        if req.email.as_set().is_some() {
+        if reset_email_verified {
             builder.push(", email_verified = false");
         }
-        if req.phone.as_set().is_some() || matches!(req.phone, crate::shared::patch::Patch::Null) {
+        if reset_phone_verified {
             builder.push(", phone_verified = false");
         }
         req.email.push_column(&mut builder, "email");

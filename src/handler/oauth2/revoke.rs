@@ -12,7 +12,10 @@ use crate::shared::state::AppState;
     post,
     path = "/oauth2/revoke",
     tag = "OAuth2",
-    request_body = crate::domain::oauth2::models::RevokeRequest,
+    request_body(
+        content = crate::domain::oauth2::models::RevokeRequest,
+        content_type = "application/x-www-form-urlencoded",
+    ),
     responses(
         (status = 200, description = "Token revoked"),
         (status = 400, description = "Invalid request"),

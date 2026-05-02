@@ -6,18 +6,13 @@ use serde::Deserialize;
 
 use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::authn::AuthService;
-use crate::domain::social::store::SocialProviderRepo;
 use crate::domain::sso::models::LoginForm;
-use crate::handler::sso::common::{load_sso_session, mark_sso_authenticated, render_tpl};
+use crate::handler::social::{ProviderView, load_provider_views};
+use crate::handler::sso::common::{
+    load_sso_session, mark_sso_authenticated, render_tpl, set_account_cookie,
+};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
-
-#[derive(Debug, Clone)]
-pub struct ProviderView {
-    pub key: String,
-    pub icon: String,
-    pub name: String,
-}
 
 pub fn query_from_session(s: &crate::domain::sso::models::SsoSession) -> String {
     let p = &s.authorize_params;
@@ -47,32 +42,6 @@ pub struct LoginTemplate {
     pub error: String,
 }
 
-async fn load_social_providers(state: &AppState) -> Vec<ProviderView> {
-    match SocialProviderRepo::list_enabled(&state.db).await {
-        Ok(providers) => providers
-            .iter()
-            .map(|p| ProviderView {
-                key: p.name.clone(),
-                icon: provider_icon(&p.name),
-                name: p.display_name.clone(),
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
-fn provider_icon(name: &str) -> String {
-    match name {
-        "google" => "G".into(),
-        "github" => "GH".into(),
-        "wechat" => "W".into(),
-        "apple" => "A".into(),
-        "microsoft" => "M".into(),
-        "qq" => "Q".into(),
-        _ => name.chars().take(2).collect(),
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct LoginQuery {
     pub error: Option<String>,
@@ -90,7 +59,7 @@ pub async fn login_get(
             if sso.authenticated && sso.user_id.is_some() {
                 return Ok(Redirect::to("/sso/consent").into_response());
             }
-            let providers = load_social_providers(&state).await;
+            let providers = load_provider_views(&state).await;
             let tpl = LoginTemplate {
                 providers,
                 error: error.unwrap_or_default(),
@@ -98,14 +67,21 @@ pub async fn login_get(
             Ok(render_tpl(&tpl)?.into_response())
         }
         (Err(_redirect), Some(_error)) => {
-            let providers = load_social_providers(&state).await;
+            let providers = load_provider_views(&state).await;
             let tpl = LoginTemplate {
                 providers,
                 error: "session_expired".into(),
             };
             Ok(render_tpl(&tpl)?.into_response())
         }
-        (Err(redirect), None) => Ok(redirect),
+        (Err(_redirect), None) => {
+            let providers = load_provider_views(&state).await;
+            let tpl = LoginTemplate {
+                providers,
+                error: "session_expired".into(),
+            };
+            Ok(render_tpl(&tpl)?.into_response())
+        }
     }
 }
 
@@ -116,7 +92,14 @@ pub async fn login_post(
 ) -> Result<Response, AppError> {
     let (sid, mut sso) = match load_sso_session(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return Ok(response),
+        Err(_) => {
+            let providers = load_provider_views(&state).await;
+            let tpl = LoginTemplate {
+                providers,
+                error: "session_expired".into(),
+            };
+            return Ok(render_tpl(&tpl)?.into_response());
+        }
     };
 
     let user = match AuthService::authenticate_with_password(
@@ -129,7 +112,7 @@ pub async fn login_post(
     {
         Ok(user) => user,
         Err(AppError::Unauthorized) => {
-            let providers = load_social_providers(&state).await;
+            let providers = load_provider_views(&state).await;
             let tpl = LoginTemplate {
                 providers,
                 error: "invalid_credentials".into(),
@@ -141,5 +124,10 @@ pub async fn login_post(
 
     mark_sso_authenticated(&state, &sid, &mut sso, user.id).await?;
 
-    Ok(Redirect::to("/sso/consent").into_response())
+    let mut response = Redirect::to("/sso/consent").into_response();
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        set_account_cookie(&state, user.id, &headers).await?,
+    );
+    Ok(response)
 }

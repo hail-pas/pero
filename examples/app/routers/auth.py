@@ -98,6 +98,7 @@ async def callback(
 
     access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token", "")
+    id_token = token_data.get("id_token", "")
 
     try:
         userinfo = await oauth2.get_userinfo(access_token)
@@ -111,6 +112,7 @@ async def callback(
         "user_info": userinfo,
         "access_token": access_token,
         "refresh_token": refresh_token,
+        "id_token": id_token,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -129,7 +131,9 @@ async def callback(
 @router.get("/logout")
 async def logout(request: Request):
     session = _get_session(request)
+    id_token_hint = ""
     if session:
+        id_token_hint = session.get("id_token", "")
         refresh = session.get("refresh_token")
         if refresh:
             try:
@@ -142,6 +146,17 @@ async def logout(request: Request):
 
     redirect = RedirectResponse(url="/", status_code=302)
     redirect.delete_cookie(SESSION_COOKIE)
+
+    if id_token_hint:
+        params = {
+            "id_token_hint": id_token_hint,
+            "post_logout_redirect_uri": f"http://localhost:{config.EXAMPLE_PORT}/",
+        }
+        import urllib.parse
+        end_session_url = f"{config.PERO_BASE_URL}/oauth2/session/end?{urllib.parse.urlencode(params)}"
+        redirect = RedirectResponse(url=end_session_url, status_code=302)
+        redirect.delete_cookie(SESSION_COOKIE)
+
     return redirect
 
 
@@ -156,23 +171,6 @@ async def get_me(request: Request):
         return JSONResponse(content=profile)
     except Exception:
         return JSONResponse(content=session["user_info"])
-
-
-@router.put("/api/me")
-async def update_me(request: Request):
-    session = _get_session(request)
-    if not session:
-        return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-
-    body = await request.json()
-    try:
-        updated = await oauth2.update_profile(session["access_token"], body)
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={"error": str(exc)})
-
-    session["user_info"].update(updated)
-    return JSONResponse(content=session["user_info"])
-
 
 @router.post("/api/permission/check")
 async def check_permission_api(request: Request):

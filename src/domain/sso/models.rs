@@ -36,8 +36,12 @@ pub struct LoginForm {
 pub struct RegisterForm {
     #[validate(length(min = 3, max = 64))]
     pub username: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(email)]
-    pub email: String,
+    pub email: Option<String>,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
     #[serde(

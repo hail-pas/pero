@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use askama::Template;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -8,16 +10,14 @@ use crate::domain::identity::service;
 use crate::domain::identity::store::IdentityRepo;
 use crate::domain::social::store::SocialProviderRepo;
 use crate::handler::account::common;
-use crate::handler::account::common::{SocialProviderView, user_display_name, user_initial};
+use crate::handler::account::common::{AccountLayout, SocialProviderView};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
 #[template(path = "account/social_accounts.html")]
 pub struct SocialAccountsTemplate {
-    pub active: String,
-    pub user_initial: String,
-    pub user_name: String,
+    pub layout: AccountLayout,
     pub providers: Vec<SocialProviderView>,
 }
 
@@ -39,7 +39,7 @@ async fn build_providers(
 ) -> Result<Vec<SocialProviderView>, AppError> {
     let identities = IdentityRepo::list_by_user(&state.db, user_id).await?;
     let all_providers = SocialProviderRepo::list_enabled(&state.db).await?;
-    let bound: Vec<String> = identities.iter().map(|i| i.provider.clone()).collect();
+    let bound: HashSet<&str> = identities.iter().map(|i| i.provider.as_str()).collect();
 
     let mut views = Vec::new();
 
@@ -59,7 +59,7 @@ async fn build_providers(
     }
 
     for p in &all_providers {
-        if bound.contains(&p.name) {
+        if bound.contains(p.name.as_str()) {
             continue;
         }
         views.push(SocialProviderView {
@@ -83,9 +83,7 @@ pub async fn social_get(
     let user = common::get_account_user(&state, &headers).await?;
     let providers = build_providers(&state, user.id).await?;
     let tpl = SocialAccountsTemplate {
-        active: "social_accounts".into(),
-        user_initial: user_initial(&user),
-        user_name: user_display_name(&user),
+        layout: AccountLayout::new("social_accounts", &user),
         providers,
     };
     Ok(common::render_tpl(&tpl)?.into_response())

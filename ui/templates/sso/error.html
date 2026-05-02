@@ -2,7 +2,7 @@
 {% block title %}Pero · Error{% endblock %}
 {% block content %}
 <div class="auth-card error-card">
-  <a class="brand compact" href="/login"><span class="logo-mark">P</span><span>Pero</span></a>
+  <a class="brand compact" href="/sso/login"><span class="logo-mark">P</span><span>Pero</span></a>
   <div class="error-grid">
     <div class="space-illustration" aria-hidden="true">
       <span class="planet"></span><span class="rocket">🚀</span><span class="warning">⚠</span>
@@ -12,7 +12,7 @@
       <h2 data-i18n="error.title">抱歉，服务器出错了</h2>
       <p data-i18n="error.detail">我们已收到你的请求，团队正在尽快处理。请稍后重试或联系支持。</p>
       <div class="button-row">
-        <a class="btn primary" href="/login" data-i18n="error.home">返回首页</a>
+        <a class="btn primary" href="/sso/login" data-i18n="error.home">返回首页</a>
         <button class="btn secondary" type="button" data-toast-message="support@perotech.example" data-i18n="error.support">联系支持</button>
       </div>
       <small class="muted">Error Code: {{ code }}-12A3B4C5</small>

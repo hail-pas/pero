@@ -1,0 +1,36 @@
+{% extends "layouts/account.html" %}
+{% block title %}Pero · Authorization Management{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1 data-i18n="authz.title">授权管理</h1><p data-i18n="authz.subtitle">管理您授权给第三方应用的访问权限</p></div></div>
+
+<section class="card-panel">
+  <div class="table-toolbar">
+    <label class="checkbox"><input type="checkbox" data-select-all="authz" /> <span data-i18n="common.selectAll">全选</span></label>
+    <span><span data-selected-count="authz">0</span> <span data-i18n="common.selected">项已选择</span></span>
+    <button class="btn danger small" type="button" data-bulk-action="authz" data-post-action="/account/authorizations/revoke" data-post-field="token_id" disabled data-i18n="authz.batchRevoke">批量撤销</button>
+    <a class="btn secondary small push-right" href="/account/authorizations" data-i18n="common.refresh">刷新</a>
+  </div>
+  <div class="responsive-table">
+    <table>
+      <thead><tr><th></th><th data-i18n="authz.clientName">应用名称</th><th data-i18n="authz.scopes">Scopes</th><th data-i18n="field.createdAt">授权时间</th><th data-i18n="common.action">操作</th></tr></thead>
+      <tbody>
+      {% for client in clients %}
+        <tr>
+          <td><input type="checkbox" value="{{ client.token_id }}" data-row-checkbox="authz" /></td>
+          <td><strong>{{ client.client_name }}</strong></td>
+          <td><code>{{ client.scopes }}</code></td>
+          <td>{{ client.created_at }}</td>
+          <td>
+            <form method="post" action="/account/authorizations/revoke" data-ajax-row data-toast-i18n="toast.authorizationRevoked">
+              <input type="hidden" name="token_id" value="{{ client.token_id }}" />
+              <button class="btn danger tiny" type="submit" data-i18n="authz.revoke">撤销</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="notice info"><strong>i</strong><span data-i18n="authz.note">撤销后，应用的现有访问令牌将在约 15 分钟内过期失效，届时应用将无法继续访问您的数据。</span></div>
+</section>
+{% endblock %}

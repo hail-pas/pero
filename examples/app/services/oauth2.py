@@ -106,18 +106,6 @@ async def get_profile(access_token: str) -> dict:
         return body.get("data", body)
 
 
-async def update_profile(access_token: str, data: dict) -> dict:
-    async with httpx.AsyncClient() as client:
-        resp = await client.put(
-            f"{config.PERO_BASE_URL}/api/users/me",
-            headers={"Authorization": f"Bearer {access_token}"},
-            json=data,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        return body.get("data", body)
-
-
 async def check_permission(access_token: str, resource: str, action: str) -> bool:
     async with httpx.AsyncClient() as client:
         resp = await client.post(

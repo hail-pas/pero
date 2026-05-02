@@ -1,11 +1,12 @@
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::domain::social::service;
 use crate::domain::sso::session;
 use crate::handler::social::social_callback_url;
-use crate::handler::sso::common::mark_sso_authenticated;
+use crate::handler::sso::common::{mark_sso_authenticated, set_account_cookie};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -22,6 +23,7 @@ pub async fn social_callback(
     State(state): State<AppState>,
     Path(provider): Path<String>,
     Query(query): Query<CallbackQuery>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
     if let Some(error) = query.error {
         let msg = query.error_description.as_deref().unwrap_or(&error);
@@ -47,13 +49,33 @@ pub async fn social_callback(
     let (user_info, social_state) =
         service::handle_callback(&state, code, state_token, &redirect_uri).await?;
 
+    let user = service::find_or_create_user(&state, &user_info).await?;
+
+    if social_state.account_login.unwrap_or(false) {
+        let cookie = set_account_cookie(&state, user.id, &headers).await?;
+        let next = social_state
+            .account_next
+            .filter(|s| s.starts_with('/'))
+            .unwrap_or_else(|| "/account/profile".to_string());
+        let mut response = Redirect::to(&next).into_response();
+        response
+            .headers_mut()
+            .append(axum::http::header::SET_COOKIE, cookie);
+        let clear = axum::http::HeaderValue::from_str(
+            "pero_login_next=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        )
+        .map_err(|e| AppError::Internal(format!("invalid cookie: {e}")))?;
+        response
+            .headers_mut()
+            .append(axum::http::header::SET_COOKIE, clear);
+        return Ok(response);
+    }
+
     let sso_sid = &social_state.sso_session_id;
 
     if sso_sid.is_empty() {
         return Ok(Redirect::to("/sso/login?error=session_expired").into_response());
     }
-
-    let user = service::find_or_create_user(&state, &user_info).await?;
 
     let mut sso = session::get(&state.cache, sso_sid)
         .await?
@@ -61,7 +83,12 @@ pub async fn social_callback(
 
     mark_sso_authenticated(&state, sso_sid, &mut sso, user.id).await?;
 
-    Ok(Redirect::to("/sso/consent").into_response())
+    let mut response = Redirect::to("/sso/consent").into_response();
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        set_account_cookie(&state, user.id, &headers).await?,
+    );
+    Ok(response)
 }
 
 async fn handle_bind_callback(

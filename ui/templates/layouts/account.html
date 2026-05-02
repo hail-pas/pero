@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <script>try{document.documentElement.lang=(localStorage.getItem('pero.lang')||'zh')==='en'?'en':'zh-CN'}catch(e){}</script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Pero User Center{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="account-body">
+  <div class="app-shell">
+    <header class="app-header">
+      <button class="icon-button mobile-only" type="button" data-nav-toggle aria-label="Open navigation">☰</button>
+      <a class="brand compact" href="/account/profile"><span class="logo-mark">P</span><span>Pero</span></a>
+      <div class="header-actions">
+        <div class="top-tools">
+          <button class="lang-pill is-active" type="button" data-lang="zh">中</button>
+          <button class="lang-pill" type="button" data-lang="en">EN</button>
+        </div>
+        <div class="header-user" data-user-menu>
+          <button class="header-user-trigger" type="button" aria-label="User menu">
+            <span class="avatar sm">{% if !layout.user_avatar_url.is_empty() %}<img src="{{ layout.user_avatar_url }}" alt="">{% else %}{{ layout.user_initial }}{% endif %}</span>
+            <span class="desktop-only">{{ layout.user_name }}</span>
+          </button>
+          <div class="user-dropdown" data-user-dropdown>
+            <a href="/account/profile" class="dropdown-item"><span>⌂</span> <span data-i18n="nav.profile">个人中心</span></a>
+            <a href="/account/change-password" class="dropdown-item"><span>🔒</span> <span data-i18n="nav.changePassword">修改密码</span></a>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item danger" type="button" data-post-action="/account/logout" data-redirect="/oauth2/session/end" data-i18n="nav.logout">退出登录</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <aside class="sidebar" data-sidebar>
+      <nav>
+        <a href="/account/profile" class="nav-item {% if layout.active == "profile" %}is-active{% endif %}"><span>⌂</span><span data-i18n="nav.profile">个人中心</span></a>
+        <a href="/account/change-password" class="nav-item {% if layout.active == "change_password" %}is-active{% endif %}"><span>🔒</span><span data-i18n="nav.changePassword">修改密码</span></a>
+        <a href="/account/social" class="nav-item {% if layout.active == "social_accounts" %}is-active{% endif %}"><span>⌘</span><span data-i18n="nav.socialAccounts">社交账号</span></a>
+        <a href="/account/authorizations" class="nav-item {% if layout.active == "authorizations" %}is-active{% endif %}"><span>▣</span><span data-i18n="nav.authorizations">授权管理</span></a>
+        <a href="/account/sessions" class="nav-item {% if layout.active == "sessions" %}is-active{% endif %}"><span>◈</span><span data-i18n="nav.sessions">会话管理</span></a>
+      </nav>
+    </aside>
+
+    <section class="content-pane">
+      {% block content %}{% endblock %}
+    </section>
+  </div>
+  <div class="sidebar-backdrop" data-nav-backdrop></div>
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
+  <script src="/static/js/i18n.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

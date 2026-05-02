@@ -89,13 +89,13 @@ async fn validate_email_token(state: &AppState, token: &str) -> (String, String)
             if user.email_verified {
                 let key = format!("{EMAIL_VERIFY_PREFIX}{token}");
                 let _ = crate::infra::cache::del(&state.cache, &key).await;
-                return ("success".to_string(), user.email);
+                return ("success".to_string(), user.email.unwrap_or_default());
             }
             match UserRepo::set_email_verified(&state.db, uid).await {
                 Ok(_) => {
                     let key = format!("{EMAIL_VERIFY_PREFIX}{token}");
                     let _ = crate::infra::cache::del(&state.cache, &key).await;
-                    ("success".to_string(), user.email)
+                    ("success".to_string(), user.email.unwrap_or_default())
                 }
                 Err(_) => ("invalid".to_string(), String::new()),
             }
@@ -164,6 +164,17 @@ pub async fn verify_phone_post(
     Ok(render_tpl(&tpl)?.into_response())
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/identity/send-verify-email",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Verification email sent", body = crate::api::response::MessageResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Email already verified"),
+    )
+)]
 pub async fn send_verify_email_post(
     State(state): State<AppState>,
     auth_user: crate::api::extractors::AuthUser,
@@ -185,7 +196,7 @@ pub async fn send_verify_email_post(
     .await?;
 
     tracing::info!(
-        email = %user.email,
+        email = ?user.email,
         token = %token,
         "email verification token generated (email delivery stub)"
     );
@@ -195,6 +206,17 @@ pub async fn send_verify_email_post(
     )))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/identity/send-verify-phone",
+    tag = "Identity",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Verification SMS sent", body = crate::api::response::MessageResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Phone already verified"),
+    )
+)]
 pub async fn send_verify_phone_post(
     State(state): State<AppState>,
     auth_user: crate::api::extractors::AuthUser,

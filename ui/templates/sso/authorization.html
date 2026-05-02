@@ -3,7 +3,7 @@
 {% block content %}
 <div class="auth-card consent-card consent-simple">
   <div class="consent-header simple">
-    <a class="brand compact" href="/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <a class="brand compact" href="/sso/login"><span class="logo-mark">P</span><span>Pero</span></a>
     <span class="badge verified" data-i18n="auth.oidc">OIDC / SSO 授权</span>
   </div>
 
@@ -36,18 +36,27 @@
     </section>
 
     <section class="card-panel compact-panel account-consent-panel">
-      <div class="section-title compact-title"><span class="avatar photo">{{ user_initial }}</span><div><h3 data-i18n="auth.yourAccount">你的账号</h3><p>{{ user_email }}</p></div></div>
-      <dl class="meta-grid slim">
-        <dt data-i18n="auth.accountType">账号类型</dt><dd data-i18n="auth.workAccount">工作账号</dd>
-        <dt data-i18n="auth.organization">所属组织</dt><dd>Pero Technologies</dd>
-      </dl>
+      <div class="section-title compact-title">
+        <span class="avatar photo">{% if !user_avatar_url.is_empty() %}<img src="{{ user_avatar_url }}" alt="">{% else %}{{ user_initial }}{% endif %}</span>
+        <div>
+          <h3 data-i18n="auth.yourAccount">你的账号</h3>
+          <p>{{ user_email }}</p>
+        </div>
+      </div>
+
     </section>
   </div>
 
   <div class="notice info consent-notice"><strong>⛨</strong><span data-i18n="auth.securityNote">我们只会在你同意的情况下共享信息；你可以随时在账号设置中撤销访问权限。</span></div>
   <div class="button-row center consent-actions">
-    <button class="btn secondary" type="button" onclick="history.back()" data-i18n="common.cancel">取消</button>
-    <button class="btn primary" type="button" data-toast-message="已允许访问 / Access allowed" data-i18n="auth.allow">允许访问</button>
+    <form method="post" action="/sso/consent">
+      <input type="hidden" name="action" value="deny" />
+      <button class="btn secondary" type="submit" data-i18n="common.cancel">取消</button>
+    </form>
+    <form method="post" action="/sso/consent">
+      <input type="hidden" name="action" value="allow" />
+      <button class="btn primary" type="submit" data-i18n="auth.allow">允许访问</button>
+    </form>
   </div>
 </div>
 {% endblock %}

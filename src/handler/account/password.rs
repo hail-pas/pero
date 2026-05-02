@@ -7,16 +7,14 @@ use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::authn::AuthService;
 use crate::domain::sso::models::ChangePasswordForm;
 use crate::handler::account::common;
-use crate::handler::account::common::{user_display_name, user_initial};
+use crate::handler::account::common::AccountLayout;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
 #[template(path = "account/change_password.html")]
 pub struct AccountChangePasswordTemplate {
-    pub active: String,
-    pub user_initial: String,
-    pub user_name: String,
+    pub layout: AccountLayout,
 }
 
 pub async fn change_password_get(
@@ -25,9 +23,7 @@ pub async fn change_password_get(
 ) -> Result<Response, AppError> {
     let user = common::get_account_user(&state, &headers).await?;
     let tpl = AccountChangePasswordTemplate {
-        active: "change_password".into(),
-        user_initial: user_initial(&user),
-        user_name: user_display_name(&user),
+        layout: AccountLayout::new("change_password", &user),
     };
     Ok(common::render_tpl(&tpl)?.into_response())
 }

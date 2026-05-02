@@ -22,6 +22,7 @@ pub struct AuthorizationTemplate {
     pub user_name: String,
     pub user_email: String,
     pub user_initial: String,
+    pub user_avatar_url: String,
 }
 
 pub async fn consent_get(
@@ -43,8 +44,9 @@ pub async fn consent_get(
         client_url: sso.authorize_params.redirect_uri.clone(),
         scopes: consent.scopes,
         user_name: crate::handler::account::common::user_display_name(&user),
-        user_email: user.email.clone(),
+        user_email: user.email.clone().unwrap_or_default(),
         user_initial: crate::handler::account::common::user_initial(&user),
+        user_avatar_url: crate::handler::account::common::user_avatar_url(&user),
     };
     Ok(render_tpl(&tpl)?.into_response())
 }
@@ -59,7 +61,16 @@ pub async fn consent_post(
         Err(response) => return Ok(response),
     };
 
-    let redirect = service::handle_consent_action(&state, &sid, &sso, action.action).await?;
+    let account_sid = crate::shared::utils::extract_cookie(
+        &headers,
+        crate::shared::constants::cookies::ACCOUNT_TOKEN,
+    )
+    .and_then(|token| crate::infra::jwt::decode_token_claims_unverified(&token).ok())
+    .and_then(|claims| claims.sid);
+
+    let redirect =
+        service::handle_consent_action(&state, &sid, &sso, action.action, account_sid.as_deref())
+            .await?;
     let mut response = Redirect::to(&redirect).into_response();
     response.headers_mut().append(
         axum::http::header::SET_COOKIE,

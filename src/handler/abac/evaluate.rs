@@ -17,7 +17,7 @@ use crate::shared::state::AppState;
     security(("bearer_auth" = [])),
     request_body = EvaluateRequest,
     responses(
-        (status = 200, description = "Policy evaluated"),
+        (status = 200, description = "Policy evaluated", body = ApiResponse<EvaluateResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]

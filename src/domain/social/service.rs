@@ -52,6 +52,8 @@ pub async fn delete_provider(state: &AppState, id: Uuid) -> Result<(), AppError>
 pub struct SocialState {
     pub sso_session_id: String,
     pub provider: String,
+    pub account_login: Option<bool>,
+    pub account_next: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -74,6 +76,53 @@ pub async fn build_authorize_url(
     let social_state = SocialState {
         sso_session_id: sso_session_id.to_string(),
         provider: provider_name.to_string(),
+        account_login: None,
+        account_next: None,
+    };
+    cache::set_json(
+        &state.cache,
+        &format!("social_state:{state_token}"),
+        &social_state,
+        600,
+    )
+    .await?;
+
+    let scopes = if provider.scopes.is_empty() {
+        String::new()
+    } else {
+        urlencoding::encode(&provider.scopes.join(" ")).into()
+    };
+
+    let mut url = format!(
+        "{}?client_id={}&response_type=code&state={}&redirect_uri={}",
+        provider.authorize_url,
+        urlencoding::encode(&provider.client_id),
+        urlencoding::encode(&state_token),
+        urlencoding::encode(redirect_uri),
+    );
+    if !scopes.is_empty() {
+        url.push_str(&format!("&scope={scopes}"));
+    }
+
+    Ok((url, state_token))
+}
+
+pub async fn build_account_login_url(
+    state: &AppState,
+    provider_name: &str,
+    redirect_uri: &str,
+    next: Option<&str>,
+) -> Result<(String, String), AppError> {
+    let provider = SocialProviderRepo::find_enabled_by_name(&state.db, provider_name)
+        .await?
+        .ok_or(provider_not_found())?;
+
+    let state_token = uuid::Uuid::new_v4().to_string();
+    let social_state = SocialState {
+        sso_session_id: String::new(),
+        provider: provider_name.to_string(),
+        account_login: Some(true),
+        account_next: next.map(|s| s.to_string()),
     };
     cache::set_json(
         &state.cache,
@@ -161,6 +210,12 @@ pub async fn find_or_create_user(
             .bind(&info.provider_uid)
             .execute(&state.db)
             .await?;
+            if !user.email_verified {
+                sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
+                    .bind(user.id)
+                    .execute(&state.db)
+                    .await?;
+            }
             return Ok(user);
         }
     }
@@ -176,22 +231,24 @@ pub async fn find_or_create_user(
             let uid_prefix: String = info.provider_uid.chars().take(8).collect();
             format!("{}_{}", info.provider, uid_prefix)
         });
-    let base_email = info
-        .email
-        .clone()
-        .unwrap_or_else(|| format!("{}+{}@social.pero.dev", info.provider, info.provider_uid));
 
     let username = resolve_unique_username(&mut *tx, &base_username).await?;
-    let email = resolve_unique_email(&mut *tx, &base_email).await?;
 
     let user = UserRepo::create(
         &mut *tx,
         &username,
-        &email,
+        info.email.as_deref(),
         None,
         info.display_name.as_deref(),
     )
     .await?;
+
+    if info.email.is_some() {
+        sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     sqlx::query(
         "INSERT INTO identities (user_id, provider, provider_uid, verified) VALUES ($1, $2, $3, true)",
@@ -296,23 +353,4 @@ pub fn username_candidate(base: &str, suffix: Option<u32>, max_len: usize) -> St
     let base_len = max_len.saturating_sub(suffix.chars().count());
     let truncated: String = base.chars().take(base_len).collect();
     format!("{truncated}{suffix}")
-}
-
-async fn resolve_unique_email(
-    executor: &mut sqlx::PgConnection,
-    base: &str,
-) -> Result<String, AppError> {
-    let mut email = base.to_string();
-    for i in 0..100u32 {
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-                .bind(&email)
-                .fetch_one(&mut *executor)
-                .await?;
-        if !exists {
-            return Ok(email);
-        }
-        email = format!("{i}_{base}");
-    }
-    Err(AppError::Conflict("could not generate unique email".into()))
 }

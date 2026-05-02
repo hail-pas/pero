@@ -6,7 +6,9 @@ use axum::response::{IntoResponse, Redirect, Response};
 use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::authn::AuthService;
 use crate::domain::sso::models::RegisterForm;
-use crate::handler::sso::common::{load_sso_session, mark_sso_authenticated, render_tpl};
+use crate::handler::sso::common::{
+    load_sso_session, mark_sso_authenticated, render_tpl, set_account_cookie,
+};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -43,7 +45,7 @@ pub async fn register_post(
     let user = match AuthService::register_user_with_password(
         &state,
         &form.username,
-        &form.email,
+        form.email.as_deref(),
         form.phone.as_deref(),
         form.nickname.as_deref(),
         &form.password,
@@ -60,5 +62,10 @@ pub async fn register_post(
 
     mark_sso_authenticated(&state, &sid, &mut sso, user.id).await?;
 
-    Ok(Redirect::to("/sso/consent").into_response())
+    let mut response = Redirect::to("/sso/consent").into_response();
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        set_account_cookie(&state, user.id, &headers).await?,
+    );
+    Ok(response)
 }

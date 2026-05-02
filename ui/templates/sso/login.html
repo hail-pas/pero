@@ -3,18 +3,18 @@
 {% block content %}
 <div class="auth-card split-card login-card">
   <section class="auth-hero-panel">
-    <a class="brand compact" href="/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <a class="brand compact" href="/sso/login"><span class="logo-mark">P</span><span>Pero</span></a>
     <h2 data-i18n="login.title">欢迎登录</h2>
-    <p class="accent-copy">Welcome back</p>
+    <p class="accent-copy" data-i18n="login.accentCopy">Welcome back</p>
     <p data-i18n="login.desc">很高兴再次见到你，请使用你的 Pero 账号继续访问。</p>
     <div class="glass-illustration cube" aria-hidden="true"></div>
   </section>
 
   <section class="form-panel">
     {% if !error.is_empty() %}
-    <div class="notice info"><strong>!</strong><span>{{ error }}</span></div>
+    <div class="notice info"><strong>!</strong><span data-server-message="{{ error }}">{{ error }}</span></div>
     {% endif %}
-    <form class="stack" data-form="login" novalidate>
+    <form class="stack" method="post" action="/sso/login" data-password-confirm novalidate>
       <label class="field">
         <span data-i18n="field.identifier">唯一标识</span>
         <span class="identifier-control">
@@ -32,23 +32,24 @@
         <button class="input-action" type="button" data-toggle-password>👁</button>
       </label>
       <div class="form-row between login-options">
-        <label class="checkbox"><input type="checkbox" /> <span data-i18n="login.remember">记住我</span></label>
-        <a href="/forgot-password" data-i18n="login.forgot">忘记密码？</a>
+        <label class="checkbox"><input type="checkbox" name="remember_me" value="true" /> <span data-i18n="login.remember">记住我</span></label>
+        <a href="/sso/forgot-password" data-i18n="login.forgot">忘记密码？</a>
       </div>
       <button class="btn primary full" type="submit" data-i18n="login.submit">登录</button>
     </form>
 
+    {% if !providers.is_empty() %}
     <div class="divider"><span data-i18n="login.continueWith">或使用以下方式登录</span></div>
     <div class="provider-grid compact-providers">
       {% for provider in providers %}
-        <button type="button" class="provider-button" data-provider="{{ provider.key }}">
-          <span class="provider-icon {{ provider.key }}">{{ provider.icon }}</span>
-          <span class="sr-only">{{ provider.name }}</span>
-        </button>
+        <a href="/sso/social/{{ provider.key }}/login" class="provider-button" aria-label="{{ provider.name }}">
+          {{ provider.icon|safe }}
+        </a>
       {% endfor %}
     </div>
+    {% endif %}
     <p class="fine-print" data-i18n="login.agreement">登录即表示您同意我们的服务条款和隐私政策。</p>
-    <p class="switch-link"><span data-i18n="login.noAccount">还没有账号？</span> <a href="/register" data-i18n="login.registerNow">立即注册</a></p>
+    <p class="switch-link"><span data-i18n="login.noAccount">还没有账号？</span> <a href="/sso/register" data-i18n="login.registerNow">立即注册</a></p>
   </section>
 </div>
 {% endblock %}

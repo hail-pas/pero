@@ -45,7 +45,7 @@ pub async fn create_policy(
         ("page_size" = Option<i64>, Query, description = "Page size"),
     ),
     responses(
-        (status = 200, description = "Policy list"),
+        (status = 200, description = "Policy list", body = ApiResponse<PageData<PolicyDTO>>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -179,7 +179,7 @@ pub async fn unassign_policy(
     security(("basic_auth" = [])),
     params(("user_id" = Uuid, Path, description = "User ID")),
     responses(
-        (status = 200, description = "User policies"),
+        (status = 200, description = "User policies", body = ApiResponse<Vec<PolicyDTO>>),
         (status = 401, description = "Unauthorized"),
     )
 )]

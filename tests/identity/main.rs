@@ -623,6 +623,53 @@ async fn list_set_attributes() {
 }
 
 #[tokio::test]
+async fn register_without_email() {
+    let mut ta = build_app().await;
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/api/identity/register",
+        Some(serde_json::json!({
+            "username": unique_name("noemail"),
+            "password": "password123",
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "register without email failed: {body:?}"
+    );
+    assert!(body["data"]["access_token"].is_string());
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn login_with_unverified_email_rejected() {
+    let mut ta = build_app().await;
+    let email = unique_email("unver");
+    let _ = ta
+        .register_user(&unique_name("unver"), &email, "password123")
+        .await;
+
+    let (status, _) = send_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/api/identity/login",
+        Some(serde_json::json!({
+            "identifier": email,
+            "identifier_type": "email",
+            "password": "password123",
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    ta.cleanup().await;
+}
+
+#[tokio::test]
 async fn unauth_without_token() {
     let (mut app, _rt) = build_router().await;
     let (status, _) = send_request(&mut app, hyper::Method::GET, "/api/users/me", None, None).await;

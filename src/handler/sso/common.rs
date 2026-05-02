@@ -5,7 +5,8 @@ use axum::response::{IntoResponse, Redirect, Response};
 use crate::config::SsoConfig;
 use crate::domain::sso::models::SsoSession;
 use crate::domain::sso::session;
-use crate::shared::constants::cookies::SSO_SESSION;
+use crate::shared::constants::cookies::{ACCOUNT_TOKEN, SSO_SESSION};
+use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -39,11 +40,39 @@ pub fn set_session_cookie(
     config: &SsoConfig,
     session_id: &str,
 ) -> Result<axum::http::HeaderValue, AppError> {
-    build_cookie_header(config, session_id, config.session_ttl_seconds)
+    build_cookie(SSO_SESSION, session_id, config, config.session_ttl_seconds)
 }
 
 pub fn clear_session_cookie(config: &SsoConfig) -> Result<axum::http::HeaderValue, AppError> {
-    build_cookie_header(config, "", 0)
+    build_cookie(SSO_SESSION, "", config, 0)
+}
+
+pub async fn set_account_cookie(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    headers: &axum::http::HeaderMap,
+) -> Result<axum::http::HeaderValue, AppError> {
+    let (device, location) = crate::shared::utils::parse_user_agent(headers);
+    let (identity_session, _refresh_token) = crate::domain::identity::session::create_session(
+        &state.cache,
+        user_id,
+        state.config.jwt.refresh_ttl_days,
+        &device,
+        &location,
+    )
+    .await?;
+    let ttl_seconds = state.config.jwt.refresh_ttl_days * 86400;
+    let token = crate::infra::jwt::sign_access_token(
+        &user_id.to_string(),
+        vec![DEFAULT_ROLE.into()],
+        &state.jwt_keys,
+        (ttl_seconds / 60).max(15),
+        None,
+        None,
+        None,
+        Some(identity_session.session_id.clone()),
+    )?;
+    build_cookie(ACCOUNT_TOKEN, &token, &state.config.sso, ttl_seconds)
 }
 
 pub async fn mark_sso_authenticated(
@@ -64,18 +93,27 @@ pub async fn mark_sso_authenticated(
     .await
 }
 
-fn build_cookie_header(
+pub fn build_account_cookie_value(
+    state: &AppState,
+    token: &str,
+) -> Result<axum::http::HeaderValue, AppError> {
+    let ttl_seconds = state.config.jwt.refresh_ttl_days * 86400;
+    build_cookie(ACCOUNT_TOKEN, token, &state.config.sso, ttl_seconds)
+}
+
+pub fn build_cookie(
+    name: &str,
+    value: &str,
     config: &SsoConfig,
-    session_id: &str,
     max_age: i64,
 ) -> Result<axum::http::HeaderValue, AppError> {
     let mut cookie = format!(
         "{}={}; Path=/; HttpOnly; SameSite={}; Max-Age={}",
-        SSO_SESSION, session_id, config.cookie_same_site, max_age
+        name, value, config.cookie_same_site, max_age
     );
     if config.cookie_secure {
         cookie.push_str("; Secure");
     }
     header::HeaderValue::from_str(&cookie)
-        .map_err(|e| AppError::Internal(format!("invalid SSO cookie header: {e}")))
+        .map_err(|e| AppError::Internal(format!("invalid cookie header: {e}")))
 }

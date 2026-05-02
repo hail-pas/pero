@@ -123,10 +123,13 @@ async fn main() {
         };
 
         let email = loop {
-            let v = prompt("Email");
+            let v = prompt_default("Email (leave empty to skip)", "");
+            if v.is_empty() {
+                break None;
+            }
             if v.contains('@') && v.contains('.') {
                 match UserRepo::find_by_email(&pool, &v).await {
-                    Ok(None) => break v,
+                    Ok(None) => break Some(v),
                     Ok(Some(_)) => println!("  ! Email '{}' already exists, try another", v),
                     Err(e) => {
                         eprintln!("  ! Database error: {}", e);
@@ -135,6 +138,21 @@ async fn main() {
                 }
             } else {
                 println!("  ! Invalid email format");
+            }
+        };
+
+        let phone = loop {
+            let v = prompt_default("Phone (leave empty to skip)", "");
+            if v.is_empty() {
+                break None;
+            }
+            match UserRepo::find_by_phone(&pool, &v).await {
+                Ok(None) => break Some(v),
+                Ok(Some(_)) => println!("  ! Phone '{}' already exists, try another", v),
+                Err(e) => {
+                    eprintln!("  ! Database error: {}", e);
+                    std::process::exit(1);
+                }
             }
         };
 
@@ -151,7 +169,8 @@ async fn main() {
 
         println!();
         println!("  Username: {}", username);
-        println!("  Email:    {}", email);
+        println!("  Email:    {}", email.as_deref().unwrap_or("(none)"));
+        println!("  Phone:    {}", phone.as_deref().unwrap_or("(none)"));
         println!("  Nickname: {}", nickname);
 
         if !confirm("Create this admin user?") {
@@ -160,9 +179,15 @@ async fn main() {
             let password_hash = service::hash_password(&password).expect("Failed to hash password");
             let mut tx = pool.begin().await.expect("Failed to begin transaction");
 
-            let user = UserRepo::create(&mut *tx, &username, &email, None, Some(&nickname))
-                .await
-                .expect("Failed to create user");
+            let user = UserRepo::create(
+                &mut *tx,
+                &username,
+                email.as_deref(),
+                phone.as_deref(),
+                Some(&nickname),
+            )
+            .await
+            .expect("Failed to create user");
 
             IdentityRepo::create_password(&mut *tx, user.id, &password_hash)
                 .await
@@ -214,10 +239,16 @@ async fn main() {
 
         let client_name = prompt_default("Client name", "Example App");
         let redirect_uri = prompt_default("Redirect URI", "http://localhost:9000/callback");
+        let post_logout_default = redirect_uri
+            .rsplit_once('/')
+            .map(|(base, _)| format!("{}/", base))
+            .unwrap_or_else(|| format!("{}/", redirect_uri));
+        let post_logout_uri = prompt_default("Post Logout Redirect URI", &post_logout_default);
 
         println!();
-        println!("  Client name:  {}", client_name);
-        println!("  Redirect URI: {}", redirect_uri);
+        println!("  Client name:           {}", client_name);
+        println!("  Redirect URI:          {}", redirect_uri);
+        println!("  Post Logout Redirect:  {}", post_logout_uri);
 
         if !confirm("Create this OAuth2 client?") {
             println!("Skipped.");
@@ -263,6 +294,7 @@ async fn main() {
                         "profile".to_string(),
                         "email".to_string(),
                     ],
+                    post_logout_redirect_uris: vec![post_logout_uri.clone()],
                 },
             )
             .await
@@ -272,8 +304,9 @@ async fn main() {
             println!();
             println!("  Client ID:     {}", client.client_id);
             println!("  Client Secret: {}", client_secret);
-            println!("  Redirect URI:  {}", redirect_uri);
-            println!("  Scopes:        openid, profile, email");
+            println!("  Redirect URI:          {}", redirect_uri);
+            println!("  Post Logout Redirect:  {}", post_logout_uri);
+            println!("  Scopes:                openid, profile, email");
         }
     }
 

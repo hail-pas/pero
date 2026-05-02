@@ -8,7 +8,7 @@ use validator::Validate;
 use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::models::UpdateMeRequest;
 use crate::handler::account::common;
-use crate::handler::account::common::{UserView, user_display_name, user_initial};
+use crate::handler::account::common::{AccountLayout, UserView};
 use crate::shared::constants::cache_keys::{EMAIL_VERIFY_PREFIX, PHONE_VERIFY_PREFIX};
 use crate::shared::error::AppError;
 use crate::shared::patch::Patch;
@@ -17,26 +17,22 @@ use crate::shared::state::AppState;
 #[derive(Template, Debug)]
 #[template(path = "account/profile.html")]
 pub struct ProfileTemplate {
-    pub active: String,
-    pub user_initial: String,
-    pub user_name: String,
+    pub layout: AccountLayout,
     pub user: UserView,
 }
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ProfileForm {
+    #[serde(default)]
     #[validate(email)]
-    pub email: String,
+    pub email: Option<String>,
     #[serde(
         default,
         deserialize_with = "crate::shared::utils::empty_string_as_none"
     )]
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "crate::shared::utils::empty_string_as_none"
-    )]
+    #[serde(default)]
     #[validate(
         length(max = 20),
         custom(function = "crate::shared::validation::validate_phone")
@@ -56,9 +52,7 @@ pub async fn profile_get(
 ) -> Result<Response, AppError> {
     let user = common::get_account_user(&state, &headers).await?;
     let tpl = ProfileTemplate {
-        active: "profile".into(),
-        user_initial: user_initial(&user),
-        user_name: user_display_name(&user),
+        layout: AccountLayout::new("profile", &user),
         user: UserView::from_user(&user),
     };
     Ok(common::render_tpl(&tpl)?.into_response())
@@ -75,10 +69,12 @@ pub async fn profile_post(
         .ok_or(AppError::Unauthorized)?;
 
     let req = UpdateMeRequest {
-        email: if form.email == current.email {
-            Patch::Absent
-        } else {
-            Patch::Set(form.email)
+        email: match form.email {
+            Some(v) if !v.is_empty() && v != current.email.clone().unwrap_or_default() => {
+                Patch::Set(v)
+            }
+            Some(v) if v.is_empty() && current.email.is_some() => Patch::Null,
+            _ => Patch::Absent,
         },
         nickname: match form.nickname {
             Some(v) => Patch::Set(v),
@@ -89,8 +85,11 @@ pub async fn profile_post(
             None => Patch::Null,
         },
         phone: match form.phone {
-            Some(v) => Patch::Set(v),
-            None => Patch::Null,
+            Some(v) if !v.is_empty() && v != current.phone.clone().unwrap_or_default() => {
+                Patch::Set(v)
+            }
+            Some(v) if v.is_empty() && current.phone.is_some() => Patch::Null,
+            _ => Patch::Absent,
         },
     };
     let updated = crate::domain::identity::service::update_me(&state, user_id, &req).await?;
@@ -114,7 +113,7 @@ pub async fn send_verify_email_post(
         state.config.sso.email_verify_ttl_seconds,
     )
     .await?;
-    tracing::info!(email = %user.email, token = %token, "email verification token generated (account page)");
+    tracing::info!(email = ?user.email, token = %token, "email verification token generated (account page)");
     Ok(axum::Json(crate::api::response::MessageResponse::success(
         "Verification email sent.",
     ))

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS apps (
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(64) NOT NULL UNIQUE,
-    email VARCHAR(255) NOT NULL UNIQUE,
+    email VARCHAR(255) UNIQUE,
     phone VARCHAR(20) UNIQUE,
     nickname VARCHAR(64),
     avatar_url TEXT,
@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS oauth2_clients (
     redirect_uris TEXT[] NOT NULL DEFAULT '{}',
     grant_types TEXT[] NOT NULL DEFAULT '{"authorization_code"}',
     scopes TEXT[] NOT NULL DEFAULT '{"openid","profile","email"}',
+    post_logout_redirect_uris TEXT[] NOT NULL DEFAULT '{}',
     enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -106,6 +107,7 @@ CREATE TABLE IF NOT EXISTS oauth2_authorization_codes (
     code_challenge TEXT,
     nonce TEXT,
     code_challenge_method VARCHAR(16),
+    sid TEXT,
     expires_at TIMESTAMPTZ NOT NULL,
     used BOOLEAN NOT NULL DEFAULT false,
     auth_time BIGINT NOT NULL DEFAULT 0,

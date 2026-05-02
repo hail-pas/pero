@@ -93,6 +93,7 @@ async fn exchange_authorization_code(
         &auth_code.scopes,
         auth_code.auth_time,
         auth_code.nonce,
+        auth_code.sid,
         refresh_token,
     )
 }
@@ -149,6 +150,7 @@ async fn exchange_refresh_token(
         &user,
         &stored.scopes,
         stored.auth_time,
+        None,
         None,
         new_refresh,
     )

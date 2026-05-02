@@ -47,6 +47,7 @@ pub struct OAuth2ClientDTO {
     pub redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
     pub scopes: Vec<String>,
+    pub post_logout_redirect_uris: Vec<String>,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -62,6 +63,7 @@ impl From<OAuth2Client> for OAuth2ClientDTO {
             redirect_uris: c.redirect_uris,
             grant_types: c.grant_types,
             scopes: c.scopes,
+            post_logout_redirect_uris: c.post_logout_redirect_uris,
             enabled: c.enabled,
             created_at: c.created_at,
             updated_at: c.updated_at,
@@ -89,6 +91,8 @@ pub struct CreateClientRequest {
     pub grant_types: Vec<String>,
     #[serde(default = "default_scopes")]
     pub scopes: Vec<String>,
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
 }
 
 fn default_grant_types() -> Vec<String> {
@@ -115,6 +119,9 @@ pub struct UpdateClientRequest {
     #[schema(value_type = Option<Vec<String>>)]
     pub scopes: Patch<Vec<String>>,
     #[serde(default)]
+    #[schema(value_type = Option<Vec<String>>)]
+    pub post_logout_redirect_uris: Patch<Vec<String>>,
+    #[serde(default)]
     #[schema(value_type = Option<bool>)]
     pub enabled: Patch<bool>,
 }
@@ -137,6 +144,10 @@ impl Validate for UpdateClientRequest {
             validation::validate_non_empty_items(v)?;
             Ok(())
         });
+        self.post_logout_redirect_uris
+            .validate("post_logout_redirect_uris", &mut errors, |v| {
+                validation::validate_redirect_uris(v)
+            });
         self.enabled
             .validate_required("enabled", &mut errors, |_| Ok(()));
         if errors.is_empty() {

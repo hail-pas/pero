@@ -12,7 +12,7 @@ use crate::shared::validation;
 pub struct UserDTO {
     pub id: Uuid,
     pub username: String,
-    pub email: String,
+    pub email: Option<String>,
     pub phone: Option<String>,
     pub nickname: Option<String>,
     pub avatar_url: Option<String>,
@@ -45,8 +45,12 @@ impl From<User> for UserDTO {
 pub struct RegisterRequest {
     #[validate(length(min = 3, max = 64))]
     pub username: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(email)]
-    pub email: String,
+    pub email: Option<String>,
     #[validate(length(min = 8, max = 128))]
     pub password: String,
     #[serde(

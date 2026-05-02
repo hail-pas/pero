@@ -28,6 +28,7 @@ pub async fn handle_consent_action(
     sid: &str,
     sso: &SsoSession,
     decision: ConsentDecision,
+    account_sid: Option<&str>,
 ) -> Result<String, AppError> {
     let params = &sso.authorize_params;
 
@@ -59,6 +60,7 @@ pub async fn handle_consent_action(
         Some(&params.code_challenge),
         Some(&params.code_challenge_method),
         params.nonce.as_deref(),
+        account_sid,
         sso.auth_time
             .unwrap_or_else(|| chrono::Utc::now().timestamp()),
         state.config.oauth2.auth_code_ttl_minutes,

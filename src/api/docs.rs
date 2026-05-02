@@ -14,6 +14,10 @@ impl Modify for SecurityAddon {
                 "bearer_auth",
                 SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
             );
+            components.add_security_scheme(
+                "basic_auth",
+                SecurityScheme::Http(Http::new(HttpAuthScheme::Basic)),
+            );
         }
     }
 }
@@ -62,9 +66,13 @@ impl Modify for ServersAddon {
         crate::handler::identity::profile::update_user,
         crate::handler::identity::profile::delete_user,
         crate::handler::identity::password::change_password,
+        crate::handler::identity::binding::list_identities,
+        crate::handler::identity::binding::bind,
         crate::handler::identity::binding::unbind,
         crate::handler::identity::user_attrs::list_attributes,
         crate::handler::identity::user_attrs::set_attributes,
+        crate::handler::sso::verification::send_verify_email_post,
+        crate::handler::sso::verification::send_verify_phone_post,
         crate::handler::app::crud::create_app,
         crate::handler::app::crud::list_apps,
         crate::handler::app::crud::get_app,
@@ -80,6 +88,7 @@ impl Modify for ServersAddon {
         crate::handler::oidc::discovery::discovery,
         crate::handler::oidc::jwks::jwks,
         crate::handler::oidc::userinfo::userinfo,
+        crate::handler::abac::evaluate::evaluate,
         crate::handler::abac::policies::create_policy,
         crate::handler::abac::policies::list_policies,
         crate::handler::abac::policies::get_policy,
@@ -88,6 +97,20 @@ impl Modify for ServersAddon {
         crate::handler::abac::policies::assign_policy,
         crate::handler::abac::policies::unassign_policy,
         crate::handler::abac::policies::list_user_policies,
+        crate::handler::abac::client_policies::create_policy,
+        crate::handler::abac::client_policies::list_policies,
+        crate::handler::abac::client_policies::get_policy,
+        crate::handler::abac::client_policies::update_policy,
+        crate::handler::abac::client_policies::delete_policy,
+        crate::handler::abac::client_policies::assign_policy,
+        crate::handler::abac::client_policies::unassign_policy,
+        crate::handler::abac::client_policies::list_user_policies,
+        crate::handler::social::public::list_enabled_providers,
+        crate::handler::social::management::create_provider,
+        crate::handler::social::management::list_providers,
+        crate::handler::social::management::get_provider,
+        crate::handler::social::management::update_provider,
+        crate::handler::social::management::delete_provider,
     ),
     components(
         schemas(
@@ -102,6 +125,7 @@ impl Modify for ServersAddon {
             crate::domain::identity::models::RefreshRequest,
             crate::domain::identity::models::BindRequest,
             crate::domain::identity::models::ChangePasswordRequest,
+            crate::domain::identity::entity::Identity,
             crate::domain::identity::store::UserAttribute,
             crate::domain::identity::store::SetAttributes,
             crate::domain::app::models::AppDTO,
@@ -109,6 +133,7 @@ impl Modify for ServersAddon {
             crate::domain::app::models::UpdateAppRequest,
             crate::domain::oauth2::models::OAuth2ClientDTO,
             crate::domain::oauth2::models::CreateClientRequest,
+            crate::domain::oauth2::models::CreateClientResponse,
             crate::domain::oauth2::models::UpdateClientRequest,
             crate::domain::oauth2::models::TokenRequest,
             crate::domain::oauth2::models::TokenResponse,
@@ -116,10 +141,16 @@ impl Modify for ServersAddon {
             crate::domain::oauth2::models::AuthorizeQuery,
             crate::domain::abac::models::Policy,
             crate::domain::abac::models::PolicyCondition,
+            crate::domain::abac::models::EvaluateRequest,
+            crate::domain::abac::models::EvaluateResponse,
             crate::domain::abac::service::PolicyDTO,
             crate::domain::abac::models::CreatePolicyRequest,
             crate::domain::abac::models::UpdatePolicyRequest,
             crate::domain::abac::models::CreateConditionRequest,
+            crate::domain::social::entity::SocialProviderPublic,
+            crate::domain::social::entity::SocialProviderDTO,
+            crate::domain::social::entity::CreateSocialProviderRequest,
+            crate::domain::social::entity::UpdateSocialProviderRequest,
         )
     ),
     tags(
@@ -129,6 +160,8 @@ impl Modify for ServersAddon {
         (name = "OAuth2", description = "OAuth2 authorization, token, client management"),
         (name = "OIDC", description = "OpenID Connect discovery, JWKS, UserInfo"),
         (name = "ABAC", description = "Policy management and user-policy assignment"),
+        (name = "Client ABAC", description = "Client-scoped policy management"),
+        (name = "Social", description = "Social login provider management"),
     )
 )]
 struct ApiDoc;

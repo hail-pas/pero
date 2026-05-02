@@ -17,6 +17,8 @@ pub struct IdentitySession {
     pub previous_refresh_token_hash: Option<String>,
     pub created_at: i64,
     pub rotated_at: i64,
+    pub device: String,
+    pub location: String,
 }
 
 pub fn parse_session_id(refresh_token: &str) -> Result<&str, AppError> {
@@ -34,6 +36,8 @@ pub async fn create_session(
     pool: &Pool,
     user_id: Uuid,
     ttl_days: i64,
+    device: &str,
+    location: &str,
 ) -> Result<(IdentitySession, String), AppError> {
     let now = Utc::now().timestamp();
     let session_id = Uuid::new_v4().to_string();
@@ -45,6 +49,8 @@ pub async fn create_session(
         previous_refresh_token_hash: None,
         created_at: now,
         rotated_at: now,
+        device: device.to_string(),
+        location: location.to_string(),
     };
 
     cache::set_json(

@@ -69,6 +69,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(abac_required)
         .merge(client_required)
         .merge(SwaggerUi::new("/docs").url("/openapi.json", openapi))
+        .nest_service("/static", tower_http::services::ServeDir::new("ui/static"))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -130,6 +131,10 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
         )
         .route("/oauth2/keys", get(crate::handler::oidc::jwks::jwks))
         .route(
+            "/oauth2/session/end",
+            get(crate::handler::oidc::session::end_session),
+        )
+        .route(
             "/oauth2/authorize",
             get(crate::handler::oauth2::authorize::authorize),
         )
@@ -160,6 +165,15 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
         .route(
             "/oauth2/revoke",
             post(crate::handler::oauth2::revoke::revoke),
+        )
+        .route(
+            "/account/login",
+            get(crate::handler::account::login::login_get)
+                .post(crate::handler::account::login::login_post),
+        )
+        .route(
+            "/account/social/{provider}/login",
+            get(crate::handler::account::login::account_social_login),
         )
         .route(
             "/sso/login",
@@ -198,6 +212,12 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/sso/social/{provider}/callback",
             get(crate::handler::social::callback::social_callback),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::api::middleware::rate_limit::rate_limit_middleware,
+        ));
+
+    let account = Router::new()
         .route(
             "/account/profile",
             get(crate::handler::account::profile::profile_get)
@@ -244,12 +264,20 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             "/account/sessions/delete-all",
             post(crate::handler::account::sessions::delete_all_post),
         )
+        .route(
+            "/account/logout",
+            post(crate::handler::account::sessions::logout_post),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::api::middleware::account_session::account_session_gate,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::rate_limit::rate_limit_middleware,
         ));
 
-    unprotected.merge(rate_limited)
+    unprotected.merge(rate_limited).merge(account)
 }
 
 fn build_login_required_routes(state: &AppState) -> Router<AppState> {

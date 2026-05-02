@@ -16,6 +16,7 @@ pub fn build_token_response(
     scopes: &[String],
     auth_time: i64,
     nonce: Option<String>,
+    sid: Option<String>,
     refresh_token: String,
 ) -> Result<TokenResponse, AppError> {
     let user_id_str = user.id.to_string();
@@ -28,6 +29,7 @@ pub fn build_token_response(
         Some(scope.clone()),
         Some(client.client_id.clone()),
         Some(client.app_id.to_string()),
+        None,
     )?;
     let has_openid = scopes
         .iter()
@@ -40,6 +42,7 @@ pub fn build_token_response(
             nonce,
             &client.client_id,
             auth_time,
+            sid.clone(),
         )?)
     } else {
         None
@@ -62,6 +65,7 @@ fn build_id_token(
     nonce: Option<String>,
     client_id: &str,
     auth_time: i64,
+    sid: Option<String>,
 ) -> Result<String, AppError> {
     let now = Utc::now();
     let claims = ScopedClaims::from_user_and_scopes(user, scopes);
@@ -80,6 +84,7 @@ fn build_id_token(
         email_verified: claims.email_verified,
         phone_number: claims.phone_number,
         phone_number_verified: claims.phone_number_verified,
+        sid,
     };
     jwt::sign_id_token(&id_claims, &state.jwt_keys)
 }

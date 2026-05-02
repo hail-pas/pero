@@ -11,7 +11,10 @@ use axum::response::{IntoResponse, Response};
     post,
     path = "/oauth2/token",
     tag = "OAuth2",
-    request_body = crate::domain::oauth2::models::TokenRequest,
+    request_body(
+        content = crate::domain::oauth2::models::TokenRequest,
+        content_type = "application/x-www-form-urlencoded",
+    ),
     responses(
         (status = 200, description = "Token response", body = crate::domain::oauth2::models::TokenResponse),
         (status = 400, description = "Invalid request"),

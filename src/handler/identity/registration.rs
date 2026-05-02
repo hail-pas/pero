@@ -6,6 +6,7 @@ use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use utoipa;
 
 #[utoipa::path(
@@ -21,10 +22,11 @@ use utoipa;
 )]
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::register_user(&state, &req).await?,
+        service::register_user(&state, &req, &headers).await?,
     )))
 }
 

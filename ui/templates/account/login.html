@@ -1,0 +1,47 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Pero · Sign In{% endblock %}
+{% block content %}
+<div class="auth-card split-card narrow">
+  <section class="auth-hero-panel">
+    <a class="brand compact" href="/account/login"><span class="logo-mark">P</span><span>Pero</span></a>
+    <h2 data-i18n="account_login.title">请重新登录</h2>
+    <p data-i18n="account_login.desc">你的会话已过期，请重新登录以继续访问用户中心。</p>
+    <div class="glass-illustration lock" aria-hidden="true"></div>
+  </section>
+
+  <section class="form-panel center-y">
+    {% if !error.is_empty() %}
+    <div class="notice info"><strong>!</strong><span data-server-message="{{ error }}">{{ error }}</span></div>
+    {% endif %}
+    <form class="stack" method="post" action="/account/login" novalidate>
+      <label class="field">
+        <span data-i18n="field.identifier">唯一标识</span>
+        <span class="identifier-control">
+          <select name="identifier_type" aria-label="Identifier type">
+            <option value="username" data-i18n="field.identifierUsername">用户名</option>
+            <option value="email" data-i18n="field.identifierEmail">邮箱</option>
+            <option value="phone" data-i18n="field.identifierPhone">手机号</option>
+          </select>
+          <input name="identifier" required autocomplete="username" placeholder="请输入唯一标识" data-i18n-placeholder="field.identifierPlaceholder" />
+        </span>
+      </label>
+      <label class="field has-action">
+        <span data-i18n="field.password">密码</span>
+        <input name="password" required type="password" autocomplete="current-password" placeholder="Password" data-i18n-placeholder="field.passwordPlaceholder" />
+        <button class="input-action" type="button" data-toggle-password>👁</button>
+      </label>
+      <button class="btn primary full" type="submit" data-i18n="account_login.submit">登录</button>
+    </form>
+    {% if !providers.is_empty() %}
+    <div class="divider"><span data-i18n="login.continueWith">或使用以下方式登录</span></div>
+    <div class="provider-grid compact-providers">
+      {% for provider in providers %}
+        <a href="/account/social/{{ provider.key }}/login" class="provider-button" aria-label="{{ provider.name }}">
+          {{ provider.icon|safe }}
+        </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

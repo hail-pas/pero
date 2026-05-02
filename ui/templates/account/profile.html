@@ -1,0 +1,32 @@
+{% extends "layouts/account.html" %}
+{% block title %}Pero · Personal Center{% endblock %}
+{% block content %}
+<section class="card-panel profile-card">
+  <div class="profile-avatar-column">
+    <div class="avatar xl" data-avatar-preview>{% if !user.avatar_url.is_empty() %}<img src="{{ user.avatar_url }}" alt="">{% else %}{{ layout.user_initial }}{% endif %}</div>
+    <!-- <button class="btn primary small" type="button" data-avatar-upload data-i18n="profile.changeAvatar">更换头像</button> -->
+    <button class="btn secondary small" type="button" data-default-avatar data-i18n="profile.defaultAvatar">使用默认头像</button>
+  </div>
+
+  <dl class="profile-meta">
+    <dt data-i18n="field.username">用户名</dt><dd>{{ user.username }}</dd>
+    <dt data-i18n="field.email">邮箱</dt><dd>{{ user.email }} {% if user.email_verified %}<span class="badge success" data-i18n="common.verified">已验证</span>{% else %}{% if !user.email.is_empty() %}<span class="badge warning" data-i18n="common.unverified">未验证</span> <button class="inline-action" type="button" data-post-action="/account/profile/send-verify-email" data-toast-message="验证邮件已发送" data-toast-i18n="profile.emailSent" data-i18n="profile.sendEmailVerification">发送验证邮件</button>{% endif %}{% endif %}</dd>
+    <dt data-i18n="field.phoneOptional">手机号</dt><dd>{{ user.phone }} {% if user.phone_verified %}<span class="badge success" data-i18n="common.verified">已验证</span>{% else %}{% if !user.phone.is_empty() %}<span class="badge warning" data-i18n="common.unverified">未验证</span> <button class="inline-action" type="button" data-post-action="/account/profile/send-verify-phone" data-toast-message="验证短信已发送" data-toast-i18n="profile.smsSent" data-i18n="profile.sendSmsVerification">发送验证短信</button>{% endif %}{% endif %}</dd>
+    <dt data-i18n="field.nicknameOptional">昵称</dt><dd>{{ user.nickname }}</dd>
+    <dt data-i18n="field.createdAt">创建时间</dt><dd><time data-local-ts="{{ user.created_at }}"></time></dd>
+  </dl>
+</section>
+
+<section class="card-panel">
+  <div class="section-heading"><h2 data-i18n="profile.editTitle">编辑个人信息</h2><p data-i18n="profile.editDesc">修改邮箱或手机号后，需要重新验证。</p></div>
+  <form class="grid-form" method="post" action="/account/profile" data-ajax-form data-toast-i18n="toast.profileUpdated" novalidate>
+    <label class="field"><span data-i18n="field.nicknameOptional">昵称</span><input name="nickname" value="{{ user.nickname }}" /></label>
+    <label class="field"><span data-i18n="field.email">邮箱</span><input name="email" type="email" value="{{ user.email }}" {% if user.email_verified %}disabled{% endif %} /></label>
+    <label class="field"><span data-i18n="field.phoneOptional">手机号</span><input name="phone" value="{{ user.phone }}" {% if user.phone_verified %}disabled{% endif %} /></label>
+    <label class="field"><span data-i18n="field.avatarUrl">头像 URL</span><input name="avatar_url" value="{{ user.avatar_url }}" placeholder="https://cdn.example/avatar.png" data-i18n-placeholder="field.avatarUrlPlaceholder" data-avatar-url /></label>
+    <div class="form-actions full-line">
+      <button class="btn primary" type="submit" data-i18n="common.saveChanges">保存更改</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

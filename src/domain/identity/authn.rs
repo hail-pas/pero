@@ -43,7 +43,7 @@ impl AuthService {
     pub async fn register_user_with_password(
         state: &AppState,
         username: &str,
-        email: &str,
+        email: Option<&str>,
         phone: Option<&str>,
         nickname: Option<&str>,
         password: &str,
@@ -74,6 +74,18 @@ impl AuthService {
                 return Err(AppError::Unauthorized);
             }
         };
+
+        match identifier_type {
+            IdentifierType::Email if !user.email_verified => {
+                Self::constant_time_password_probe(password);
+                return Err(AppError::Unauthorized);
+            }
+            IdentifierType::Phone if !user.phone_verified => {
+                Self::constant_time_password_probe(password);
+                return Err(AppError::Unauthorized);
+            }
+            _ => {}
+        }
 
         let credential = match Self::load_password_credential(state, user.id).await {
             Ok(credential) => credential,

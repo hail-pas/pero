@@ -8,6 +8,32 @@ use serde::de::DeserializeOwned;
 use crate::infra::cache::Pool;
 use crate::shared::error::AppError;
 
+pub fn parse_user_agent(headers: &HeaderMap) -> (String, String) {
+    let ua = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let parser = woothee::parser::Parser::new();
+    let result = parser.parse(ua);
+    match result {
+        Some(w) => {
+            let device = if !w.name.is_empty() && !w.os.is_empty() {
+                if w.os_version.is_empty() {
+                    format!("{}/{}", w.name, w.os)
+                } else {
+                    format!("{}/{} {}", w.name, w.os, w.os_version)
+                }
+            } else if !w.name.is_empty() {
+                w.name.to_string()
+            } else {
+                "Unknown".to_string()
+            };
+            (device, String::new())
+        }
+        None => ("Unknown".to_string(), String::new()),
+    }
+}
+
 pub fn render_tpl<T: Template>(tpl: &T) -> Result<Html<String>, AppError> {
     tpl.render()
         .map(Html)
