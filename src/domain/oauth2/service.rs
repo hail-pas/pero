@@ -83,7 +83,7 @@ pub fn ensure_client_grant_allowed(
 }
 
 fn fake_secret_probe(client_secret: &str) {
-    let _ = bcrypt::verify(client_secret, FAKE_BCRYPT_HASH);
+    let _ = crate::shared::crypto::verify_secret(client_secret, FAKE_BCRYPT_HASH);
 }
 
 pub struct CreatedClient {
@@ -99,7 +99,7 @@ pub async fn create_client(
 
     let client_id = crate::shared::utils::random_hex_token();
     let client_secret = crate::shared::utils::random_hex_token();
-    let client_secret_hash = crate::domain::identity::service::hash_password(&client_secret)?;
+    let client_secret_hash = crate::shared::crypto::hash_secret(&client_secret)?;
     let client = OAuth2ClientRepo::create(&state.db, &client_id, &client_secret_hash, req).await?;
     Ok(CreatedClient {
         client,

@@ -60,7 +60,6 @@ pub struct SocialState {
 pub struct SocialBindState {
     pub provider: String,
     pub bind_user_id: String,
-    pub redirect_uri: String,
 }
 
 pub async fn build_authorize_url(
@@ -286,8 +285,14 @@ pub async fn bind_social_identity(
         return Err(provider_disabled());
     }
 
+    let redirect_uri = format!(
+        "{}/sso/social/{}/bind-callback",
+        state.config.oidc.issuer.trim_end_matches('/'),
+        social_state.provider,
+    );
+
     let access_token =
-        userinfo::exchange_code(&provider, code, &social_state.redirect_uri).await?;
+        userinfo::exchange_code(&provider, code, &redirect_uri).await?;
     let user_info = userinfo::fetch_userinfo(&provider, &access_token).await?;
 
     let existing =

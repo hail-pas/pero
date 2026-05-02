@@ -13,7 +13,7 @@ pub struct AuthService;
 
 impl AuthService {
     fn constant_time_password_probe(password: &str) {
-        let _ = bcrypt::verify(
+        let _ = crate::shared::crypto::verify_secret(
             password,
             crate::shared::constants::security::FAKE_BCRYPT_HASH,
         );
@@ -96,8 +96,7 @@ impl AuthService {
             Err(err) => return Err(err),
         };
 
-        let valid = bcrypt::verify(password, &credential)
-            .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
+        let valid = crate::shared::crypto::verify_secret(password, &credential)?;
         if !valid {
             return Err(AppError::Unauthorized);
         }
@@ -116,8 +115,7 @@ impl AuthService {
         }
 
         let credential = Self::load_password_credential(state, user_id).await?;
-        let valid = bcrypt::verify(old_password, &credential)
-            .map_err(|e| AppError::Internal(format!("Password verify error: {e}")))?;
+        let valid = crate::shared::crypto::verify_secret(old_password, &credential)?;
         if !valid {
             return Err(error::old_password_incorrect());
         }

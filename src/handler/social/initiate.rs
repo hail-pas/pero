@@ -61,7 +61,6 @@ pub async fn social_bind(
     let social_state = service::SocialBindState {
         provider: provider.clone(),
         bind_user_id: user_id.to_string(),
-        redirect_uri: redirect_uri.clone(),
     };
     crate::infra::cache::set_json(
         &state.cache,

@@ -22,8 +22,7 @@ pub struct OAuth2Client {
 
 impl OAuth2Client {
     pub fn verify_secret(&self, secret: &str) -> Result<bool, AppError> {
-        bcrypt::verify(secret, &self.client_secret_hash)
-            .map_err(|e| AppError::Internal(format!("Secret verify error: {e}")))
+        crate::shared::crypto::verify_secret(secret, &self.client_secret_hash)
     }
 
     pub fn allows_grant_type(&self, grant_type: &str) -> bool {

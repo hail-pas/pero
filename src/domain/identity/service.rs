@@ -370,8 +370,7 @@ where
 }
 
 pub fn hash_password(password: &str) -> Result<String, AppError> {
-    bcrypt::hash(password, bcrypt::DEFAULT_COST)
-        .map_err(|e| AppError::Internal(format!("Password hash error: {e}")))
+    crate::shared::crypto::hash_secret(password)
 }
 
 pub async fn create_user_with_password(

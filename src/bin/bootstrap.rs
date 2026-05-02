@@ -1,5 +1,4 @@
 use pero::config::AppConfig;
-use pero::domain::identity::service;
 use pero::domain::identity::store::{IdentityRepo, UserRepo};
 use std::io::{self, Write};
 
@@ -176,7 +175,7 @@ async fn main() {
         if !confirm("Create this admin user?") {
             println!("Skipped.");
         } else {
-            let password_hash = service::hash_password(&password).expect("Failed to hash password");
+            let password_hash = pero::shared::crypto::hash_secret(&password).expect("Failed to hash password");
             let mut tx = pool.begin().await.expect("Failed to begin transaction");
 
             let user = UserRepo::create(
@@ -278,7 +277,7 @@ async fn main() {
             let client_id_str = uuid::Uuid::new_v4().to_string().replace('-', "");
             let client_secret = uuid::Uuid::new_v4().to_string().replace('-', "");
             let client_secret_hash =
-                service::hash_password(&client_secret).expect("Failed to hash client secret");
+                pero::shared::crypto::hash_secret(&client_secret).expect("Failed to hash client secret");
 
             let client = pero::domain::oauth2::store::OAuth2ClientRepo::create(
                 &pool,

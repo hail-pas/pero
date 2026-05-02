@@ -38,7 +38,7 @@ pub async fn handle_consent_action(
         session::delete(&state.cache, sid).await?;
         return Ok(build_redirect(
             &params.redirect_uri,
-            "error=access_denied",
+            &[("error", "access_denied")],
             &params.state,
         ));
     }
@@ -81,22 +81,17 @@ pub async fn handle_consent_action(
 
     Ok(build_redirect(
         &params.redirect_uri,
-        &format!("code={}", urlencoding::encode(&code)),
+        &[("code", &code)],
         &params.state,
     ))
 }
 
-fn build_redirect(base: &str, first_param: &str, state: &Option<String>) -> String {
-    let params: Vec<(&str, &str)> = first_param.split('&').filter_map(|p| {
-        let mut parts = p.splitn(2, '=');
-        Some((parts.next()?, parts.next()?))
-    }).collect();
-
-    let mut redirect = append_query_params(base, &params).unwrap_or_else(|_| base.to_string());
-    if let Some(state) = state {
-        redirect.push_str(&format!("&state={}", urlencoding::encode(state)));
+fn build_redirect(base: &str, params: &[(&str, &str)], state: &Option<String>) -> String {
+    let mut all_params: Vec<(&str, &str)> = params.to_vec();
+    if let Some(s) = state {
+        all_params.push(("state", s));
     }
-    redirect
+    append_query_params(base, &all_params).unwrap_or_else(|_| base.to_string())
 }
 
 async fn load_valid_authorization_client(

@@ -76,7 +76,7 @@ pub async fn reset_password_post(
         return Err(AppError::Unauthorized);
     }
 
-    let hash = crate::domain::identity::service::hash_password(&form.new_password)?;
+    let hash = crate::shared::crypto::hash_secret(&form.new_password)?;
     UserRepo::update_password_by_identity(&state.db, user_id, &hash).await?;
 
     let key = format!("{PASSWORD_RESET_PREFIX}{token}");
