@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 pub fn validate_length(
     value: &str,
     min: usize,
@@ -91,7 +93,7 @@ pub fn validate_redirect_uris(uris: &[String]) -> Result<(), validator::Validati
     let mut seen = HashSet::new();
     for uri in uris {
         if !seen.insert(uri) {
-            return Err(ValidationError::new("duplicate_redirect_uri"));
+            return Err(validator::ValidationError::new("duplicate_redirect_uri"));
         }
         validate_redirect_uri(uri)?;
     }

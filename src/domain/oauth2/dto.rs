@@ -186,9 +186,13 @@ impl Validate for UpdateClientRequest {
             .validate_required("redirect_uris", &mut errors, |v| {
                 validation::validate_redirect_uris(v)
             });
-        self.grant_types.validate("grant_types", &mut errors, |v| {
-            validate_grant_types(v)
-        });
+        self.grant_types
+            .validate_required("grant_types", &mut errors, |v| {
+                if v.is_empty() {
+                    return Err(ValidationError::new("length"));
+                }
+                validate_grant_types(v)
+            });
         self.scopes.validate_required("scopes", &mut errors, |v| {
             if v.is_empty() {
                 return Err(ValidationError::new("length"));
@@ -196,7 +200,7 @@ impl Validate for UpdateClientRequest {
             validate_allowed_scopes(v)
         });
         self.post_logout_redirect_uris
-            .validate("post_logout_redirect_uris", &mut errors, |v| {
+            .validate_required("post_logout_redirect_uris", &mut errors, |v| {
                 validation::validate_redirect_uris(v)
             });
         self.enabled
