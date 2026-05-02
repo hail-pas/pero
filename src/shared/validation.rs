@@ -69,10 +69,16 @@ pub fn validate_url(url: &str) -> Result<(), validator::ValidationError> {
 pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError> {
     match url::Url::parse(uri) {
         Ok(parsed) => {
-            if parsed.scheme() != "http" && parsed.scheme() != "https" {
-                return Err(validator::ValidationError::new(
-                    "invalid_redirect_uri_scheme",
-                ));
+            if parsed.fragment().is_some() {
+                return Err(validator::ValidationError::new("redirect_uri_fragment_not_allowed"));
+            }
+
+            if parsed.scheme() == "http" {
+                let host = parsed.host_str().unwrap_or_default();
+                let is_loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
+                if !is_loopback {
+                    return Err(validator::ValidationError::new("http_redirect_uri_only_loopback"));
+                }
             }
             Ok(())
         }
@@ -81,7 +87,12 @@ pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError
 }
 
 pub fn validate_redirect_uris(uris: &[String]) -> Result<(), validator::ValidationError> {
+
+    let mut seen = HashSet::new();
     for uri in uris {
+        if !seen.insert(uri) {
+            return Err(ValidationError::new("duplicate_redirect_uri"));
+        }
         validate_redirect_uri(uri)?;
     }
     Ok(())

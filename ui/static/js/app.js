@@ -294,7 +294,7 @@
     $$('[data-bind]').forEach((button) => {
       button.addEventListener('click', () => {
         const provider = button.closest('[data-provider-row]')?.dataset.providerRow;
-        if (provider) window.location.href = `/sso/social/${provider}/login`;
+        if (provider) window.location.href = `/account/social/${provider}/bind`;
       });
     });
 

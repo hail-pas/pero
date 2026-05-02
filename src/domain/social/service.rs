@@ -57,9 +57,10 @@ pub struct SocialState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct SocialBindState {
-    provider: String,
-    bind_user_id: String,
+pub struct SocialBindState {
+    pub provider: String,
+    pub bind_user_id: String,
+    pub redirect_uri: String,
 }
 
 pub async fn build_authorize_url(
@@ -266,21 +267,17 @@ pub async fn bind_social_identity(
     state: &AppState,
     code: &str,
     state_token: &str,
-    bind_user_id: &str,
 ) -> Result<(), AppError> {
-    let user_id: uuid::Uuid = bind_user_id
-        .parse()
-        .map_err(|_| AppError::BadRequest("invalid bind_user id".into()))?;
-
     let key = format!("social_state:{state_token}");
     let social_state: SocialBindState = cache::get_json(&state.cache, &key)
         .await?
         .ok_or_else(social_state_invalid)?;
     cache::del(&state.cache, &key).await?;
 
-    if social_state.bind_user_id != bind_user_id {
-        return Err(social_state_invalid());
-    }
+    let user_id: uuid::Uuid = social_state
+        .bind_user_id
+        .parse()
+        .map_err(|_| AppError::Internal("invalid bind_user_id in state".into()))?;
 
     let provider = SocialProviderRepo::find_by_name(&state.db, &social_state.provider)
         .await?
@@ -289,17 +286,8 @@ pub async fn bind_social_identity(
         return Err(provider_disabled());
     }
 
-    let access_token = userinfo::exchange_code(
-        &provider,
-        code,
-        &format!(
-            "{}/sso/social/{}/callback?bind_user={}",
-            state.config.oidc.issuer.trim_end_matches('/'),
-            social_state.provider,
-            bind_user_id
-        ),
-    )
-    .await?;
+    let access_token =
+        userinfo::exchange_code(&provider, code, &social_state.redirect_uri).await?;
     let user_info = userinfo::fetch_userinfo(&provider, &access_token).await?;
 
     let existing =

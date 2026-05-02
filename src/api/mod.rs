@@ -240,6 +240,10 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
             get(crate::handler::account::social::social_get),
         )
         .route(
+            "/account/social/{provider}/bind",
+            get(crate::handler::social::initiate::social_bind),
+        )
+        .route(
             "/account/social/unbind",
             post(crate::handler::account::social::unbind_post),
         )

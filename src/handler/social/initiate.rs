@@ -29,11 +29,14 @@ pub async fn social_login(
 
 pub async fn social_bind(
     State(state): State<AppState>,
-    user_id: axum::extract::Extension<uuid::Uuid>,
+    headers: HeaderMap,
     Path(provider): Path<String>,
 ) -> Result<Response, AppError> {
+    let user_id =
+        crate::handler::account::common::get_account_user_id(&state, &headers).await?;
+
     let existing = crate::domain::identity::store::IdentityRepo::find_by_user_and_provider(
-        &state.db, user_id.0, &provider,
+        &state.db, user_id, &provider,
     )
     .await?;
     if existing.is_some() {
@@ -49,17 +52,17 @@ pub async fn social_bind(
     .ok_or(provider_not_found())?;
 
     let redirect_uri = format!(
-        "{}/sso/social/{}/bind-callback?bind_user={}",
+        "{}/sso/social/{}/bind-callback",
         state.config.oidc.issuer.trim_end_matches('/'),
         provider,
-        user_id.0
     );
 
     let state_token = uuid::Uuid::new_v4().to_string();
-    let social_state = serde_json::json!({
-        "provider": provider,
-        "bind_user_id": user_id.0.to_string(),
-    });
+    let social_state = service::SocialBindState {
+        provider: provider.clone(),
+        bind_user_id: user_id.to_string(),
+        redirect_uri: redirect_uri.clone(),
+    };
     crate::infra::cache::set_json(
         &state.cache,
         &format!("social_state:{state_token}"),
@@ -68,15 +71,15 @@ pub async fn social_bind(
     )
     .await?;
 
-    let _provider =
+    let provider =
         crate::domain::social::store::SocialProviderRepo::find_by_name(&state.db, &provider)
             .await?
             .ok_or(provider_not_found())?;
 
     let url = crate::shared::utils::append_query_params(
-        &_provider.authorize_url,
+        &provider.authorize_url,
         &[
-            ("client_id", &_provider.client_id),
+            ("client_id", &provider.client_id),
             ("response_type", "code"),
             ("state", &state_token),
             ("redirect_uri", &redirect_uri),

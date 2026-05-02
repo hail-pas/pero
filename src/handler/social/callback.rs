@@ -24,7 +24,6 @@ pub struct BindCallbackQuery {
     pub state: Option<String>,
     pub error: Option<String>,
     pub error_description: Option<String>,
-    pub bind_user: Option<String>,
 }
 
 pub async fn social_callback(
@@ -115,12 +114,8 @@ pub async fn social_bind_callback(
         .state
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("missing state parameter".into()))?;
-    let bind_user_id = query
-        .bind_user
-        .as_deref()
-        .ok_or_else(|| AppError::BadRequest("missing bind_user parameter".into()))?;
 
-    service::bind_social_identity(&state, code, state_token, bind_user_id).await?;
+    service::bind_social_identity(&state, code, state_token).await?;
 
-    Ok(Redirect::to("/?message=social_account_linked").into_response())
+    Ok(Redirect::to("/account/social").into_response())
 }

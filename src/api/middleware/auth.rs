@@ -24,6 +24,17 @@ pub async fn auth_middleware(
         .trim();
 
     let claims = jwt::verify_token(token, &state.jwt_keys)?;
+
+    let user_id: uuid::Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
+
+    let user = crate::domain::identity::store::UserRepo::find_by_id(&state.db, user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if !user.is_active() {
+        return Err(AppError::Forbidden("account is disabled".into()));
+    }
+
     req.extensions_mut().insert(claims);
     Ok(next.run(req).await)
 }

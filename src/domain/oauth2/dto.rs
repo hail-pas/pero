@@ -99,6 +99,14 @@ pub struct CreateClientRequest {
 }
 
 fn validate_grant_types(types: &[String]) -> Result<(), ValidationError> {
+    if types.is_empty() {
+        return Err(ValidationError::new("grant_types_required"));
+    }
+
+    if !types.iter().any(|v| v == oauth2_constants::GRANT_TYPE_AUTH_CODE) {
+        return Err(ValidationError::new("authorization_code_required"));
+    }
+
     let allowed = [
         oauth2_constants::GRANT_TYPE_AUTH_CODE,
         oauth2_constants::GRANT_TYPE_REFRESH_TOKEN,
