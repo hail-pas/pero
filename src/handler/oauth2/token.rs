@@ -25,7 +25,10 @@ pub async fn token(
     headers: HeaderMap,
     ValidatedForm(req): ValidatedForm<TokenRequest>,
 ) -> Response {
-    let req = service::resolve_client_credentials(&headers, req);
+    let req = match service::resolve_client_credentials(&headers, req) {
+        Ok(req) => req,
+        Err(e) => return error::map_app_error(e),
+    };
     match service::exchange_token(&state, &req).await {
         Ok(response) => axum::Json(response).into_response(),
         Err(e) => error::map_app_error(e),

@@ -192,14 +192,29 @@ pub fn ensure_authorization_client_ready(
 pub fn resolve_client_credentials<T: ClientCredentials>(
     headers: &axum::http::HeaderMap,
     mut req: T,
-) -> T {
-    if let Some(auth) = headers
+) -> Result<T, AppError> {
+    let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        if let Ok((id, secret)) = parse_basic_client_auth_header(auth) {
+        .and_then(|v| v.to_str().ok());
+
+    let body_has_id = req.has_client_id();
+
+    match auth_header {
+        Some(auth_value) => {
+            if !auth_value.starts_with("Basic ") && !auth_value.starts_with("basic ") {
+                return Err(AppError::BadRequest(
+                    "unsupported authorization header, expected Basic".into(),
+                ));
+            }
+            if body_has_id {
+                return Err(AppError::BadRequest(
+                    "client credentials must not be provided in both header and body".into(),
+                ));
+            }
+            let (id, secret) = parse_basic_client_auth_header(auth_value)?;
             req.set_client_credentials(id, secret);
         }
+        None => {}
     }
-    req
+    Ok(req)
 }

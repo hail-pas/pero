@@ -281,6 +281,7 @@ pub struct RevokeRequest {
 
 pub trait ClientCredentials {
     fn set_client_credentials(&mut self, client_id: String, client_secret: String);
+    fn has_client_id(&self) -> bool;
 }
 
 impl ClientCredentials for TokenRequest {
@@ -288,11 +289,19 @@ impl ClientCredentials for TokenRequest {
         self.client_id = Some(client_id);
         self.client_secret = Some(client_secret);
     }
+
+    fn has_client_id(&self) -> bool {
+        self.client_id.is_some()
+    }
 }
 
 impl ClientCredentials for RevokeRequest {
     fn set_client_credentials(&mut self, client_id: String, client_secret: String) {
         self.client_id = Some(client_id);
         self.client_secret = Some(client_secret);
+    }
+
+    fn has_client_id(&self) -> bool {
+        self.client_id.is_some()
     }
 }

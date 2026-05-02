@@ -26,7 +26,10 @@ pub async fn revoke(
     headers: HeaderMap,
     ValidatedForm(req): ValidatedForm<RevokeRequest>,
 ) -> Response {
-    let req = service::resolve_client_credentials(&headers, req);
+    let req = match service::resolve_client_credentials(&headers, req) {
+        Ok(req) => req,
+        Err(e) => return error::map_app_error(e),
+    };
     match service::revoke_token(&state, &req).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => error::map_app_error(e),
