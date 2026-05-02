@@ -1,11 +1,12 @@
 use axum::extract::State;
 use axum::http::header;
+use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use crate::handler::account::common;
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
 use crate::shared::state::AppState;
-use crate::shared::utils::extract_cookie;
 
 pub async fn account_session_gate(
     State(state): State<AppState>,
@@ -15,42 +16,29 @@ pub async fn account_session_gate(
     let headers = request.headers().clone();
     let path = request.uri().path().to_owned();
 
-    match check_account_cookie(&state, &headers).await {
-        Some(cookie) => {
+    match common::get_verified_account(&state, &headers).await {
+        Ok((_user, _identity_session)) => {
             let mut response = next.run(request).await;
-            if let Some(cookie) = cookie {
+            if let Some(cookie) = maybe_refresh_cookie(&state, &headers) {
                 response.headers_mut().append(header::SET_COOKIE, cookie);
             }
             response
         }
-        None => {
+        Err(_) => {
             let next_url = urlencoding::encode(&path);
             Redirect::to(&format!("/account/login?next={}", next_url)).into_response()
         }
     }
 }
 
-async fn check_account_cookie(
-    state: &AppState,
-    headers: &axum::http::HeaderMap,
-) -> Option<Option<axum::http::HeaderValue>> {
-    let token = extract_cookie(headers, ACCOUNT_TOKEN)?;
-    let claims = crate::infra::jwt::verify_token(&token, &state.jwt_keys).ok()?;
-
-    if let Some(ref sid) = claims.sid {
-        let exists = crate::domain::identity::session::get_session(&state.cache, sid)
-            .await
-            .unwrap_or(None)
-            .is_some();
-        if !exists {
-            return None;
-        }
-    }
+fn maybe_refresh_cookie(state: &AppState, headers: &HeaderMap) -> Option<axum::http::HeaderValue> {
+    let token = crate::shared::utils::extract_cookie(headers, ACCOUNT_TOKEN)?;
+    let claims = crate::infra::jwt::decode_token_claims_unverified(&token).ok()?;
 
     let total_seconds: i64 = state.config.jwt.refresh_ttl_days * 86400;
     let remaining = claims.exp - chrono::Utc::now().timestamp();
     if remaining > total_seconds / 4 {
-        return Some(None);
+        return None;
     }
 
     let new_token = crate::infra::jwt::sign_access_token(
@@ -65,6 +53,5 @@ async fn check_account_cookie(
     )
     .ok()?;
 
-    let cookie = crate::handler::sso::common::build_account_cookie_value(state, &new_token).ok()?;
-    Some(Some(cookie))
+    crate::handler::sso::common::build_account_cookie_value(state, &new_token).ok()
 }
