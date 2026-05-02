@@ -25,17 +25,23 @@ pub async fn abac_middleware(
 
     let user_id: Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
 
-    let app_id = req
-        .headers()
-        .get(headers::X_APP_ID)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<Uuid>().ok());
+    let app_id_from_token = claims.app_id.as_deref()
+        .and_then(|s| s.parse::<Uuid>().ok());
+
+    let app_id = if app_id_from_token.is_some() {
+        app_id_from_token
+    } else {
+        req.headers()
+            .get(headers::X_APP_ID)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<Uuid>().ok())
+    };
 
     let route_scope = req
         .extensions()
         .get::<RouteScope>()
         .copied()
-        .unwrap_or(RouteScope::Admin);
+        .ok_or_else(|| AppError::Internal("route missing ABAC scope".into()))?;
 
     let subject_attrs = service::build_subject_attrs(&state, user_id, &claims.roles).await?;
     let policies = service::load_user_policies(&state, user_id, app_id, true).await?;

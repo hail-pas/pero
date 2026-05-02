@@ -138,11 +138,7 @@ pub async fn verify_phone_post(
     Query(query): Query<VerifyQuery>,
 ) -> Result<Response, AppError> {
     let token = query.token.unwrap_or_default();
-    let key = format!("{PHONE_VERIFY_PREFIX}{token}");
-    let payload: Option<VerifyPayload> = crate::infra::cache::get_json(&state.cache, &key)
-        .await
-        .ok()
-        .flatten();
+    let payload: Option<VerifyPayload> = crate::shared::utils::consume_cached_token(&state.cache, PHONE_VERIFY_PREFIX, &token).await;
 
     let payload = match payload {
         Some(p) => p,
@@ -161,7 +157,6 @@ pub async fn verify_phone_post(
         .ok_or(AppError::Unauthorized)?;
 
     UserRepo::set_phone_verified(&state.db, payload).await?;
-    crate::infra::cache::del(&state.cache, &key).await?;
 
     let tpl = VerificationTemplate {
         channel: "phone".to_string(),
@@ -203,7 +198,7 @@ pub async fn send_verify_email_post(
         user_id: user.id,
         value: email.to_string(),
     };
-    let token = crate::shared::utils::generate_token_and_cache(
+    let _token = crate::shared::utils::generate_token_and_cache(
         &state.cache,
         EMAIL_VERIFY_PREFIX,
         &payload,
@@ -212,8 +207,7 @@ pub async fn send_verify_email_post(
     .await?;
 
     tracing::info!(
-        email = ?user.email,
-        token = %token,
+        user_id = %user.id,
         "email verification token generated (email delivery stub)"
     );
 
@@ -254,7 +248,7 @@ pub async fn send_verify_phone_post(
         user_id: user.id,
         value: phone.to_string(),
     };
-    let token = crate::shared::utils::generate_token_and_cache(
+    let _token = crate::shared::utils::generate_token_and_cache(
         &state.cache,
         PHONE_VERIFY_PREFIX,
         &payload,
@@ -263,8 +257,7 @@ pub async fn send_verify_phone_post(
     .await?;
 
     tracing::info!(
-        phone = %phone,
-        token = %token,
+        user_id = %user.id,
         "phone verification token generated (SMS delivery stub)"
     );
 

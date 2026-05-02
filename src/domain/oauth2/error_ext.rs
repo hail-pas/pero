@@ -51,3 +51,7 @@ pub fn missing_field(name: &str) -> AppError {
 pub fn user_not_authenticated() -> AppError {
     AppError::Forbidden("user not authenticated".into())
 }
+
+pub fn app_disabled() -> AppError {
+    AppError::Forbidden("app is disabled".into())
+}

@@ -24,7 +24,10 @@ pub struct ProfileTemplate {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ProfileForm {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(email)]
     pub email: Option<String>,
     #[serde(
@@ -33,7 +36,10 @@ pub struct ProfileForm {
     )]
     #[validate(length(min = 1, max = 64))]
     pub nickname: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::shared::utils::empty_string_as_none"
+    )]
     #[validate(
         length(max = 20),
         custom(function = "crate::shared::validation::validate_phone")
@@ -71,11 +77,15 @@ pub async fn profile_post(
 
     let req = UpdateMeRequest {
         email: match form.email {
-            Some(v) if !v.is_empty() && v != current.email.clone().unwrap_or_default() => {
-                Patch::Set(v)
+            Some(v) if v != current.email.clone().unwrap_or_default() => Patch::Set(v),
+            Some(_) => Patch::Absent,
+            None => {
+                if current.email.is_some() {
+                    Patch::Null
+                } else {
+                    Patch::Absent
+                }
             }
-            Some(v) if v.is_empty() && current.email.is_some() => Patch::Null,
-            _ => Patch::Absent,
         },
         nickname: match form.nickname {
             Some(v) => Patch::Set(v),
@@ -86,11 +96,15 @@ pub async fn profile_post(
             None => Patch::Null,
         },
         phone: match form.phone {
-            Some(v) if !v.is_empty() && v != current.phone.clone().unwrap_or_default() => {
-                Patch::Set(v)
+            Some(v) if v != current.phone.clone().unwrap_or_default() => Patch::Set(v),
+            Some(_) => Patch::Absent,
+            None => {
+                if current.phone.is_some() {
+                    Patch::Null
+                } else {
+                    Patch::Absent
+                }
             }
-            Some(v) if v.is_empty() && current.phone.is_some() => Patch::Null,
-            _ => Patch::Absent,
         },
     };
     let updated = crate::domain::identity::service::update_me(&state, user_id, &req).await?;
@@ -116,14 +130,14 @@ pub async fn send_verify_email_post(
         user_id: user.id,
         value: email.to_string(),
     };
-    let token = crate::shared::utils::generate_token_and_cache(
+    let _token = crate::shared::utils::generate_token_and_cache(
         &state.cache,
         EMAIL_VERIFY_PREFIX,
         &payload,
         state.config.sso.email_verify_ttl_seconds,
     )
     .await?;
-    tracing::info!(email = ?user.email, token = %token, "email verification token generated (account page)");
+    tracing::info!(user_id = %user.id, "email verification token generated (account page)");
     Ok(axum::Json(crate::api::response::MessageResponse::success(
         "Verification email sent.",
     ))
@@ -147,14 +161,14 @@ pub async fn send_verify_phone_post(
         user_id: user.id,
         value: phone.to_string(),
     };
-    let token = crate::shared::utils::generate_token_and_cache(
+    let _token = crate::shared::utils::generate_token_and_cache(
         &state.cache,
         PHONE_VERIFY_PREFIX,
         &payload,
         state.config.sso.phone_verify_ttl_seconds,
     )
     .await?;
-    tracing::info!(phone = %phone, token = %token, "phone verification token generated (account page)");
+    tracing::info!(user_id = %user.id, "phone verification token generated (account page)");
     Ok(axum::Json(crate::api::response::MessageResponse::success(
         "Verification SMS sent.",
     ))

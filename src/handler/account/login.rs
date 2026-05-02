@@ -89,7 +89,7 @@ pub async fn login_post(
     let cookie = crate::handler::sso::common::set_account_cookie(&state, user.id, &headers).await?;
 
     let next = extract_cookie(&headers, "pero_login_next")
-        .filter(|s| s.starts_with('/'))
+        .and_then(|s| safe_local_path(&s))
         .unwrap_or_else(|| "/account/profile".to_string());
 
     let mut response = Redirect::to(&next).into_response();

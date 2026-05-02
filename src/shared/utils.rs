@@ -100,6 +100,25 @@ pub async fn validate_cached_token<T: DeserializeOwned>(
         .flatten()
 }
 
+pub async fn consume_cached_token<T: DeserializeOwned>(
+    pool: &Pool,
+    prefix: &str,
+    token: &str,
+) -> Option<T> {
+    if token.is_empty() {
+        return None;
+    }
+    let key = format!("{prefix}{token}");
+    let value: Option<T> = crate::infra::cache::get_json(pool, &key)
+        .await
+        .ok()
+        .flatten();
+    if value.is_some() {
+        let _ = crate::infra::cache::del(pool, &key).await;
+    }
+    value
+}
+
 
 pub fn append_query_params(base: &str, params: &[(&str, &str)]) -> Result<String, AppError> {
     let mut url = url::Url::parse(base)

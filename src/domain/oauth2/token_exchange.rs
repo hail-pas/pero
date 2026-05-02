@@ -34,6 +34,8 @@ pub async fn revoke_token(state: &AppState, req: &RevokeRequest) -> Result<(), A
     )
     .await?;
 
+    crate::domain::oauth2::service::ensure_app_enabled_pub(state, &client).await?;
+
     let mut tx = state.db.begin().await?;
     if let Some(token) = RefreshTokenRepo::find_active_for_update(&mut *tx, &req.token).await? {
         if token.client_id == client.id {

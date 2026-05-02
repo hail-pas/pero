@@ -79,6 +79,9 @@ pub fn evaluate(
         }
     }
 
+    let mut matched_deny = false;
+    let mut matched_allow = false;
+
     for (policy, conditions) in policies {
         if conditions.is_empty() {
             tracing::warn!(
@@ -94,8 +97,18 @@ pub fn evaluate(
             .iter()
             .all(|c| eval_condition(c, ctx, &regex_cache))
         {
-            return policy.effect.clone();
+            match policy.effect.as_str() {
+                "deny" => matched_deny = true,
+                _ => matched_allow = true,
+            }
         }
+    }
+
+    if matched_deny {
+        return "deny".to_string();
+    }
+    if matched_allow {
+        return "allow".to_string();
     }
     default_action.to_string()
 }

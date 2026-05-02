@@ -24,7 +24,7 @@ pub async fn forgot_post(
     ValidatedForm(form): ValidatedForm<ForgotPasswordForm>,
 ) -> Result<Response, AppError> {
     if let Some(user) = find_user_for_reset(&state, &form.identifier).await? {
-        let token = crate::shared::utils::generate_token_and_cache(
+        let _token = crate::shared::utils::generate_token_and_cache(
             &state.cache,
             crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX,
             &user.id.to_string(),
@@ -33,7 +33,6 @@ pub async fn forgot_post(
         .await?;
         tracing::info!(
             identifier = %form.identifier,
-            token = %token,
             "password reset token generated (email delivery stub)"
         );
     }

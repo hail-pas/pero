@@ -51,6 +51,9 @@ pub async fn authenticate_client(
     if !client.verify_secret(client_secret)? {
         return Err(AppError::Unauthorized);
     }
+    if require_enabled {
+        ensure_app_enabled(state, &client).await?;
+    }
     Ok(client)
 }
 
@@ -64,12 +67,18 @@ pub fn parse_basic_client_auth_header(auth_header: &str) -> Result<(String, Stri
         .map_err(|_| AppError::Unauthorized)?;
     let decoded_str = String::from_utf8(decoded).map_err(|_| AppError::Unauthorized)?;
     let mut parts = decoded_str.splitn(2, ':');
-    let client_id = parts.next().unwrap_or("");
-    let client_secret = parts.next().unwrap_or("");
-    if client_id.is_empty() || client_secret.is_empty() {
+    let raw_id = parts.next().unwrap_or("");
+    let raw_secret = parts.next().unwrap_or("");
+    if raw_id.is_empty() || raw_secret.is_empty() {
         return Err(AppError::Unauthorized);
     }
-    Ok((client_id.to_string(), client_secret.to_string()))
+    let client_id = urlencoding::decode(raw_id)
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| raw_id.to_string());
+    let client_secret = urlencoding::decode(raw_secret)
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| raw_secret.to_string());
+    Ok((client_id, client_secret))
 }
 
 pub fn ensure_client_grant_allowed(
@@ -147,6 +156,7 @@ pub async fn validate_authorization_client(
 
     ensure_redirect_uri_allowed(&client, redirect_uri)?;
     ensure_authorization_client_ready(&client, requested_scopes)?;
+    ensure_app_enabled(state, &client).await?;
 
     Ok(client)
 }
@@ -217,4 +227,23 @@ pub fn resolve_client_credentials<T: ClientCredentials>(
         None => {}
     }
     Ok(req)
+}
+
+async fn ensure_app_enabled(state: &AppState, client: &OAuth2Client) -> Result<(), AppError> {
+    let app = crate::domain::app::store::AppRepo::find_by_id(&state.db, client.app_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(format!(
+                "app {} not found for client {}",
+                client.app_id, client.client_id
+            ))
+        })?;
+    if !app.enabled {
+        return Err(error_ext::app_disabled());
+    }
+    Ok(())
+}
+
+pub async fn ensure_app_enabled_pub(state: &AppState, client: &OAuth2Client) -> Result<(), AppError> {
+    ensure_app_enabled(state, client).await
 }

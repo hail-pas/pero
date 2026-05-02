@@ -23,7 +23,7 @@ pub struct EndSessionTemplate;
 pub async fn end_session(
     State(state): State<AppState>,
     Query(query): Query<EndSessionQuery>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let mut redirect_uri: Option<String> = None;
 
@@ -57,6 +57,17 @@ pub async fn end_session(
 
         if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await {
             tracing::warn!(error = %e, "failed to revoke oauth2 tokens during end_session");
+        }
+    } else if let Some(token) = crate::shared::utils::extract_cookie(&headers, ACCOUNT_TOKEN) {
+        if let Ok(claims) = crate::infra::jwt::verify_token(&token, &state.jwt_keys) {
+            if let Some(ref sid) = claims.sid {
+                let _ = session::revoke_session(&state.cache, sid).await;
+            }
+            if let Ok(user_id) = claims.sub.parse::<uuid::Uuid>() {
+                if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await {
+                    tracing::warn!(error = %e, "failed to revoke oauth2 tokens during end_session");
+                }
+            }
         }
     }
 

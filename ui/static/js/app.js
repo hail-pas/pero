@@ -339,6 +339,10 @@
         const img = preview.querySelector('img');
         if (img) img.remove();
         preview.textContent = preview.textContent.trim() || 'P';
+        if (input) {
+          input.value = '';
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         toast(tKey('toast.defaultAvatar'));
       });
     }

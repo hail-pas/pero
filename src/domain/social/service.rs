@@ -241,7 +241,7 @@ pub async fn find_or_create_user(
     )
     .await?;
 
-    if info.email.is_some() {
+    if info.email.is_some() && info.email_verified {
         sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
             .bind(user.id)
             .execute(&mut *tx)
@@ -266,6 +266,7 @@ pub async fn bind_social_identity(
     state: &AppState,
     code: &str,
     state_token: &str,
+    current_user_id: uuid::Uuid,
 ) -> Result<(), AppError> {
     let key = format!("social_state:{state_token}");
     let social_state: SocialBindState = cache::get_json(&state.cache, &key)
@@ -278,6 +279,9 @@ pub async fn bind_social_identity(
         .parse()
         .map_err(|_| AppError::Internal("invalid bind_user_id in state".into()))?;
 
+    if user_id != current_user_id {
+        return Err(AppError::Forbidden("session does not match bind state".into()));
+    }
     let provider = SocialProviderRepo::find_by_name(&state.db, &social_state.provider)
         .await?
         .ok_or(provider_not_found())?;

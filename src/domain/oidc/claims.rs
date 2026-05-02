@@ -14,9 +14,15 @@ pub struct ScopedClaims {
 impl ScopedClaims {
     pub fn from_user_and_scopes(user: &User, scopes: &[String]) -> Self {
         let has = |s: &str| scopes.iter().any(|sc| sc == s);
+        let display_name = user
+            .nickname
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .unwrap_or(&user.username)
+            .to_string();
         Self {
             name: if has(oauth2_scopes::PROFILE) {
-                Some(user.username.clone())
+                Some(display_name)
             } else {
                 None
             },

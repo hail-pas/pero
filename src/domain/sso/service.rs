@@ -17,7 +17,7 @@ pub async fn build_consent_view(
     sso: &SsoSession,
 ) -> Result<ConsentViewData, AppError> {
     let client = load_valid_authorization_client(state, sso).await?;
-    let scopes = granted_scopes_for_display(&client, sso);
+    let scopes = effective_scopes(&client, sso, false);
 
     Ok(ConsentViewData {
         client_name: client.client_name,
@@ -56,7 +56,7 @@ pub async fn handle_consent_action(
     }
 
     let client = load_valid_authorization_client(state, sso).await?;
-    let scopes = granted_scopes(&client, sso);
+    let scopes = effective_scopes(&client, sso, true);
 
     let code = uuid::Uuid::new_v4().to_string().replace('-', "");
 
@@ -112,30 +112,22 @@ fn requested_scopes(sso: &SsoSession) -> Vec<String> {
     crate::shared::utils::parse_scopes(sso.authorize_params.scope.as_deref())
 }
 
-fn granted_scopes(
+fn effective_scopes(
     client: &crate::domain::oauth2::models::OAuth2Client,
     sso: &SsoSession,
+    filter_allowed: bool,
 ) -> Vec<String> {
     let requested = requested_scopes(sso);
-    let effective: Vec<String> = if requested.is_empty() {
+    let raw: Vec<String> = if requested.is_empty() {
         client.scopes.clone()
     } else {
         requested
     };
-    effective
-        .into_iter()
-        .filter(|s| client.scopes.iter().any(|cs| cs == s))
-        .collect()
-}
-
-fn granted_scopes_for_display(
-    client: &crate::domain::oauth2::models::OAuth2Client,
-    sso: &SsoSession,
-) -> Vec<String> {
-    let requested = requested_scopes(sso);
-    if requested.is_empty() {
-        client.scopes.clone()
+    if filter_allowed {
+        raw.into_iter()
+            .filter(|s| client.scopes.iter().any(|cs| cs == s))
+            .collect()
     } else {
-        requested
+        raw
     }
 }

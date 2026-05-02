@@ -65,7 +65,7 @@ pub async fn reset_password_post(
         return Ok(render_tpl(&tpl)?.into_response());
     }
 
-    let user_id = validate_token(&state, &token)
+    let user_id = consume_token(&state, &token)
         .await
         .ok_or_else(|| AppError::BadRequest("Invalid or expired reset token.".into()))?;
 
@@ -79,8 +79,6 @@ pub async fn reset_password_post(
     let hash = crate::shared::crypto::hash_secret(&form.new_password)?;
     UserRepo::update_password_by_identity(&state.db, user_id, &hash).await?;
 
-    let key = format!("{PASSWORD_RESET_PREFIX}{token}");
-    crate::infra::cache::del(&state.cache, &key).await?;
     session::revoke_user_sessions(&state.cache, user_id).await?;
     RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await?;
 
@@ -96,6 +94,13 @@ pub async fn reset_password_post(
 async fn validate_token(state: &AppState, token: &str) -> Option<uuid::Uuid> {
     let uid_str: String =
         crate::shared::utils::validate_cached_token(&state.cache, PASSWORD_RESET_PREFIX, token)
+            .await?;
+    uid_str.parse().ok()
+}
+
+async fn consume_token(state: &AppState, token: &str) -> Option<uuid::Uuid> {
+    let uid_str: String =
+        crate::shared::utils::consume_cached_token(&state.cache, PASSWORD_RESET_PREFIX, token)
             .await?;
     uid_str.parse().ok()
 }

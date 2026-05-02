@@ -60,7 +60,8 @@ pub async fn social_callback(
         let cookie = set_account_cookie(&state, user.id, &headers).await?;
         let next = social_state
             .account_next
-            .filter(|s| s.starts_with('/'))
+            .as_deref()
+            .and_then(crate::shared::utils::safe_local_path)
             .unwrap_or_else(|| "/account/profile".to_string());
         let mut response = Redirect::to(&next).into_response();
         response
@@ -100,6 +101,7 @@ pub async fn social_bind_callback(
     State(state): State<AppState>,
     Path(_provider): Path<String>,
     Query(query): Query<BindCallbackQuery>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
     if let Some(error) = query.error {
         let msg = query.error_description.as_deref().unwrap_or(&error);
@@ -115,7 +117,10 @@ pub async fn social_bind_callback(
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("missing state parameter".into()))?;
 
-    service::bind_social_identity(&state, code, state_token).await?;
+    let current_user_id =
+        crate::handler::account::common::get_account_user_id(&state, &headers).await?;
+
+    service::bind_social_identity(&state, code, state_token, current_user_id).await?;
 
     Ok(Redirect::to("/account/social").into_response())
 }

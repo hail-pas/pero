@@ -225,7 +225,7 @@ pub struct AuthorizeQuery {
     pub response_type: ResponseType,
     pub scope: Option<String>,
     pub state: Option<String>,
-    #[validate(length(min = 1, max = 128))]
+    #[validate(custom(function = "crate::shared::validation::validate_pkce_challenge"))]
     pub code_challenge: String,
     #[serde(default)]
     pub code_challenge_method: CodeChallengeMethod,

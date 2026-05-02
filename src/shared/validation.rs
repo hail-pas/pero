@@ -74,15 +74,23 @@ pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError
             if parsed.fragment().is_some() {
                 return Err(validator::ValidationError::new("redirect_uri_fragment_not_allowed"));
             }
-
-            if parsed.scheme() == "http" {
-                let host = parsed.host_str().unwrap_or_default();
-                let is_loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
-                if !is_loopback {
-                    return Err(validator::ValidationError::new("http_redirect_uri_only_loopback"));
-                }
+            if parsed.host_str().is_none_or(|h| h.is_empty()) {
+                return Err(validator::ValidationError::new("redirect_uri_missing_host"));
             }
-            Ok(())
+            match parsed.scheme() {
+                "https" => Ok(()),
+                "http" => {
+                    let host = parsed.host_str().unwrap_or_default();
+                    let is_loopback = host == "localhost"
+                        || host == "127.0.0.1"
+                        || host == "::1";
+                    if !is_loopback {
+                        return Err(validator::ValidationError::new("http_redirect_uri_only_loopback"));
+                    }
+                    Ok(())
+                }
+                _ => Err(validator::ValidationError::new("redirect_uri_unsupported_scheme")),
+            }
         }
         Err(_) => Err(validator::ValidationError::new("invalid_redirect_uri")),
     }
@@ -111,6 +119,21 @@ pub fn validate_non_empty_items(items: &[String]) -> Result<(), validator::Valid
 pub fn validate_pkce_verifier(v: &str) -> Result<(), validator::ValidationError> {
     if !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c)) {
         return Err(validator::ValidationError::new("pkce_verifier_charset"));
+    }
+    Ok(())
+}
+
+pub fn validate_pkce_challenge(v: &str) -> Result<(), validator::ValidationError> {
+    let len = v.len();
+    if len < 43 || len > 128 {
+        let mut err = validator::ValidationError::new("pkce_challenge_length");
+        err.add_param(std::borrow::Cow::Borrowed("min"), &43usize);
+        err.add_param(std::borrow::Cow::Borrowed("max"), &128usize);
+        err.add_param(std::borrow::Cow::Borrowed("value"), &len);
+        return Err(err);
+    }
+    if !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c)) {
+        return Err(validator::ValidationError::new("pkce_challenge_charset"));
     }
     Ok(())
 }

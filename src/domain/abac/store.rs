@@ -206,7 +206,7 @@ impl PolicyRepo {
             }
         }
 
-        builder.push(" ORDER BY p.priority DESC");
+        builder.push(" ORDER BY p.priority DESC, p.effect DESC, p.id ASC");
         builder
             .build_query_as::<Policy>()
             .fetch_all(pool)

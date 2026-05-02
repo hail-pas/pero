@@ -32,7 +32,7 @@ fn build_discovery(state: &AppState) -> serde_json::Value {
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": [jwt_constants::ALG_RS256],
         "scopes_supported": [oauth2_scopes::OPENID, oauth2_scopes::PROFILE, oauth2_scopes::EMAIL, oauth2_scopes::PHONE],
-        "token_endpoint_auth_methods_supported": ["client_secret_post"],
+        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce",
             "name", "nickname", "picture",
