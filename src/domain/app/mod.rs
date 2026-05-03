@@ -7,6 +7,3 @@ pub mod models {
     pub use super::entity::*;
 }
 pub mod service;
-pub mod store;
-
-pub use store::AppRepo;

@@ -219,3 +219,31 @@ pub struct ChangePasswordRequest {
 }
 
 impl ChangePasswordRequest {}
+
+#[derive(Debug, sqlx::FromRow, Serialize, ToSchema)]
+pub struct UserAttribute {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct SetAttributes {
+    #[validate(length(min = 1))]
+    pub attributes: Vec<AttributeItem>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
+pub struct AttributeItem {
+    #[validate(length(min = 1, max = 128))]
+    pub key: String,
+    #[validate(length(min = 1, max = 1024))]
+    pub value: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct VerifyPayload {
+    pub user_id: Uuid,
+    pub value: String,
+}

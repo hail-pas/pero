@@ -25,7 +25,7 @@ pub async fn create_provider(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateSocialProviderRequest>,
 ) -> Result<Json<ApiResponse<SocialProviderDTO>>, AppError> {
-    let provider = service::create_provider(&state, &req).await?;
+    let provider = service::create_provider(&*state.repos.social, &req).await?;
     Ok(Json(ApiResponse::success(provider.into())))
 }
 
@@ -42,7 +42,7 @@ pub async fn create_provider(
 pub async fn list_providers(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<SocialProviderDTO>>>, AppError> {
-    let providers = service::list_providers(&state).await?;
+    let providers = service::list_providers(&*state.repos.social).await?;
     let items: Vec<SocialProviderDTO> = providers.into_iter().map(Into::into).collect();
     Ok(Json(ApiResponse::success(items)))
 }
@@ -65,7 +65,7 @@ pub async fn get_provider(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<SocialProviderDTO>>, AppError> {
-    let provider = service::get_provider(&state, id).await?;
+    let provider = service::get_provider(&*state.repos.social, id).await?;
     Ok(Json(ApiResponse::success(provider.into())))
 }
 
@@ -89,7 +89,7 @@ pub async fn update_provider(
     Path(id): Path<uuid::Uuid>,
     ValidatedJson(req): ValidatedJson<UpdateSocialProviderRequest>,
 ) -> Result<Json<ApiResponse<SocialProviderDTO>>, AppError> {
-    let provider = service::update_provider(&state, id, &req).await?;
+    let provider = service::update_provider(&*state.repos.social, id, &req).await?;
     Ok(Json(ApiResponse::success(provider.into())))
 }
 
@@ -111,7 +111,7 @@ pub async fn delete_provider(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<crate::api::response::MessageResponse>, AppError> {
-    service::delete_provider(&state, id).await?;
+    service::delete_provider(&*state.repos.social, id).await?;
     Ok(Json(crate::api::response::MessageResponse::success(
         "provider deleted",
     )))

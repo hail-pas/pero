@@ -1,59 +1,37 @@
 use crate::config::AppConfig;
-use crate::infra::cache::Pool;
+use crate::domain::abac::repo::{AbacCacheStore, AbacStore};
+use crate::domain::app::repo::AppStore;
+use crate::domain::identity::repo::{IdentityStore, SessionStore, UserAttributeStore, UserStore};
+use crate::domain::oauth2::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
+use crate::domain::social::repo::SocialStore;
+use crate::domain::sso::repo::SsoSessionStore;
 use crate::infra::jwt::JwtKeys;
-use sqlx::postgres::PgPool;
+use crate::infra::repo::kv::RedisKvStore;
+use serde_json::Value;
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone)]
-pub struct AppState {
-    pub db: PgPool,
-    pub cache: Pool,
-    pub config: Arc<AppConfig>,
-    pub jwt_keys: Arc<JwtKeys>,
-    pub discovery_doc: Arc<OnceLock<serde_json::Value>>,
-    pub jwks_doc: Arc<OnceLock<serde_json::Value>>,
+pub struct Repos {
+    pub users: Arc<dyn UserStore>,
+    pub identities: Arc<dyn IdentityStore>,
+    pub user_attributes: Arc<dyn UserAttributeStore>,
+    pub sessions: Arc<dyn SessionStore>,
+    pub sso_sessions: Arc<dyn SsoSessionStore>,
+    pub policies: Arc<dyn AbacStore>,
+    pub abac_cache: Arc<dyn AbacCacheStore>,
+    pub oauth2_clients: Arc<dyn OAuth2ClientStore>,
+    pub oauth2_tokens: Arc<dyn OAuth2TokenStore>,
+    pub social: Arc<dyn SocialStore>,
+    pub apps: Arc<dyn AppStore>,
+    pub kv: Arc<RedisKvStore>,
+    pub token_signer: Arc<dyn TokenSigner>,
 }
 
-impl AppState {
-    pub fn abac_state(&self) -> crate::domain::abac::state::AbacState {
-        crate::domain::abac::state::AbacState {
-            db: self.db.clone(),
-            cache: self.cache.clone(),
-            config: Arc::new(self.config.abac.clone()),
-        }
-    }
-
-    pub fn identity_state(&self) -> crate::domain::identity::state::IdentityState {
-        crate::domain::identity::state::IdentityState {
-            db: self.db.clone(),
-            cache: self.cache.clone(),
-            jwt_config: Arc::new(self.config.jwt.clone()),
-        }
-    }
-
-    pub fn oauth2_state(&self) -> crate::domain::oauth2::state::OAuth2State {
-        crate::domain::oauth2::state::OAuth2State {
-            db: self.db.clone(),
-            cache: self.cache.clone(),
-            jwt_keys: self.jwt_keys.clone(),
-            config: Arc::new(self.config.oauth2.clone()),
-        }
-    }
-
-    pub fn social_state(&self) -> crate::domain::social::state::SocialState {
-        crate::domain::social::state::SocialState {
-            db: self.db.clone(),
-            cache: self.cache.clone(),
-            oidc_issuer: self.config.oidc.issuer.clone(),
-        }
-    }
-
-    pub fn sso_state(&self) -> crate::domain::sso::state::SsoState {
-        crate::domain::sso::state::SsoState {
-            db: self.db.clone(),
-            cache: self.cache.clone(),
-            jwt_keys: self.jwt_keys.clone(),
-            config: Arc::new(self.config.sso.clone()),
-        }
-    }
+#[derive(Clone)]
+pub struct AppState {
+    pub repos: Arc<Repos>,
+    pub jwt_keys: Arc<JwtKeys>,
+    pub config: Arc<AppConfig>,
+    pub discovery_doc: Arc<OnceLock<Value>>,
+    pub jwks_doc: Arc<OnceLock<Value>>,
 }

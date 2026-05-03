@@ -43,7 +43,8 @@ pub async fn register_post(
     };
 
     let user = match AuthService::register_user_with_password(
-        &state,
+        &*state.repos.users,
+        &*state.repos.identities,
         &form.username,
         form.email.as_deref(),
         form.phone.as_deref(),

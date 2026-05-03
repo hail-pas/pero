@@ -25,7 +25,7 @@ pub async fn create_client(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateClientRequest>,
 ) -> Result<Json<ApiResponse<CreateClientResponse>>, AppError> {
-    let created = service::create_client(&state, &req).await?;
+    let created = service::create_client(&*state.repos.apps, &*state.repos.oauth2_clients, &req).await?;
 
     Ok(Json(ApiResponse::success(CreateClientResponse {
         client: OAuth2ClientDTO::from(created.client),
@@ -52,7 +52,7 @@ pub async fn list_clients(
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<OAuth2ClientDTO>>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::list_clients(&state, page, page_size).await?,
+        service::list_clients(&*state.repos.oauth2_clients, page, page_size).await?,
     )))
 }
 
@@ -75,7 +75,7 @@ pub async fn get_client(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<OAuth2ClientDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::get_client(&state, id).await?,
+        service::get_client(&*state.repos.oauth2_clients, id).await?,
     )))
 }
 
@@ -100,7 +100,7 @@ pub async fn update_client(
     ValidatedJson(req): ValidatedJson<UpdateClientRequest>,
 ) -> Result<Json<ApiResponse<OAuth2ClientDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::update_client(&state, id, &req).await?,
+        service::update_client(&*state.repos.oauth2_clients, id, &req).await?,
     )))
 }
 
@@ -122,6 +122,6 @@ pub async fn delete_client(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    service::delete_client(&state, id).await?;
+    service::delete_client(&*state.repos.oauth2_clients, id).await?;
     Ok(Json(MessageResponse::success("client deleted")))
 }

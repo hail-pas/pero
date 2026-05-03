@@ -26,7 +26,10 @@ pub async fn change_password(
     ValidatedJson(req): ValidatedJson<ChangePasswordRequest>,
 ) -> Result<Json<MessageResponse>, AppError> {
     AuthService::change_password(
-        &state,
+        &*state.repos.users,
+        &*state.repos.identities,
+        &*state.repos.sessions,
+        &*state.repos.oauth2_tokens,
         auth_user.user_id,
         &req.old_password,
         &req.new_password,

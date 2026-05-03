@@ -3,7 +3,6 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 
 use crate::api::extractors::ValidatedForm;
-use crate::domain::identity::store::UserRepo;
 use crate::domain::sso::models::ForgotPasswordForm;
 use crate::handler::sso::common::render_tpl;
 use crate::shared::error::AppError;
@@ -25,7 +24,7 @@ pub async fn forgot_post(
 ) -> Result<Response, AppError> {
     if let Some(user) = find_user_for_reset(&state, &form.identifier).await? {
         let _token = crate::shared::utils::generate_token_and_cache(
-            &state.cache,
+            &state.repos.kv,
             crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX,
             &user.id.to_string(),
             state.config.sso.password_reset_ttl_seconds,
@@ -45,9 +44,9 @@ async fn find_user_for_reset(
     identifier: &str,
 ) -> Result<Option<crate::domain::identity::entity::User>, AppError> {
     if identifier.contains('@') {
-        UserRepo::find_by_email(&state.db, identifier).await
+        state.repos.users.find_by_email(identifier).await
     } else {
-        UserRepo::find_by_phone(&state.db, identifier).await
+        state.repos.users.find_by_phone(identifier).await
     }
 }
 

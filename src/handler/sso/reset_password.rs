@@ -4,9 +4,6 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::api::extractors::ValidatedForm;
-use crate::domain::identity::session;
-use crate::domain::identity::store::UserRepo;
-use crate::domain::oauth2::RefreshTokenRepo;
 use crate::domain::sso::models::ResetPasswordForm;
 use crate::handler::sso::common::render_tpl;
 use crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX;
@@ -69,7 +66,7 @@ pub async fn reset_password_post(
         .await
         .ok_or_else(|| AppError::BadRequest("Invalid or expired reset token.".into()))?;
 
-    let user = UserRepo::find_by_id(&state.db, user_id)
+    let user = state.repos.users.find_by_id(user_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
     if !user.is_active() {
@@ -77,10 +74,10 @@ pub async fn reset_password_post(
     }
 
     let hash = crate::shared::crypto::hash_secret(&form.new_password)?;
-    UserRepo::update_password_by_identity(&state.db, user_id, &hash).await?;
+    state.repos.identities.update_credential(user_id, "password", &hash).await?;
 
-    session::revoke_user_sessions(&state.cache, user_id).await?;
-    RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await?;
+    state.repos.sessions.revoke_all_for_user(user_id).await?;
+    state.repos.oauth2_tokens.revoke_all_for_user(user_id).await?;
 
     let tpl = ResetPasswordTemplate {
         token: String::new(),
@@ -93,14 +90,14 @@ pub async fn reset_password_post(
 
 async fn validate_token(state: &AppState, token: &str) -> Option<uuid::Uuid> {
     let uid_str: String =
-        crate::shared::utils::validate_cached_token(&state.cache, PASSWORD_RESET_PREFIX, token)
+        crate::shared::utils::validate_cached_token(&state.repos.kv, PASSWORD_RESET_PREFIX, token)
             .await?;
     uid_str.parse().ok()
 }
 
 async fn consume_token(state: &AppState, token: &str) -> Option<uuid::Uuid> {
     let uid_str: String =
-        crate::shared::utils::consume_cached_token(&state.cache, PASSWORD_RESET_PREFIX, token)
+        crate::shared::utils::consume_cached_token(&state.repos.kv, PASSWORD_RESET_PREFIX, token)
             .await?;
     uid_str.parse().ok()
 }

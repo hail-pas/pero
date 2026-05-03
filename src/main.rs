@@ -1,7 +1,7 @@
 use pero::config::AppConfig;
 use pero::infra::jwt::JwtKeys;
 use pero::shared::state::AppState;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 #[tokio::main]
@@ -22,7 +22,7 @@ async fn main() {
         .await
         .expect("Failed to init redis");
 
-    let jwt_keys = JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys");
+    let jwt_keys = Arc::new(JwtKeys::load(&cfg.oidc).expect("Failed to load JWT keys"));
 
     let cleanup_interval = Duration::from_secs(cfg.server.cleanup_interval_secs);
     let janitor_db = db_pool.clone();
@@ -30,13 +30,13 @@ async fn main() {
         pero::infra::janitor::run(janitor_db, cleanup_interval).await;
     });
 
+    let repos = pero::infra::repo::build_repos(db_pool, cache_pool, jwt_keys.clone(), &cfg);
     let state = AppState {
-        db: db_pool,
-        cache: cache_pool,
+        repos: Arc::new(repos),
+        jwt_keys,
         config: Arc::new(cfg),
-        jwt_keys: Arc::new(jwt_keys),
-        discovery_doc: Arc::new(std::sync::OnceLock::new()),
-        jwks_doc: Arc::new(std::sync::OnceLock::new()),
+        discovery_doc: Arc::new(OnceLock::new()),
+        jwks_doc: Arc::new(OnceLock::new()),
     };
 
     let addr = if state.config.server.host.contains(':') {

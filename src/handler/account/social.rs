@@ -7,8 +7,6 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::domain::identity::service;
-use crate::domain::identity::store::IdentityRepo;
-use crate::domain::social::store::SocialProviderRepo;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, SocialProviderView};
 use crate::shared::error::AppError;
@@ -37,8 +35,8 @@ async fn build_providers(
     state: &AppState,
     user_id: uuid::Uuid,
 ) -> Result<Vec<SocialProviderView>, AppError> {
-    let identities = IdentityRepo::list_by_user(&state.db, user_id).await?;
-    let all_providers = SocialProviderRepo::list_enabled(&state.db).await?;
+    let identities = state.repos.identities.list_by_user(user_id).await?;
+    let all_providers = state.repos.social.list_all_providers().await?;
     let bound: HashSet<&str> = identities.iter().map(|i| i.provider.as_str()).collect();
 
     let mut views = Vec::new();
@@ -100,7 +98,7 @@ pub async fn unbind_post(
     axum::Form(form): axum::Form<UnbindForm>,
 ) -> Result<Response, AppError> {
     let user_id = common::get_account_user_id(&state, &headers).await?;
-    match service::unbind_identity(&state, user_id, &form.provider).await {
+    match service::unbind_identity(&*state.repos.identities, user_id, &form.provider).await {
         Ok(_) => Ok(axum::Json(crate::api::response::MessageResponse::success(
             "Social account unlinked.",
         ))

@@ -4,7 +4,6 @@ use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::config::SsoConfig;
 use crate::domain::sso::models::SsoSession;
-use crate::domain::sso::session;
 use crate::shared::constants::cookies::{ACCOUNT_TOKEN, SSO_SESSION};
 use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
@@ -15,14 +14,18 @@ pub use crate::shared::utils::render_tpl;
 pub type SessionResult = Result<(String, SsoSession), Response>;
 
 pub async fn load_sso_session(state: &AppState, headers: &HeaderMap) -> SessionResult {
-    session::require(&state.cache, headers)
+    let sid = crate::shared::utils::extract_cookie(headers, SSO_SESSION)
+        .ok_or(Redirect::to("/oauth2/authorize").into_response())?;
+    let sso = state.repos.sso_sessions.get(&sid)
         .await
         .map_err(|e| match e {
             AppError::BadRequest(_) | AppError::NotFound(_) | AppError::Unauthorized => {
                 Redirect::to("/oauth2/authorize").into_response()
             }
             other => other.into_response(),
-        })
+        })?
+        .ok_or_else(|| Redirect::to("/oauth2/authorize").into_response())?;
+    Ok((sid, sso))
 }
 
 pub async fn require_authenticated_sso_session(
@@ -53,8 +56,7 @@ pub async fn set_account_cookie(
     headers: &axum::http::HeaderMap,
 ) -> Result<axum::http::HeaderValue, AppError> {
     let (device, location) = crate::shared::utils::parse_user_agent(headers);
-    let (identity_session, _refresh_token) = crate::domain::identity::session::create_session(
-        &state.cache,
+    let (identity_session, _refresh_token) = state.repos.sessions.create(
         user_id,
         state.config.jwt.refresh_ttl_days,
         &device,
@@ -84,8 +86,7 @@ pub async fn mark_sso_authenticated(
     sso.user_id = Some(user_id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    session::update(
-        &state.cache,
+    state.repos.sso_sessions.update(
         session_id,
         sso,
         state.config.sso.session_ttl_seconds,

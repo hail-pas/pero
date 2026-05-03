@@ -1,12 +1,10 @@
-use super::cache::AbacCache;
 use super::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
-use super::store::{PolicyConditionRepo, PolicyFilter, PolicyRepo, UserPolicyRepo};
+use super::repo::{AbacCacheStore, AbacStore, PolicyFilter};
 use crate::api::response::PageData;
-use crate::domain::identity::store::UserRepo;
+use crate::domain::identity::repo::UserStore;
 use crate::shared::constants::identity;
 use crate::shared::error::{AppError, require_found};
 use crate::shared::patch::Patch;
-use crate::shared::state::AppState;
 use serde::Serialize;
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -59,24 +57,22 @@ pub enum PolicyScope {
 }
 
 pub async fn build_subject_attrs(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
     user_id: Uuid,
     roles: &[String],
+    cache_ttl: i64,
 ) -> Result<HashMap<String, Vec<String>>, AppError> {
-    let ttl = state.config.abac.policy_cache_ttl_seconds;
-
     let mut subject_attrs: HashMap<String, Vec<String>> =
-        match AbacCache::get_subject_attrs::<HashMap<String, Vec<String>>>(&state.cache, user_id)
-            .await
-        {
+        match abac_cache.get_subject_attrs(user_id).await {
             Ok(Some(cached)) => cached,
             _ => {
                 let mut attrs: HashMap<String, Vec<String>> = HashMap::new();
-                for (key, value) in PolicyRepo::load_user_attributes(&state.db, user_id).await? {
+                for (key, value) in policies.load_user_attributes(user_id).await? {
                     attrs.entry(key).or_default().push(value);
                 }
                 if let Err(e) =
-                    AbacCache::set_subject_attrs(&state.cache, user_id, &attrs, ttl).await
+                    abac_cache.set_subject_attrs(user_id, &attrs, cache_ttl).await
                 {
                     tracing::warn!(error = %e, "failed to cache ABAC subject attrs");
                 }
@@ -95,32 +91,34 @@ pub async fn build_subject_attrs(
 }
 
 pub async fn create_policy_dto(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
+    cache_ttl: i64,
     mut req: CreatePolicyRequest,
     forced_app_id: Option<Uuid>,
 ) -> Result<PolicyDTO, AppError> {
     if let Some(app_id) = forced_app_id {
         req.app_id = Some(app_id);
     }
-    let (policy, conditions) = PolicyRepo::create(&state.db, &req).await?;
+    let (policy, conditions) = policies.create_policy(&req).await?;
     let dto = PolicyDTO::from_policy_with_conditions(policy, conditions);
-    invalidate_policy_cache_best_effort(state, dto.app_id).await;
+    invalidate_policy_cache_best_effort(abac_cache, dto.app_id, cache_ttl).await;
     Ok(dto)
 }
 
 pub async fn list_policy_page(
-    state: &AppState,
+    policies: &dyn AbacStore,
     scope: PolicyScope,
     page: i64,
     page_size: i64,
 ) -> Result<PageData<PolicyDTO>, AppError> {
-    let (policies, total) = match scope {
-        PolicyScope::Any => PolicyRepo::list(&state.db, page, page_size).await?,
+    let (policies_list, total) = match scope {
+        PolicyScope::Any => policies.list_policies(page, page_size).await?,
         PolicyScope::App(app_id) => {
-            PolicyRepo::list_by_app(&state.db, app_id, page, page_size).await?
+            policies.list_policies_by_app(app_id, page, page_size).await?
         }
     };
-    let attached = PolicyRepo::attach_conditions(&state.db, policies).await?;
+    let attached = policies.attach_conditions(policies_list).await?;
     Ok(PageData::new(
         PolicyDTO::from_attached(attached),
         total,
@@ -130,85 +128,92 @@ pub async fn list_policy_page(
 }
 
 pub async fn get_policy_dto(
-    state: &AppState,
+    policies: &dyn AbacStore,
     id: Uuid,
     scope: PolicyScope,
 ) -> Result<PolicyDTO, AppError> {
-    let policy = load_policy_in_scope(state, id, scope).await?;
-    let conditions = PolicyConditionRepo::get_for_policy(&state.db, policy.id).await?;
-    Ok(PolicyDTO::from_policy_with_conditions(policy, conditions))
+    let policy = load_policy_in_scope(policies, id, scope).await?;
+    Ok(PolicyDTO::from_policy_with_conditions(policy, vec![]))
 }
 
 pub async fn update_policy_dto(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
+    cache_ttl: i64,
     id: Uuid,
     mut req: UpdatePolicyRequest,
     scope: PolicyScope,
     forced_app_id: Option<Uuid>,
 ) -> Result<PolicyDTO, AppError> {
-    let policy = load_policy_in_scope(state, id, scope).await?;
+    let policy = load_policy_in_scope(policies, id, scope).await?;
     if let Some(app_id) = forced_app_id {
         req.app_id = Patch::Set(app_id);
     }
     let old_app_id = policy.app_id;
     let (updated, conditions) =
-        PolicyRepo::update_with_policy(&state.db, id, &req, &policy).await?;
+        policies.update_policy(id, &req, &policy).await?;
     let dto = PolicyDTO::from_policy_with_conditions(updated, conditions);
-    invalidate_policy_cache_best_effort(state, dto.app_id).await;
+    invalidate_policy_cache_best_effort(abac_cache, dto.app_id, cache_ttl).await;
     if dto.app_id != old_app_id {
-        invalidate_policy_cache_best_effort(state, old_app_id).await;
+        invalidate_policy_cache_best_effort(abac_cache, old_app_id, cache_ttl).await;
     }
     Ok(dto)
 }
 
 pub async fn delete_policy_in_scope(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
+    cache_ttl: i64,
     id: Uuid,
     scope: PolicyScope,
 ) -> Result<(), AppError> {
-    let policy = load_policy_in_scope(state, id, scope).await?;
-    PolicyRepo::delete(&state.db, id).await?;
-    invalidate_policy_cache_best_effort(state, policy.app_id).await;
+    let policy = load_policy_in_scope(policies, id, scope).await?;
+    policies.delete_policy(id).await?;
+    invalidate_policy_cache_best_effort(abac_cache, policy.app_id, cache_ttl).await;
     Ok(())
 }
 
 pub async fn assign_policy_to_user_in_scope(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
+    cache_ttl: i64,
     user_id: Uuid,
     policy_id: Uuid,
     scope: PolicyScope,
 ) -> Result<(), AppError> {
-    let policy = load_policy_in_scope(state, policy_id, scope).await?;
-    UserPolicyRepo::assign(&state.db, user_id, policy_id).await?;
-    invalidate_policy_cache_best_effort(state, policy.app_id).await;
+    let policy = load_policy_in_scope(policies, policy_id, scope).await?;
+    policies.assign_policy(user_id, policy_id).await?;
+    invalidate_policy_cache_best_effort(abac_cache, policy.app_id, cache_ttl).await;
     Ok(())
 }
 
 pub async fn unassign_policy_from_user_in_scope(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
+    cache_ttl: i64,
     user_id: Uuid,
     policy_id: Uuid,
     scope: PolicyScope,
 ) -> Result<(), AppError> {
-    let policy = load_policy_in_scope(state, policy_id, scope).await?;
-    UserPolicyRepo::unassign(&state.db, user_id, policy_id).await?;
-    invalidate_policy_cache_best_effort(state, policy.app_id).await;
+    let policy = load_policy_in_scope(policies, policy_id, scope).await?;
+    policies.unassign_policy(user_id, policy_id).await?;
+    invalidate_policy_cache_best_effort(abac_cache, policy.app_id, cache_ttl).await;
     Ok(())
 }
 
 pub async fn list_user_policy_dtos(
-    state: &AppState,
+    users: &dyn UserStore,
+    policies: &dyn AbacStore,
     user_id: Uuid,
     scope: PolicyScope,
 ) -> Result<Vec<PolicyDTO>, AppError> {
-    UserRepo::find_by_id_or_err(&state.db, user_id).await?;
+    users.find_by_id(user_id).await?.ok_or_else(|| AppError::NotFound("user".into()))?;
 
     let app_id = match scope {
         PolicyScope::Any => None,
         PolicyScope::App(app_id) => Some(app_id),
     };
-    let policies = PolicyRepo::select_policies(
-        &state.db,
+    let policies_list = policies.select_policies(
         PolicyFilter {
             user_id: Some(user_id),
             app_id,
@@ -216,15 +221,17 @@ pub async fn list_user_policy_dtos(
         },
     )
     .await?;
-    let attached = PolicyRepo::attach_conditions(&state.db, policies).await?;
+    let attached = policies.attach_conditions(policies_list).await?;
     Ok(PolicyDTO::from_attached(attached))
 }
 
 pub async fn load_user_policies(
-    state: &AppState,
+    policies: &dyn AbacStore,
+    abac_cache: &dyn AbacCacheStore,
     user_id: Uuid,
     app_id: Option<Uuid>,
     use_cache: bool,
+    cache_ttl: i64,
 ) -> Result<AttachedPolicies, AppError> {
     let load = || async {
         let filter = PolicyFilter {
@@ -232,50 +239,46 @@ pub async fn load_user_policies(
             app_id,
             enabled_only: true,
         };
-        let policies = PolicyRepo::select_policies(&state.db, filter).await?;
-        PolicyRepo::attach_conditions(&state.db, policies).await
+        let policies_list = policies.select_policies(filter).await?;
+        policies.attach_conditions(policies_list).await
     };
 
     if !use_cache {
         return load().await;
     }
 
-    let ttl = state.config.abac.policy_cache_ttl_seconds;
-
-    match AbacCache::get_policies::<AttachedPolicies>(&state.cache, user_id, app_id).await {
+    match abac_cache.get_policies(user_id, app_id).await {
         Ok(Some(cached)) => Ok(cached),
         _ => {
-            let policies = load().await?;
+            let result = load().await?;
             if let Err(e) =
-                AbacCache::set_policies(&state.cache, user_id, app_id, &policies, ttl).await
+                abac_cache.set_policies(user_id, app_id, &result, cache_ttl).await
             {
                 tracing::warn!(error = %e, "failed to cache ABAC policies");
             }
-            Ok(policies)
+            Ok(result)
         }
     }
 }
 
-pub async fn invalidate_policy_cache_best_effort(state: &AppState, app_id: Option<Uuid>) {
-    let ttl = state.config.abac.policy_cache_ttl_seconds;
-    if let Err(e) = AbacCache::invalidate_policy_version(&state.cache, app_id, ttl).await {
+pub async fn invalidate_policy_cache_best_effort(abac_cache: &dyn AbacCacheStore, app_id: Option<Uuid>, cache_ttl: i64) {
+    if let Err(e) = abac_cache.bump_policy_version(app_id, cache_ttl).await {
         tracing::warn!(error = %e, app_id = ?app_id, "failed to invalidate ABAC policy cache");
     }
 }
 
-pub async fn invalidate_user_cache_best_effort(state: &AppState, user_id: Uuid) {
-    let ttl = state.config.abac.policy_cache_ttl_seconds;
-    if let Err(e) = AbacCache::invalidate_user_policy_version(&state.cache, user_id, ttl).await {
+pub async fn invalidate_user_cache_best_effort(abac_cache: &dyn AbacCacheStore, user_id: Uuid, cache_ttl: i64) {
+    if let Err(e) = abac_cache.bump_user_version(user_id, cache_ttl).await {
         tracing::warn!(error = %e, %user_id, "failed to invalidate ABAC user cache");
     }
 }
 
 async fn load_policy_in_scope(
-    state: &AppState,
+    policies: &dyn AbacStore,
     id: Uuid,
     scope: PolicyScope,
 ) -> Result<Policy, AppError> {
-    let policy = require_found(PolicyRepo::find_by_id(&state.db, id).await?, "policy")?;
+    let policy = require_found(policies.find_policy_by_id(id).await?, "policy")?;
     ensure_policy_scope(&policy, scope)?;
     Ok(policy)
 }

@@ -19,7 +19,8 @@ pub async fn client_credentials_middleware(
 
     let (client_id, client_secret) = service::parse_basic_client_auth_header(auth_header)?;
     let client = service::authenticate_client(
-        &state,
+        &*state.repos.oauth2_clients,
+        &*state.repos.apps,
         &client_id,
         &client_secret,
         None,

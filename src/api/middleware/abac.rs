@@ -51,8 +51,9 @@ pub async fn abac_middleware(
         .copied()
         .ok_or_else(|| AppError::Internal("route missing ABAC scope".into()))?;
 
-    let subject_attrs = service::build_subject_attrs(&state, user_id, &claims.roles).await?;
-    let policies = service::load_user_policies(&state, user_id, app_id, true).await?;
+    let cache_ttl = state.config.abac.policy_cache_ttl_seconds;
+    let subject_attrs = service::build_subject_attrs(&*state.repos.policies, &*state.repos.abac_cache, user_id, &claims.roles, cache_ttl).await?;
+    let policies = service::load_user_policies(&*state.repos.policies, &*state.repos.abac_cache, user_id, app_id, true, cache_ttl).await?;
 
     let domain_resource = Resource::from_path(&path);
     let domain_action = Action::from_method_and_path(req.method().as_str(), &path);

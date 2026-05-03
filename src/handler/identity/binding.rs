@@ -23,7 +23,7 @@ pub async fn list_identities(
     auth_user: AuthUser,
 ) -> Result<Json<ApiResponse<Vec<Identity>>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::list_identities(&state, auth_user.user_id).await?,
+        service::list_identities(&*state.repos.identities, auth_user.user_id).await?,
     )))
 }
 
@@ -50,7 +50,7 @@ pub async fn bind(
     ValidatedJson(req): ValidatedJson<BindRequest>,
 ) -> Result<Json<MessageResponse>, AppError> {
     Ok(Json(
-        service::bind_identity(&state, auth_user.user_id, &provider, &req).await?,
+        service::bind_identity(&*state.repos.identities, auth_user.user_id, &provider, &req).await?,
     ))
 }
 
@@ -74,6 +74,6 @@ pub async fn unbind(
     Path(provider): Path<String>,
 ) -> Result<Json<MessageResponse>, AppError> {
     Ok(Json(
-        service::unbind_identity(&state, auth_user.user_id, &provider).await?,
+        service::unbind_identity(&*state.repos.identities, auth_user.user_id, &provider).await?,
     ))
 }

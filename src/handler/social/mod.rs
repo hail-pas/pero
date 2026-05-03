@@ -4,7 +4,6 @@ pub mod management;
 pub mod public;
 
 use crate::domain::social::entity::SocialProviderName;
-use crate::domain::social::store::SocialProviderRepo;
 use crate::shared::state::AppState;
 
 pub fn social_callback_url(issuer: &str, provider: &str) -> String {
@@ -23,7 +22,7 @@ pub struct ProviderView {
 }
 
 pub async fn load_provider_views(state: &AppState) -> Vec<ProviderView> {
-    match SocialProviderRepo::list_enabled(&state.db).await {
+    match state.repos.social.list_enabled_providers().await {
         Ok(providers) => providers
             .iter()
             .filter_map(|p| {

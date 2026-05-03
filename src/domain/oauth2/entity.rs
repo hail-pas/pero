@@ -62,3 +62,20 @@ pub struct RefreshToken {
     pub created_at: DateTime<Utc>,
     pub family_id: Option<Uuid>,
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct UserAuthorization {
+    pub client_name: String,
+    pub scopes: Vec<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub token_id: Uuid,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct TokenFamily {
+    pub id: Uuid,
+    pub client_id: Uuid,
+    pub user_id: Uuid,
+    pub revoked: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}

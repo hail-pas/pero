@@ -1,8 +1,6 @@
-use crate::domain::identity::session;
-use crate::domain::oauth2::store::RefreshTokenRepo;
-use crate::infra::cache::Pool;
+use crate::domain::identity::repo::SessionStore;
+use crate::domain::oauth2::repo::OAuth2TokenStore;
 use crate::shared::error::AppError;
-use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
 pub struct SessionBinding {
@@ -11,17 +9,17 @@ pub struct SessionBinding {
 }
 
 impl SessionBinding {
-    pub async fn revoke_all(&self, cache: &Pool, db: &PgPool) -> Result<(), AppError> {
+    pub async fn revoke_all(&self, sessions: &dyn SessionStore, tokens: &dyn OAuth2TokenStore) -> Result<(), AppError> {
         if let Some(ref sid) = self.session_id {
-            let _ = session::revoke_session(cache, sid).await;
+            let _ = sessions.revoke(sid).await;
         }
-        RefreshTokenRepo::revoke_all_for_user(db, self.user_id).await?;
+        tokens.revoke_all_for_user(self.user_id).await?;
         Ok(())
     }
 
-    pub async fn revoke_session_only(&self, cache: &Pool) -> Result<(), AppError> {
+    pub async fn revoke_session_only(&self, sessions: &dyn SessionStore) -> Result<(), AppError> {
         if let Some(ref sid) = self.session_id {
-            session::revoke_session(cache, sid).await?;
+            sessions.revoke(sid).await?;
         }
         Ok(())
     }

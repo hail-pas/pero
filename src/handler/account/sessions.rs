@@ -4,7 +4,6 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::domain::identity::session;
 use crate::domain::session::SessionBinding;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, SessionView};
@@ -51,7 +50,7 @@ pub async fn delete_session_post(
 
     let user_id = common::get_account_user_id(&state, &headers).await?;
 
-    let target = session::get_session(&state.cache, &form.session_id)
+    let target = state.repos.sessions.get(&form.session_id)
         .await?
         .ok_or_else(|| AppError::NotFound("session not found".into()))?;
 
@@ -60,7 +59,7 @@ pub async fn delete_session_post(
     }
 
     SessionBinding::from_sid(user_id, &form.session_id)
-        .revoke_session_only(&state.cache)
+        .revoke_session_only(&*state.repos.sessions)
         .await?;
     Ok(axum::Json(crate::api::response::MessageResponse::success(
         "Session terminated.",
@@ -73,14 +72,14 @@ pub async fn delete_all_post(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let user_id = common::get_account_user_id(&state, &headers).await?;
-    let all_ids = session::list_user_session_ids(&state.cache, user_id).await?;
+    let all_ids = state.repos.sessions.list_user_session_ids(user_id).await?;
     let current = current_session_id_from_cookie(&headers)
         .filter(|sid| all_ids.iter().any(|item| item == sid))
         .ok_or_else(|| AppError::BadRequest("Current session could not be identified.".into()))?;
 
     for sid in &all_ids {
         if sid != &current {
-            if let Err(err) = session::revoke_session(&state.cache, sid).await {
+            if let Err(err) = state.repos.sessions.revoke(sid).await {
                 tracing::warn!(session_id = %sid, error = %err, "failed to revoke session");
             }
         }
@@ -99,7 +98,7 @@ pub async fn logout_post(
     let (user, identity_session) = common::get_verified_account(&state, &headers).await?;
 
     let _ = SessionBinding::from_sid(user.id, &identity_session.session_id)
-        .revoke_session_only(&state.cache)
+        .revoke_session_only(&*state.repos.sessions)
         .await;
 
     let mut response = axum::Json(crate::api::response::MessageResponse::success(
@@ -119,11 +118,11 @@ async fn build_session_views(
     headers: &HeaderMap,
 ) -> Result<Vec<SessionView>, AppError> {
     let current = current_session_id_from_cookie(headers);
-    let session_ids = session::list_user_session_ids(&state.cache, user_id).await?;
+    let session_ids = state.repos.sessions.list_user_session_ids(user_id).await?;
     let mut views = Vec::new();
 
     for sid in &session_ids {
-        if let Some(s) = session::get_session(&state.cache, sid).await? {
+        if let Some(s) = state.repos.sessions.get(sid).await? {
             views.push(SessionView {
                 id: sid.clone(),
                 session_id: short_session_id(sid),

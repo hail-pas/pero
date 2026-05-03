@@ -1,10 +1,9 @@
-use crate::domain::identity::UserRepo;
+use crate::domain::identity::repo::UserStore;
+use crate::domain::oauth2::repo::{OAuth2ClientStore, OAuth2TokenStore};
 use crate::domain::oauth2::service as oauth2_service;
-use crate::domain::oauth2::store::AuthCodeRepo;
 use crate::domain::sso::models::{ConsentDecision, SsoSession};
-use crate::domain::sso::session;
+use crate::domain::sso::repo::SsoSessionStore;
 use crate::shared::error::AppError;
-use crate::shared::state::AppState;
 use crate::shared::utils::append_query_params;
 
 pub struct ConsentViewData {
@@ -13,10 +12,12 @@ pub struct ConsentViewData {
 }
 
 pub async fn build_consent_view(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    apps: &dyn crate::domain::app::repo::AppStore,
+    _sso_store: &dyn SsoSessionStore,
     sso: &SsoSession,
 ) -> Result<ConsentViewData, AppError> {
-    let client = load_valid_authorization_client(state, sso).await?;
+    let client = load_valid_authorization_client(clients, apps, sso).await?;
     let scopes = effective_scopes(&client, sso, false);
 
     Ok(ConsentViewData {
@@ -26,7 +27,12 @@ pub async fn build_consent_view(
 }
 
 pub async fn handle_consent_action(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    apps: &dyn crate::domain::app::repo::AppStore,
+    users: &dyn UserStore,
+    sso_store: &dyn SsoSessionStore,
+    tokens: &dyn OAuth2TokenStore,
+    auth_code_ttl_minutes: i64,
     sid: &str,
     sso: &SsoSession,
     decision: ConsentDecision,
@@ -35,7 +41,7 @@ pub async fn handle_consent_action(
     let params = &sso.authorize_params;
 
     if decision == ConsentDecision::Deny {
-        session::delete(&state.cache, sid).await?;
+        sso_store.delete(sid).await?;
         return Ok(build_redirect(
             &params.redirect_uri,
             &[("error", "access_denied")],
@@ -47,37 +53,38 @@ pub async fn handle_consent_action(
         .user_id
         .ok_or(AppError::BadRequest("user not authenticated".into()))?;
 
-    let user = UserRepo::find_by_id(&state.db, user_id).await?
+    let user = users.find_by_id(user_id).await?
         .ok_or(AppError::Unauthorized)?;
 
     if !user.is_active() {
-        session::delete(&state.cache, sid).await?;
+        sso_store.delete(sid).await?;
         return Err(AppError::Unauthorized);
     }
 
-    let client = load_valid_authorization_client(state, sso).await?;
+    let client = load_valid_authorization_client(clients, apps, sso).await?;
     let scopes = effective_scopes(&client, sso, true);
 
     let code = uuid::Uuid::new_v4().to_string().replace('-', "");
 
-    AuthCodeRepo::create(
-        &state.db,
-        &code,
-        client.id,
-        user_id,
-        &params.redirect_uri,
-        &scopes,
-        Some(&params.code_challenge),
-        Some(&params.code_challenge_method),
-        params.nonce.as_deref(),
-        account_sid,
-        sso.auth_time
-            .unwrap_or_else(|| chrono::Utc::now().timestamp()),
-        state.config.oauth2.auth_code_ttl_minutes,
+    tokens.create_auth_code(
+        crate::domain::oauth2::repo::CreateAuthCodeParams {
+            code: code.clone(),
+            client_id: client.id,
+            user_id,
+            redirect_uri: params.redirect_uri.clone(),
+            scopes: scopes.clone(),
+            code_challenge: params.code_challenge.clone(),
+            code_challenge_method: params.code_challenge_method.clone(),
+            nonce: params.nonce.clone(),
+            sid: account_sid.map(|s| s.to_string()),
+            auth_time: sso.auth_time
+                .unwrap_or_else(|| chrono::Utc::now().timestamp()),
+            ttl_minutes: auth_code_ttl_minutes,
+        },
     )
     .await?;
 
-    session::delete(&state.cache, sid).await?;
+    sso_store.delete(sid).await?;
 
     Ok(build_redirect(
         &params.redirect_uri,
@@ -95,12 +102,14 @@ fn build_redirect(base: &str, params: &[(&str, &str)], state: &Option<String>) -
 }
 
 async fn load_valid_authorization_client(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    apps: &dyn crate::domain::app::repo::AppStore,
     sso: &SsoSession,
 ) -> Result<crate::domain::oauth2::models::OAuth2Client, AppError> {
     let params = &sso.authorize_params;
     oauth2_service::validate_authorization_client(
-        state,
+        clients,
+        apps,
         &params.client_id,
         &params.redirect_uri,
         &requested_scopes(sso),

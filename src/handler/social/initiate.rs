@@ -22,7 +22,7 @@ pub async fn social_login(
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
 
     let (url, _state_token) =
-        service::build_authorize_url(&state, &provider, &sid, &redirect_uri).await?;
+        service::build_authorize_url(&*state.repos.social, &*state.repos.kv, &provider, &sid, &redirect_uri).await?;
 
     Ok(Redirect::to(&url).into_response())
 }
@@ -35,8 +35,8 @@ pub async fn social_bind(
     let user_id =
         crate::handler::account::common::get_account_user_id(&state, &headers).await?;
 
-    let existing = crate::domain::identity::store::IdentityRepo::find_by_user_and_provider(
-        &state.db, user_id, &provider,
+    let existing = state.repos.identities.find_by_user_and_provider(
+        user_id, &provider,
     )
     .await?;
     if existing.is_some() {
@@ -45,8 +45,8 @@ pub async fn social_bind(
         ));
     }
 
-    let _provider = crate::domain::social::store::SocialProviderRepo::find_enabled_by_name(
-        &state.db, &provider,
+    let _provider = state.repos.social.find_enabled_provider_by_name(
+        &provider,
     )
     .await?
     .ok_or(provider_not_found())?;
@@ -62,16 +62,15 @@ pub async fn social_bind(
         provider: provider.clone(),
         bind_user_id: user_id.to_string(),
     };
-    crate::infra::cache::set_json(
-        &state.cache,
-        &format!("social_state:{state_token}"),
+    state.repos.kv.set_json(
+        &crate::shared::cache_keys::social::state_key(&state_token),
         &social_state,
         600,
     )
     .await?;
 
     let provider =
-        crate::domain::social::store::SocialProviderRepo::find_by_name(&state.db, &provider)
+        state.repos.social.find_provider_by_name(&provider)
             .await?
             .ok_or(provider_not_found())?;
 

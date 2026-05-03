@@ -1,51 +1,51 @@
-use crate::domain::identity::store::{IdentityRepo, UserRepo};
+use crate::domain::identity::repo::{IdentityStore, UserStore};
 use crate::domain::social::entity::{
     CreateSocialProviderRequest, SocialProvider, SocialProviderPublic, SocialUserInfo,
     UpdateSocialProviderRequest,
 };
 use crate::domain::social::error::{provider_disabled, provider_not_found, social_state_invalid};
-use crate::domain::social::store::SocialProviderRepo;
+use crate::domain::social::repo::SocialStore;
 use crate::domain::social::userinfo;
-use crate::infra::cache;
+use crate::infra::repo::kv::RedisKvStore;
+use crate::shared::cache_keys::social::state_key;
 use crate::shared::error::AppError;
-use crate::shared::state::AppState;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub async fn list_enabled_providers(
-    state: &AppState,
+    social: &dyn SocialStore,
 ) -> Result<Vec<SocialProviderPublic>, AppError> {
-    let providers = SocialProviderRepo::list_enabled(&state.db).await?;
+    let providers = social.list_enabled_providers().await?;
     Ok(providers.iter().map(SocialProviderPublic::from).collect())
 }
 
 pub async fn create_provider(
-    state: &AppState,
+    social: &dyn SocialStore,
     req: &CreateSocialProviderRequest,
 ) -> Result<SocialProvider, AppError> {
-    SocialProviderRepo::create(&state.db, req).await
+    social.create_provider(req).await
 }
 
-pub async fn list_providers(state: &AppState) -> Result<Vec<SocialProvider>, AppError> {
-    SocialProviderRepo::list_all(&state.db).await
+pub async fn list_providers(social: &dyn SocialStore) -> Result<Vec<SocialProvider>, AppError> {
+    social.list_all_providers().await
 }
 
-pub async fn get_provider(state: &AppState, id: Uuid) -> Result<SocialProvider, AppError> {
-    SocialProviderRepo::find_by_id(&state.db, id)
+pub async fn get_provider(social: &dyn SocialStore, id: Uuid) -> Result<SocialProvider, AppError> {
+    social.find_provider_by_id(id)
         .await?
         .ok_or(provider_not_found())
 }
 
 pub async fn update_provider(
-    state: &AppState,
+    social: &dyn SocialStore,
     id: Uuid,
     req: &UpdateSocialProviderRequest,
 ) -> Result<SocialProvider, AppError> {
-    SocialProviderRepo::update(&state.db, id, req).await
+    social.update_provider(id, req).await
 }
 
-pub async fn delete_provider(state: &AppState, id: Uuid) -> Result<(), AppError> {
-    SocialProviderRepo::delete(&state.db, id).await
+pub async fn delete_provider(social: &dyn SocialStore, id: Uuid) -> Result<(), AppError> {
+    social.delete_provider(id).await
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,12 +63,13 @@ pub struct SocialBindState {
 }
 
 pub async fn build_authorize_url(
-    state: &AppState,
+    social: &dyn SocialStore,
+    kv: &RedisKvStore,
     provider_name: &str,
     sso_session_id: &str,
     redirect_uri: &str,
 ) -> Result<(String, String), AppError> {
-    let provider = SocialProviderRepo::find_enabled_by_name(&state.db, provider_name)
+    let provider = social.find_enabled_provider_by_name(provider_name)
         .await?
         .ok_or(provider_not_found())?;
 
@@ -79,13 +80,7 @@ pub async fn build_authorize_url(
         account_login: None,
         account_next: None,
     };
-    cache::set_json(
-        &state.cache,
-        &format!("social_state:{state_token}"),
-        &social_state,
-        600,
-    )
-    .await?;
+    kv.set_json(&state_key(&state_token), &social_state, 600).await?;
 
     let mut params: Vec<(&str, String)> = vec![
         ("client_id", provider.client_id.clone()),
@@ -106,12 +101,13 @@ pub async fn build_authorize_url(
 }
 
 pub async fn build_account_login_url(
-    state: &AppState,
+    social: &dyn SocialStore,
+    kv: &RedisKvStore,
     provider_name: &str,
     redirect_uri: &str,
     next: Option<&str>,
 ) -> Result<(String, String), AppError> {
-    let provider = SocialProviderRepo::find_enabled_by_name(&state.db, provider_name)
+    let provider = social.find_enabled_provider_by_name(provider_name)
         .await?
         .ok_or(provider_not_found())?;
 
@@ -122,13 +118,7 @@ pub async fn build_account_login_url(
         account_login: Some(true),
         account_next: next.map(|s| s.to_string()),
     };
-    cache::set_json(
-        &state.cache,
-        &format!("social_state:{state_token}"),
-        &social_state,
-        600,
-    )
-    .await?;
+    kv.set_json(&state_key(&state_token), &social_state, 600).await?;
 
     let mut params: Vec<(&str, String)> = vec![
         ("client_id", provider.client_id.clone()),
@@ -149,24 +139,25 @@ pub async fn build_account_login_url(
 }
 
 pub async fn handle_callback(
-    state: &AppState,
+    social: &dyn SocialStore,
+    kv: &RedisKvStore,
     code: &str,
     state_token: &str,
     callback_provider: &str,
     redirect_uri: &str,
 ) -> Result<(SocialUserInfo, SocialState), AppError> {
-    let key = format!("social_state:{state_token}");
-    let social_state: SocialState = cache::get_json(&state.cache, &key)
+    let key = state_key(state_token);
+    let social_state: SocialState = kv.get_json(&key)
         .await?
         .ok_or_else(social_state_invalid)?;
 
-    cache::del(&state.cache, &key).await?;
+    kv.del(&key).await?;
 
     if social_state.provider != callback_provider {
         return Err(AppError::BadRequest("provider path does not match state".into()));
     }
 
-    let provider = SocialProviderRepo::find_by_name(&state.db, &social_state.provider)
+    let provider = social.find_provider_by_name(&social_state.provider)
         .await?
         .ok_or(provider_not_found())?;
 
@@ -181,13 +172,14 @@ pub async fn handle_callback(
 }
 
 pub async fn find_or_create_user(
-    state: &AppState,
+    users: &dyn UserStore,
+    identities: &dyn IdentityStore,
     info: &SocialUserInfo,
 ) -> Result<crate::domain::identity::entity::User, AppError> {
     if let Some(identity) =
-        IdentityRepo::find_by_provider(&state.db, &info.provider, &info.provider_uid).await?
+        identities.find_by_provider(&info.provider, &info.provider_uid).await?
     {
-        let user = UserRepo::find_by_id(&state.db, identity.user_id)
+        let user = users.find_by_id(identity.user_id)
             .await?
             .ok_or(AppError::Internal(
                 "user for social identity not found".into(),
@@ -200,30 +192,18 @@ pub async fn find_or_create_user(
 
     if info.is_trusted_provider() && info.email_verified {
         if let Some(ref email) = info.email {
-            if let Some(user) = UserRepo::find_by_email(&state.db, email).await? {
+            if let Some(user) = users.find_by_email(email).await? {
                 if !user.is_active() {
                     return Err(AppError::Unauthorized);
                 }
-                sqlx::query(
-                    "INSERT INTO identities (user_id, provider, provider_uid, verified) VALUES ($1, $2, $3, true)",
-                )
-                .bind(user.id)
-                .bind(&info.provider)
-                .bind(&info.provider_uid)
-                .execute(&state.db)
-                .await?;
+                users.link_social_identity(user.id, &info.provider, &info.provider_uid).await?;
                 if !user.email_verified {
-                    sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
-                        .bind(user.id)
-                        .execute(&state.db)
-                        .await?;
+                    users.set_email_verified_flag(user.id).await?;
                 }
                 return Ok(user);
             }
         }
     }
-
-    let mut tx = state.db.begin().await?;
 
     let base_username = info
         .username
@@ -235,49 +215,34 @@ pub async fn find_or_create_user(
             format!("{}_{}", info.provider, uid_prefix)
         });
 
-    let username = resolve_unique_username(&mut *tx, &base_username).await?;
+    let username = users.resolve_unique_username(&base_username).await?;
 
-    let user = UserRepo::create(
-        &mut *tx,
+    let user = users.create_social_user(
         &username,
         info.email.as_deref(),
-        None,
         info.display_name.as_deref(),
-    )
-    .await?;
-
-    if info.email.is_some() && info.email_verified {
-        sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
-            .bind(user.id)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    sqlx::query(
-        "INSERT INTO identities (user_id, provider, provider_uid, verified) VALUES ($1, $2, $3, true)",
-    )
-    .bind(user.id)
-    .bind(&info.provider)
-    .bind(&info.provider_uid)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+        &info.provider,
+        &info.provider_uid,
+        info.email_verified,
+    ).await?;
 
     Ok(user)
 }
 
 pub async fn bind_social_identity(
-    state: &AppState,
+    social: &dyn SocialStore,
+    identities: &dyn IdentityStore,
+    kv: &RedisKvStore,
+    oidc_issuer: &str,
     code: &str,
     state_token: &str,
     current_user_id: uuid::Uuid,
 ) -> Result<(), AppError> {
-    let key = format!("social_state:{state_token}");
-    let social_state: SocialBindState = cache::get_json(&state.cache, &key)
+    let key = state_key(state_token);
+    let social_state: SocialBindState = kv.get_json(&key)
         .await?
         .ok_or_else(social_state_invalid)?;
-    cache::del(&state.cache, &key).await?;
+    kv.del(&key).await?;
 
     let user_id: uuid::Uuid = social_state
         .bind_user_id
@@ -287,7 +252,7 @@ pub async fn bind_social_identity(
     if user_id != current_user_id {
         return Err(AppError::Forbidden("session does not match bind state".into()));
     }
-    let provider = SocialProviderRepo::find_by_name(&state.db, &social_state.provider)
+    let provider = social.find_provider_by_name(&social_state.provider)
         .await?
         .ok_or(provider_not_found())?;
     if !provider.enabled {
@@ -296,7 +261,7 @@ pub async fn bind_social_identity(
 
     let redirect_uri = format!(
         "{}/sso/social/{}/bind-callback",
-        state.config.oidc.issuer.trim_end_matches('/'),
+        oidc_issuer.trim_end_matches('/'),
         social_state.provider,
     );
 
@@ -305,7 +270,7 @@ pub async fn bind_social_identity(
     let user_info = userinfo::fetch_userinfo(&provider, &access_token).await?;
 
     let existing =
-        IdentityRepo::find_by_provider(&state.db, &user_info.provider, &user_info.provider_uid)
+        identities.find_by_provider(&user_info.provider, &user_info.provider_uid)
             .await?;
     if let Some(existing_identity) = existing {
         if existing_identity.user_id != user_id {
@@ -316,41 +281,11 @@ pub async fn bind_social_identity(
         return Ok(());
     }
 
-    IdentityRepo::create_oauth(
-        &state.db,
+    identities.create_social(
         user_id,
         &user_info.provider,
         &user_info.provider_uid,
     )
     .await?;
     Ok(())
-}
-
-async fn resolve_unique_username(
-    executor: &mut sqlx::PgConnection,
-    base: &str,
-) -> Result<String, AppError> {
-    const MAX_USERNAME_CHARS: usize = 64;
-
-    for i in 0..100u32 {
-        let name = username_candidate(base, (i > 0).then_some(i), MAX_USERNAME_CHARS);
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
-                .bind(&name)
-                .fetch_one(&mut *executor)
-                .await?;
-        if !exists {
-            return Ok(name);
-        }
-    }
-    Err(AppError::Conflict(
-        "could not generate unique username".into(),
-    ))
-}
-
-pub fn username_candidate(base: &str, suffix: Option<u32>, max_len: usize) -> String {
-    let suffix = suffix.map(|value| format!("_{value}")).unwrap_or_default();
-    let base_len = max_len.saturating_sub(suffix.chars().count());
-    let truncated: String = base.chars().take(base_len).collect();
-    format!("{truncated}{suffix}")
 }

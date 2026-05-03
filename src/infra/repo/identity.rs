@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::domain::identity::error;
 use crate::domain::identity::models::{Identity, UpdateMeRequest, UpdateUserRequest, User};
 use crate::domain::identity::repo::{IdentityStore, UserAttributeStore, UserStore};
-use crate::domain::identity::store::{AttributeItem, UserAttribute};
+use crate::domain::identity::dto::{AttributeItem, UserAttribute};
 use crate::shared::error::{AppError, require_found};
 use crate::shared::pagination::{USERS, paginate};
 

@@ -2,8 +2,6 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tokio::time;
 
-use crate::domain::oauth2::store::{AuthCodeRepo, RefreshTokenRepo};
-
 pub async fn run(pool: PgPool, interval: Duration) {
     let mut ticker = time::interval(interval);
     ticker.tick().await;
@@ -24,7 +22,11 @@ pub async fn run(pool: PgPool, interval: Duration) {
 }
 
 async fn cleanup(pool: &PgPool) -> Result<(u64, u64), crate::shared::error::AppError> {
-    let codes = AuthCodeRepo::purge_expired(pool).await?;
-    let tokens = RefreshTokenRepo::purge_expired(pool).await?;
-    Ok((codes, tokens))
+    let codes_result = sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
+        .execute(pool)
+        .await?;
+    let tokens_result = sqlx::query("DELETE FROM oauth2_tokens WHERE expires_at < now()")
+        .execute(pool)
+        .await?;
+    Ok((codes_result.rows_affected(), tokens_result.rows_affected()))
 }

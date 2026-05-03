@@ -5,8 +5,8 @@ use crate::domain::oauth2::error_ext;
 use crate::domain::oauth2::models::{
     CreateClientRequest, OAuth2Client, OAuth2ClientDTO, UpdateClientRequest,
 };
-use crate::domain::oauth2::store::OAuth2ClientRepo;
-use crate::shared::state::AppState;
+use crate::domain::oauth2::repo::OAuth2ClientStore;
+use crate::domain::app::repo::AppStore;
 
 pub use crate::domain::oauth2::token_exchange::{exchange_token, revoke_token};
 
@@ -21,14 +21,15 @@ pub enum InvalidClientError {
 }
 
 pub async fn authenticate_client(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    apps: &dyn AppStore,
     client_id: &str,
     client_secret: &str,
     grant_type: Option<&str>,
     require_enabled: bool,
     invalid_client_error: InvalidClientError,
 ) -> Result<OAuth2Client, AppError> {
-    let client = match OAuth2ClientRepo::find_by_client_id(&state.db, client_id).await? {
+    let client = match clients.find_by_client_id(client_id).await? {
         Some(client) => client,
         None => {
             fake_secret_probe(client_secret);
@@ -52,7 +53,7 @@ pub async fn authenticate_client(
         return Err(AppError::Unauthorized);
     }
     if require_enabled {
-        ensure_app_enabled(state, &client).await?;
+        ensure_app_enabled(apps, &client).await?;
     }
     Ok(client)
 }
@@ -101,15 +102,16 @@ pub struct CreatedClient {
 }
 
 pub async fn create_client(
-    state: &AppState,
+    apps: &dyn AppStore,
+    clients: &dyn OAuth2ClientStore,
     req: &CreateClientRequest,
 ) -> Result<CreatedClient, AppError> {
-    crate::domain::app::store::AppRepo::find_by_id_or_err(&state.db, req.app_id).await?;
+    apps.find_by_id(req.app_id).await?.ok_or_else(|| AppError::NotFound("app".into()))?;
 
     let client_id = crate::shared::utils::random_hex_token();
     let client_secret = crate::shared::utils::random_hex_token();
     let client_secret_hash = crate::shared::crypto::hash_secret(&client_secret)?;
-    let client = OAuth2ClientRepo::create(&state.db, &client_id, &client_secret_hash, req).await?;
+    let client = clients.create(&client_id, &client_secret_hash, req).await?;
     Ok(CreatedClient {
         client,
         client_secret,
@@ -117,55 +119,55 @@ pub async fn create_client(
 }
 
 pub async fn list_clients(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
     page: i64,
     page_size: i64,
 ) -> Result<PageData<OAuth2ClientDTO>, AppError> {
-    let (clients, total) = OAuth2ClientRepo::list(&state.db, page, page_size).await?;
-    let items = clients.into_iter().map(OAuth2ClientDTO::from).collect();
+    let (clients_list, total) = clients.list(page, page_size).await?;
+    let items = clients_list.into_iter().map(OAuth2ClientDTO::from).collect();
     Ok(PageData::new(items, total, page, page_size))
 }
 
-pub async fn get_client(state: &AppState, id: uuid::Uuid) -> Result<OAuth2ClientDTO, AppError> {
-    Ok(OAuth2ClientRepo::find_by_id_or_err(&state.db, id)
-        .await?
-        .into())
+pub async fn get_client(clients: &dyn OAuth2ClientStore, id: uuid::Uuid) -> Result<OAuth2ClientDTO, AppError> {
+    let client = clients.find_by_id(id).await?.ok_or(error_ext::invalid_client_id())?;
+    Ok(client.into())
 }
 
 pub async fn update_client(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
     id: uuid::Uuid,
     req: &UpdateClientRequest,
 ) -> Result<OAuth2ClientDTO, AppError> {
-    Ok(OAuth2ClientRepo::update(&state.db, id, req).await?.into())
+    Ok(clients.update(id, req).await?.into())
 }
 
-pub async fn delete_client(state: &AppState, id: uuid::Uuid) -> Result<(), AppError> {
-    OAuth2ClientRepo::delete(&state.db, id).await
+pub async fn delete_client(clients: &dyn OAuth2ClientStore, id: uuid::Uuid) -> Result<(), AppError> {
+    clients.delete(id).await
 }
 
 pub async fn validate_authorization_client(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    apps: &dyn AppStore,
     client_id: &str,
     redirect_uri: &str,
     requested_scopes: &[String],
 ) -> Result<OAuth2Client, AppError> {
-    let client = OAuth2ClientRepo::find_by_client_id(&state.db, client_id)
+    let client = clients.find_by_client_id(client_id)
         .await?
         .ok_or(error_ext::invalid_client_id())?;
 
     ensure_redirect_uri_allowed(&client, redirect_uri)?;
     ensure_authorization_client_ready(&client, requested_scopes)?;
-    ensure_app_enabled(state, &client).await?;
+    ensure_app_enabled(apps, &client).await?;
 
     Ok(client)
 }
 
 pub async fn load_authorization_client(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
     client_id: &str,
 ) -> Result<OAuth2Client, AppError> {
-    OAuth2ClientRepo::find_by_client_id(&state.db, client_id)
+    clients.find_by_client_id(client_id)
         .await?
         .ok_or(error_ext::invalid_client_id())
 }
@@ -200,13 +202,9 @@ pub fn ensure_authorization_client_ready(
 }
 
 pub fn resolve_client_credentials<T: ClientCredentials>(
-    headers: &axum::http::HeaderMap,
+    auth_header: Option<&str>,
     mut req: T,
 ) -> Result<T, AppError> {
-    let auth_header = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
     let body_has_id = req.has_client_id();
 
     match auth_header {
@@ -229,8 +227,8 @@ pub fn resolve_client_credentials<T: ClientCredentials>(
     Ok(req)
 }
 
-async fn ensure_app_enabled(state: &AppState, client: &OAuth2Client) -> Result<(), AppError> {
-    let app = crate::domain::app::store::AppRepo::find_by_id(&state.db, client.app_id)
+async fn ensure_app_enabled(apps: &dyn AppStore, client: &OAuth2Client) -> Result<(), AppError> {
+    let app = apps.find_by_id(client.app_id)
         .await?
         .ok_or_else(|| {
             AppError::Internal(format!(
@@ -244,6 +242,6 @@ async fn ensure_app_enabled(state: &AppState, client: &OAuth2Client) -> Result<(
     Ok(())
 }
 
-pub async fn ensure_app_enabled_pub(state: &AppState, client: &OAuth2Client) -> Result<(), AppError> {
-    ensure_app_enabled(state, client).await
+pub async fn ensure_app_enabled_pub(apps: &dyn AppStore, client: &OAuth2Client) -> Result<(), AppError> {
+    ensure_app_enabled(apps, client).await
 }

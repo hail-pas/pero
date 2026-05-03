@@ -1,5 +1,4 @@
 use crate::api::extractors::AuthUser;
-use crate::domain::identity::store::UserRepo;
 use crate::domain::oidc::claims::ScopedClaims;
 use crate::shared::constants::oauth2::scopes::OPENID;
 use crate::shared::error::{AppError, require_found};
@@ -33,7 +32,7 @@ pub async fn userinfo(
     }
 
     let user = require_found(
-        UserRepo::find_by_id(&state.db, auth_user.user_id).await?,
+        state.repos.users.find_by_id(auth_user.user_id).await?,
         "user",
     )?;
 

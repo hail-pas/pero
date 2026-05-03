@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::oauth2::family::TokenFamily;
+use crate::domain::oauth2::entity::{TokenFamily, UserAuthorization};
 use crate::domain::oauth2::models::{
     AuthorizationCode, CreateClientRequest, OAuth2Client, RefreshToken, UpdateClientRequest,
 };
-use crate::domain::oauth2::store::UserAuthorization;
 use crate::shared::error::AppError;
 
 pub struct CreateAuthCodeParams {

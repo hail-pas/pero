@@ -25,8 +25,19 @@ pub async fn register(
     headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
+    let (device, location) = crate::shared::utils::parse_user_agent(&headers);
     Ok(Json(ApiResponse::success(
-        service::register_user(&state, &req, &headers).await?,
+        service::register_user(
+            &*state.repos.users,
+            &*state.repos.identities,
+            &*state.repos.sessions,
+            &*state.repos.token_signer,
+            &req,
+            &device,
+            &location,
+            state.config.jwt.access_ttl_minutes,
+            state.config.jwt.refresh_ttl_days,
+        ).await?,
     )))
 }
 
@@ -47,6 +58,6 @@ pub async fn create_user(
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::create_user(&state, &req).await?,
+        service::create_user(&*state.repos.users, &*state.repos.identities, &req).await?,
     )))
 }

@@ -18,6 +18,6 @@ use crate::shared::state::AppState;
 pub async fn list_enabled_providers(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<SocialProviderPublic>>>, AppError> {
-    let providers = service::list_enabled_providers(&state).await?;
+    let providers = service::list_enabled_providers(&*state.repos.social).await?;
     Ok(Json(ApiResponse::success(providers)))
 }

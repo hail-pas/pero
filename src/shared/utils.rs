@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::infra::cache::Pool;
+use crate::infra::repo::kv::RedisKvStore;
 use crate::shared::error::AppError;
 
 pub fn parse_user_agent(headers: &HeaderMap) -> (String, String) {
@@ -73,20 +73,20 @@ pub fn parse_scopes(scope: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-pub async fn generate_token_and_cache<T: Serialize>(
-    pool: &Pool,
+pub async fn generate_token_and_cache<T: Serialize + Sync>(
+    kv: &RedisKvStore,
     prefix: &str,
     payload: &T,
     ttl: i64,
 ) -> Result<String, AppError> {
     let token = random_hex_token();
     let key = format!("{prefix}{token}");
-    crate::infra::cache::set_json(pool, &key, payload, ttl).await?;
+    kv.set_json(&key, payload, ttl).await?;
     Ok(token)
 }
 
 pub async fn validate_cached_token<T: DeserializeOwned>(
-    pool: &Pool,
+    kv: &RedisKvStore,
     prefix: &str,
     token: &str,
 ) -> Option<T> {
@@ -94,14 +94,11 @@ pub async fn validate_cached_token<T: DeserializeOwned>(
         return None;
     }
     let key = format!("{prefix}{token}");
-    crate::infra::cache::get_json(pool, &key)
-        .await
-        .ok()
-        .flatten()
+    kv.get_json(&key).await.ok().flatten()
 }
 
 pub async fn consume_cached_token<T: DeserializeOwned>(
-    pool: &Pool,
+    kv: &RedisKvStore,
     prefix: &str,
     token: &str,
 ) -> Option<T> {
@@ -109,12 +106,9 @@ pub async fn consume_cached_token<T: DeserializeOwned>(
         return None;
     }
     let key = format!("{prefix}{token}");
-    let value: Option<T> = crate::infra::cache::get_json(pool, &key)
-        .await
-        .ok()
-        .flatten();
+    let value: Option<T> = kv.get_json(&key).await.ok().flatten();
     if value.is_some() {
-        let _ = crate::infra::cache::del(pool, &key).await;
+        let _ = kv.del(&key).await;
     }
     value
 }

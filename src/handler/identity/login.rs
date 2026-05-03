@@ -5,8 +5,6 @@ use crate::domain::identity::models::{
     LoginRequest, RefreshRequest, RefreshTokenResponse, TokenResponse,
 };
 use crate::domain::identity::session;
-use crate::domain::identity::store::UserRepo;
-use crate::domain::oauth2::store::RefreshTokenRepo;
 use crate::infra::jwt;
 use crate::shared::constants::identity::DEFAULT_ROLE;
 use crate::shared::error::AppError;
@@ -32,15 +30,25 @@ pub async fn login(
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
     let user = AuthService::authenticate_with_password(
-        &state,
+        &*state.repos.users,
+        &*state.repos.identities,
         &req.identifier_type,
         &req.identifier,
         &req.password,
     )
     .await?;
 
+    let (device, location) = crate::shared::utils::parse_user_agent(&headers);
     let token_response =
-        crate::domain::identity::service::issue_tokens(&state, &user, &headers).await?;
+        crate::domain::identity::service::issue_tokens(
+            &*state.repos.token_signer,
+            &*state.repos.sessions,
+            &user,
+            state.config.jwt.access_ttl_minutes,
+            state.config.jwt.refresh_ttl_days,
+            &device,
+            &location,
+        ).await?;
     Ok(Json(ApiResponse::success(token_response)))
 }
 
@@ -59,7 +67,7 @@ pub async fn refresh(
     ValidatedJson(req): ValidatedJson<RefreshRequest>,
 ) -> Result<Json<ApiResponse<RefreshTokenResponse>>, AppError> {
     let session_id = session::parse_session_id(&req.refresh_token)?;
-    let stored = session::get_session(&state.cache, session_id)
+    let stored = state.repos.sessions.get(session_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
     let refresh_hash = session::hash_refresh_token(&req.refresh_token);
@@ -70,7 +78,7 @@ pub async fn refresh(
                 user_id = %stored.user_id,
                 "refresh token replay detected, revoking session"
             );
-            session::revoke_session(&state.cache, session_id).await?;
+            state.repos.sessions.revoke(session_id).await?;
             return Err(AppError::Unauthorized);
         }
         return Err(AppError::Unauthorized);
@@ -79,7 +87,7 @@ pub async fn refresh(
     let user_id = stored.user_id;
     let user_id_str = user_id.to_string();
 
-    let user = UserRepo::find_by_id(&state.db, user_id)
+    let user = state.repos.users.find_by_id(user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -100,8 +108,7 @@ pub async fn refresh(
     )?;
 
     let new_refresh_token = session::build_refresh_token(session_id);
-    let rotated = session::rotate_refresh_token(
-        &state.cache,
+    let rotated = state.repos.sessions.rotate(
         session_id,
         &refresh_hash,
         &new_refresh_token,
@@ -132,8 +139,8 @@ pub async fn logout(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<MessageResponse>, AppError> {
-    session::revoke_user_sessions(&state.cache, auth_user.user_id).await?;
-    if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, auth_user.user_id).await {
+    state.repos.sessions.revoke_all_for_user(auth_user.user_id).await?;
+    if let Err(e) = state.repos.oauth2_tokens.revoke_all_for_user(auth_user.user_id).await {
         tracing::warn!(error = %e, "failed to revoke oauth2 tokens after logout");
     }
     Ok(Json(MessageResponse::success("logged out")))

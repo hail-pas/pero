@@ -23,7 +23,7 @@ pub async fn get_me(
     auth_user: AuthUser,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::get_me(&state, auth_user.user_id).await?,
+        service::get_me(&*state.repos.users, auth_user.user_id).await?,
     )))
 }
 
@@ -44,7 +44,7 @@ pub async fn update_me(
     ValidatedJson(req): ValidatedJson<UpdateMeRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::update_me(&state, auth_user.user_id, &req).await?,
+        service::update_me(&*state.repos.users, auth_user.user_id, &req).await?,
     )))
 }
 
@@ -67,7 +67,7 @@ pub async fn list_users(
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<UserDTO>>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::list_users(&state, page, page_size).await?,
+        service::list_users(&*state.repos.users, page, page_size).await?,
     )))
 }
 
@@ -90,7 +90,7 @@ pub async fn get_user(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::get_user(&state, id).await?,
+        service::get_user(&*state.repos.users, id).await?,
     )))
 }
 
@@ -115,7 +115,13 @@ pub async fn update_user(
     ValidatedJson(input): ValidatedJson<UpdateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::update_user(&state, id, &input).await?,
+        service::update_user(
+            &*state.repos.users,
+            &*state.repos.sessions,
+            &*state.repos.oauth2_tokens,
+            id,
+            &input,
+        ).await?,
     )))
 }
 
@@ -137,5 +143,10 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    Ok(Json(service::delete_user(&state, id).await?))
+    Ok(Json(service::delete_user(
+        &*state.repos.users,
+        &*state.repos.sessions,
+        &*state.repos.oauth2_tokens,
+        id,
+    ).await?))
 }

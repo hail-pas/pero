@@ -4,8 +4,14 @@ use uuid::Uuid;
 
 use crate::domain::abac::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
 use crate::domain::abac::service::AttachedPolicies;
-use crate::domain::abac::store::PolicyFilter;
 use crate::shared::error::AppError;
+
+#[derive(Debug, Clone, Copy)]
+pub struct PolicyFilter {
+    pub user_id: Option<Uuid>,
+    pub app_id: Option<Uuid>,
+    pub enabled_only: bool,
+}
 
 #[async_trait]
 pub trait AbacStore: Send + Sync {

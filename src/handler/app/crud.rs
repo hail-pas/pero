@@ -25,7 +25,7 @@ pub async fn create_app(
     ValidatedJson(req): ValidatedJson<CreateAppRequest>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::create_app(&state, &req).await?,
+        service::create_app(&*state.repos.apps, &req).await?,
     )))
 }
 
@@ -48,7 +48,7 @@ pub async fn list_apps(
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<AppDTO>>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::list_apps(&state, page, page_size).await?,
+        service::list_apps(&*state.repos.apps, page, page_size).await?,
     )))
 }
 
@@ -71,7 +71,7 @@ pub async fn get_app(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::get_app(&state, id).await?,
+        service::get_app(&*state.repos.apps, id).await?,
     )))
 }
 
@@ -96,7 +96,7 @@ pub async fn update_app(
     ValidatedJson(req): ValidatedJson<UpdateAppRequest>,
 ) -> Result<Json<ApiResponse<AppDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::update_app(&state, id, &req).await?,
+        service::update_app(&*state.repos.apps, id, &req).await?,
     )))
 }
 
@@ -118,5 +118,5 @@ pub async fn delete_app(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    Ok(Json(service::delete_app(&state, id).await?))
+    Ok(Json(service::delete_app(&*state.repos.apps, id).await?))
 }

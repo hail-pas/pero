@@ -1,32 +1,43 @@
-use crate::domain::identity::models::User;
-use crate::domain::identity::store::UserRepo;
+use crate::domain::identity::repo::UserStore;
+use crate::domain::oauth2::entity::AuthorizationCode;
 use crate::domain::oauth2::error_ext;
 use crate::domain::oauth2::models::{
-    AuthorizationCode, GrantType, RevokeRequest, TokenRequest, TokenResponse,
+    GrantType, RevokeRequest, TokenRequest, TokenResponse,
 };
 use crate::domain::oauth2::pkce;
+use crate::domain::oauth2::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
 use crate::domain::oauth2::service::{InvalidClientError, authenticate_client};
-use crate::domain::oauth2::family::TokenFamilyRepo;
-use crate::domain::oauth2::store::{AuthCodeRepo, RefreshTokenRepo};
+use crate::domain::app::repo::AppStore;
 use crate::domain::oauth2::token_builder::build_token_response;
 use crate::shared::constants::oauth2::{GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN};
 use crate::shared::error::{AppError, require_found};
-use crate::shared::state::AppState;
-
 
 pub async fn exchange_token(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    tokens: &dyn OAuth2TokenStore,
+    apps: &dyn AppStore,
+    users: &dyn UserStore,
+    signer: &dyn TokenSigner,
+    access_ttl: i64,
+    refresh_ttl: i64,
+    oidc_issuer: &str,
     req: &TokenRequest,
 ) -> Result<TokenResponse, AppError> {
     match req.grant_type {
-        GrantType::AuthorizationCode => exchange_authorization_code(state, req).await,
-        GrantType::RefreshToken => exchange_refresh_token(state, req).await,
+        GrantType::AuthorizationCode => exchange_authorization_code(clients, tokens, apps, users, signer, access_ttl, refresh_ttl, oidc_issuer, req).await,
+        GrantType::RefreshToken => exchange_refresh_token(clients, tokens, apps, users, signer, access_ttl, refresh_ttl, oidc_issuer, req).await,
     }
 }
 
-pub async fn revoke_token(state: &AppState, req: &RevokeRequest) -> Result<(), AppError> {
+pub async fn revoke_token(
+    clients: &dyn OAuth2ClientStore,
+    tokens: &dyn OAuth2TokenStore,
+    apps: &dyn AppStore,
+    req: &RevokeRequest,
+) -> Result<(), AppError> {
     let client = authenticate_client(
-        state,
+        clients,
+        apps,
         required_field(req.client_id.as_deref(), "client_id")?,
         required_field(req.client_secret.as_deref(), "client_secret")?,
         None,
@@ -35,26 +46,27 @@ pub async fn revoke_token(state: &AppState, req: &RevokeRequest) -> Result<(), A
     )
     .await?;
 
-    crate::domain::oauth2::service::ensure_app_enabled_pub(state, &client).await?;
-
-    let mut tx = state.db.begin().await?;
-    if let Some(token) = RefreshTokenRepo::find_active_for_update(&mut *tx, &req.token).await? {
-        if token.client_id == client.id {
-            RefreshTokenRepo::revoke(&mut *tx, token.id).await?;
-        }
-    }
-    tx.commit().await?;
+    crate::domain::oauth2::service::ensure_app_enabled_pub(apps, &client).await?;
+    tokens.revoke_token_if_owned(&req.token, client.id).await?;
     Ok(())
 }
 
 async fn exchange_authorization_code(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    tokens: &dyn OAuth2TokenStore,
+    apps: &dyn AppStore,
+    users: &dyn UserStore,
+    signer: &dyn TokenSigner,
+    access_ttl: i64,
+    refresh_ttl: i64,
+    oidc_issuer: &str,
     req: &TokenRequest,
 ) -> Result<TokenResponse, AppError> {
     let code = required_field(req.code.as_deref(), "code")?;
     let redirect_uri = required_field(req.redirect_uri.as_deref(), "redirect_uri")?;
     let client = authenticate_client(
-        state,
+        clients,
+        apps,
         required_field(req.client_id.as_deref(), "client_id")?,
         required_field(req.client_secret.as_deref(), "client_secret")?,
         Some(GRANT_TYPE_AUTH_CODE),
@@ -64,41 +76,23 @@ async fn exchange_authorization_code(
     .await?;
     let code_verifier = required_field(req.code_verifier.as_deref(), "code_verifier")?;
 
-    let mut tx = state.db.begin().await?;
+    let (auth_code, refresh_token) = tokens.exchange_auth_code(
+        code,
+        client.id,
+        uuid::Uuid::nil(),
+        &[],
+        0,
+        refresh_ttl,
+    ).await?;
 
-    let auth_code = AuthCodeRepo::find_active_for_update(&mut *tx, code)
-        .await?
-        .ok_or(error_ext::invalid_or_expired_auth_code())?;
     validate_authorization_code(&auth_code, &client, redirect_uri, code_verifier)?;
 
-    if !AuthCodeRepo::consume(&mut *tx, &auth_code.code).await? {
-        return Err(error_ext::invalid_or_expired_auth_code());
-    }
-
-    let user = load_active_user(&mut *tx, auth_code.user_id).await?;
-    let refresh_token = if client.allows_grant_type(GRANT_TYPE_REFRESH_TOKEN) {
-        let family = TokenFamilyRepo::create(&mut *tx, client.id, user.id).await?;
-        let rt = crate::shared::utils::random_hex_token();
-        RefreshTokenRepo::create(
-            &mut *tx,
-            client.id,
-            user.id,
-            &rt,
-            &auth_code.scopes,
-            auth_code.auth_time,
-            state.config.oauth2.refresh_token_ttl_days,
-            Some(family.id),
-        )
-        .await?;
-        Some(rt)
-    } else {
-        None
-    };
-
-    tx.commit().await?;
+    let user = load_active_user(users, auth_code.user_id).await?;
 
     build_token_response(
-        state,
+        signer,
+        access_ttl,
+        oidc_issuer,
         &client,
         &user,
         &auth_code.scopes,
@@ -110,12 +104,20 @@ async fn exchange_authorization_code(
 }
 
 async fn exchange_refresh_token(
-    state: &AppState,
+    clients: &dyn OAuth2ClientStore,
+    tokens: &dyn OAuth2TokenStore,
+    apps: &dyn AppStore,
+    users: &dyn UserStore,
+    signer: &dyn TokenSigner,
+    access_ttl: i64,
+    refresh_ttl: i64,
+    oidc_issuer: &str,
     req: &TokenRequest,
 ) -> Result<TokenResponse, AppError> {
     let old_refresh = required_field(req.refresh_token.as_deref(), "refresh_token")?;
     let client = authenticate_client(
-        state,
+        clients,
+        apps,
         required_field(req.client_id.as_deref(), "client_id")?,
         required_field(req.client_secret.as_deref(), "client_secret")?,
         Some(GRANT_TYPE_REFRESH_TOKEN),
@@ -124,13 +126,10 @@ async fn exchange_refresh_token(
     )
     .await?;
 
-    let mut tx = state.db.begin().await?;
-
-    let stored = match RefreshTokenRepo::find_active_for_update(&mut *tx, old_refresh).await? {
+    let stored = match tokens.find_active_refresh_for_update(old_refresh).await? {
         Some(token) => token,
         None => {
-            drop(tx);
-            return handle_refresh_replay_or_missing(state, old_refresh).await;
+            return handle_refresh_replay_or_missing(tokens, old_refresh).await;
         }
     };
 
@@ -138,32 +137,22 @@ async fn exchange_refresh_token(
         return Err(error_ext::client_mismatch());
     }
 
-    RefreshTokenRepo::revoke(&mut *tx, stored.id).await?;
-    let user = load_active_user(&mut *tx, stored.user_id).await?;
-    let family_id = stored.family_id;
+    let (new_stored, new_refresh) = tokens.rotate_refresh_token(
+        old_refresh,
+        client.id,
+        stored.user_id,
+        &stored.scopes,
+        stored.auth_time,
+        refresh_ttl,
+        stored.family_id,
+    ).await?;
 
-    let new_refresh = if client.allows_grant_type(GRANT_TYPE_REFRESH_TOKEN) {
-        let rt = crate::shared::utils::random_hex_token();
-        RefreshTokenRepo::create(
-            &mut *tx,
-            client.id,
-            user.id,
-            &rt,
-            &stored.scopes,
-            stored.auth_time,
-            state.config.oauth2.refresh_token_ttl_days,
-            family_id,
-        )
-        .await?;
-        Some(rt)
-    } else {
-        None
-    };
-
-    tx.commit().await?;
+    let user = load_active_user(users, new_stored.user_id).await?;
 
     build_token_response(
-        state,
+        signer,
+        access_ttl,
+        oidc_issuer,
         &client,
         &user,
         &stored.scopes,
@@ -199,11 +188,8 @@ fn validate_authorization_code(
     Ok(())
 }
 
-async fn load_active_user<'a, E>(executor: E, user_id: uuid::Uuid) -> Result<User, AppError>
-where
-    E: sqlx::Executor<'a, Database = sqlx::Postgres>,
-{
-    let user = require_found(UserRepo::find_by_id(executor, user_id).await?, "user")?;
+async fn load_active_user(users: &dyn UserStore, user_id: uuid::Uuid) -> Result<crate::domain::identity::models::User, AppError> {
+    let user = require_found(users.find_by_id(user_id).await?, "user")?;
     if !user.is_active() {
         return Err(AppError::Forbidden("account is disabled".into()));
     }
@@ -211,21 +197,19 @@ where
 }
 
 async fn handle_refresh_replay_or_missing(
-    state: &AppState,
+    tokens: &dyn OAuth2TokenStore,
     refresh_token: &str,
 ) -> Result<TokenResponse, AppError> {
-    if let Some(revoked) = RefreshTokenRepo::find_revoked_by_token(&state.db, refresh_token).await?
-    {
+    if let Some(revoked) = tokens.find_revoked_by_token(refresh_token).await? {
         tracing::warn!(
             user_id = %revoked.user_id,
             client_id = %revoked.client_id,
             "refresh token replay detected, revoking token family"
         );
         if let Some(family_id) = revoked.family_id {
-            TokenFamilyRepo::revoke_family(&state.db, family_id).await?;
+            tokens.revoke_token_family(family_id).await?;
         } else {
-            RefreshTokenRepo::revoke_all_for_user_client(&state.db, revoked.user_id, revoked.client_id)
-                .await?;
+            tokens.revoke_all_for_user_client(revoked.user_id, revoked.client_id).await?;
         }
         return Err(AppError::Unauthorized);
     }

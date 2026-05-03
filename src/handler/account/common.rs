@@ -1,7 +1,7 @@
 use axum::http::HeaderMap;
 
 use crate::domain::identity::entity::User;
-use crate::domain::identity::session::{self, IdentitySession};
+use crate::domain::identity::session::IdentitySession;
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
@@ -17,7 +17,7 @@ pub async fn get_verified_account(
         .map_err(|_| AppError::Unauthorized)?;
 
     let sid = claims.sid.ok_or(AppError::Unauthorized)?;
-    let identity_session = session::get_session(&state.cache, &sid)
+    let identity_session = state.repos.sessions.get(&sid)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -25,7 +25,7 @@ pub async fn get_verified_account(
         return Err(AppError::Unauthorized);
     }
 
-    let user = crate::domain::identity::store::UserRepo::find_by_id(&state.db, identity_session.user_id)
+    let user = state.repos.users.find_by_id(identity_session.user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 

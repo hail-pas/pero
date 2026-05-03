@@ -12,7 +12,7 @@ pub async fn rate_limit_middleware(
 ) -> Result<Response, AppError> {
     let key = rate_limit_key(&req);
 
-    let mut conn = cache::with_conn(&state.cache).await?;
+    let mut conn = cache::with_conn(state.repos.kv.pool()).await?;
 
     let window_secs: i64 = 60;
     let script = redis::Script::new(

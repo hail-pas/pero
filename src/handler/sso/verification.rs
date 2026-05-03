@@ -3,9 +3,7 @@ use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::domain::identity::store::{UserRepo, VerifyPayload};
 use crate::handler::sso::common::render_tpl;
-use crate::shared::constants::cache_keys::{EMAIL_VERIFY_PREFIX, PHONE_VERIFY_PREFIX};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -68,26 +66,25 @@ async fn verify_get_inner(
 }
 
 async fn validate_email_token(state: &AppState, token: &str) -> (String, String) {
-    let payload: Option<VerifyPayload> =
-        crate::shared::utils::validate_cached_token(&state.cache, EMAIL_VERIFY_PREFIX, token).await;
+    let key = format!("{}{token}", crate::shared::constants::cache_keys::EMAIL_VERIFY_PREFIX);
+    let payload: Option<crate::domain::identity::dto::VerifyPayload> =
+        state.repos.kv.get_json(&key).await.ok().flatten();
     match payload {
         Some(payload) => {
-            let user = match UserRepo::find_by_id(&state.db, payload.user_id).await {
+            let user = match state.repos.users.find_by_id(payload.user_id).await {
                 Ok(Some(u)) => u,
                 _ => return ("invalid".to_string(), String::new()),
             };
 
             if user.email_verified {
-                let key = format!("{EMAIL_VERIFY_PREFIX}{token}");
-                let _ = crate::infra::cache::del(&state.cache, &key).await;
+                let _ = state.repos.kv.del(&key).await;
                 return ("success".to_string(), user.email.unwrap_or_default());
             };
 
             if let Some(email) = user.email {
-                match UserRepo::set_email_verified(&state.db, payload).await {
+                match state.repos.users.set_email_verified(payload.user_id, &payload.value).await {
                     Ok(_) => {
-                        let key = format!("{EMAIL_VERIFY_PREFIX}{token}");
-                        let _ = crate::infra::cache::del(&state.cache, &key).await;
+                        let _ = state.repos.kv.del(&key).await;
                         ("success".to_string(), email)
                     }
                     Err(_) => ("invalid".to_string(), String::new()),
@@ -101,26 +98,25 @@ async fn validate_email_token(state: &AppState, token: &str) -> (String, String)
 }
 
 async fn validate_phone_token(state: &AppState, token: &str) -> (String, String) {
-    let payload: Option<VerifyPayload> =
-        crate::shared::utils::validate_cached_token(&state.cache, PHONE_VERIFY_PREFIX, token).await;
+    let key = format!("{}{token}", crate::shared::constants::cache_keys::PHONE_VERIFY_PREFIX);
+    let payload: Option<crate::domain::identity::dto::VerifyPayload> =
+        state.repos.kv.get_json(&key).await.ok().flatten();
     match payload {
         Some(payload) => {
-            let user = match UserRepo::find_by_id(&state.db, payload.user_id).await {
+            let user = match state.repos.users.find_by_id(payload.user_id).await {
                 Ok(Some(u)) => u,
                 _ => return ("invalid".to_string(), String::new()),
             };
 
             if user.phone_verified {
-                let key = format!("{PHONE_VERIFY_PREFIX}{token}");
-                let _ = crate::infra::cache::del(&state.cache, &key).await;
+                let _ = state.repos.kv.del(&key).await;
                 return ("success".to_string(), String::new());
             }
 
             if let Some(phone) = user.phone {
-                match UserRepo::set_phone_verified(&state.db, payload).await {
+                match state.repos.users.set_phone_verified(payload.user_id, &payload.value).await {
                     Ok(_) => {
-                        let key = format!("{PHONE_VERIFY_PREFIX}{token}");
-                        let _ = crate::infra::cache::del(&state.cache, &key).await;
+                        let _ = state.repos.kv.del(&key).await;
                         ("success".to_string(), phone)
                     }
                     Err(_) => ("invalid".to_string(), String::new()),
@@ -138,10 +134,14 @@ pub async fn verify_phone_post(
     Query(query): Query<VerifyQuery>,
 ) -> Result<Response, AppError> {
     let token = query.token.unwrap_or_default();
-    let payload: Option<VerifyPayload> = crate::shared::utils::consume_cached_token(&state.cache, PHONE_VERIFY_PREFIX, &token).await;
+    let key = format!("{}{token}", crate::shared::constants::cache_keys::PHONE_VERIFY_PREFIX);
+    let payload: Option<crate::domain::identity::dto::VerifyPayload> = state.repos.kv.get_json(&key).await.ok().flatten();
 
     let payload = match payload {
-        Some(p) => p,
+        Some(p) => {
+            let _ = state.repos.kv.del(&key).await;
+            p
+        }
         None => {
             let tpl = VerificationTemplate {
                 channel: "phone".to_string(),
@@ -152,11 +152,11 @@ pub async fn verify_phone_post(
         }
     };
 
-    let user = UserRepo::find_by_id(&state.db, payload.user_id)
+    let user = state.repos.users.find_by_id(payload.user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    UserRepo::set_phone_verified(&state.db, payload).await?;
+    state.repos.users.set_phone_verified(payload.user_id, &payload.value).await?;
 
     let tpl = VerificationTemplate {
         channel: "phone".to_string(),
@@ -181,7 +181,7 @@ pub async fn send_verify_email_post(
     State(state): State<AppState>,
     auth_user: crate::api::extractors::AuthUser,
 ) -> Result<axum::Json<crate::api::response::MessageResponse>, AppError> {
-    let user = UserRepo::find_by_id(&state.db, auth_user.user_id)
+    let user = state.repos.users.find_by_id(auth_user.user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -194,13 +194,13 @@ pub async fn send_verify_email_post(
         None => return Err(crate::domain::identity::error::email_not_set()),
     };
 
-    let payload = VerifyPayload {
+    let payload = crate::domain::identity::dto::VerifyPayload {
         user_id: user.id,
         value: email.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.cache,
-        EMAIL_VERIFY_PREFIX,
+        &state.repos.kv,
+        crate::shared::constants::cache_keys::EMAIL_VERIFY_PREFIX,
         &payload,
         state.config.sso.email_verify_ttl_seconds,
     )
@@ -231,7 +231,7 @@ pub async fn send_verify_phone_post(
     State(state): State<AppState>,
     auth_user: crate::api::extractors::AuthUser,
 ) -> Result<axum::Json<crate::api::response::MessageResponse>, AppError> {
-    let user = UserRepo::find_by_id(&state.db, auth_user.user_id)
+    let user = state.repos.users.find_by_id(auth_user.user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -244,13 +244,13 @@ pub async fn send_verify_phone_post(
         return Err(crate::domain::identity::error::phone_already_verified());
     }
 
-    let payload = VerifyPayload {
+    let payload = crate::domain::identity::dto::VerifyPayload {
         user_id: user.id,
         value: phone.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.cache,
-        PHONE_VERIFY_PREFIX,
+        &state.repos.kv,
+        crate::shared::constants::cache_keys::PHONE_VERIFY_PREFIX,
         &payload,
         state.config.sso.phone_verify_ttl_seconds,
     )

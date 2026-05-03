@@ -34,8 +34,16 @@ pub async fn change_password_post(
     ValidatedForm(form): ValidatedForm<ChangePasswordForm>,
 ) -> Result<Response, AppError> {
     let user_id = common::get_account_user_id(&state, &headers).await?;
-    match AuthService::change_password(&state, user_id, &form.old_password, &form.new_password)
-        .await
+    match AuthService::change_password(
+        &*state.repos.users,
+        &*state.repos.identities,
+        &*state.repos.sessions,
+        &*state.repos.oauth2_tokens,
+        user_id,
+        &form.old_password,
+        &form.new_password,
+    )
+    .await
     {
         Ok(_) => Ok(axum::Json(crate::api::response::MessageResponse::success(
             "Password updated.",

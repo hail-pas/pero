@@ -103,7 +103,8 @@ pub async fn login_post(
     };
 
     let user = match AuthService::authenticate_with_password(
-        &state,
+        &*state.repos.users,
+        &*state.repos.identities,
         &form.identifier_type,
         &form.identifier,
         &form.password,

@@ -7,7 +7,7 @@ use validator::Validate;
 
 use crate::api::extractors::ValidatedForm;
 use crate::domain::identity::models::UpdateMeRequest;
-use crate::domain::identity::store::VerifyPayload;
+use crate::domain::identity::dto::VerifyPayload;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, UserView};
 use crate::shared::constants::cache_keys::{EMAIL_VERIFY_PREFIX, PHONE_VERIFY_PREFIX};
@@ -71,7 +71,7 @@ pub async fn profile_post(
     ValidatedForm(form): ValidatedForm<ProfileForm>,
 ) -> Result<Response, AppError> {
     let user_id = common::get_account_user_id(&state, &headers).await?;
-    let current = crate::domain::identity::store::UserRepo::find_by_id(&state.db, user_id)
+    let current = state.repos.users.find_by_id(user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -107,7 +107,7 @@ pub async fn profile_post(
             }
         },
     };
-    let updated = crate::domain::identity::service::update_me(&state, user_id, &req).await?;
+    let updated = crate::domain::identity::service::update_me(&*state.repos.users, user_id, &req).await?;
     Ok(axum::Json(crate::api::response::ApiResponse::success(updated)).into_response())
 }
 
@@ -131,7 +131,7 @@ pub async fn send_verify_email_post(
         value: email.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.cache,
+        &state.repos.kv,
         EMAIL_VERIFY_PREFIX,
         &payload,
         state.config.sso.email_verify_ttl_seconds,
@@ -162,7 +162,7 @@ pub async fn send_verify_phone_post(
         value: phone.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.cache,
+        &state.repos.kv,
         PHONE_VERIFY_PREFIX,
         &payload,
         state.config.sso.phone_verify_ttl_seconds,

@@ -4,13 +4,11 @@ use chrono::{TimeDelta, Utc};
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-use crate::domain::oauth2::entity::{AuthorizationCode, OAuth2Client, RefreshToken};
-use crate::domain::oauth2::family::TokenFamily;
+use crate::domain::oauth2::entity::{AuthorizationCode, OAuth2Client, RefreshToken, TokenFamily, UserAuthorization};
 use crate::domain::oauth2::models::{CreateClientRequest, UpdateClientRequest};
 use crate::domain::oauth2::repo::{
     AccessTokenParams, CreateAuthCodeParams, OAuth2ClientStore, OAuth2TokenStore, TokenSigner,
 };
-use crate::domain::oauth2::store::UserAuthorization;
 use crate::infra::jwt::{self, IdTokenClaims};
 use crate::shared::error::{AppError, require_found, require_rows_affected};
 use crate::shared::pagination::{OAUTH2_CLIENTS, paginate};
@@ -310,10 +308,10 @@ impl OAuth2TokenStore for SqlxOAuth2TokenStore {
     async fn exchange_auth_code(
         &self,
         code: &str,
-        client_id: Uuid,
-        user_id: Uuid,
-        scopes: &[String],
-        auth_time: i64,
+        _client_id: Uuid,
+        _user_id: Uuid,
+        _scopes: &[String],
+        _auth_time: i64,
         refresh_ttl_days: i64,
     ) -> Result<(AuthorizationCode, Option<String>), AppError> {
         let mut tx = self.pool.begin().await?;
@@ -341,8 +339,8 @@ impl OAuth2TokenStore for SqlxOAuth2TokenStore {
         let family = sqlx::query_as::<_, TokenFamily>(
             "INSERT INTO token_families (client_id, user_id) VALUES ($1, $2) RETURNING *",
         )
-        .bind(client_id)
-        .bind(user_id)
+        .bind(auth_code.client_id)
+        .bind(auth_code.user_id)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -352,11 +350,11 @@ impl OAuth2TokenStore for SqlxOAuth2TokenStore {
         sqlx::query_as::<_, RefreshToken>(
             "INSERT INTO oauth2_tokens (client_id, user_id, refresh_token, scopes, auth_time, expires_at, family_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
         )
-        .bind(client_id)
-        .bind(user_id)
+        .bind(auth_code.client_id)
+        .bind(auth_code.user_id)
         .bind(hash)
-        .bind(scopes)
-        .bind(auth_time)
+        .bind(&auth_code.scopes)
+        .bind(auth_code.auth_time)
         .bind(expires_at)
         .bind(family.id)
         .fetch_one(&mut *tx)

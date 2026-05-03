@@ -1,5 +1,5 @@
 use pero::config::AppConfig;
-use pero::domain::identity::store::{IdentityRepo, UserRepo};
+use pero::domain::identity::entity::{Identity, User};
 use std::io::{self, Write};
 
 fn prompt(label: &str) -> String {
@@ -108,7 +108,11 @@ async fn main() {
         let username = loop {
             let v = prompt("Username (3-64 chars)");
             if v.len() >= 3 && v.len() <= 64 {
-                match UserRepo::find_by_username(&pool, &v).await {
+                match sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+                    .bind(&v)
+                    .fetch_optional(&pool)
+                    .await
+                {
                     Ok(None) => break v,
                     Ok(Some(_)) => println!("  ! Username '{}' already exists, try another", v),
                     Err(e) => {
@@ -127,7 +131,11 @@ async fn main() {
                 break None;
             }
             if v.contains('@') && v.contains('.') {
-                match UserRepo::find_by_email(&pool, &v).await {
+                match sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
+                    .bind(&v)
+                    .fetch_optional(&pool)
+                    .await
+                {
                     Ok(None) => break Some(v),
                     Ok(Some(_)) => println!("  ! Email '{}' already exists, try another", v),
                     Err(e) => {
@@ -145,7 +153,11 @@ async fn main() {
             if v.is_empty() {
                 break None;
             }
-            match UserRepo::find_by_phone(&pool, &v).await {
+            match sqlx::query_as::<_, User>("SELECT * FROM users WHERE phone = $1")
+                .bind(&v)
+                .fetch_optional(&pool)
+                .await
+            {
                 Ok(None) => break Some(v),
                 Ok(Some(_)) => println!("  ! Phone '{}' already exists, try another", v),
                 Err(e) => {
@@ -178,19 +190,25 @@ async fn main() {
             let password_hash = pero::shared::crypto::hash_secret(&password).expect("Failed to hash password");
             let mut tx = pool.begin().await.expect("Failed to begin transaction");
 
-            let user = UserRepo::create(
-                &mut *tx,
-                &username,
-                email.as_deref(),
-                phone.as_deref(),
-                Some(&nickname),
+            let user = sqlx::query_as::<_, User>(
+                "INSERT INTO users (username, email, phone, nickname) VALUES ($1, $2, $3, $4) RETURNING *",
             )
+            .bind(&username)
+            .bind(email.as_deref())
+            .bind(phone.as_deref())
+            .bind(Some(&nickname))
+            .fetch_one(&mut *tx)
             .await
             .expect("Failed to create user");
 
-            IdentityRepo::create_password(&mut *tx, user.id, &password_hash)
-                .await
-                .expect("Failed to create password identity");
+            sqlx::query_as::<_, Identity>(
+                "INSERT INTO identities (user_id, provider, provider_uid, credential, verified) VALUES ($1, 'password', $1, $2, true) RETURNING *",
+            )
+            .bind(user.id)
+            .bind(&password_hash)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("Failed to create password identity");
 
             let policy_name = format!("super-admin-{}", user.id);
             let policy_id: uuid::Uuid = sqlx::query_scalar(
@@ -263,14 +281,13 @@ async fn main() {
                     }
                 })
                 .collect();
-            let app = pero::domain::app::store::AppRepo::create(
-                &pool,
-                &pero::domain::app::models::CreateAppRequest {
-                    name: client_name.clone(),
-                    code,
-                    description: None,
-                },
+            let app = sqlx::query_as::<_, pero::domain::app::entity::App>(
+                "INSERT INTO apps (name, code, description) VALUES ($1, $2, $3) RETURNING *",
             )
+            .bind(&client_name)
+            .bind(&code)
+            .bind(None::<&str>)
+            .fetch_one(&pool)
             .await
             .expect("Failed to create app");
 
@@ -279,23 +296,22 @@ async fn main() {
             let client_secret_hash =
                 pero::shared::crypto::hash_secret(&client_secret).expect("Failed to hash client secret");
 
-            let client = pero::domain::oauth2::store::OAuth2ClientRepo::create(
-                &pool,
-                &client_id_str,
-                &client_secret_hash,
-                &pero::domain::oauth2::models::CreateClientRequest {
-                    app_id: app.id,
-                    client_name: client_name.clone(),
-                    redirect_uris: vec![redirect_uri.clone()],
-                    grant_types: vec!["authorization_code".to_string()],
-                    scopes: vec![
-                        "openid".to_string(),
-                        "profile".to_string(),
-                        "email".to_string(),
-                    ],
-                    post_logout_redirect_uris: vec![post_logout_uri.clone()],
-                },
+            let client = sqlx::query_as::<_, pero::domain::oauth2::entity::OAuth2Client>(
+                "INSERT INTO oauth2_clients (app_id, client_id, client_secret_hash, client_name, redirect_uris, grant_types, scopes, post_logout_redirect_uris) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
             )
+            .bind(app.id)
+            .bind(&client_id_str)
+            .bind(&client_secret_hash)
+            .bind(&client_name)
+            .bind(vec![redirect_uri.clone()])
+            .bind(vec!["authorization_code".to_string()])
+            .bind(vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "email".to_string(),
+            ])
+            .bind(vec![post_logout_uri.clone()])
+            .fetch_one(&pool)
             .await
             .expect("Failed to create OAuth2 client");
 

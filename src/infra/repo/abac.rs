@@ -8,7 +8,7 @@ use crate::domain::abac::dto::CreateConditionRequest;
 use crate::domain::abac::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest, UserAttribute};
 use crate::domain::abac::repo::{AbacCacheStore, AbacStore};
 use crate::domain::abac::service::AttachedPolicies;
-use crate::domain::abac::store::PolicyFilter;
+use crate::domain::abac::repo::PolicyFilter;
 use crate::infra::cache;
 use crate::shared::cache_keys::abac::{
     app_version_key, policy_key, policy_version_key, subject_key, subject_version_key,

@@ -68,7 +68,8 @@ pub async fn login_post(
     };
 
     let user = match AuthService::authenticate_with_password(
-        &state,
+        &*state.repos.users,
+        &*state.repos.identities,
         &id_type,
         &form.identifier,
         &form.password,
@@ -114,7 +115,8 @@ pub async fn account_social_login(
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
     let next = extract_cookie(&headers, "pero_login_next").filter(|s| s.starts_with('/'));
     let (url, _) = crate::domain::social::service::build_account_login_url(
-        &state,
+        &*state.repos.social,
+        &state.repos.kv,
         &provider,
         &redirect_uri,
         next.as_deref().and_then(safe_local_path).as_deref(),
