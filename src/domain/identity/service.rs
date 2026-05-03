@@ -13,7 +13,6 @@ use crate::shared::patch::Patch;
 
 pub async fn register_user(
     users: &dyn UserStore,
-    identities: &dyn IdentityStore,
     sessions_store: &dyn SessionStore,
     signer: &dyn TokenSigner,
     req: &RegisterRequest,
@@ -23,7 +22,6 @@ pub async fn register_user(
     refresh_ttl_days: i64,
 ) -> Result<TokenResponse, AppError> {
     let password_hash = hash_password(&req.password)?;
-    users.check_new_user_conflicts(&req.username, req.email.as_deref(), req.phone.as_deref()).await?;
     let user = users.create_with_password(
         &req.username,
         req.email.as_deref(),
@@ -31,14 +29,12 @@ pub async fn register_user(
         req.nickname.as_deref(),
         &password_hash,
     ).await?;
-    identities.create_password(user.id, &password_hash).await?;
 
     issue_tokens(signer, sessions_store, &user, access_ttl_minutes, refresh_ttl_days, device, location).await
 }
 
-pub async fn create_user(users: &dyn UserStore, identities: &dyn IdentityStore, req: &CreateUserRequest) -> Result<UserDTO, AppError> {
+pub async fn create_user(users: &dyn UserStore, req: &CreateUserRequest) -> Result<UserDTO, AppError> {
     let password_hash = hash_password(&req.password)?;
-    users.check_new_user_conflicts(&req.username, req.email.as_deref(), req.phone.as_deref()).await?;
     let user = users.create_with_password(
         &req.username,
         req.email.as_deref(),
@@ -46,7 +42,6 @@ pub async fn create_user(users: &dyn UserStore, identities: &dyn IdentityStore, 
         req.nickname.as_deref(),
         &password_hash,
     ).await?;
-    identities.create_password(user.id, &password_hash).await?;
 
     Ok(user.into())
 }

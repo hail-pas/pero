@@ -29,7 +29,6 @@ pub async fn register(
     Ok(Json(ApiResponse::success(
         service::register_user(
             &*state.repos.users,
-            &*state.repos.identities,
             &*state.repos.sessions,
             &*state.repos.token_signer,
             &req,
@@ -58,6 +57,6 @@ pub async fn create_user(
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::create_user(&*state.repos.users, &*state.repos.identities, &req).await?,
+        service::create_user(&*state.repos.users, &req).await?,
     )))
 }
