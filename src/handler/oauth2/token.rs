@@ -1,5 +1,5 @@
 use crate::api::extractors::ValidatedForm;
-use crate::domain::oauth2::error;
+use crate::infra::http::oauth2 as error;
 use crate::domain::oauth2::models::TokenRequest;
 use crate::domain::oauth2::service;
 use crate::shared::state::AppState;

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::domain::abac::models::RouteScope;
 use crate::shared::constants::headers::{X_PROCESS_TIME, X_REQUEST_ID};
-use crate::shared::error::ErrorInfo;
+use crate::infra::http::error::ErrorInfo;
 use crate::shared::state::AppState;
 use axum::Router;
 use axum::http::header;

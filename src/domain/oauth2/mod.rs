@@ -1,7 +1,6 @@
 pub mod dto;
 pub mod state;
 pub mod entity;
-pub mod error;
 pub mod family;
 pub mod error_ext;
 pub mod repo;
