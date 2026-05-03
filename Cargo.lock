@@ -2013,6 +2013,7 @@ name = "pero"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "async-trait",
  "axum",
  "base64",
  "bcrypt",
