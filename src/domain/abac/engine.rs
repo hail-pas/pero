@@ -19,8 +19,24 @@ pub fn eval_condition(
     let app_id_str = ctx.app_id.map(|id| id.to_string());
     let target_values: Vec<&str> = match cond.condition_type.as_str() {
         "subject" => subject_values(ctx, &cond.key).collect(),
-        "resource" if cond.key == "path" => vec![ctx.resource.as_str()],
-        "action" if cond.key == "method" => vec![ctx.action.as_str()],
+        "resource" => match cond.key.as_str() {
+            "path" => vec![ctx.resource.as_str()],
+            "type" => ctx
+                .domain_resource
+                .as_ref()
+                .map(|r| vec![r.as_str()])
+                .unwrap_or_default(),
+            _ => vec![],
+        },
+        "action" => match cond.key.as_str() {
+            "method" => vec![ctx.action.as_str()],
+            "type" => ctx
+                .domain_action
+                .as_ref()
+                .map(|a| vec![a.as_str()])
+                .unwrap_or_default(),
+            _ => vec![],
+        },
         "app" if cond.key == "app_id" => app_id_str.as_deref().into_iter().collect(),
         _ => vec![],
     };

@@ -231,6 +231,8 @@ pub struct AuthorizeQuery {
     pub code_challenge_method: CodeChallengeMethod,
     pub nonce: Option<String>,
     pub login_hint: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]

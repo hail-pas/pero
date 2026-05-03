@@ -113,6 +113,27 @@ pub fn unauthorized_client(message: impl Into<String>) -> Response {
     oauth_error(OAuth2ErrorCode::UnauthorizedClient, message.into())
 }
 
+use super::typed_error::OAuth2TypedError;
+
+pub fn map_typed_error(e: OAuth2TypedError) -> Response {
+    match &e {
+        OAuth2TypedError::ClientNotFound | OAuth2TypedError::ClientMismatch => {
+            invalid_client(e.to_string())
+        }
+        OAuth2TypedError::ClientDisabled => unauthorized_client(e.to_string()),
+        OAuth2TypedError::InvalidRedirectUri
+        | OAuth2TypedError::RedirectUriMismatch
+        | OAuth2TypedError::InvalidOrExpiredAuthCode
+        | OAuth2TypedError::InvalidOrExpiredRefreshToken
+        | OAuth2TypedError::PkceVerificationFailed
+        | OAuth2TypedError::MissingPkceChallenge => invalid_grant(e.to_string()),
+        OAuth2TypedError::ScopeNotAllowed(_) => invalid_scope(e.to_string()),
+        OAuth2TypedError::GrantTypeNotAllowed(_) => unauthorized_client(e.to_string()),
+        OAuth2TypedError::MissingField(_) => invalid_request(e.to_string()),
+        OAuth2TypedError::UserNotAuthenticated | OAuth2TypedError::AppDisabled => access_denied(e.to_string()),
+    }
+}
+
 pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
     match &e {
         crate::shared::error::AppError::BadRequest(msg) => {

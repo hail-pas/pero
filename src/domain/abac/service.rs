@@ -1,9 +1,9 @@
+use super::cache::AbacCache;
 use super::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
 use super::store::{PolicyConditionRepo, PolicyFilter, PolicyRepo, UserPolicyRepo};
 use crate::api::response::PageData;
 use crate::domain::identity::store::UserRepo;
-use crate::infra::cache;
-use crate::shared::constants::{cache_keys, identity};
+use crate::shared::constants::identity;
 use crate::shared::error::{AppError, require_found};
 use crate::shared::patch::Patch;
 use crate::shared::state::AppState;
@@ -63,23 +63,20 @@ pub async fn build_subject_attrs(
     user_id: Uuid,
     roles: &[String],
 ) -> Result<HashMap<String, Vec<String>>, AppError> {
-    let cache_key = format!("{}{}", cache_keys::ABAC_SUBJECT_PREFIX, user_id);
+    let ttl = state.config.abac.policy_cache_ttl_seconds;
 
     let mut subject_attrs: HashMap<String, Vec<String>> =
-        match cache::get_json::<HashMap<String, Vec<String>>>(&state.cache, &cache_key).await {
+        match AbacCache::get_subject_attrs::<HashMap<String, Vec<String>>>(&state.cache, user_id)
+            .await
+        {
             Ok(Some(cached)) => cached,
             _ => {
                 let mut attrs: HashMap<String, Vec<String>> = HashMap::new();
                 for (key, value) in PolicyRepo::load_user_attributes(&state.db, user_id).await? {
                     attrs.entry(key).or_default().push(value);
                 }
-                if let Err(e) = cache::set_json(
-                    &state.cache,
-                    &cache_key,
-                    &attrs,
-                    state.config.abac.policy_cache_ttl_seconds,
-                )
-                .await
+                if let Err(e) =
+                    AbacCache::set_subject_attrs(&state.cache, user_id, &attrs, ttl).await
                 {
                     tracing::warn!(error = %e, "failed to cache ABAC subject attrs");
                 }
@@ -243,24 +240,14 @@ pub async fn load_user_policies(
         return load().await;
     }
 
-    let cache_key = format!(
-        "{}{}:{}",
-        cache_keys::ABAC_PREFIX,
-        user_id,
-        app_id.map(|id| id.to_string()).unwrap_or_default()
-    );
+    let ttl = state.config.abac.policy_cache_ttl_seconds;
 
-    match cache::get_json::<AttachedPolicies>(&state.cache, &cache_key).await {
+    match AbacCache::get_policies::<AttachedPolicies>(&state.cache, user_id, app_id).await {
         Ok(Some(cached)) => Ok(cached),
         _ => {
             let policies = load().await?;
-            if let Err(e) = cache::set_json(
-                &state.cache,
-                &cache_key,
-                &policies,
-                state.config.abac.policy_cache_ttl_seconds,
-            )
-            .await
+            if let Err(e) =
+                AbacCache::set_policies(&state.cache, user_id, app_id, &policies, ttl).await
             {
                 tracing::warn!(error = %e, "failed to cache ABAC policies");
             }
@@ -269,48 +256,16 @@ pub async fn load_user_policies(
     }
 }
 
-pub async fn invalidate_policy_cache(
-    state: &AppState,
-    app_id: Option<Uuid>,
-) -> Result<(), AppError> {
-    let patterns: Vec<String> = if let Some(aid) = app_id {
-        vec![
-            format!("{}*:{}", cache_keys::ABAC_PREFIX, aid),
-            format!("{}*:", cache_keys::ABAC_PREFIX),
-        ]
-    } else {
-        vec![format!("{}*:", cache_keys::ABAC_PREFIX)]
-    };
-    for pattern in patterns {
-        cache::delete_by_pattern(&state.cache, &pattern).await?;
-    }
-    Ok(())
-}
-
 pub async fn invalidate_policy_cache_best_effort(state: &AppState, app_id: Option<Uuid>) {
-    if let Err(e) = invalidate_policy_cache(state, app_id).await {
+    let ttl = state.config.abac.policy_cache_ttl_seconds;
+    if let Err(e) = AbacCache::invalidate_policy_version(&state.cache, app_id, ttl).await {
         tracing::warn!(error = %e, app_id = ?app_id, "failed to invalidate ABAC policy cache");
     }
 }
 
-pub async fn invalidate_user_cache(state: &AppState, user_id: Uuid) -> Result<(), AppError> {
-    cache::del(
-        &state.cache,
-        &format!("{}{}", cache_keys::ABAC_SUBJECT_PREFIX, user_id),
-    )
-    .await?;
-    let patterns = [
-        format!("{}{}:", cache_keys::ABAC_PREFIX, user_id),
-        format!("{}{}:*", cache_keys::ABAC_PREFIX, user_id),
-    ];
-    for pattern in patterns {
-        cache::delete_by_pattern(&state.cache, &pattern).await?;
-    }
-    Ok(())
-}
-
 pub async fn invalidate_user_cache_best_effort(state: &AppState, user_id: Uuid) {
-    if let Err(e) = invalidate_user_cache(state, user_id).await {
+    let ttl = state.config.abac.policy_cache_ttl_seconds;
+    if let Err(e) = AbacCache::invalidate_user_policy_version(&state.cache, user_id, ttl).await {
         tracing::warn!(error = %e, %user_id, "failed to invalidate ABAC user cache");
     }
 }

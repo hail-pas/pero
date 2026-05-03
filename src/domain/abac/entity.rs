@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::resource::{Action, Resource};
+
 #[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Policy {
     pub id: Uuid,
@@ -45,6 +47,8 @@ pub struct EvalContext {
     pub subject_attrs: HashMap<String, Vec<String>>,
     pub resource: String,
     pub action: String,
+    pub domain_resource: Option<Resource>,
+    pub domain_action: Option<Action>,
     pub app_id: Option<Uuid>,
     pub route_scope: RouteScope,
 }

@@ -6,6 +6,7 @@ use crate::api::extractors::ValidatedJson;
 use crate::api::response::ApiResponse;
 use crate::domain::abac::engine;
 use crate::domain::abac::models::{EvalContext, EvaluateRequest, EvaluateResponse, RouteScope};
+use crate::domain::abac::resource::{Action, Resource};
 use crate::domain::abac::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
@@ -31,10 +32,15 @@ pub async fn evaluate(
     let policies =
         service::load_user_policies(&state, auth_user.user_id, req.app_id, false).await?;
 
+    let domain_resource = Resource::from_path(&req.resource);
+    let domain_action = Action::from_method_and_path(&req.action, &req.resource);
+
     let ctx = EvalContext {
         subject_attrs,
         resource: req.resource,
         action: req.action,
+        domain_resource: Some(domain_resource),
+        domain_action: Some(domain_action),
         app_id: req.app_id,
         route_scope: if req.app_id.is_some() {
             RouteScope::App

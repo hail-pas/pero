@@ -3,8 +3,8 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
-use crate::domain::identity::session;
-use crate::domain::oauth2::store::{OAuth2ClientRepo, RefreshTokenRepo};
+use crate::domain::oauth2::store::OAuth2ClientRepo;
+use crate::domain::session::SessionBinding;
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
@@ -58,49 +58,44 @@ pub async fn end_session(
                 {
                     redirect_uri = Some(uri.clone());
                     let target_sid = verified.sid.as_deref().or(cookie_sid.as_deref());
-                    revoke_single_session(&state, &verified.sub, target_sid).await;
+                    if let Ok(user_id) = verified.sub.parse::<uuid::Uuid>() {
+                        let binding = target_sid
+                            .map(|sid| SessionBinding::from_sid(user_id, sid))
+                            .unwrap_or_else(|| SessionBinding::user_only(user_id));
+                        revoke_session_binding(&state, &binding).await;
+                    }
                 }
             }
         } else {
             let target_sid = id_claims.sid.as_deref().or(cookie_sid.as_deref());
-            revoke_single_session(&state, &id_claims.sub, target_sid).await;
+            if let Ok(user_id) = id_claims.sub.parse::<uuid::Uuid>() {
+                let binding = target_sid
+                    .map(|sid| SessionBinding::from_sid(user_id, sid))
+                    .unwrap_or_else(|| SessionBinding::user_only(user_id));
+                revoke_session_binding(&state, &binding).await;
+            }
         }
     } else {
-        revoke_single_session_from_cookie(&state, &headers).await;
+        if let Some(token) = crate::shared::utils::extract_cookie(&headers, ACCOUNT_TOKEN) {
+            if let Ok(claims) = crate::infra::jwt::verify_token(&token, &state.jwt_keys) {
+                if let Ok(user_id) = claims.sub.parse::<uuid::Uuid>() {
+                    let binding = claims
+                        .sid
+                        .as_deref()
+                        .map(|sid| SessionBinding::from_sid(user_id, sid))
+                        .unwrap_or_else(|| SessionBinding::user_only(user_id));
+                    revoke_session_binding(&state, &binding).await;
+                }
+            }
+        }
     }
 
     end_session_cleanup(&state, &query, redirect_uri, cookie_sid).await
 }
 
-async fn revoke_single_session(
-    state: &AppState,
-    sub: &str,
-    sid: Option<&str>,
-) {
-    if let Some(sid) = sid {
-        let _ = session::revoke_session(&state.cache, sid).await;
-    }
-    if let Ok(user_id) = sub.parse::<uuid::Uuid>() {
-        if let Err(e) = RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await {
-            tracing::warn!(error = %e, "failed to revoke oauth2 tokens during end_session");
-        }
-    }
-}
-
-async fn revoke_single_session_from_cookie(state: &AppState, headers: &HeaderMap) {
-    if let Some(token) = crate::shared::utils::extract_cookie(headers, ACCOUNT_TOKEN) {
-        if let Ok(claims) = crate::infra::jwt::verify_token(&token, &state.jwt_keys) {
-            if let Some(ref sid) = claims.sid {
-                let _ = session::revoke_session(&state.cache, sid).await;
-            }
-            if let Ok(user_id) = claims.sub.parse::<uuid::Uuid>() {
-                if let Err(e) =
-                    RefreshTokenRepo::revoke_all_for_user(&state.db, user_id).await
-                {
-                    tracing::warn!(error = %e, "failed to revoke oauth2 tokens during end_session");
-                }
-            }
-        }
+async fn revoke_session_binding(state: &AppState, binding: &SessionBinding) {
+    if let Err(e) = binding.revoke_all(&state.cache, &state.db).await {
+        tracing::warn!(error = %e, "failed to revoke session binding during end_session");
     }
 }
 

@@ -328,3 +328,87 @@ async fn token_exchange_rejects_disallowed_refresh_token_grant() {
 
     ta.cleanup().await;
 }
+
+#[tokio::test]
+async fn authorize_accepts_provider_param() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    ta.grant_api_access(fx.user_id).await;
+    let (_, client_fx) = create_app_with_client(&mut ta, &fx.access_token).await;
+
+    let (status, _) = send_raw_request(
+        &mut ta.app,
+        hyper::Method::GET,
+        &format!(
+            "/oauth2/authorize?client_id={}&redirect_uri=http://localhost:3000/callback&response_type=code&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&provider=google",
+            client_fx.client_id_str
+        ),
+    )
+    .await;
+    assert!(
+        status == StatusCode::FOUND || status == StatusCode::SEE_OTHER,
+        "authorize should redirect with provider param: got {status}"
+    );
+    ta.cleanup().await;
+}
+
+#[tokio::test]
+async fn token_family_created_on_auth_code_exchange() {
+    let mut ta = build_app().await;
+    let fx = ta.register_default_user().await;
+    ta.grant_api_access(fx.user_id).await;
+    let (_, client_fx) = create_app_with_client(&mut ta, &fx.access_token).await;
+
+    let code = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+    sqlx::query(
+        "INSERT INTO oauth2_authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '10 minutes')",
+    )
+    .bind(&code)
+    .bind(client_fx.client_id)
+    .bind(fx.user_id)
+    .bind("http://localhost:3000/callback")
+    .bind(&vec!["openid".to_string(), "profile".to_string()])
+    .bind(challenge)
+    .bind("S256")
+    .execute(&ta.db)
+    .await
+    .unwrap();
+
+    let (status, body) = send_form_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/oauth2/token",
+        &[
+            ("grant_type", "authorization_code".to_string()),
+            ("code", code),
+            ("redirect_uri", "http://localhost:3000/callback".to_string()),
+            ("client_id", client_fx.client_id_str.clone()),
+            ("client_secret", client_fx.client_secret.clone()),
+            (
+                "code_verifier",
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string(),
+            ),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "token exchange failed: {body:?}");
+
+    let family_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM token_families WHERE client_id = $1 AND user_id = $2")
+        .bind(client_fx.client_id)
+        .bind(fx.user_id)
+        .fetch_one(&ta.db)
+        .await
+        .unwrap();
+    assert!(family_count >= 1, "token family should be created");
+
+    let tokens_with_family: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth2_tokens WHERE user_id = $1 AND family_id IS NOT NULL")
+        .bind(fx.user_id)
+        .fetch_one(&ta.db)
+        .await
+        .unwrap();
+    assert!(tokens_with_family >= 1, "refresh token should have family_id");
+
+    ta.cleanup().await;
+}

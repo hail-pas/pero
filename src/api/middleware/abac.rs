@@ -1,5 +1,6 @@
 use crate::domain::abac::engine;
 use crate::domain::abac::models::{EvalContext, RouteScope};
+use crate::domain::abac::resource::{Action, Resource};
 use crate::domain::abac::service;
 use crate::infra::jwt::TokenClaims;
 use crate::shared::constants::headers;
@@ -53,10 +54,15 @@ pub async fn abac_middleware(
     let subject_attrs = service::build_subject_attrs(&state, user_id, &claims.roles).await?;
     let policies = service::load_user_policies(&state, user_id, app_id, true).await?;
 
+    let domain_resource = Resource::from_path(&path);
+    let domain_action = Action::from_method_and_path(req.method().as_str(), &path);
+
     let ctx = EvalContext {
         subject_attrs,
         resource: path,
         action: req.method().to_string(),
+        domain_resource: Some(domain_resource),
+        domain_action: Some(domain_action),
         app_id,
         route_scope,
     };

@@ -6,6 +6,7 @@ use crate::domain::oauth2::models::{
 };
 use crate::domain::oauth2::pkce;
 use crate::domain::oauth2::service::{InvalidClientError, authenticate_client};
+use crate::domain::oauth2::family::TokenFamilyRepo;
 use crate::domain::oauth2::store::{AuthCodeRepo, RefreshTokenRepo};
 use crate::domain::oauth2::token_builder::build_token_response;
 use crate::shared::constants::oauth2::{GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN};
@@ -76,6 +77,7 @@ async fn exchange_authorization_code(
 
     let user = load_active_user(&mut *tx, auth_code.user_id).await?;
     let refresh_token = if client.allows_grant_type(GRANT_TYPE_REFRESH_TOKEN) {
+        let family = TokenFamilyRepo::create(&mut *tx, client.id, user.id).await?;
         let rt = crate::shared::utils::random_hex_token();
         RefreshTokenRepo::create(
             &mut *tx,
@@ -85,6 +87,7 @@ async fn exchange_authorization_code(
             &auth_code.scopes,
             auth_code.auth_time,
             state.config.oauth2.refresh_token_ttl_days,
+            Some(family.id),
         )
         .await?;
         Some(rt)
@@ -137,6 +140,7 @@ async fn exchange_refresh_token(
 
     RefreshTokenRepo::revoke(&mut *tx, stored.id).await?;
     let user = load_active_user(&mut *tx, stored.user_id).await?;
+    let family_id = stored.family_id;
 
     let new_refresh = if client.allows_grant_type(GRANT_TYPE_REFRESH_TOKEN) {
         let rt = crate::shared::utils::random_hex_token();
@@ -148,6 +152,7 @@ async fn exchange_refresh_token(
             &stored.scopes,
             stored.auth_time,
             state.config.oauth2.refresh_token_ttl_days,
+            family_id,
         )
         .await?;
         Some(rt)
@@ -214,10 +219,14 @@ async fn handle_refresh_replay_or_missing(
         tracing::warn!(
             user_id = %revoked.user_id,
             client_id = %revoked.client_id,
-            "refresh token replay detected, revoking all tokens for user-client pair"
+            "refresh token replay detected, revoking token family"
         );
-        RefreshTokenRepo::revoke_all_for_user_client(&state.db, revoked.user_id, revoked.client_id)
-            .await?;
+        if let Some(family_id) = revoked.family_id {
+            TokenFamilyRepo::revoke_family(&state.db, family_id).await?;
+        } else {
+            RefreshTokenRepo::revoke_all_for_user_client(&state.db, revoked.user_id, revoked.client_id)
+                .await?;
+        }
         return Err(AppError::Unauthorized);
     }
     Err(error_ext::invalid_or_expired_refresh_token())

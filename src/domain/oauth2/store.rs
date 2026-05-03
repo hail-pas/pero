@@ -113,6 +113,7 @@ impl RefreshTokenRepo {
         scopes: &[String],
         auth_time: i64,
         ttl_days: i64,
+        family_id: Option<Uuid>,
     ) -> Result<RefreshToken, AppError>
     where
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
@@ -120,7 +121,7 @@ impl RefreshTokenRepo {
         let expires_at = Utc::now() + TimeDelta::days(ttl_days);
         let token_hash = Self::token_hash(refresh_token);
         let token = sqlx::query_as::<_, RefreshToken>(
-            "INSERT INTO oauth2_tokens (client_id, user_id, refresh_token, scopes, auth_time, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+            "INSERT INTO oauth2_tokens (client_id, user_id, refresh_token, scopes, auth_time, expires_at, family_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
         )
         .bind(client_id)
         .bind(user_id)
@@ -128,6 +129,7 @@ impl RefreshTokenRepo {
         .bind(scopes)
         .bind(auth_time)
         .bind(expires_at)
+        .bind(family_id)
         .fetch_one(executor)
         .await?;
         Ok(token)

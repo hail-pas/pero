@@ -1,7 +1,10 @@
 pub mod dto;
+pub mod state;
 pub mod entity;
 pub mod error;
+pub mod family;
 pub mod error_ext;
+pub mod typed_error;
 pub mod models {
     pub use super::dto::*;
     pub use super::entity::*;

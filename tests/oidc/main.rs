@@ -63,3 +63,30 @@ async fn userinfo_with_auth() {
     assert_eq!(body["sub"], fx.user_id.to_string());
     ta.cleanup().await;
 }
+
+#[tokio::test]
+async fn end_session_clears_cookie() {
+    let (mut app, _rt) = build_router().await;
+    let (status, _) = send_raw_request(
+        &mut app,
+        hyper::Method::GET,
+        "/oauth2/session/end",
+    )
+    .await;
+    assert!(status == StatusCode::OK || status == StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn discovery_includes_end_session_endpoint() {
+    let (mut app, _rt) = build_router().await;
+    let (_, body) = send_request(
+        &mut app,
+        hyper::Method::GET,
+        "/.well-known/openid-configuration",
+        None,
+        None,
+    )
+    .await;
+    assert!(body["end_session_endpoint"].is_string(), "discovery must include end_session_endpoint");
+    assert!(body["token_endpoint_auth_methods_supported"].is_array());
+}

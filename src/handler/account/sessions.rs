@@ -5,6 +5,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::domain::identity::session;
+use crate::domain::session::SessionBinding;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, SessionView};
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
@@ -58,7 +59,9 @@ pub async fn delete_session_post(
         return Err(AppError::NotFound("session not found".into()));
     }
 
-    session::revoke_session(&state.cache, &form.session_id).await?;
+    SessionBinding::from_sid(user_id, &form.session_id)
+        .revoke_session_only(&state.cache)
+        .await?;
     Ok(axum::Json(crate::api::response::MessageResponse::success(
         "Session terminated.",
     ))
@@ -93,9 +96,11 @@ pub async fn logout_post(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let (_user, identity_session) = common::get_verified_account(&state, &headers).await?;
+    let (user, identity_session) = common::get_verified_account(&state, &headers).await?;
 
-    let _ = session::revoke_session(&state.cache, &identity_session.session_id).await;
+    let _ = SessionBinding::from_sid(user.id, &identity_session.session_id)
+        .revoke_session_only(&state.cache)
+        .await;
 
     let mut response = axum::Json(crate::api::response::MessageResponse::success(
         "Signed out.",

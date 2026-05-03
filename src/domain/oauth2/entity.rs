@@ -60,4 +60,5 @@ pub struct RefreshToken {
     pub expires_at: DateTime<Utc>,
     pub revoked: bool,
     pub created_at: DateTime<Utc>,
+    pub family_id: Option<Uuid>,
 }

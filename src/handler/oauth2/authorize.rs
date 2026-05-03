@@ -76,12 +76,13 @@ pub async fn authorize(
     let session_id =
         session::create(&state.cache, &sso, state.config.sso.session_ttl_seconds).await?;
 
-    if let Some(ref hint) = query.login_hint {
-        if SocialProviderRepo::find_enabled_by_name(&state.db, hint)
+    if let Some(ref provider_name) = query.provider {
+        if SocialProviderRepo::find_enabled_by_name(&state.db, provider_name)
             .await?
             .is_some()
         {
-            let mut response = Redirect::to(&format!("/sso/social/{}/login", hint)).into_response();
+            let mut response =
+                Redirect::to(&format!("/sso/social/{}/login", provider_name)).into_response();
             response.headers_mut().append(
                 header::SET_COOKIE,
                 set_session_cookie(&state.config.sso, &session_id)?,
