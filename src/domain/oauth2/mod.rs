@@ -4,6 +4,7 @@ pub mod entity;
 pub mod error;
 pub mod family;
 pub mod error_ext;
+pub mod repo;
 pub mod typed_error;
 pub mod models {
     pub use super::dto::*;

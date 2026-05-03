@@ -4,6 +4,7 @@ pub mod dto;
 pub mod engine;
 pub mod entity;
 pub mod error;
+pub mod repo;
 pub mod resource;
 pub mod typed_error;
 pub mod models {

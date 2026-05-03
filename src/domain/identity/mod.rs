@@ -3,6 +3,7 @@ pub mod state;
 pub mod dto;
 pub mod entity;
 pub mod error;
+pub mod repo;
 pub mod typed_error;
 pub mod models {
     pub use super::dto::*;
