@@ -7,6 +7,7 @@ use crate::domain::social::service;
 use crate::handler::social::social_callback_url;
 use crate::handler::sso::common::load_sso_session;
 use crate::shared::error::AppError;
+use crate::shared::kv::KvStoreExt;
 use crate::shared::state::AppState;
 
 pub async fn social_login(

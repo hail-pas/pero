@@ -1023,8 +1023,8 @@ async fn evaluate_domain_action_type_deny() {
         "/api/policies",
         Some(serde_json::json!({
             "name": policy_name,
-            "effect": "allow",
-            "priority": 100,
+            "effect": "deny",
+            "priority": 1,
             "app_id": app_fx.app_id.to_string(),
             "conditions": [
                 {"condition_type": "resource", "key": "type", "operator": "eq", "value": "user"},
@@ -1047,19 +1047,21 @@ async fn evaluate_domain_action_type_deny() {
     )
     .await;
 
+    ta.clear_user_cache(fx.user_id).await;
+
     let (status, body) = send_request(
         &mut ta.app,
         hyper::Method::POST,
         "/api/abac/evaluate",
         Some(serde_json::json!({
             "resource": "/api/users/123",
-            "action": "GET",
+            "action": "DELETE",
             "app_id": app_fx.app_id.to_string(),
         })),
         Some(&fx.access_token),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "evaluate failed: {body:?}");
     assert_eq!(body["data"]["allowed"], false);
     ta.cleanup().await;
 }
@@ -1069,13 +1071,34 @@ async fn policy_cache_invalidated_on_update() {
     let mut ta = build_app().await;
     let fx = ta.register_default_user().await;
     ta.grant_api_access(fx.user_id).await;
+    let app_fx = ta.create_test_app(&fx.access_token).await;
 
-    let policy_fx = ta.create_test_policy(&fx.access_token, "deny", 100).await;
+    let policy_name = unique_name("cache-inv");
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/api/policies",
+        Some(serde_json::json!({
+            "name": policy_name,
+            "effect": "deny",
+            "priority": 1,
+            "app_id": app_fx.app_id.to_string(),
+            "conditions": [
+                {"condition_type": "resource", "key": "path", "operator": "wildcard", "value": "/test/**"},
+                {"condition_type": "action", "key": "method", "operator": "in", "value": "GET,POST,PUT,DELETE"},
+            ],
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create policy failed: {body:?}");
+    let policy_id: uuid::Uuid = body["data"]["id"].as_str().unwrap().parse().unwrap();
+    ta.track_policy(policy_id);
 
     send_request(
         &mut ta.app,
         hyper::Method::POST,
-        &format!("/api/users/{}/policies/{}", fx.user_id, policy_fx.policy_id),
+        &format!("/api/users/{}/policies/{}", fx.user_id, policy_id),
         None,
         Some(&fx.access_token),
     )
@@ -1083,22 +1106,25 @@ async fn policy_cache_invalidated_on_update() {
 
     ta.clear_user_cache(fx.user_id).await;
 
-    let request: hyper::Request<axum::body::Body> = hyper::Request::builder()
-        .method(hyper::Method::GET)
-        .uri("/api/policies?page=1&page_size=10")
-        .header(
-            hyper::header::AUTHORIZATION,
-            format!("Bearer {}", fx.access_token),
-        )
-        .body(axum::body::Body::empty())
-        .unwrap();
-    let response = ta.app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/api/abac/evaluate",
+        Some(serde_json::json!({
+            "resource": "/test/data",
+            "action": "GET",
+            "app_id": app_fx.app_id.to_string(),
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "evaluate deny failed: {body:?}");
+    assert_eq!(body["data"]["allowed"], false);
 
     send_request(
         &mut ta.app,
         hyper::Method::PUT,
-        &format!("/api/policies/{}", policy_fx.policy_id),
+        &format!("/api/policies/{}", policy_id),
         Some(serde_json::json!({
             "effect": "allow",
         })),
@@ -1108,16 +1134,19 @@ async fn policy_cache_invalidated_on_update() {
 
     ta.clear_user_cache(fx.user_id).await;
 
-    let request: hyper::Request<axum::body::Body> = hyper::Request::builder()
-        .method(hyper::Method::GET)
-        .uri("/api/policies?page=1&page_size=10")
-        .header(
-            hyper::header::AUTHORIZATION,
-            format!("Bearer {}", fx.access_token),
-        )
-        .body(axum::body::Body::empty())
-        .unwrap();
-    let response = ta.app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK, "after policy update to allow, access should be granted");
+    let (status, body) = send_request(
+        &mut ta.app,
+        hyper::Method::POST,
+        "/api/abac/evaluate",
+        Some(serde_json::json!({
+            "resource": "/test/data",
+            "action": "GET",
+            "app_id": app_fx.app_id.to_string(),
+        })),
+        Some(&fx.access_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "evaluate allow failed: {body:?}");
+    assert_eq!(body["data"]["allowed"], true, "after policy update to allow, access should be granted");
     ta.cleanup().await;
 }

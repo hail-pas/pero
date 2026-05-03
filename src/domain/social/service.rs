@@ -6,9 +6,9 @@ use crate::domain::social::entity::{
 use crate::domain::social::error::{provider_disabled, provider_not_found, social_state_invalid};
 use crate::domain::social::repo::SocialStore;
 use crate::domain::social::userinfo;
-use crate::infra::repo::kv::RedisKvStore;
 use crate::shared::cache_keys::social::state_key;
 use crate::shared::error::AppError;
+use crate::shared::kv::{KvStore, KvStoreExt};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -64,7 +64,7 @@ pub struct SocialBindState {
 
 pub async fn build_authorize_url(
     social: &dyn SocialStore,
-    kv: &RedisKvStore,
+    kv: &dyn KvStore,
     provider_name: &str,
     sso_session_id: &str,
     redirect_uri: &str,
@@ -102,7 +102,7 @@ pub async fn build_authorize_url(
 
 pub async fn build_account_login_url(
     social: &dyn SocialStore,
-    kv: &RedisKvStore,
+    kv: &dyn KvStore,
     provider_name: &str,
     redirect_uri: &str,
     next: Option<&str>,
@@ -140,7 +140,8 @@ pub async fn build_account_login_url(
 
 pub async fn handle_callback(
     social: &dyn SocialStore,
-    kv: &RedisKvStore,
+    kv: &dyn KvStore,
+    http: &dyn crate::domain::social::http::HttpClient,
     code: &str,
     state_token: &str,
     callback_provider: &str,
@@ -165,8 +166,8 @@ pub async fn handle_callback(
         return Err(provider_disabled());
     }
 
-    let access_token = userinfo::exchange_code(&provider, code, redirect_uri).await?;
-    let user_info = userinfo::fetch_userinfo(&provider, &access_token).await?;
+    let access_token = userinfo::exchange_code(http, &provider, code, redirect_uri).await?;
+    let user_info = userinfo::fetch_userinfo(http, &provider, &access_token).await?;
 
     Ok((user_info, social_state))
 }
@@ -232,7 +233,8 @@ pub async fn find_or_create_user(
 pub async fn bind_social_identity(
     social: &dyn SocialStore,
     identities: &dyn IdentityStore,
-    kv: &RedisKvStore,
+    kv: &dyn KvStore,
+    http: &dyn crate::domain::social::http::HttpClient,
     oidc_issuer: &str,
     code: &str,
     state_token: &str,
@@ -266,8 +268,8 @@ pub async fn bind_social_identity(
     );
 
     let access_token =
-        userinfo::exchange_code(&provider, code, &redirect_uri).await?;
-    let user_info = userinfo::fetch_userinfo(&provider, &access_token).await?;
+        userinfo::exchange_code(http, &provider, code, &redirect_uri).await?;
+    let user_info = userinfo::fetch_userinfo(http, &provider, &access_token).await?;
 
     let existing =
         identities.find_by_provider(&user_info.provider, &user_info.provider_uid)

@@ -1,6 +1,6 @@
 use crate::domain::identity::repo::UserStore;
 use crate::domain::oauth2::entity::AuthorizationCode;
-use crate::domain::oauth2::error_ext;
+use crate::domain::oauth2::oauth2_error::OAuth2Error;
 use crate::domain::oauth2::models::{
     GrantType, RevokeRequest, TokenRequest, TokenResponse,
 };
@@ -134,7 +134,7 @@ async fn exchange_refresh_token(
     };
 
     if client.id != stored.client_id {
-        return Err(error_ext::client_mismatch());
+        return Err(OAuth2Error::ClientMismatch.into());
     }
 
     let (new_stored, new_refresh) = tokens.rotate_refresh_token(
@@ -170,19 +170,19 @@ fn validate_authorization_code(
     code_verifier: &str,
 ) -> Result<(), AppError> {
     if auth_code.client_id != client.id {
-        return Err(error_ext::client_mismatch());
+        return Err(OAuth2Error::ClientMismatch.into());
     }
     if auth_code.redirect_uri != redirect_uri {
-        return Err(error_ext::redirect_uri_mismatch());
+        return Err(OAuth2Error::RedirectUriMismatch.into());
     }
     match (&auth_code.code_challenge, &auth_code.code_challenge_method) {
         (Some(challenge), Some(method)) => {
             if !pkce::verify_pkce(code_verifier, challenge, method) {
-                return Err(error_ext::pkce_verification_failed());
+                return Err(OAuth2Error::PkceVerificationFailed.into());
             }
         }
         _ => {
-            return Err(error_ext::missing_pkce_challenge());
+            return Err(OAuth2Error::MissingPkceChallenge.into());
         }
     }
     Ok(())
@@ -191,7 +191,7 @@ fn validate_authorization_code(
 async fn load_active_user(users: &dyn UserStore, user_id: uuid::Uuid) -> Result<crate::domain::identity::models::User, AppError> {
     let user = require_found(users.find_by_id(user_id).await?, "user")?;
     if !user.is_active() {
-        return Err(AppError::Forbidden("account is disabled".into()));
+        return Err(OAuth2Error::AccountDisabled.into());
     }
     Ok(user)
 }
@@ -211,11 +211,11 @@ async fn handle_refresh_replay_or_missing(
         } else {
             tokens.revoke_all_for_user_client(revoked.user_id, revoked.client_id).await?;
         }
-        return Err(AppError::Unauthorized);
+        return Err(OAuth2Error::RefreshTokenReplay.into());
     }
-    Err(error_ext::invalid_or_expired_refresh_token())
+    Err(OAuth2Error::InvalidRefreshToken.into())
 }
 
 fn required_field<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, AppError> {
-    value.ok_or_else(|| error_ext::missing_field(name))
+    value.ok_or_else(move || OAuth2Error::MissingField(name.to_string()).into())
 }

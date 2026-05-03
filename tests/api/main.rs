@@ -7,7 +7,7 @@ use http_body_util::BodyExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use pero::config::OidcConfig;
 use pero::domain::app::models::UpdateAppRequest;
-use pero::domain::oauth2::error::map_app_error;
+use pero::infra::http::oauth2::map_app_error;
 use pero::infra::jwt::{JwtKeys, verify_token};
 use pero::shared::error::AppError;
 use pero::shared::patch::Patch;

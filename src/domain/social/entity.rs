@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationErrors};
 
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,58 +126,58 @@ pub struct CreateSocialProviderRequest {
 pub struct UpdateSocialProviderRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub display_name: Patch<String>,
+    pub display_name: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub client_id: Patch<String>,
+    pub client_id: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub client_secret: Patch<String>,
+    pub client_secret: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub authorize_url: Patch<String>,
+    pub authorize_url: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub token_url: Patch<String>,
+    pub token_url: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub userinfo_url: Patch<String>,
+    pub userinfo_url: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
-    pub scopes: Patch<Vec<String>>,
+    pub scopes: FieldUpdate<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<bool>)]
-    pub enabled: Patch<bool>,
+    pub enabled: FieldUpdate<bool>,
 }
 
 impl Validate for UpdateSocialProviderRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
         self.display_name
-            .validate_required("display_name", &mut errors, |v| {
+            .reject_clear("display_name", &mut errors, |v| {
                 validation::validate_length(v, 1, 64)
             });
         self.client_id
-            .validate_required("client_id", &mut errors, |v| {
+            .reject_clear("client_id", &mut errors, |v| {
                 validation::validate_length(v, 1, 255)
             });
         self.client_secret
-            .validate_required("client_secret", &mut errors, |v| {
+            .reject_clear("client_secret", &mut errors, |v| {
                 validation::validate_length(v, 1, 4096)
             });
         self.authorize_url
-            .validate_required("authorize_url", &mut errors, |v| {
+            .reject_clear("authorize_url", &mut errors, |v| {
                 validation::validate_url(v)
             });
         self.token_url
-            .validate_required("token_url", &mut errors, |v| validation::validate_url(v));
+            .reject_clear("token_url", &mut errors, |v| validation::validate_url(v));
         self.userinfo_url
-            .validate_required("userinfo_url", &mut errors, |v| validation::validate_url(v));
-        self.scopes.validate_required("scopes", &mut errors, |v| {
+            .reject_clear("userinfo_url", &mut errors, |v| validation::validate_url(v));
+        self.scopes.reject_clear("scopes", &mut errors, |v| {
             validation::validate_non_empty_items(v)
         });
         self.enabled
-            .validate_required("enabled", &mut errors, |_| Ok(()));
+            .reject_clear("enabled", &mut errors, |_| Ok(()));
         if errors.is_empty() {
             Ok(())
         } else {

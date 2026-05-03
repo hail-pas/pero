@@ -24,7 +24,7 @@ pub async fn forgot_post(
 ) -> Result<Response, AppError> {
     if let Some(user) = find_user_for_reset(&state, &form.identifier).await? {
         let _token = crate::shared::utils::generate_token_and_cache(
-            &state.repos.kv,
+            &*state.repos.kv,
             crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX,
             &user.id.to_string(),
             state.config.sso.password_reset_ttl_seconds,

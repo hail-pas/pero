@@ -12,7 +12,7 @@ use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, UserView};
 use crate::shared::constants::cache_keys::{EMAIL_VERIFY_PREFIX, PHONE_VERIFY_PREFIX};
 use crate::shared::error::AppError;
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 use crate::shared::state::AppState;
 
 #[derive(Template, Debug)]
@@ -77,32 +77,32 @@ pub async fn profile_post(
 
     let req = UpdateMeRequest {
         email: match form.email {
-            Some(v) if v != current.email.clone().unwrap_or_default() => Patch::Set(v),
-            Some(_) => Patch::Absent,
+            Some(v) if v != current.email.clone().unwrap_or_default() => FieldUpdate::Set(v),
+            Some(_) => FieldUpdate::Unchanged,
             None => {
                 if current.email.is_some() {
-                    Patch::Null
+                    FieldUpdate::Clear
                 } else {
-                    Patch::Absent
+                    FieldUpdate::Unchanged
                 }
             }
         },
         nickname: match form.nickname {
-            Some(v) => Patch::Set(v),
-            None => Patch::Null,
+            Some(v) => FieldUpdate::Set(v),
+            None => FieldUpdate::Clear,
         },
         avatar_url: match form.avatar_url {
-            Some(v) => Patch::Set(v),
-            None => Patch::Null,
+            Some(v) => FieldUpdate::Set(v),
+            None => FieldUpdate::Clear,
         },
         phone: match form.phone {
-            Some(v) if v != current.phone.clone().unwrap_or_default() => Patch::Set(v),
-            Some(_) => Patch::Absent,
+            Some(v) if v != current.phone.clone().unwrap_or_default() => FieldUpdate::Set(v),
+            Some(_) => FieldUpdate::Unchanged,
             None => {
                 if current.phone.is_some() {
-                    Patch::Null
+                    FieldUpdate::Clear
                 } else {
-                    Patch::Absent
+                    FieldUpdate::Unchanged
                 }
             }
         },
@@ -131,7 +131,7 @@ pub async fn send_verify_email_post(
         value: email.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.repos.kv,
+        &*state.repos.kv,
         EMAIL_VERIFY_PREFIX,
         &payload,
         state.config.sso.email_verify_ttl_seconds,
@@ -162,7 +162,7 @@ pub async fn send_verify_phone_post(
         value: phone.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.repos.kv,
+        &*state.repos.kv,
         PHONE_VERIFY_PREFIX,
         &payload,
         state.config.sso.phone_verify_ttl_seconds,

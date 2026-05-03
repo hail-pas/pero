@@ -1,4 +1,5 @@
-use crate::api::response::{MessageResponse, PageData};
+use crate::shared::message::MessageResponse;
+use crate::shared::page::PageData;
 use crate::domain::abac;
 use crate::domain::identity::error;
 use crate::domain::identity::models::{
@@ -9,7 +10,7 @@ use crate::domain::identity::repo::{IdentityStore, SessionStore, UserAttributeSt
 use crate::domain::oauth2::repo::{OAuth2TokenStore, TokenSigner};
 use crate::shared::constants::identity::{DEFAULT_ROLE, PROVIDER_PASSWORD};
 use crate::shared::error::AppError;
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 
 pub async fn register_user(
     users: &dyn UserStore,
@@ -53,33 +54,33 @@ pub async fn get_me(users: &dyn UserStore, user_id: uuid::Uuid) -> Result<UserDT
 
 fn should_reset_email_verified(req: &UpdateMeRequest, current: &str) -> bool {
     match &req.email {
-        Patch::Set(v) => v != current,
-        Patch::Null => !current.is_empty(),
-        Patch::Absent => false,
+        FieldUpdate::Set(v) => v != current,
+        FieldUpdate::Clear => !current.is_empty(),
+        FieldUpdate::Unchanged => false,
     }
 }
 
 fn should_reset_phone_verified(req: &UpdateMeRequest, current: &str) -> bool {
     match &req.phone {
-        Patch::Set(v) => v != current,
-        Patch::Null => !current.is_empty(),
-        Patch::Absent => false,
+        FieldUpdate::Set(v) => v != current,
+        FieldUpdate::Clear => !current.is_empty(),
+        FieldUpdate::Unchanged => false,
     }
 }
 
 fn should_reset_admin_email_verified(req: &UpdateUserRequest, current: &str) -> bool {
     match &req.email {
-        Patch::Set(v) => v != current,
-        Patch::Null => !current.is_empty(),
-        Patch::Absent => false,
+        FieldUpdate::Set(v) => v != current,
+        FieldUpdate::Clear => !current.is_empty(),
+        FieldUpdate::Unchanged => false,
     }
 }
 
 fn should_reset_admin_phone_verified(req: &UpdateUserRequest, current: &str) -> bool {
     match &req.phone {
-        Patch::Set(v) => v != current,
-        Patch::Null => !current.is_empty(),
-        Patch::Absent => false,
+        FieldUpdate::Set(v) => v != current,
+        FieldUpdate::Clear => !current.is_empty(),
+        FieldUpdate::Unchanged => false,
     }
 }
 
@@ -146,7 +147,7 @@ pub async fn update_user(
         should_reset_admin_phone_verified(req, &current.phone.clone().unwrap_or_default());
 
     let disabling = match req.status {
-        Patch::Set(status) if status == 0 && current.is_active() => true,
+        FieldUpdate::Set(status) if status == 0 && current.is_active() => true,
         _ => false,
     };
 

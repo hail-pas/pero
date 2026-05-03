@@ -116,7 +116,7 @@ pub async fn account_social_login(
     let next = extract_cookie(&headers, "pero_login_next").filter(|s| s.starts_with('/'));
     let (url, _) = crate::domain::social::service::build_account_login_url(
         &*state.repos.social,
-        &state.repos.kv,
+        &*state.repos.kv,
         &provider,
         &redirect_uri,
         next.as_deref().and_then(safe_local_path).as_deref(),

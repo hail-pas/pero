@@ -51,7 +51,7 @@ pub async fn social_callback(
 
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
     let (user_info, social_state) =
-        service::handle_callback(&*state.repos.social, &*state.repos.kv, code, state_token, &provider, &redirect_uri).await?;
+        service::handle_callback(&*state.repos.social, &*state.repos.kv, &*state.repos.http, code, state_token, &provider, &redirect_uri).await?;
 
     let user = service::find_or_create_user(&*state.repos.users, &*state.repos.identities, &user_info).await?;
 
@@ -123,6 +123,7 @@ pub async fn social_bind_callback(
         &*state.repos.social,
         &*state.repos.identities,
         &*state.repos.kv,
+        &*state.repos.http,
         &state.config.oidc.issuer,
         code,
         state_token,

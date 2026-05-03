@@ -125,7 +125,28 @@ impl TestApp {
         effect: &str,
         priority: i32,
     ) -> PolicyFixture {
+        self.create_test_policy_with_conditions(token, effect, priority, &[]).await
+    }
+
+    pub async fn create_test_policy_with_conditions(
+        &mut self,
+        token: &str,
+        effect: &str,
+        priority: i32,
+        conditions: &[(&str, &str, &str, &str)],
+    ) -> PolicyFixture {
         let name = unique_name("fxpol");
+        let conditions_json: Vec<serde_json::Value> = conditions
+            .iter()
+            .map(|(ct, key, op, val)| {
+                serde_json::json!({
+                    "condition_type": ct,
+                    "key": key,
+                    "operator": op,
+                    "value": val,
+                })
+            })
+            .collect();
         let (status, body) = send_request(
             &mut self.app,
             hyper::Method::POST,
@@ -134,7 +155,7 @@ impl TestApp {
                 "name": name,
                 "effect": effect,
                 "priority": priority,
-                "conditions": [],
+                "conditions": conditions_json,
             })),
             Some(token),
         )

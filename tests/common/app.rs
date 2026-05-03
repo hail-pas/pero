@@ -65,11 +65,11 @@ pub fn shared_resources() -> &'static SharedResources {
 pub async fn build_app() -> TestApp {
     let guard = ensure_rt().enter();
     let (db, cache, config, jwt_keys) = shared_resources();
+    let repos = pero::infra::repo::build_repos(db.clone(), cache.clone(), jwt_keys.clone(), config);
     let app = pero::api::build_router(AppState {
-        db: db.clone(),
-        cache: cache.clone(),
-        config: config.clone(),
+        repos: Arc::new(repos),
         jwt_keys: jwt_keys.clone(),
+        config: config.clone(),
         discovery_doc: Arc::new(std::sync::OnceLock::new()),
         jwks_doc: Arc::new(std::sync::OnceLock::new()),
     });
@@ -87,11 +87,11 @@ pub async fn build_app() -> TestApp {
 pub async fn build_router() -> (axum::Router, tokio::runtime::EnterGuard<'static>) {
     let guard = ensure_rt().enter();
     let (db, cache, config, jwt_keys) = shared_resources();
+    let repos = pero::infra::repo::build_repos(db.clone(), cache.clone(), jwt_keys.clone(), config);
     let router = pero::api::build_router(AppState {
-        db: db.clone(),
-        cache: cache.clone(),
-        config: config.clone(),
+        repos: Arc::new(repos),
         jwt_keys: jwt_keys.clone(),
+        config: config.clone(),
         discovery_doc: Arc::new(std::sync::OnceLock::new()),
         jwks_doc: Arc::new(std::sync::OnceLock::new()),
     });
@@ -177,7 +177,8 @@ impl TestApp {
 
         for key in [
             format!("refresh_token:{user_id}"),
-            format!("abac_subject:{user_id}"),
+            format!("abac_subject:{user_id}:sv"),
+            format!("abac:{user_id}::v"),
         ] {
             let _: Result<(), redis::RedisError> = conn.del(&key).await;
         }

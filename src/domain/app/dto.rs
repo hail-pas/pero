@@ -5,7 +5,7 @@ use uuid::Uuid;
 use validator::{Validate, ValidationErrors};
 
 use crate::domain::app::entity::App;
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
 #[derive(Debug, Serialize, Clone, ToSchema)]
@@ -51,20 +51,20 @@ pub struct CreateAppRequest {
 pub struct UpdateAppRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub name: Patch<String>,
+    pub name: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub description: Patch<String>,
+    pub description: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<bool>)]
-    pub enabled: Patch<bool>,
+    pub enabled: FieldUpdate<bool>,
 }
 
 impl Validate for UpdateAppRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
 
-        self.name.validate_required("name", &mut errors, |v| {
+        self.name.reject_clear("name", &mut errors, |v| {
             validation::validate_length(v, 1, 128)
         });
 
@@ -72,7 +72,7 @@ impl Validate for UpdateAppRequest {
             validation::validate_length(v, 0, 512)
         });
         self.enabled
-            .validate_required("enabled", &mut errors, |_| Ok(()));
+            .reject_clear("enabled", &mut errors, |_| Ok(()));
 
         if errors.is_empty() {
             Ok(())

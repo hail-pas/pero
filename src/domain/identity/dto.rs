@@ -5,7 +5,7 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::domain::identity::entity::User;
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
 #[derive(Debug, Serialize, Clone, ToSchema)]
@@ -76,22 +76,22 @@ pub type CreateUserRequest = RegisterRequest;
 pub struct UpdateUserRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub username: Patch<String>,
+    pub username: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub email: Patch<String>,
+    pub email: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub phone: Patch<String>,
+    pub phone: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub nickname: Patch<String>,
+    pub nickname: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub avatar_url: Patch<String>,
+    pub avatar_url: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<i16>)]
-    pub status: Patch<i16>,
+    pub status: FieldUpdate<i16>,
 }
 
 impl Validate for UpdateUserRequest {
@@ -99,11 +99,11 @@ impl Validate for UpdateUserRequest {
         let mut errors = ValidationErrors::new();
 
         self.username
-            .validate_required("username", &mut errors, |v| {
+            .reject_clear("username", &mut errors, |v| {
                 validation::validate_length(v, 3, 64)
             });
         self.email
-            .validate_required("email", &mut errors, |v| validation::validate_email(v));
+            .validate("email", &mut errors, |v| validation::validate_email(v));
         self.phone
             .validate("phone", &mut errors, |v| validation::validate_phone(v));
         self.nickname.validate("nickname", &mut errors, |v| {
@@ -111,7 +111,7 @@ impl Validate for UpdateUserRequest {
         });
         self.avatar_url
             .validate("avatar_url", &mut errors, |v| validation::validate_url(v));
-        self.status.validate_required("status", &mut errors, |v| {
+        self.status.reject_clear("status", &mut errors, |v| {
             if (0..=1).contains(v) {
                 Ok(())
             } else {
@@ -131,23 +131,23 @@ impl Validate for UpdateUserRequest {
 pub struct UpdateMeRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub email: Patch<String>,
+    pub email: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub nickname: Patch<String>,
+    pub nickname: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub avatar_url: Patch<String>,
+    pub avatar_url: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub phone: Patch<String>,
+    pub phone: FieldUpdate<String>,
 }
 
 impl Validate for UpdateMeRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
         self.email
-            .validate_required("email", &mut errors, |v| validation::validate_email(v));
+            .validate("email", &mut errors, |v| validation::validate_email(v));
         self.nickname.validate("nickname", &mut errors, |v| {
             validation::validate_length(v, 1, 64)
         });

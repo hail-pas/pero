@@ -1,8 +1,7 @@
 pub mod dto;
 pub mod entity;
-pub mod error_ext;
+pub mod oauth2_error;
 pub mod repo;
-pub mod typed_error;
 pub mod models {
     pub use super::dto::*;
     pub use super::entity::*;

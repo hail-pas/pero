@@ -15,7 +15,7 @@ use crate::shared::cache_keys::abac::{
 };
 use crate::shared::error::{AppError, require_found, require_rows_affected};
 use crate::shared::pagination::{POLICIES, offset, paginate};
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 
 pub struct SqlxAbacStore {
     pool: Arc<PgPool>,
@@ -143,7 +143,7 @@ impl AbacStore for SqlxAbacStore {
         .fetch_one(&mut *tx)
         .await?;
 
-        let conditions = if let Patch::Set(conditions_req) = &req.conditions {
+        let conditions = if let FieldUpdate::Set(conditions_req) = &req.conditions {
             sqlx::query("DELETE FROM policy_conditions WHERE policy_id = $1")
                 .bind(id)
                 .execute(&mut *tx)

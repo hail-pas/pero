@@ -3,7 +3,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationErrors};
 
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
@@ -92,46 +92,45 @@ pub struct CreatePolicyRequest {
 pub struct UpdatePolicyRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub name: Patch<String>,
+    pub name: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub description: Patch<String>,
+    pub description: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<PolicyEffect>)]
-    pub effect: Patch<PolicyEffect>,
+    pub effect: FieldUpdate<PolicyEffect>,
     #[serde(default)]
     #[schema(value_type = Option<i32>)]
-    pub priority: Patch<i32>,
+    pub priority: FieldUpdate<i32>,
     #[serde(default)]
     #[schema(value_type = Option<bool>)]
-    pub enabled: Patch<bool>,
+    pub enabled: FieldUpdate<bool>,
     #[serde(default)]
     #[schema(value_type = Option<Uuid>)]
-    pub app_id: Patch<Uuid>,
+    pub app_id: FieldUpdate<Uuid>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<CreateConditionRequest>>)]
-    pub conditions: Patch<Vec<CreateConditionRequest>>,
+    pub conditions: FieldUpdate<Vec<CreateConditionRequest>>,
 }
 
 impl Validate for UpdatePolicyRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
 
-        self.name.validate_required("name", &mut errors, |v| {
+        self.name.reject_clear("name", &mut errors, |v| {
             validation::validate_length(v, 1, 128)
         });
 
         self.effect
-            .validate_required("effect", &mut errors, |_| Ok(()));
+            .reject_clear("effect", &mut errors, |_| Ok(()));
         self.priority
-            .validate_required("priority", &mut errors, |_| Ok(()));
+            .reject_clear("priority", &mut errors, |_| Ok(()));
         self.enabled
-            .validate_required("enabled", &mut errors, |_| Ok(()));
+            .reject_clear("enabled", &mut errors, |_| Ok(()));
 
-        match &self.conditions {
-            Patch::Null => errors.add("conditions", validator::ValidationError::new("required")),
-            _ => self.conditions.validate_nested("conditions", &mut errors),
-        }
+        self.conditions
+            .reject_clear("conditions", &mut errors, |_| Ok(()));
+        self.conditions.validate_nested("conditions", &mut errors);
 
         if errors.is_empty() {
             Ok(())

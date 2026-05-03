@@ -3,6 +3,7 @@ use crate::domain::abac::repo::{AbacCacheStore, AbacStore};
 use crate::domain::app::repo::AppStore;
 use crate::domain::identity::repo::{IdentityStore, SessionStore, UserAttributeStore, UserStore};
 use crate::domain::oauth2::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
+use crate::domain::social::http::HttpClient;
 use crate::domain::social::repo::SocialStore;
 use crate::domain::sso::repo::SsoSessionStore;
 use crate::infra::jwt::JwtKeys;
@@ -24,6 +25,7 @@ pub struct Repos {
     pub social: Arc<dyn SocialStore>,
     pub apps: Arc<dyn AppStore>,
     pub kv: Arc<RedisKvStore>,
+    pub http: Arc<dyn HttpClient>,
     pub token_signer: Arc<dyn TokenSigner>,
 }
 

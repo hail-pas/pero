@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 
 use crate::domain::oauth2::entity::OAuth2Client;
 use crate::shared::constants::oauth2::{self as oauth2_constants, scopes as oauth2_scopes};
@@ -157,54 +157,54 @@ fn default_scopes() -> Vec<String> {
 pub struct UpdateClientRequest {
     #[serde(default)]
     #[schema(value_type = Option<String>)]
-    pub client_name: Patch<String>,
+    pub client_name: FieldUpdate<String>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
-    pub redirect_uris: Patch<Vec<String>>,
+    pub redirect_uris: FieldUpdate<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
-    pub grant_types: Patch<Vec<String>>,
+    pub grant_types: FieldUpdate<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
-    pub scopes: Patch<Vec<String>>,
+    pub scopes: FieldUpdate<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<Vec<String>>)]
-    pub post_logout_redirect_uris: Patch<Vec<String>>,
+    pub post_logout_redirect_uris: FieldUpdate<Vec<String>>,
     #[serde(default)]
     #[schema(value_type = Option<bool>)]
-    pub enabled: Patch<bool>,
+    pub enabled: FieldUpdate<bool>,
 }
 
 impl Validate for UpdateClientRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::new();
         self.client_name
-            .validate_required("client_name", &mut errors, |v| {
+            .reject_clear("client_name", &mut errors, |v| {
                 validation::validate_length(v, 1, 128)
             });
         self.redirect_uris
-            .validate_required("redirect_uris", &mut errors, |v| {
+            .reject_clear("redirect_uris", &mut errors, |v| {
                 validation::validate_redirect_uris(v)
             });
         self.grant_types
-            .validate_required("grant_types", &mut errors, |v| {
+            .reject_clear("grant_types", &mut errors, |v| {
                 if v.is_empty() {
                     return Err(ValidationError::new("length"));
                 }
                 validate_grant_types(v)
             });
-        self.scopes.validate_required("scopes", &mut errors, |v| {
+        self.scopes.reject_clear("scopes", &mut errors, |v| {
             if v.is_empty() {
                 return Err(ValidationError::new("length"));
             }
             validate_allowed_scopes(v)
         });
         self.post_logout_redirect_uris
-            .validate_required("post_logout_redirect_uris", &mut errors, |v| {
+            .validate("post_logout_redirect_uris", &mut errors, |v| {
                 validation::validate_redirect_uris(v)
             });
         self.enabled
-            .validate_required("enabled", &mut errors, |_| Ok(()));
+            .reject_clear("enabled", &mut errors, |_| Ok(()));
         if errors.is_empty() {
             Ok(())
         } else {

@@ -1,4 +1,5 @@
-use crate::api::response::{MessageResponse, PageData};
+use crate::shared::message::MessageResponse;
+use crate::shared::page::PageData;
 use crate::domain::app::error;
 use crate::domain::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
 use crate::domain::app::repo::AppStore;

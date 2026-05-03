@@ -1,10 +1,10 @@
 use super::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
 use super::repo::{AbacCacheStore, AbacStore, PolicyFilter};
-use crate::api::response::PageData;
+use crate::shared::page::PageData;
 use crate::domain::identity::repo::UserStore;
 use crate::shared::constants::identity;
 use crate::shared::error::{AppError, require_found};
-use crate::shared::patch::Patch;
+use crate::shared::patch::FieldUpdate;
 use serde::Serialize;
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -147,7 +147,7 @@ pub async fn update_policy_dto(
 ) -> Result<PolicyDTO, AppError> {
     let policy = load_policy_in_scope(policies, id, scope).await?;
     if let Some(app_id) = forced_app_id {
-        req.app_id = Patch::Set(app_id);
+        req.app_id = FieldUpdate::Set(app_id);
     }
     let old_app_id = policy.app_id;
     let (updated, conditions) =

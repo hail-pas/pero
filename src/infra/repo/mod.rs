@@ -17,7 +17,9 @@ pub use social::SqlxSocialStore;
 pub use sso_session::RedisSsoSessionStore;
 
 use crate::config::AppConfig;
+use crate::domain::social::http::HttpClient;
 use crate::infra::cache;
+use crate::infra::http::client::ReqwestHttpClient;
 use crate::infra::jwt::JwtKeys;
 use crate::shared::state::Repos;
 use sqlx::postgres::PgPool;
@@ -43,6 +45,7 @@ pub fn build_repos(
         social: Arc::new(SqlxSocialStore::new(db.clone())),
         apps: Arc::new(SqlxAppStore::new(db)),
         kv: Arc::new(RedisKvStore::new(cache_pool)),
+        http: Arc::new(ReqwestHttpClient) as Arc<dyn HttpClient>,
         token_signer: Arc::new(JwtTokenSigner::new(jwt_keys, cfg.oauth2.access_token_ttl_minutes, cfg.oidc.issuer.clone())),
     }
 }

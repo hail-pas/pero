@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::handler::sso::common::render_tpl;
 use crate::shared::error::AppError;
+use crate::shared::kv::{KvStore, KvStoreExt};
 use crate::shared::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +69,7 @@ async fn verify_get_inner(
 async fn validate_email_token(state: &AppState, token: &str) -> (String, String) {
     let key = format!("{}{token}", crate::shared::constants::cache_keys::EMAIL_VERIFY_PREFIX);
     let payload: Option<crate::domain::identity::dto::VerifyPayload> =
-        state.repos.kv.get_json(&key).await.ok().flatten();
+        crate::shared::kv::KvStoreExt::get_json(&*state.repos.kv, &key).await.ok().flatten();
     match payload {
         Some(payload) => {
             let user = match state.repos.users.find_by_id(payload.user_id).await {
@@ -100,7 +101,7 @@ async fn validate_email_token(state: &AppState, token: &str) -> (String, String)
 async fn validate_phone_token(state: &AppState, token: &str) -> (String, String) {
     let key = format!("{}{token}", crate::shared::constants::cache_keys::PHONE_VERIFY_PREFIX);
     let payload: Option<crate::domain::identity::dto::VerifyPayload> =
-        state.repos.kv.get_json(&key).await.ok().flatten();
+        crate::shared::kv::KvStoreExt::get_json(&*state.repos.kv, &key).await.ok().flatten();
     match payload {
         Some(payload) => {
             let user = match state.repos.users.find_by_id(payload.user_id).await {
@@ -199,7 +200,7 @@ pub async fn send_verify_email_post(
         value: email.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.repos.kv,
+        &*state.repos.kv,
         crate::shared::constants::cache_keys::EMAIL_VERIFY_PREFIX,
         &payload,
         state.config.sso.email_verify_ttl_seconds,
@@ -249,7 +250,7 @@ pub async fn send_verify_phone_post(
         value: phone.to_string(),
     };
     let _token = crate::shared::utils::generate_token_and_cache(
-        &state.repos.kv,
+        &*state.repos.kv,
         crate::shared::constants::cache_keys::PHONE_VERIFY_PREFIX,
         &payload,
         state.config.sso.phone_verify_ttl_seconds,

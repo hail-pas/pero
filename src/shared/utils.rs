@@ -5,8 +5,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::infra::repo::kv::RedisKvStore;
 use crate::shared::error::AppError;
+use crate::shared::kv::{KvStore, KvStoreExt};
 
 pub fn parse_user_agent(headers: &HeaderMap) -> (String, String) {
     let ua = headers
@@ -74,7 +74,7 @@ pub fn parse_scopes(scope: Option<&str>) -> Vec<String> {
 }
 
 pub async fn generate_token_and_cache<T: Serialize + Sync>(
-    kv: &RedisKvStore,
+    kv: &dyn KvStore,
     prefix: &str,
     payload: &T,
     ttl: i64,
@@ -85,8 +85,8 @@ pub async fn generate_token_and_cache<T: Serialize + Sync>(
     Ok(token)
 }
 
-pub async fn validate_cached_token<T: DeserializeOwned>(
-    kv: &RedisKvStore,
+pub async fn validate_cached_token<T: DeserializeOwned + Send>(
+    kv: &dyn KvStore,
     prefix: &str,
     token: &str,
 ) -> Option<T> {
@@ -97,8 +97,8 @@ pub async fn validate_cached_token<T: DeserializeOwned>(
     kv.get_json(&key).await.ok().flatten()
 }
 
-pub async fn consume_cached_token<T: DeserializeOwned>(
-    kv: &RedisKvStore,
+pub async fn consume_cached_token<T: DeserializeOwned + Send>(
+    kv: &dyn KvStore,
     prefix: &str,
     token: &str,
 ) -> Option<T> {

@@ -322,7 +322,7 @@ impl OAuth2TokenStore for SqlxOAuth2TokenStore {
         .bind(code)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::BadRequest("invalid or expired authorization code".into()))?;
+        .ok_or_else(|| crate::domain::oauth2::oauth2_error::OAuth2Error::InvalidAuthCode)?;
 
         {
             let result = sqlx::query(
@@ -332,7 +332,7 @@ impl OAuth2TokenStore for SqlxOAuth2TokenStore {
             .execute(&mut *tx)
             .await?;
             if result.rows_affected() != 1 {
-                return Err(AppError::BadRequest("invalid or expired authorization code".into()));
+                return Err(crate::domain::oauth2::oauth2_error::OAuth2Error::InvalidAuthCode.into());
             }
         }
 
@@ -383,7 +383,7 @@ impl OAuth2TokenStore for SqlxOAuth2TokenStore {
         .bind(old_hash)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::BadRequest("invalid or expired refresh token".into()))?;
+        .ok_or_else(|| crate::domain::oauth2::oauth2_error::OAuth2Error::InvalidRefreshToken)?;
 
         sqlx::query("UPDATE oauth2_tokens SET revoked = true WHERE id = $1")
             .bind(stored.id)

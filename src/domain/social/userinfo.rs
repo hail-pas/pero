@@ -1,85 +1,62 @@
-use serde::Deserialize;
-use tracing;
-
 use crate::domain::social::entity::SocialProvider;
 use crate::domain::social::entity::SocialUserInfo;
 use crate::domain::social::error::social_login_failed;
+use crate::domain::social::http::HttpClient;
 use crate::shared::error::AppError;
 
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: String,
-}
-
 pub async fn exchange_code(
+    http: &dyn HttpClient,
     provider: &SocialProvider,
     code: &str,
     redirect_uri: &str,
-) -> Result<String, crate::shared::error::AppError> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&provider.token_url)
-        .header("Accept", "application/json")
-        .form(&[
+) -> Result<String, AppError> {
+    let resp = http.post_form(
+        &provider.token_url,
+        vec![
             ("grant_type", "authorization_code"),
             ("code", code),
             ("client_id", &provider.client_id),
             ("client_secret", &provider.client_secret),
             ("redirect_uri", redirect_uri),
-        ])
-        .send()
-        .await
-        .map_err(|e| social_login_failed(&format!("token request failed: {e}")))?;
+        ],
+    )
+    .await
+    .map_err(|_| social_login_failed("token exchange returned error"))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        tracing::warn!(provider = %provider.name, status = %status, body = %body, "token exchange failed");
-        return Err(social_login_failed("token exchange returned error"));
-    }
-
-    let token: TokenResponse = resp
-        .json()
-        .await
-        .map_err(|e| social_login_failed(&format!("token response parse failed: {e}")))?;
-
-    Ok(token.access_token)
+    resp["access_token"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| social_login_failed("token response missing access_token"))
 }
 
 pub async fn fetch_userinfo(
+    http: &dyn HttpClient,
     provider: &SocialProvider,
     access_token: &str,
-) -> Result<SocialUserInfo, crate::shared::error::AppError> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&provider.userinfo_url)
-        .header("User-Agent", "Pero/1.0")
-        .bearer_auth(access_token)
-        .send()
+) -> Result<SocialUserInfo, AppError> {
+    let raw = http.get_bearer(&provider.userinfo_url, access_token)
         .await
-        .map_err(|e| social_login_failed(&format!("userinfo request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        tracing::warn!(provider = %provider.name, status = %status, body = %body, "userinfo request failed");
-        return Err(social_login_failed("userinfo request returned error"));
-    }
-
-    let raw: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| social_login_failed(&format!("userinfo parse failed: {e}")))?;
+        .map_err(|_| social_login_failed("userinfo request returned error"))?;
 
     let mut info = map_userinfo_response(&provider.name, &raw)?;
     if provider.name == "github" && info.email.is_none() {
-        if let Some((email, verified)) = fetch_github_email(&client, access_token).await {
-            info.email = Some(email);
-            info.email_verified = verified;
+        if let Ok(github_resp) = http.get_bearer("https://api.github.com/user/emails", access_token).await {
+            info.email = extract_github_primary_email(&github_resp);
+            info.email_verified = info.email.is_some();
         }
     }
 
     Ok(info)
+}
+
+fn extract_github_primary_email(raw: &serde_json::Value) -> Option<String> {
+    raw.as_array()?.iter().find_map(|e| {
+        if e["primary"].as_bool()? && e["verified"].as_bool()? {
+            e["email"].as_str().map(String::from)
+        } else {
+            None
+        }
+    })
 }
 
 pub fn map_userinfo_response(
@@ -114,33 +91,6 @@ pub fn map_userinfo_response(
     };
 
     Ok(info)
-}
-
-async fn fetch_github_email(client: &reqwest::Client, access_token: &str) -> Option<(String, bool)> {
-    #[derive(Debug, serde::Deserialize)]
-    struct GitHubEmail {
-        email: String,
-        primary: bool,
-        verified: bool,
-    }
-
-    let resp = client
-        .get("https://api.github.com/user/emails")
-        .header("User-Agent", "Pero/1.0")
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .ok()?;
-
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let emails: Vec<GitHubEmail> = resp.json().await.ok()?;
-    emails
-        .iter()
-        .find(|e| e.primary && e.verified)
-        .map(|e| (e.email.clone(), true))
 }
 
 fn map_github(raw: &serde_json::Value, provider_uid: String) -> SocialUserInfo {

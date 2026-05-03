@@ -2,57 +2,57 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use validator::{Validate, ValidationError, ValidationErrors};
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Patch<T> {
-    Absent,
-    Null,
+pub enum FieldUpdate<T> {
+    Unchanged,
+    Clear,
     Set(T),
 }
 
-impl<T> Default for Patch<T> {
+impl<T> Default for FieldUpdate<T> {
     fn default() -> Self {
-        Patch::Absent
+        FieldUpdate::Unchanged
     }
 }
 
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for Patch<T> {
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for FieldUpdate<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         Option::<T>::deserialize(deserializer).map(|opt| match opt {
-            Some(v) => Patch::Set(v),
-            None => Patch::Null,
+            Some(v) => FieldUpdate::Set(v),
+            None => FieldUpdate::Clear,
         })
     }
 }
 
-impl<T: Serialize> Serialize for Patch<T> {
+impl<T: Serialize> Serialize for FieldUpdate<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         match self {
-            Patch::Set(v) => v.serialize(serializer),
-            Patch::Null | Patch::Absent => serializer.serialize_none(),
+            FieldUpdate::Set(v) => v.serialize(serializer),
+            FieldUpdate::Clear | FieldUpdate::Unchanged => serializer.serialize_none(),
         }
     }
 }
 
-impl<T> Patch<T> {
-    pub fn is_absent(&self) -> bool {
-        matches!(self, Patch::Absent)
+impl<T> FieldUpdate<T> {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, FieldUpdate::Unchanged)
     }
 
     pub fn as_set(&self) -> Option<&T> {
         match self {
-            Patch::Set(v) => Some(v),
+            FieldUpdate::Set(v) => Some(v),
             _ => None,
         }
     }
 
     pub fn into_set(self) -> Option<T> {
         match self {
-            Patch::Set(v) => Some(v),
+            FieldUpdate::Set(v) => Some(v),
             _ => None,
         }
     }
@@ -63,7 +63,7 @@ impl<T> Patch<T> {
         errors: &mut ValidationErrors,
         f: impl FnOnce(&T) -> Result<(), ValidationError>,
     ) {
-        if let Patch::Set(v) = self {
+        if let FieldUpdate::Set(v) = self {
             if let Err(err) = f(v) {
                 errors.add(field, err);
             }
@@ -77,9 +77,26 @@ impl<T> Patch<T> {
         f: impl FnOnce(&T) -> Result<(), ValidationError>,
     ) {
         match self {
-            Patch::Absent => {}
-            Patch::Null => errors.add(field, ValidationError::new("required")),
-            Patch::Set(v) => {
+            FieldUpdate::Unchanged => {}
+            FieldUpdate::Clear => errors.add(field, ValidationError::new("required")),
+            FieldUpdate::Set(v) => {
+                if let Err(err) = f(v) {
+                    errors.add(field, err);
+                }
+            }
+        }
+    }
+
+    pub fn reject_clear(
+        &self,
+        field: &'static str,
+        errors: &mut ValidationErrors,
+        f: impl FnOnce(&T) -> Result<(), ValidationError>,
+    ) {
+        match self {
+            FieldUpdate::Unchanged => {}
+            FieldUpdate::Clear => errors.add(field, ValidationError::new("required")),
+            FieldUpdate::Set(v) => {
                 if let Err(err) = f(v) {
                     errors.add(field, err);
                 }
@@ -99,13 +116,13 @@ impl<T> Patch<T> {
             "invalid SQL column name: {column}"
         );
         match self {
-            Patch::Absent => {}
-            Patch::Null => {
+            FieldUpdate::Unchanged => {}
+            FieldUpdate::Clear => {
                 builder.push(", ");
                 builder.push(column);
                 builder.push(" = NULL");
             }
-            Patch::Set(v) => {
+            FieldUpdate::Set(v) => {
                 builder.push(", ");
                 builder.push(column);
                 builder.push(" = ");
@@ -115,9 +132,9 @@ impl<T> Patch<T> {
     }
 }
 
-impl<T: Validate> Patch<Vec<T>> {
+impl<T: Validate> FieldUpdate<Vec<T>> {
     pub fn validate_nested(&self, field: &'static str, errors: &mut ValidationErrors) {
-        if let Patch::Set(items) = self {
+        if let FieldUpdate::Set(items) = self {
             for (idx, item) in items.iter().enumerate() {
                 if let Err(nested) = item.validate() {
                     let mut err = ValidationError::new("nested");

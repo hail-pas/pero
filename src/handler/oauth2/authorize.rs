@@ -107,11 +107,5 @@ fn redirect_error_response(redirect_uri: &str, error: &str, state: Option<&str>)
 }
 
 fn authorization_error_code(err: &AppError) -> &'static str {
-    match err {
-        AppError::Forbidden(_) => "access_denied",
-        AppError::BadRequest(message) if message.contains("scope") => "invalid_scope",
-        AppError::BadRequest(message) if message.contains("grant_type") => "unauthorized_client",
-        AppError::BadRequest(message) if message.contains("client") => "unauthorized_client",
-        _ => "invalid_request",
-    }
+    crate::infra::http::error::oauth2_redirect_error_code(err)
 }

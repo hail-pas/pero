@@ -90,14 +90,14 @@ pub async fn reset_password_post(
 
 async fn validate_token(state: &AppState, token: &str) -> Option<uuid::Uuid> {
     let uid_str: String =
-        crate::shared::utils::validate_cached_token(&state.repos.kv, PASSWORD_RESET_PREFIX, token)
+        crate::shared::utils::validate_cached_token(&*state.repos.kv, PASSWORD_RESET_PREFIX, token)
             .await?;
     uid_str.parse().ok()
 }
 
 async fn consume_token(state: &AppState, token: &str) -> Option<uuid::Uuid> {
     let uid_str: String =
-        crate::shared::utils::consume_cached_token(&state.repos.kv, PASSWORD_RESET_PREFIX, token)
+        crate::shared::utils::consume_cached_token(&*state.repos.kv, PASSWORD_RESET_PREFIX, token)
             .await?;
     uid_str.parse().ok()
 }

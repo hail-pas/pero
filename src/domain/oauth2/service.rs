@@ -1,7 +1,7 @@
 use base64::Engine;
 
-use crate::api::response::PageData;
-use crate::domain::oauth2::error_ext;
+use crate::shared::page::PageData;
+use crate::domain::oauth2::oauth2_error::OAuth2Error;
 use crate::domain::oauth2::models::{
     CreateClientRequest, OAuth2Client, OAuth2ClientDTO, UpdateClientRequest,
 };
@@ -34,7 +34,7 @@ pub async fn authenticate_client(
         None => {
             fake_secret_probe(client_secret);
             return Err(match invalid_client_error {
-                InvalidClientError::BadRequest => error_ext::invalid_client_id(),
+                InvalidClientError::BadRequest => OAuth2Error::InvalidClient.into(),
                 InvalidClientError::Unauthorized => AppError::Unauthorized,
             });
         }
@@ -42,7 +42,7 @@ pub async fn authenticate_client(
 
     if require_enabled && !client.enabled {
         return Err(match invalid_client_error {
-            InvalidClientError::BadRequest => error_ext::client_disabled(),
+            InvalidClientError::BadRequest => OAuth2Error::ClientDisabled.into(),
             InvalidClientError::Unauthorized => AppError::Forbidden("client is disabled".into()),
         });
     }
@@ -62,7 +62,7 @@ pub fn parse_basic_client_auth_header(auth_header: &str) -> Result<(String, Stri
     let encoded = auth_header
         .strip_prefix("Basic ")
         .or_else(|| auth_header.strip_prefix("basic "))
-        .ok_or_else(|| AppError::BadRequest("Expected Basic auth".into()))?;
+        .ok_or_else(|| OAuth2Error::InvalidAuthHeader)?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|_| AppError::Unauthorized)?;
@@ -89,7 +89,7 @@ pub fn ensure_client_grant_allowed(
     if client.allows_grant_type(grant_type) {
         return Ok(());
     }
-    Err(error_ext::grant_type_not_allowed(grant_type))
+    Err(OAuth2Error::UnauthorizedClient(grant_type.to_string()).into())
 }
 
 fn fake_secret_probe(client_secret: &str) {
@@ -129,7 +129,7 @@ pub async fn list_clients(
 }
 
 pub async fn get_client(clients: &dyn OAuth2ClientStore, id: uuid::Uuid) -> Result<OAuth2ClientDTO, AppError> {
-    let client = clients.find_by_id(id).await?.ok_or(error_ext::invalid_client_id())?;
+    let client = clients.find_by_id(id).await?.ok_or_else(|| AppError::from(OAuth2Error::InvalidClient))?;
     Ok(client.into())
 }
 
@@ -152,9 +152,9 @@ pub async fn validate_authorization_client(
     redirect_uri: &str,
     requested_scopes: &[String],
 ) -> Result<OAuth2Client, AppError> {
-    let client = clients.find_by_client_id(client_id)
-        .await?
-        .ok_or(error_ext::invalid_client_id())?;
+     let client = clients.find_by_client_id(client_id)
+         .await?
+         .ok_or_else(|| AppError::from(OAuth2Error::InvalidClient))?;
 
     ensure_redirect_uri_allowed(&client, redirect_uri)?;
     ensure_authorization_client_ready(&client, requested_scopes)?;
@@ -169,7 +169,7 @@ pub async fn load_authorization_client(
 ) -> Result<OAuth2Client, AppError> {
     clients.find_by_client_id(client_id)
         .await?
-        .ok_or(error_ext::invalid_client_id())
+        .ok_or_else(|| AppError::from(OAuth2Error::InvalidClient))
 }
 
 pub fn ensure_redirect_uri_allowed(
@@ -179,7 +179,7 @@ pub fn ensure_redirect_uri_allowed(
     if client.redirect_uris.contains(&redirect_uri.to_string()) {
         Ok(())
     } else {
-        Err(error_ext::invalid_redirect_uri())
+        Err(OAuth2Error::InvalidRedirectUri.into())
     }
 }
 
@@ -188,13 +188,13 @@ pub fn ensure_authorization_client_ready(
     requested_scopes: &[String],
 ) -> Result<(), AppError> {
     if !client.enabled {
-        return Err(error_ext::client_disabled());
+        return Err(OAuth2Error::ClientDisabled.into());
     }
     ensure_client_grant_allowed(client, oauth2_constants::GRANT_TYPE_AUTH_CODE)?;
 
     for scope in requested_scopes {
         if !client.scopes.contains(scope) {
-            return Err(error_ext::scope_not_allowed(scope));
+            return Err(OAuth2Error::InvalidScope(scope.clone()).into());
         }
     }
 
@@ -210,14 +210,10 @@ pub fn resolve_client_credentials<T: ClientCredentials>(
     match auth_header {
         Some(auth_value) => {
             if !auth_value.starts_with("Basic ") && !auth_value.starts_with("basic ") {
-                return Err(AppError::BadRequest(
-                    "unsupported authorization header, expected Basic".into(),
-                ));
+                return Err(OAuth2Error::InvalidAuthHeader.into());
             }
             if body_has_id {
-                return Err(AppError::BadRequest(
-                    "client credentials must not be provided in both header and body".into(),
-                ));
+                return Err(OAuth2Error::DuplicateCredentials.into());
             }
             let (id, secret) = parse_basic_client_auth_header(auth_value)?;
             req.set_client_credentials(id, secret);
@@ -237,7 +233,7 @@ async fn ensure_app_enabled(apps: &dyn AppStore, client: &OAuth2Client) -> Resul
             ))
         })?;
     if !app.enabled {
-        return Err(error_ext::app_disabled());
+        return Err(OAuth2Error::AppDisabled.into());
     }
     Ok(())
 }

@@ -5,6 +5,8 @@ pub mod csrf;
 pub mod error;
 pub mod i18n;
 pub mod kv;
+pub mod message;
+pub mod page;
 pub mod pagination;
 pub mod patch;
 pub mod state;

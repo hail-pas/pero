@@ -5,7 +5,12 @@ use common::*;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
 use pero::domain::social::entity::UpdateSocialProviderRequest;
-use pero::domain::social::service::username_candidate;
+fn username_candidate(base: &str, suffix: Option<u32>, max_len: usize) -> String {
+    let suffix = suffix.map(|value| format!("_{value}")).unwrap_or_default();
+    let base_len = max_len.saturating_sub(suffix.chars().count());
+    let truncated: String = base.chars().take(base_len).collect();
+    format!("{truncated}{suffix}")
+}
 use pero::domain::social::userinfo::map_userinfo_response;
 use tower::ServiceExt;
 use validator::Validate;
@@ -455,16 +460,17 @@ async fn sso_consent_rejects_unknown_action() {
         .strip_prefix("pero_sso_session=")
         .expect("missing session id");
 
-    let mut sso = pero::domain::sso::session::get(&ta.cache, session_id)
+    let key = format!("sso_session:{session_id}");
+    let mut sso: pero::domain::sso::models::SsoSession = pero::infra::cache::get_json(&ta.cache, &key)
         .await
         .unwrap()
         .expect("missing sso session");
     sso.user_id = Some(fx.user_id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    pero::domain::sso::session::update(
+    pero::infra::cache::set_json(
         &ta.cache,
-        session_id,
+        &key,
         &sso,
         ta.config.sso.session_ttl_seconds,
     )
@@ -532,16 +538,17 @@ async fn sso_consent_revalidates_client_state_before_issuing_code() {
         .strip_prefix("pero_sso_session=")
         .expect("missing session id");
 
-    let mut sso = pero::domain::sso::session::get(&ta.cache, session_id)
+    let key2 = format!("sso_session:{session_id}");
+    let mut sso: pero::domain::sso::models::SsoSession = pero::infra::cache::get_json(&ta.cache, &key2)
         .await
         .unwrap()
         .expect("missing sso session");
     sso.user_id = Some(fx.user_id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    pero::domain::sso::session::update(
+    pero::infra::cache::set_json(
         &ta.cache,
-        session_id,
+        &key2,
         &sso,
         ta.config.sso.session_ttl_seconds,
     )
