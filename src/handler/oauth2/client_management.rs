@@ -3,10 +3,10 @@ use axum::extract::{Path, State};
 
 use crate::api::extractors::{Pagination, ValidatedJson};
 use crate::api::response::{ApiResponse, MessageResponse, PageData};
-use crate::domain::oauth2::models::{
+use crate::domain::oauth::models::{
     CreateClientRequest, CreateClientResponse, OAuth2ClientDTO, UpdateClientRequest,
 };
-use crate::domain::oauth2::service;
+use crate::domain::oauth::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -15,7 +15,7 @@ use crate::shared::state::AppState;
     path = "/api/oauth2/clients",
     tag = "OAuth2",
     security(("bearer_auth" = [])),
-    request_body = crate::domain::oauth2::models::CreateClientRequest,
+    request_body = crate::domain::oauth::models::CreateClientRequest,
     responses(
         (status = 200, description = "Client created", body = ApiResponse<CreateClientResponse>),
         (status = 401, description = "Unauthorized"),
@@ -25,7 +25,8 @@ pub async fn create_client(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateClientRequest>,
 ) -> Result<Json<ApiResponse<CreateClientResponse>>, AppError> {
-    let created = service::create_client(&*state.repos.apps, &*state.repos.oauth2_clients, &req).await?;
+    let created =
+        service::create_client(&*state.repos.apps, &*state.repos.oauth2_clients, &req).await?;
 
     Ok(Json(ApiResponse::success(CreateClientResponse {
         client: OAuth2ClientDTO::from(created.client),
@@ -87,7 +88,7 @@ pub async fn get_client(
     params(
         ("id" = uuid::Uuid, Path, description = "Client ID"),
     ),
-    request_body = crate::domain::oauth2::models::UpdateClientRequest,
+    request_body = crate::domain::oauth::models::UpdateClientRequest,
     responses(
         (status = 200, description = "Client updated", body = ApiResponse<OAuth2ClientDTO>),
         (status = 401, description = "Unauthorized"),

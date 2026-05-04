@@ -8,6 +8,32 @@ pub enum FieldUpdate<T> {
     Set(T),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Patch<T> {
+    Missing,
+    Null,
+    Value(T),
+}
+
+impl<T> Patch<T> {
+    pub fn validate_required(
+        &self,
+        field: &'static str,
+        errors: &mut ValidationErrors,
+        f: impl FnOnce(&T) -> Result<(), ValidationError>,
+    ) {
+        match self {
+            Patch::Missing => {}
+            Patch::Null => errors.add(field, ValidationError::new("required")),
+            Patch::Value(v) => {
+                if let Err(err) = f(v) {
+                    errors.add(field, err);
+                }
+            }
+        }
+    }
+}
+
 impl<T> Default for FieldUpdate<T> {
     fn default() -> Self {
         FieldUpdate::Unchanged

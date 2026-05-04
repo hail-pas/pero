@@ -27,7 +27,7 @@ pub struct LoginForm {
     #[validate(length(min = 1, max = 255))]
     pub identifier: String,
     #[serde(default)]
-    pub identifier_type: crate::domain::identity::models::IdentifierType,
+    pub identifier_type: crate::domain::user::models::IdentifierType,
     #[validate(length(min = 1, max = 128))]
     pub password: String,
 }

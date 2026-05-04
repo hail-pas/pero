@@ -27,7 +27,10 @@ pub async fn auth_middleware(
 
     let user_id: uuid::Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
 
-    let user = state.repos.users.find_by_id(user_id)
+    let user = state
+        .repos
+        .users
+        .find_by_id(user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 

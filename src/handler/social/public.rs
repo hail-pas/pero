@@ -2,8 +2,8 @@ use axum::Json;
 use axum::extract::State;
 
 use crate::api::response::ApiResponse;
-use crate::domain::social::entity::SocialProviderPublic;
-use crate::domain::social::service;
+use crate::domain::federation::entity::SocialProviderPublic;
+use crate::domain::federation::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 

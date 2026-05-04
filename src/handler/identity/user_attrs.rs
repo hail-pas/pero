@@ -1,7 +1,7 @@
 use crate::api::extractors::ValidatedJson;
 use crate::api::response::{ApiResponse, MessageResponse};
-use crate::domain::identity::service;
-use crate::domain::identity::dto::{SetAttributes, UserAttribute};
+use crate::domain::user::dto::{SetAttributes, UserAttribute};
+use crate::domain::user::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -27,7 +27,8 @@ pub async fn list_attributes(
     Path(user_id): Path<uuid::Uuid>,
 ) -> Result<Json<ApiResponse<Vec<UserAttribute>>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::list_user_attributes(&*state.repos.users, &*state.repos.user_attributes, user_id).await?,
+        service::list_user_attributes(&*state.repos.users, &*state.repos.user_attributes, user_id)
+            .await?,
     )))
 }
 
@@ -59,7 +60,8 @@ pub async fn set_attributes(
             state.config.abac.policy_cache_ttl_seconds,
             user_id,
             &input,
-        ).await?,
+        )
+        .await?,
     ))
 }
 
@@ -90,6 +92,7 @@ pub async fn delete_attribute(
             state.config.abac.policy_cache_ttl_seconds,
             user_id,
             &key,
-        ).await?,
+        )
+        .await?,
     ))
 }

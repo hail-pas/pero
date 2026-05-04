@@ -3,10 +3,10 @@ use axum::extract::{Path, State};
 
 use crate::api::extractors::ValidatedJson;
 use crate::api::response::ApiResponse;
-use crate::domain::social::entity::{
+use crate::domain::federation::entity::{
     CreateSocialProviderRequest, SocialProviderDTO, UpdateSocialProviderRequest,
 };
-use crate::domain::social::service;
+use crate::domain::federation::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 

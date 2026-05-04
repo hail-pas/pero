@@ -2,8 +2,8 @@ use chrono::Utc;
 use redis::AsyncCommands;
 use uuid::Uuid;
 
-use crate::domain::identity::repo::SessionStore;
-use crate::domain::identity::session::IdentitySession;
+use crate::domain::auth::repo::SessionStore;
+use crate::domain::auth::session::IdentitySession;
 use crate::infra::cache;
 use crate::shared::cache_keys::identity_session::{session_key, user_sessions_key};
 use crate::shared::constants::cache_keys;
@@ -176,10 +176,7 @@ impl SessionStore for RedisSessionStore {
     }
 
     async fn verify(&self, session_id: &str, user_id: Uuid) -> Result<IdentitySession, AppError> {
-        let session = self
-            .get(session_id)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        let session = self.get(session_id).await?.ok_or(AppError::Unauthorized)?;
         if session.user_id != user_id {
             return Err(AppError::Unauthorized);
         }

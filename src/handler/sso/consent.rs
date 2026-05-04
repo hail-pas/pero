@@ -34,8 +34,17 @@ pub async fn consent_get(
         Err(response) => return Ok(response),
     };
 
-    let consent = service::build_consent_view(&*state.repos.oauth2_clients, &*state.repos.apps, &*state.repos.sso_sessions, &sso).await?;
-    let user = state.repos.users.find_by_id(sso.user_id.ok_or(AppError::Unauthorized)?)
+    let consent = service::build_consent_view(
+        &*state.repos.oauth2_clients,
+        &*state.repos.apps,
+        &*state.repos.sso_sessions,
+        &sso,
+    )
+    .await?;
+    let user = state
+        .repos
+        .users
+        .find_by_id(sso.user_id.ok_or(AppError::Unauthorized)?)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -74,22 +83,27 @@ pub async fn consent_post(
     .and_then(|claims| claims.sid);
 
     if let Some(account_sid) = account_sid.as_deref() {
-        verify_user_session_with_store(&state, account_sid, sso.user_id.ok_or(AppError::Unauthorized)?).await?;
+        verify_user_session_with_store(
+            &state,
+            account_sid,
+            sso.user_id.ok_or(AppError::Unauthorized)?,
+        )
+        .await?;
     }
 
-    let redirect =
-        service::handle_consent_action(
-            &*state.repos.oauth2_clients,
-            &*state.repos.apps,
-            &*state.repos.users,
-            &*state.repos.sso_sessions,
-            &*state.repos.oauth2_tokens,
-            state.config.oauth2.auth_code_ttl_minutes,
-            &sid,
-            &sso,
-            action.action,
-            account_sid.as_deref(),
-        ).await?;
+    let redirect = service::handle_consent_action(
+        &*state.repos.oauth2_clients,
+        &*state.repos.apps,
+        &*state.repos.users,
+        &*state.repos.sso_sessions,
+        &*state.repos.refresh_tokens,
+        state.config.oauth2.auth_code_ttl_minutes,
+        &sid,
+        &sso,
+        action.action,
+        account_sid.as_deref(),
+    )
+    .await?;
     let mut response = Redirect::to(&redirect).into_response();
     response.headers_mut().append(
         axum::http::header::SET_COOKIE,
@@ -103,7 +117,10 @@ async fn verify_user_session_with_store(
     session_id: &str,
     user_id: uuid::Uuid,
 ) -> Result<(), AppError> {
-    let session = state.repos.sessions.get(session_id)
+    let session = state
+        .repos
+        .sessions
+        .get(session_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
     if session.user_id != user_id {

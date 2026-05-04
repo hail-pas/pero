@@ -6,8 +6,8 @@ use serde::Deserialize;
 use validator::Validate;
 
 use crate::api::extractors::ValidatedForm;
-use crate::domain::identity::models::UpdateMeRequest;
-use crate::domain::identity::dto::VerifyPayload;
+use crate::domain::user::dto::VerifyPayload;
+use crate::domain::user::models::UpdateMeRequest;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, UserView};
 use crate::shared::constants::cache_keys::{EMAIL_VERIFY_PREFIX, PHONE_VERIFY_PREFIX};
@@ -71,7 +71,10 @@ pub async fn profile_post(
     ValidatedForm(form): ValidatedForm<ProfileForm>,
 ) -> Result<Response, AppError> {
     let user_id = common::get_account_user_id(&state, &headers).await?;
-    let current = state.repos.users.find_by_id(user_id)
+    let current = state
+        .repos
+        .users
+        .find_by_id(user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -107,7 +110,8 @@ pub async fn profile_post(
             }
         },
     };
-    let updated = crate::domain::identity::service::update_me(&*state.repos.users, user_id, &req).await?;
+    let updated =
+        crate::domain::user::service::update_me(&*state.repos.users, user_id, &req).await?;
     Ok(axum::Json(crate::api::response::ApiResponse::success(updated)).into_response())
 }
 
@@ -118,12 +122,12 @@ pub async fn send_verify_email_post(
     let user = common::get_account_user(&state, &headers).await?;
 
     if user.email_verified {
-        return Err(crate::domain::identity::error::email_already_verified());
+        return Err(crate::domain::user::error::email_already_verified());
     }
 
     let email = match user.email.clone() {
         Some(email) => email,
-        None => return Err(crate::domain::identity::error::email_not_set()),
+        None => return Err(crate::domain::user::error::email_not_set()),
     };
 
     let payload = VerifyPayload {
@@ -154,7 +158,7 @@ pub async fn send_verify_phone_post(
         None => return Err(AppError::BadRequest("Phone number is not set.".into())),
     };
     if user.phone_verified {
-        return Err(crate::domain::identity::error::phone_already_verified());
+        return Err(crate::domain::user::error::phone_already_verified());
     }
 
     let payload = VerifyPayload {

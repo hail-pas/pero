@@ -3,6 +3,7 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 
 use crate::api::extractors::ValidatedForm;
+use crate::application::password_reset;
 use crate::domain::sso::models::ForgotPasswordForm;
 use crate::handler::sso::common::render_tpl;
 use crate::shared::error::AppError;
@@ -22,32 +23,15 @@ pub async fn forgot_post(
     State(state): State<AppState>,
     ValidatedForm(form): ValidatedForm<ForgotPasswordForm>,
 ) -> Result<Response, AppError> {
-    if let Some(user) = find_user_for_reset(&state, &form.identifier).await? {
-        let _token = crate::shared::utils::generate_token_and_cache(
-            &*state.repos.kv,
-            crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX,
-            &user.id.to_string(),
-            state.config.sso.password_reset_ttl_seconds,
-        )
-        .await?;
-        tracing::info!(
-            identifier = %form.identifier,
-            "password reset token generated (email delivery stub)"
-        );
-    }
+    password_reset::request_reset(
+        &*state.repos.users,
+        &*state.repos.kv,
+        &form.identifier,
+        state.config.sso.password_reset_ttl_seconds,
+    )
+    .await?;
 
     render_forgot(true)
-}
-
-async fn find_user_for_reset(
-    state: &AppState,
-    identifier: &str,
-) -> Result<Option<crate::domain::identity::entity::User>, AppError> {
-    if identifier.contains('@') {
-        state.repos.users.find_by_email(identifier).await
-    } else {
-        state.repos.users.find_by_phone(identifier).await
-    }
 }
 
 fn render_forgot(success: bool) -> Result<Response, AppError> {

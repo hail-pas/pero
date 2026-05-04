@@ -3,7 +3,7 @@ pub mod initiate;
 pub mod management;
 pub mod public;
 
-use crate::domain::social::entity::SocialProviderName;
+use crate::domain::federation::entity::SocialProviderName;
 use crate::shared::state::AppState;
 
 pub fn social_callback_url(issuer: &str, provider: &str) -> String {

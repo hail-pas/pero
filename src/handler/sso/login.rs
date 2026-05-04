@@ -5,12 +5,10 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::api::extractors::ValidatedForm;
-use crate::domain::identity::authn::AuthService;
+use crate::application::sso_login;
 use crate::domain::sso::models::LoginForm;
 use crate::handler::social::{ProviderView, load_provider_views};
-use crate::handler::sso::common::{
-    load_sso_session, mark_sso_authenticated, render_tpl, set_account_cookie,
-};
+use crate::handler::sso::common::{load_sso_session, render_tpl, set_account_cookie};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -102,12 +100,14 @@ pub async fn login_post(
         }
     };
 
-    let user = match AuthService::authenticate_with_password(
+    let user = match sso_login::login_and_authenticate(
         &*state.repos.users,
         &*state.repos.identities,
-        &form.identifier_type,
-        &form.identifier,
-        &form.password,
+        &*state.repos.sso_sessions,
+        &sid,
+        &mut sso,
+        &form,
+        state.config.sso.session_ttl_seconds,
     )
     .await
     {
@@ -122,8 +122,6 @@ pub async fn login_post(
         }
         Err(err) => return Err(err),
     };
-
-    mark_sso_authenticated(&state, &sid, &mut sso, user.id).await?;
 
     let mut response = Redirect::to("/sso/consent").into_response();
     response.headers_mut().append(

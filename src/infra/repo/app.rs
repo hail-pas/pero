@@ -61,7 +61,10 @@ impl AppStore for SqlxAppStore {
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         builder.push(" RETURNING *");
-        let result = builder.build_query_as::<App>().fetch_optional(&*self.pool).await?;
+        let result = builder
+            .build_query_as::<App>()
+            .fetch_optional(&*self.pool)
+            .await?;
         require_found(result, "app")
     }
 

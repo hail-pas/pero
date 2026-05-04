@@ -4,8 +4,8 @@ use axum::http::header;
 use axum::response::{IntoResponse, Redirect, Response};
 use validator::Validate;
 
-use crate::domain::oauth2::models::AuthorizeQuery;
-use crate::domain::oauth2::service;
+use crate::domain::oauth::models::AuthorizeQuery;
+use crate::domain::oauth::service;
 use crate::domain::sso::models::{AuthorizeParams, SsoSession};
 use crate::handler::sso::common::set_session_cookie;
 use crate::shared::constants::cookies::SSO_SESSION;
@@ -22,7 +22,8 @@ pub async fn authorize(
         .validate()
         .map_err(|e: validator::ValidationErrors| AppError::Validation(e.to_string()))?;
 
-    let client = service::load_authorization_client(&*state.repos.oauth2_clients, &query.client_id).await?;
+    let client =
+        service::load_authorization_client(&*state.repos.oauth2_clients, &query.client_id).await?;
     service::ensure_redirect_uri_allowed(&client, &query.redirect_uri)?;
 
     let requested_scopes = crate::shared::utils::parse_scopes(query.scope.as_deref());
@@ -52,12 +53,11 @@ pub async fn authorize(
         if let Some(mut existing) = state.repos.sso_sessions.get(&sid).await? {
             if existing.authenticated && existing.user_id.is_some() {
                 existing.authorize_params = params;
-                state.repos.sso_sessions.update(
-                    &sid,
-                    &existing,
-                    state.config.sso.session_ttl_seconds,
-                )
-                .await?;
+                state
+                    .repos
+                    .sso_sessions
+                    .update(&sid, &existing, state.config.sso.session_ttl_seconds)
+                    .await?;
                 return Ok(Redirect::to("/sso/consent").into_response());
             }
         }
@@ -70,11 +70,17 @@ pub async fn authorize(
         auth_time: None,
     };
 
-    let session_id =
-        state.repos.sso_sessions.create(&sso, state.config.sso.session_ttl_seconds).await?;
+    let session_id = state
+        .repos
+        .sso_sessions
+        .create(&sso, state.config.sso.session_ttl_seconds)
+        .await?;
 
     if let Some(ref provider_name) = query.provider {
-        if state.repos.social.find_enabled_provider_by_name(provider_name)
+        if state
+            .repos
+            .social
+            .find_enabled_provider_by_name(provider_name)
             .await?
             .is_some()
         {

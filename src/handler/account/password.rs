@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 
 use crate::api::extractors::ValidatedForm;
-use crate::domain::identity::authn::AuthService;
+use crate::domain::auth::service::AuthService;
 use crate::domain::sso::models::ChangePasswordForm;
 use crate::handler::account::common;
 use crate::handler::account::common::AccountLayout;
@@ -38,7 +38,7 @@ pub async fn change_password_post(
         &*state.repos.users,
         &*state.repos.identities,
         &*state.repos.sessions,
-        &*state.repos.oauth2_tokens,
+        &*state.repos.refresh_tokens,
         user_id,
         &form.old_password,
         &form.new_password,

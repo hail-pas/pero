@@ -5,10 +5,12 @@ use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
 use crate::domain::abac::dto::CreateConditionRequest;
-use crate::domain::abac::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest, UserAttribute};
+use crate::domain::abac::models::{
+    CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest, UserAttribute,
+};
+use crate::domain::abac::repo::PolicyFilter;
 use crate::domain::abac::repo::{AbacCacheStore, AbacStore};
 use crate::domain::abac::service::AttachedPolicies;
-use crate::domain::abac::repo::PolicyFilter;
 use crate::infra::cache;
 use crate::shared::cache_keys::abac::{
     app_version_key, policy_key, policy_version_key, subject_key, subject_version_key,
@@ -238,7 +240,7 @@ impl AbacStore for SqlxAbacStore {
             .fetch_optional(&*self.pool)
             .await?;
         require_found(policy, "policy")?;
-        let user = sqlx::query_as::<_, crate::domain::identity::entity::User>(
+        let user = sqlx::query_as::<_, crate::domain::user::entity::User>(
             "SELECT * FROM users WHERE id = $1",
         )
         .bind(user_id)
@@ -399,13 +401,7 @@ impl AbacCacheStore for RedisAbacCacheStore {
             .await?;
         }
         let new_version = Uuid::new_v4().to_string();
-        cache::set(
-            &self.pool,
-            &subject_version_key(user_id),
-            &new_version,
-            ttl,
-        )
-        .await
+        cache::set(&self.pool, &subject_version_key(user_id), &new_version, ttl).await
     }
 }
 

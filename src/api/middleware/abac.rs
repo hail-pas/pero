@@ -26,10 +26,13 @@ pub async fn abac_middleware(
 
     let user_id: Uuid = claims.sub.parse().map_err(|_| AppError::Unauthorized)?;
 
-    let app_id_from_token = claims.app_id.as_deref()
+    let app_id_from_token = claims
+        .app_id
+        .as_deref()
         .and_then(|s| s.parse::<Uuid>().ok());
 
-    let header_app_id = req.headers()
+    let header_app_id = req
+        .headers()
         .get(headers::X_APP_ID)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<Uuid>().ok());
@@ -37,7 +40,9 @@ pub async fn abac_middleware(
     let app_id = match (app_id_from_token, header_app_id) {
         (Some(from_token), Some(from_header)) => {
             if from_token != from_header {
-                return Err(AppError::Forbidden("app_id mismatch between token and header".into()));
+                return Err(AppError::Forbidden(
+                    "app_id mismatch between token and header".into(),
+                ));
             }
             Some(from_token)
         }
@@ -52,8 +57,23 @@ pub async fn abac_middleware(
         .ok_or_else(|| AppError::Internal("route missing ABAC scope".into()))?;
 
     let cache_ttl = state.config.abac.policy_cache_ttl_seconds;
-    let subject_attrs = service::build_subject_attrs(&*state.repos.policies, &*state.repos.abac_cache, user_id, &claims.roles, cache_ttl).await?;
-    let policies = service::load_user_policies(&*state.repos.policies, &*state.repos.abac_cache, user_id, app_id, true, cache_ttl).await?;
+    let subject_attrs = service::build_subject_attrs(
+        &*state.repos.policies,
+        &*state.repos.abac_cache,
+        user_id,
+        &claims.roles,
+        cache_ttl,
+    )
+    .await?;
+    let policies = service::load_user_policies(
+        &*state.repos.policies,
+        &*state.repos.abac_cache,
+        user_id,
+        app_id,
+        true,
+        cache_ttl,
+    )
+    .await?;
 
     let domain_resource = Resource::from_path(&path);
     let domain_action = Action::from_method_and_path(req.method().as_str(), &path);

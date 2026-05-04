@@ -1,4 +1,3 @@
-use crate::infra::cache;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::extract::{Request, State};
@@ -12,33 +11,23 @@ pub async fn rate_limit_middleware(
 ) -> Result<Response, AppError> {
     let key = rate_limit_key(&req);
 
-    let mut conn = cache::with_conn(state.repos.kv.pool()).await?;
-
     let window_secs: i64 = 60;
-    let script = redis::Script::new(
-        r#"
-        local key = KEYS[1]
-        local limit = tonumber(ARGV[1])
-        local window = tonumber(ARGV[2])
-        local current = tonumber(redis.call('INCR', key) or 0)
-        if current == 1 then
-            redis.call('EXPIRE', key, window)
-        end
-        if current > limit then
-            return 0
-        end
-        return 1
-    "#,
-    );
-
-    let allowed: i32 = script
-        .key(format!("rate_limit:{key}"))
-        .arg(state.config.server.rate_limit_rpm)
-        .arg(window_secs)
-        .invoke_async(&mut *conn)
+    let key = format!("rate_limit:{key}");
+    let current = state
+        .repos
+        .kv
+        .get_raw(&key)
+        .await?
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+        + 1;
+    state
+        .repos
+        .kv
+        .set_raw(&key, serde_json::Value::from(current), window_secs)
         .await?;
 
-    if allowed == 0 {
+    if current > u64::from(state.config.server.rate_limit_rpm) {
         return Err(AppError::RateLimited);
     }
 

@@ -16,7 +16,10 @@ pub type SessionResult = Result<(String, SsoSession), Response>;
 pub async fn load_sso_session(state: &AppState, headers: &HeaderMap) -> SessionResult {
     let sid = crate::shared::utils::extract_cookie(headers, SSO_SESSION)
         .ok_or(Redirect::to("/oauth2/authorize").into_response())?;
-    let sso = state.repos.sso_sessions.get(&sid)
+    let sso = state
+        .repos
+        .sso_sessions
+        .get(&sid)
         .await
         .map_err(|e| match e {
             AppError::BadRequest(_) | AppError::NotFound(_) | AppError::Unauthorized => {
@@ -56,13 +59,16 @@ pub async fn set_account_cookie(
     headers: &axum::http::HeaderMap,
 ) -> Result<axum::http::HeaderValue, AppError> {
     let (device, location) = crate::shared::utils::parse_user_agent(headers);
-    let (identity_session, _refresh_token) = state.repos.sessions.create(
-        user_id,
-        state.config.jwt.refresh_ttl_days,
-        &device,
-        &location,
-    )
-    .await?;
+    let (identity_session, _refresh_token) = state
+        .repos
+        .sessions
+        .create(
+            user_id,
+            state.config.jwt.refresh_ttl_days,
+            &device,
+            &location,
+        )
+        .await?;
     let ttl_seconds = state.config.jwt.refresh_ttl_days * 86400;
     let token = crate::infra::jwt::sign_access_token(
         &user_id.to_string(),
@@ -86,12 +92,11 @@ pub async fn mark_sso_authenticated(
     sso.user_id = Some(user_id);
     sso.authenticated = true;
     sso.auth_time = Some(chrono::Utc::now().timestamp());
-    state.repos.sso_sessions.update(
-        session_id,
-        sso,
-        state.config.sso.session_ttl_seconds,
-    )
-    .await
+    state
+        .repos
+        .sso_sessions
+        .update(session_id, sso, state.config.sso.session_ttl_seconds)
+        .await
 }
 
 pub fn build_account_cookie_value(

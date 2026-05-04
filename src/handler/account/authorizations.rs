@@ -21,7 +21,11 @@ pub async fn authorizations_get(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let user = common::get_account_user(&state, &headers).await?;
-    let auths = state.repos.oauth2_tokens.list_active_by_user(user.id).await?;
+    let auths = state
+        .repos
+        .refresh_tokens
+        .list_active_by_user(user.id)
+        .await?;
     let clients: Vec<ClientView> = auths
         .iter()
         .map(|a| ClientView {
@@ -54,7 +58,11 @@ pub async fn revoke_post(
         .token_id
         .parse()
         .map_err(|_| AppError::BadRequest("invalid token id".into()))?;
-    state.repos.oauth2_tokens.revoke_for_user(token_id, user_id).await?;
+    state
+        .repos
+        .refresh_tokens
+        .revoke_for_user(token_id, user_id)
+        .await?;
     Ok(axum::Json(crate::api::response::MessageResponse::success(
         "Authorization revoked.",
     ))

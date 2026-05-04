@@ -1,9 +1,9 @@
-use crate::shared::message::MessageResponse;
-use crate::shared::page::PageData;
 use crate::domain::app::error;
 use crate::domain::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
 use crate::domain::app::repo::AppStore;
 use crate::shared::error::AppError;
+use crate::shared::message::MessageResponse;
+use crate::shared::page::PageData;
 
 pub async fn create_app(store: &dyn AppStore, req: &CreateAppRequest) -> Result<AppDTO, AppError> {
     if store.find_by_code(&req.code).await?.is_some() {

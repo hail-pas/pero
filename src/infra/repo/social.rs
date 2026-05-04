@@ -3,10 +3,10 @@ use std::sync::Arc;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-use crate::domain::social::entity::{
+use crate::domain::federation::entity::{
     CreateSocialProviderRequest, SocialProvider, UpdateSocialProviderRequest,
 };
-use crate::domain::social::repo::SocialStore;
+use crate::domain::federation::repo::SocialStore;
 use crate::shared::error::{AppError, require_found, require_rows_affected};
 
 pub struct SqlxSocialStore {

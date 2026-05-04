@@ -28,10 +28,23 @@ pub async fn evaluate(
     ValidatedJson(req): ValidatedJson<EvaluateRequest>,
 ) -> Result<Json<ApiResponse<EvaluateResponse>>, AppError> {
     let cache_ttl = state.config.abac.policy_cache_ttl_seconds;
-    let subject_attrs =
-        service::build_subject_attrs(&*state.repos.policies, &*state.repos.abac_cache, auth_user.user_id, &auth_user.roles, cache_ttl).await?;
-    let policies =
-        service::load_user_policies(&*state.repos.policies, &*state.repos.abac_cache, auth_user.user_id, req.app_id, false, cache_ttl).await?;
+    let subject_attrs = service::build_subject_attrs(
+        &*state.repos.policies,
+        &*state.repos.abac_cache,
+        auth_user.user_id,
+        &auth_user.roles,
+        cache_ttl,
+    )
+    .await?;
+    let policies = service::load_user_policies(
+        &*state.repos.policies,
+        &*state.repos.abac_cache,
+        auth_user.user_id,
+        req.app_id,
+        false,
+        cache_ttl,
+    )
+    .await?;
 
     let domain_resource = Resource::from_path(&req.resource);
     let domain_action = Action::from_method_and_path(&req.action, &req.resource);

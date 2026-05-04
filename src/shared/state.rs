@@ -1,13 +1,15 @@
 use crate::config::AppConfig;
 use crate::domain::abac::repo::{AbacCacheStore, AbacStore};
 use crate::domain::app::repo::AppStore;
-use crate::domain::identity::repo::{IdentityStore, SessionStore, UserAttributeStore, UserStore};
-use crate::domain::oauth2::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
-use crate::domain::social::http::HttpClient;
-use crate::domain::social::repo::SocialStore;
+use crate::domain::auth::repo::SessionStore;
+use crate::domain::credential::repo::IdentityStore;
+use crate::domain::federation::http::HttpClient;
+use crate::domain::federation::repo::SocialStore;
+use crate::domain::oauth::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
 use crate::domain::sso::repo::SsoSessionStore;
+use crate::domain::user::repo::{UserAttributeStore, UserStore};
 use crate::infra::jwt::JwtKeys;
-use crate::infra::repo::kv::RedisKvStore;
+use crate::shared::kv::KvStore;
 use serde_json::Value;
 use std::sync::{Arc, OnceLock};
 
@@ -21,10 +23,12 @@ pub struct Repos {
     pub policies: Arc<dyn AbacStore>,
     pub abac_cache: Arc<dyn AbacCacheStore>,
     pub oauth2_clients: Arc<dyn OAuth2ClientStore>,
-    pub oauth2_tokens: Arc<dyn OAuth2TokenStore>,
+    pub auth_codes: Arc<dyn OAuth2TokenStore>,
+    pub token_families: Arc<dyn OAuth2TokenStore>,
+    pub refresh_tokens: Arc<dyn OAuth2TokenStore>,
     pub social: Arc<dyn SocialStore>,
     pub apps: Arc<dyn AppStore>,
-    pub kv: Arc<RedisKvStore>,
+    pub kv: Arc<dyn KvStore>,
     pub http: Arc<dyn HttpClient>,
     pub token_signer: Arc<dyn TokenSigner>,
 }

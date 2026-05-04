@@ -1,7 +1,7 @@
 use crate::api::extractors::ValidatedJson;
 use crate::api::response::ApiResponse;
-use crate::domain::identity::models::{CreateUserRequest, RegisterRequest, TokenResponse, UserDTO};
-use crate::domain::identity::service;
+use crate::domain::credential::service;
+use crate::domain::user::models::{CreateUserRequest, RegisterRequest, TokenResponse, UserDTO};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -36,7 +36,8 @@ pub async fn register(
             &location,
             state.config.jwt.access_ttl_minutes,
             state.config.jwt.refresh_ttl_days,
-        ).await?,
+        )
+        .await?,
     )))
 }
 

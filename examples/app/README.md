@@ -21,8 +21,8 @@ uv sync
 
 ```bash
 # create with pero bootstrap
-export OAUTH2_CLIENT_ID="8f91c513d1bd4f28bd026d4e3f6b41f1"
-export OAUTH2_CLIENT_SECRET="5dc408b2827f48ef874fc405b5979f18"
+export OAUTH2_CLIENT_ID="367868df09fb45f99eec4218dc82d8c6"
+export OAUTH2_CLIENT_SECRET="b5db26d6555b471b9e9a0b0bea9e91d7"
 ```
 
 ### 3. Run the app

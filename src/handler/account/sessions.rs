@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::domain::session::SessionBinding;
+use crate::domain::auth::SessionBinding;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, SessionView};
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
@@ -50,7 +50,10 @@ pub async fn delete_session_post(
 
     let user_id = common::get_account_user_id(&state, &headers).await?;
 
-    let target = state.repos.sessions.get(&form.session_id)
+    let target = state
+        .repos
+        .sessions
+        .get(&form.session_id)
         .await?
         .ok_or_else(|| AppError::NotFound("session not found".into()))?;
 

@@ -24,7 +24,8 @@ pub async fn create(
         state.config.abac.policy_cache_ttl_seconds,
         req,
         forced_app_id,
-    ).await?;
+    )
+    .await?;
     Ok(Json(ApiResponse::success(dto)))
 }
 
@@ -61,7 +62,8 @@ pub async fn update(
         req,
         scope,
         forced_app_id,
-    ).await?;
+    )
+    .await?;
     Ok(Json(ApiResponse::success(dto)))
 }
 
@@ -76,7 +78,8 @@ pub async fn delete(
         state.config.abac.policy_cache_ttl_seconds,
         id,
         scope,
-    ).await?;
+    )
+    .await?;
     Ok(Json(MessageResponse::success("policy deleted")))
 }
 
@@ -93,7 +96,8 @@ pub async fn assign(
         user_id,
         policy_id,
         scope,
-    ).await?;
+    )
+    .await?;
     Ok(Json(MessageResponse::success("policy assigned")))
 }
 
@@ -110,7 +114,8 @@ pub async fn unassign(
         user_id,
         policy_id,
         scope,
-    ).await?;
+    )
+    .await?;
     Ok(Json(MessageResponse::success("policy unassigned")))
 }
 
@@ -119,6 +124,7 @@ pub async fn list_user_policies(
     user_id: Uuid,
     scope: PolicyScope,
 ) -> Result<Json<ApiResponse<Vec<PolicyDTO>>>, AppError> {
-    let items = list_user_policy_dtos(&*state.repos.users, &*state.repos.policies, user_id, scope).await?;
+    let items =
+        list_user_policy_dtos(&*state.repos.users, &*state.repos.policies, user_id, scope).await?;
     Ok(Json(ApiResponse::success(items)))
 }

@@ -1,7 +1,7 @@
 use crate::api::extractors::{AuthUser, ValidatedJson};
 use crate::api::response::MessageResponse;
-use crate::domain::identity::authn::AuthService;
-use crate::domain::identity::models::ChangePasswordRequest;
+use crate::domain::auth::service::AuthService;
+use crate::domain::user::models::ChangePasswordRequest;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -29,7 +29,7 @@ pub async fn change_password(
         &*state.repos.users,
         &*state.repos.identities,
         &*state.repos.sessions,
-        &*state.repos.oauth2_tokens,
+        &*state.repos.refresh_tokens,
         auth_user.user_id,
         &req.old_password,
         &req.new_password,

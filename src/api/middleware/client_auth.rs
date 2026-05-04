@@ -1,4 +1,4 @@
-use crate::domain::oauth2::service::{self, InvalidClientError};
+use crate::domain::oauth::service::{self, InvalidClientError};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::extract::{Request, State};

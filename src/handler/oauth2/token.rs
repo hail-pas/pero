@@ -1,7 +1,8 @@
 use crate::api::extractors::ValidatedForm;
+use crate::application::token_exchange;
+use crate::domain::oauth::models::TokenRequest;
+use crate::domain::oauth::service;
 use crate::infra::http::oauth2 as error;
-use crate::domain::oauth2::models::TokenRequest;
-use crate::domain::oauth2::service;
 use crate::shared::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -12,11 +13,11 @@ use axum::response::{IntoResponse, Response};
     path = "/oauth2/token",
     tag = "OAuth2",
     request_body(
-        content = crate::domain::oauth2::models::TokenRequest,
+        content = crate::domain::oauth::models::TokenRequest,
         content_type = "application/x-www-form-urlencoded",
     ),
     responses(
-        (status = 200, description = "Token response", body = crate::domain::oauth2::models::TokenResponse),
+        (status = 200, description = "Token response", body = crate::domain::oauth::models::TokenResponse),
         (status = 400, description = "Invalid request"),
     )
 )]
@@ -25,14 +26,16 @@ pub async fn token(
     headers: HeaderMap,
     ValidatedForm(req): ValidatedForm<TokenRequest>,
 ) -> Response {
-    let auth_header = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    let auth_header = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
     let req = match service::resolve_client_credentials(auth_header, req) {
         Ok(req) => req,
         Err(e) => return error::map_app_error(e),
     };
-    match service::exchange_token(
+    match token_exchange::exchange_token(
         &*state.repos.oauth2_clients,
-        &*state.repos.oauth2_tokens,
+        &*state.repos.refresh_tokens,
         &*state.repos.apps,
         &*state.repos.users,
         &*state.repos.token_signer,
@@ -40,7 +43,9 @@ pub async fn token(
         state.config.oauth2.refresh_token_ttl_days,
         &state.config.oidc.issuer,
         &req,
-    ).await {
+    )
+    .await
+    {
         Ok(response) => axum::Json(response).into_response(),
         Err(e) => error::map_app_error(e),
     }

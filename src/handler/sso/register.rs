@@ -4,11 +4,9 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::api::extractors::ValidatedForm;
-use crate::domain::identity::authn::AuthService;
+use crate::application::sso_login;
 use crate::domain::sso::models::RegisterForm;
-use crate::handler::sso::common::{
-    load_sso_session, mark_sso_authenticated, render_tpl, set_account_cookie,
-};
+use crate::handler::sso::common::{load_sso_session, render_tpl, set_account_cookie};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 
@@ -42,14 +40,14 @@ pub async fn register_post(
         Err(response) => return Ok(response),
     };
 
-    let user = match AuthService::register_user_with_password(
+    let user = match sso_login::register_and_authenticate(
         &*state.repos.users,
         &*state.repos.identities,
-        &form.username,
-        form.email.as_deref(),
-        form.phone.as_deref(),
-        form.nickname.as_deref(),
-        &form.password,
+        &*state.repos.sso_sessions,
+        &sid,
+        &mut sso,
+        &form,
+        state.config.sso.session_ttl_seconds,
     )
     .await
     {
@@ -60,8 +58,6 @@ pub async fn register_post(
         }
         Err(e) => return Err(e),
     };
-
-    mark_sso_authenticated(&state, &sid, &mut sso, user.id).await?;
 
     let mut response = Redirect::to("/sso/consent").into_response();
     response.headers_mut().append(

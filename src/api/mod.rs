@@ -3,12 +3,13 @@ pub mod extractors;
 pub mod health;
 pub mod middleware;
 pub mod response;
+pub mod routes;
 
 use std::time::Duration;
 
 use crate::domain::abac::models::RouteScope;
-use crate::shared::constants::headers::{X_PROCESS_TIME, X_REQUEST_ID};
 use crate::infra::http::error::ErrorInfo;
+use crate::shared::constants::headers::{X_PROCESS_TIME, X_REQUEST_ID};
 use crate::shared::state::AppState;
 use axum::Router;
 use axum::http::header;
@@ -121,161 +122,31 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 fn build_public_routes(state: &AppState) -> Router<AppState> {
-    use axum::routing::{get, post};
-
     let unprotected = Router::new()
-        .route("/health", get(crate::api::health::health))
-        .route(
-            "/.well-known/openid-configuration",
-            get(crate::handler::oidc::discovery::discovery),
-        )
-        .route("/oauth2/keys", get(crate::handler::oidc::jwks::jwks))
-        .route(
-            "/oauth2/session/end",
-            get(crate::handler::oidc::session::end_session),
-        )
-        .route(
-            "/oauth2/authorize",
-            get(crate::handler::oauth2::authorize::authorize),
-        )
+        .route("/health", axum::routing::get(crate::api::health::health))
+        .merge(crate::api::routes::oauth::public_routes())
+        .merge(crate::api::routes::social::public_routes())
         .route(
             "/sso/consent",
-            get(crate::handler::sso::consent::consent_get)
+            axum::routing::get(crate::handler::sso::consent::consent_get)
                 .post(crate::handler::sso::consent::consent_post),
-        )
-        .route(
-            "/api/social-providers/enabled",
-            get(crate::handler::social::public::list_enabled_providers),
         );
 
-    let rate_limited = Router::new()
-        .route(
-            "/api/identity/register",
-            post(crate::handler::identity::registration::register),
-        )
-        .route(
-            "/api/identity/login",
-            post(crate::handler::identity::login::login),
-        )
-        .route(
-            "/auth/refresh",
-            post(crate::handler::identity::login::refresh),
-        )
-        .route("/oauth2/token", post(crate::handler::oauth2::token::token))
-        .route(
+    let rate_limited = crate::api::routes::identity::public_routes()
+        .merge(Router::new().route(
+            "/oauth2/token",
+            axum::routing::post(crate::handler::oauth2::token::token),
+        ))
+        .merge(Router::new().route(
             "/oauth2/revoke",
-            post(crate::handler::oauth2::revoke::revoke),
-        )
-        .route(
-            "/account/login",
-            get(crate::handler::account::login::login_get)
-                .post(crate::handler::account::login::login_post),
-        )
-        .route(
-            "/account/social/{provider}/login",
-            get(crate::handler::account::login::account_social_login),
-        )
-        .route(
-            "/sso/login",
-            get(crate::handler::sso::login::login_get).post(crate::handler::sso::login::login_post),
-        )
-        .route(
-            "/sso/register",
-            get(crate::handler::sso::register::register_get)
-                .post(crate::handler::sso::register::register_post),
-        )
-        .route(
-            "/sso/forgot-password",
-            get(crate::handler::sso::forgot::forgot_get)
-                .post(crate::handler::sso::forgot::forgot_post),
-        )
-        .route(
-            "/sso/reset-password",
-            get(crate::handler::sso::reset_password::reset_password_get)
-                .post(crate::handler::sso::reset_password::reset_password_post),
-        )
-        .route(
-            "/sso/verify-email",
-            get(crate::handler::sso::verification::verify_email_get),
-        )
-        .route(
-            "/sso/verify-phone",
-            get(crate::handler::sso::verification::verify_phone_get)
-                .post(crate::handler::sso::verification::verify_phone_post),
-        )
-        .route("/sso/error", get(crate::handler::sso::error::error_get))
-        .route(
-            "/sso/social/{provider}/login",
-            get(crate::handler::social::initiate::social_login),
-        )
-        .route(
-            "/sso/social/{provider}/callback",
-            get(crate::handler::social::callback::social_callback),
-        )
-        .route(
-            "/sso/social/{provider}/bind-callback",
-            get(crate::handler::social::callback::social_bind_callback),
-        )
+            axum::routing::post(crate::handler::oauth2::revoke::revoke),
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::rate_limit::rate_limit_middleware,
         ));
 
-    let account = Router::new()
-        .route(
-            "/account/profile",
-            get(crate::handler::account::profile::profile_get)
-                .post(crate::handler::account::profile::profile_post),
-        )
-        .route(
-            "/account/profile/send-verify-email",
-            post(crate::handler::account::profile::send_verify_email_post),
-        )
-        .route(
-            "/account/profile/send-verify-phone",
-            post(crate::handler::account::profile::send_verify_phone_post),
-        )
-        .route(
-            "/account/social",
-            get(crate::handler::account::social::social_get),
-        )
-        .route(
-            "/account/social/{provider}/bind",
-            get(crate::handler::social::initiate::social_bind),
-        )
-        .route(
-            "/account/social/unbind",
-            post(crate::handler::account::social::unbind_post),
-        )
-        .route(
-            "/account/change-password",
-            get(crate::handler::account::password::change_password_get)
-                .post(crate::handler::account::password::change_password_post),
-        )
-        .route(
-            "/account/authorizations",
-            get(crate::handler::account::authorizations::authorizations_get),
-        )
-        .route(
-            "/account/authorizations/revoke",
-            post(crate::handler::account::authorizations::revoke_post),
-        )
-        .route(
-            "/account/sessions",
-            get(crate::handler::account::sessions::sessions_get),
-        )
-        .route(
-            "/account/sessions/delete",
-            post(crate::handler::account::sessions::delete_session_post),
-        )
-        .route(
-            "/account/sessions/delete-all",
-            post(crate::handler::account::sessions::delete_all_post),
-        )
-        .route(
-            "/account/logout",
-            post(crate::handler::account::sessions::logout_post),
-        )
+    let account = crate::api::routes::identity::account_routes()
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::account_session::account_session_gate,
@@ -289,46 +160,9 @@ fn build_public_routes(state: &AppState) -> Router<AppState> {
 }
 
 fn build_login_required_routes(state: &AppState) -> Router<AppState> {
-    use axum::routing::{delete, get, post, put};
-
-    Router::new()
-        .route(
-            "/api/users/me",
-            get(crate::handler::identity::profile::get_me)
-                .put(crate::handler::identity::profile::update_me),
-        )
-        .route(
-            "/api/identity/password/change",
-            put(crate::handler::identity::password::change_password),
-        )
-        .route(
-            "/api/identity/unbind/{provider}",
-            delete(crate::handler::identity::binding::unbind),
-        )
-        .route(
-            "/api/identity/identities",
-            get(crate::handler::identity::binding::list_identities),
-        )
-        .route(
-            "/auth/logout",
-            post(crate::handler::identity::login::logout),
-        )
-        .route(
-            "/oauth2/userinfo",
-            get(crate::handler::oidc::userinfo::userinfo),
-        )
-        .route(
-            "/api/abac/evaluate",
-            post(crate::handler::abac::evaluate::evaluate),
-        )
-        .route(
-            "/api/identity/send-verify-email",
-            post(crate::handler::sso::verification::send_verify_email_post),
-        )
-        .route(
-            "/api/identity/send-verify-phone",
-            post(crate::handler::sso::verification::send_verify_phone_post),
-        )
+    crate::api::routes::identity::login_required_routes()
+        .merge(crate::api::routes::oauth::login_required_routes())
+        .merge(crate::api::routes::abac::login_required_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::auth::auth_middleware,
@@ -336,81 +170,11 @@ fn build_login_required_routes(state: &AppState) -> Router<AppState> {
 }
 
 fn build_abac_required_routes(state: &AppState) -> Router<AppState> {
-    use axum::routing::{delete, get, post};
-
-    Router::new()
-        .route(
-            "/api/users",
-            post(crate::handler::identity::registration::create_user)
-                .get(crate::handler::identity::profile::list_users),
-        )
-        .route(
-            "/api/users/{id}",
-            get(crate::handler::identity::profile::get_user)
-                .put(crate::handler::identity::profile::update_user)
-                .delete(crate::handler::identity::profile::delete_user),
-        )
-        .route(
-            "/api/users/{id}/attributes",
-            get(crate::handler::identity::user_attrs::list_attributes)
-                .put(crate::handler::identity::user_attrs::set_attributes),
-        )
-        .route(
-            "/api/users/{id}/attributes/{key}",
-            delete(crate::handler::identity::user_attrs::delete_attribute),
-        )
-        .route(
-            "/api/apps",
-            post(crate::handler::app::crud::create_app).get(crate::handler::app::crud::list_apps),
-        )
-        .route(
-            "/api/apps/{id}",
-            get(crate::handler::app::crud::get_app)
-                .put(crate::handler::app::crud::update_app)
-                .delete(crate::handler::app::crud::delete_app),
-        )
-        .route(
-            "/api/oauth2/clients",
-            post(crate::handler::oauth2::client_management::create_client)
-                .get(crate::handler::oauth2::client_management::list_clients),
-        )
-        .route(
-            "/api/oauth2/clients/{id}",
-            get(crate::handler::oauth2::client_management::get_client)
-                .put(crate::handler::oauth2::client_management::update_client)
-                .delete(crate::handler::oauth2::client_management::delete_client),
-        )
-        .route(
-            "/api/policies",
-            post(crate::handler::abac::policies::create_policy)
-                .get(crate::handler::abac::policies::list_policies),
-        )
-        .route(
-            "/api/policies/{id}",
-            get(crate::handler::abac::policies::get_policy)
-                .put(crate::handler::abac::policies::update_policy)
-                .delete(crate::handler::abac::policies::delete_policy),
-        )
-        .route(
-            "/api/users/{user_id}/policies",
-            get(crate::handler::abac::policies::list_user_policies),
-        )
-        .route(
-            "/api/users/{user_id}/policies/{policy_id}",
-            post(crate::handler::abac::policies::assign_policy)
-                .delete(crate::handler::abac::policies::unassign_policy),
-        )
-        .route(
-            "/api/social-providers",
-            post(crate::handler::social::management::create_provider)
-                .get(crate::handler::social::management::list_providers),
-        )
-        .route(
-            "/api/social-providers/{id}",
-            get(crate::handler::social::management::get_provider)
-                .put(crate::handler::social::management::update_provider)
-                .delete(crate::handler::social::management::delete_provider),
-        )
+    crate::api::routes::identity::admin_routes()
+        .merge(crate::api::routes::app::admin_routes())
+        .merge(crate::api::routes::oauth::admin_routes())
+        .merge(crate::api::routes::abac::admin_routes())
+        .merge(crate::api::routes::social::admin_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::api::middleware::abac::abac_middleware,
@@ -428,33 +192,10 @@ fn build_abac_required_routes(state: &AppState) -> Router<AppState> {
 }
 
 fn build_client_required_routes(state: &AppState) -> Router<AppState> {
-    use axum::routing::{get, post};
-
-    Router::new()
-        .route(
-            "/api/client/policies",
-            post(crate::handler::abac::client_policies::create_policy)
-                .get(crate::handler::abac::client_policies::list_policies),
-        )
-        .route(
-            "/api/client/policies/{id}",
-            get(crate::handler::abac::client_policies::get_policy)
-                .put(crate::handler::abac::client_policies::update_policy)
-                .delete(crate::handler::abac::client_policies::delete_policy),
-        )
-        .route(
-            "/api/client/users/{user_id}/policies",
-            get(crate::handler::abac::client_policies::list_user_policies),
-        )
-        .route(
-            "/api/client/users/{user_id}/policies/{policy_id}",
-            post(crate::handler::abac::client_policies::assign_policy)
-                .delete(crate::handler::abac::client_policies::unassign_policy),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::api::middleware::client_auth::client_credentials_middleware,
-        ))
+    crate::api::routes::abac::client_routes().layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        crate::api::middleware::client_auth::client_credentials_middleware,
+    ))
 }
 
 fn build_cors(cfg: &crate::config::CorsConfig) -> CorsLayer {

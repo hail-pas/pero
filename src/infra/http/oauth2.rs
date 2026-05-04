@@ -15,7 +15,8 @@ pub struct OAuth2ErrorBody {
 pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
     match &e {
         crate::shared::error::AppError::OAuth2(oauth2_err) => {
-            let status = StatusCode::from_u16(oauth2_err.http_status()).unwrap_or(StatusCode::BAD_REQUEST);
+            let status =
+                StatusCode::from_u16(oauth2_err.http_status()).unwrap_or(StatusCode::BAD_REQUEST);
             let error_str = oauth2_err.error_code();
             let description = oauth2_err.to_string();
             let body = OAuth2ErrorBody {
@@ -23,11 +24,7 @@ pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
                 error_description: Some(description.clone()),
             };
             if oauth2_err.needs_www_authenticate() {
-                (
-                    status,
-                    [(header::WWW_AUTHENTICATE, "Basic")],
-                    Json(body),
-                )
+                (status, [(header::WWW_AUTHENTICATE, "Basic")], Json(body))
                     .into_response()
                     .with_error_info(status.as_u16() as i32 * 100 + 1, description)
             } else {
@@ -35,6 +32,16 @@ pub fn map_app_error(e: crate::shared::error::AppError) -> Response {
                     .into_response()
                     .with_error_info(status.as_u16() as i32 * 100 + 1, description)
             }
+        }
+        crate::shared::error::AppError::Validation(message)
+        | crate::shared::error::AppError::BadRequest(message) => {
+            let body = OAuth2ErrorBody {
+                error: "invalid_request",
+                error_description: Some(message.clone()),
+            };
+            (StatusCode::BAD_REQUEST, Json(body))
+                .into_response()
+                .with_error_info(40001, message.clone())
         }
         _ => e.into_response(),
     }

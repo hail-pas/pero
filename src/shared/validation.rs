@@ -72,7 +72,9 @@ pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError
     match url::Url::parse(uri) {
         Ok(parsed) => {
             if parsed.fragment().is_some() {
-                return Err(validator::ValidationError::new("redirect_uri_fragment_not_allowed"));
+                return Err(validator::ValidationError::new(
+                    "redirect_uri_fragment_not_allowed",
+                ));
             }
             if parsed.host_str().is_none_or(|h| h.is_empty()) {
                 return Err(validator::ValidationError::new("redirect_uri_missing_host"));
@@ -81,15 +83,17 @@ pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError
                 "https" => Ok(()),
                 "http" => {
                     let host = parsed.host_str().unwrap_or_default();
-                    let is_loopback = host == "localhost"
-                        || host == "127.0.0.1"
-                        || host == "::1";
+                    let is_loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
                     if !is_loopback {
-                        return Err(validator::ValidationError::new("http_redirect_uri_only_loopback"));
+                        return Err(validator::ValidationError::new(
+                            "http_redirect_uri_only_loopback",
+                        ));
                     }
                     Ok(())
                 }
-                _ => Err(validator::ValidationError::new("redirect_uri_unsupported_scheme")),
+                _ => Err(validator::ValidationError::new(
+                    "redirect_uri_unsupported_scheme",
+                )),
             }
         }
         Err(_) => Err(validator::ValidationError::new("invalid_redirect_uri")),
@@ -97,7 +101,6 @@ pub fn validate_redirect_uri(uri: &str) -> Result<(), validator::ValidationError
 }
 
 pub fn validate_redirect_uris(uris: &[String]) -> Result<(), validator::ValidationError> {
-
     let mut seen = HashSet::new();
     for uri in uris {
         if !seen.insert(uri) {
@@ -115,9 +118,11 @@ pub fn validate_non_empty_items(items: &[String]) -> Result<(), validator::Valid
     Ok(())
 }
 
-
 pub fn validate_pkce_verifier(v: &str) -> Result<(), validator::ValidationError> {
-    if !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c)) {
+    if !v
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c))
+    {
         return Err(validator::ValidationError::new("pkce_verifier_charset"));
     }
     Ok(())
@@ -132,7 +137,10 @@ pub fn validate_pkce_challenge(v: &str) -> Result<(), validator::ValidationError
         err.add_param(std::borrow::Cow::Borrowed("value"), &len);
         return Err(err);
     }
-    if !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c)) {
+    if !v
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c))
+    {
         return Err(validator::ValidationError::new("pkce_challenge_charset"));
     }
     Ok(())

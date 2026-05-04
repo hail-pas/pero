@@ -33,7 +33,7 @@ pub struct OAuth2ErrorBody {
     pub error_description: Option<String>,
 }
 
-fn oauth2_response(e: &crate::domain::oauth2::oauth2_error::OAuth2Error) -> Response {
+fn oauth2_response(e: &crate::domain::oauth::error::OAuth2Error) -> Response {
     let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::BAD_REQUEST);
     let error_str = e.error_code();
     let description = e.to_string();
@@ -42,11 +42,7 @@ fn oauth2_response(e: &crate::domain::oauth2::oauth2_error::OAuth2Error) -> Resp
         error_description: Some(description.clone()),
     };
     if e.needs_www_authenticate() {
-        (
-            status,
-            [(header::WWW_AUTHENTICATE, "Basic")],
-            Json(body),
-        )
+        (status, [(header::WWW_AUTHENTICATE, "Basic")], Json(body))
             .into_response()
             .with_error_info(status.as_u16() as i32 * 100 + 1, description)
     } else {

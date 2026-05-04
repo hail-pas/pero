@@ -6,7 +6,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::domain::identity::service;
+use crate::domain::credential::service;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, SocialProviderView};
 use crate::shared::error::AppError;

@@ -1,8 +1,8 @@
-use crate::domain::identity::repo::UserStore;
-use crate::domain::oauth2::repo::{OAuth2ClientStore, OAuth2TokenStore};
-use crate::domain::oauth2::service as oauth2_service;
+use crate::domain::oauth::repo::{OAuth2ClientStore, OAuth2TokenStore};
+use crate::domain::oauth::service as oauth2_service;
 use crate::domain::sso::models::{ConsentDecision, SsoSession};
 use crate::domain::sso::repo::SsoSessionStore;
+use crate::domain::user::repo::UserStore;
 use crate::shared::error::AppError;
 use crate::shared::utils::append_query_params;
 
@@ -53,7 +53,9 @@ pub async fn handle_consent_action(
         .user_id
         .ok_or(AppError::BadRequest("user not authenticated".into()))?;
 
-    let user = users.find_by_id(user_id).await?
+    let user = users
+        .find_by_id(user_id)
+        .await?
         .ok_or(AppError::Unauthorized)?;
 
     if !user.is_active() {
@@ -66,8 +68,8 @@ pub async fn handle_consent_action(
 
     let code = uuid::Uuid::new_v4().to_string().replace('-', "");
 
-    tokens.create_auth_code(
-        crate::domain::oauth2::repo::CreateAuthCodeParams {
+    tokens
+        .create_auth_code(crate::domain::oauth::repo::CreateAuthCodeParams {
             code: code.clone(),
             client_id: client.id,
             user_id,
@@ -77,12 +79,12 @@ pub async fn handle_consent_action(
             code_challenge_method: params.code_challenge_method.clone(),
             nonce: params.nonce.clone(),
             sid: account_sid.map(|s| s.to_string()),
-            auth_time: sso.auth_time
+            auth_time: sso
+                .auth_time
                 .unwrap_or_else(|| chrono::Utc::now().timestamp()),
             ttl_minutes: auth_code_ttl_minutes,
-        },
-    )
-    .await?;
+        })
+        .await?;
 
     sso_store.delete(sid).await?;
 
@@ -105,7 +107,7 @@ async fn load_valid_authorization_client(
     clients: &dyn OAuth2ClientStore,
     apps: &dyn crate::domain::app::repo::AppStore,
     sso: &SsoSession,
-) -> Result<crate::domain::oauth2::models::OAuth2Client, AppError> {
+) -> Result<crate::domain::oauth::models::OAuth2Client, AppError> {
     let params = &sso.authorize_params;
     oauth2_service::validate_authorization_client(
         clients,
@@ -122,7 +124,7 @@ fn requested_scopes(sso: &SsoSession) -> Vec<String> {
 }
 
 fn effective_scopes(
-    client: &crate::domain::oauth2::models::OAuth2Client,
+    client: &crate::domain::oauth::models::OAuth2Client,
     sso: &SsoSession,
     filter_allowed: bool,
 ) -> Vec<String> {

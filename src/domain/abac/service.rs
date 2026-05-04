@@ -1,9 +1,9 @@
 use super::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
 use super::repo::{AbacCacheStore, AbacStore, PolicyFilter};
-use crate::shared::page::PageData;
-use crate::domain::identity::repo::UserStore;
+use crate::domain::user::repo::UserStore;
 use crate::shared::constants::identity;
 use crate::shared::error::{AppError, require_found};
+use crate::shared::page::PageData;
 use crate::shared::patch::FieldUpdate;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -71,8 +71,9 @@ pub async fn build_subject_attrs(
                 for (key, value) in policies.load_user_attributes(user_id).await? {
                     attrs.entry(key).or_default().push(value);
                 }
-                if let Err(e) =
-                    abac_cache.set_subject_attrs(user_id, &attrs, cache_ttl).await
+                if let Err(e) = abac_cache
+                    .set_subject_attrs(user_id, &attrs, cache_ttl)
+                    .await
                 {
                     tracing::warn!(error = %e, "failed to cache ABAC subject attrs");
                 }
@@ -115,7 +116,9 @@ pub async fn list_policy_page(
     let (policies_list, total) = match scope {
         PolicyScope::Any => policies.list_policies(page, page_size).await?,
         PolicyScope::App(app_id) => {
-            policies.list_policies_by_app(app_id, page, page_size).await?
+            policies
+                .list_policies_by_app(app_id, page, page_size)
+                .await?
         }
     };
     let attached = policies.attach_conditions(policies_list).await?;
@@ -150,8 +153,7 @@ pub async fn update_policy_dto(
         req.app_id = FieldUpdate::Set(app_id);
     }
     let old_app_id = policy.app_id;
-    let (updated, conditions) =
-        policies.update_policy(id, &req, &policy).await?;
+    let (updated, conditions) = policies.update_policy(id, &req, &policy).await?;
     let dto = PolicyDTO::from_policy_with_conditions(updated, conditions);
     invalidate_policy_cache_best_effort(abac_cache, dto.app_id, cache_ttl).await;
     if dto.app_id != old_app_id {
@@ -207,20 +209,22 @@ pub async fn list_user_policy_dtos(
     user_id: Uuid,
     scope: PolicyScope,
 ) -> Result<Vec<PolicyDTO>, AppError> {
-    users.find_by_id(user_id).await?.ok_or_else(|| AppError::NotFound("user".into()))?;
+    users
+        .find_by_id(user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("user".into()))?;
 
     let app_id = match scope {
         PolicyScope::Any => None,
         PolicyScope::App(app_id) => Some(app_id),
     };
-    let policies_list = policies.select_policies(
-        PolicyFilter {
+    let policies_list = policies
+        .select_policies(PolicyFilter {
             user_id: Some(user_id),
             app_id,
             enabled_only: false,
-        },
-    )
-    .await?;
+        })
+        .await?;
     let attached = policies.attach_conditions(policies_list).await?;
     Ok(PolicyDTO::from_attached(attached))
 }
@@ -251,8 +255,9 @@ pub async fn load_user_policies(
         Ok(Some(cached)) => Ok(cached),
         _ => {
             let result = load().await?;
-            if let Err(e) =
-                abac_cache.set_policies(user_id, app_id, &result, cache_ttl).await
+            if let Err(e) = abac_cache
+                .set_policies(user_id, app_id, &result, cache_ttl)
+                .await
             {
                 tracing::warn!(error = %e, "failed to cache ABAC policies");
             }
@@ -261,13 +266,21 @@ pub async fn load_user_policies(
     }
 }
 
-pub async fn invalidate_policy_cache_best_effort(abac_cache: &dyn AbacCacheStore, app_id: Option<Uuid>, cache_ttl: i64) {
+pub async fn invalidate_policy_cache_best_effort(
+    abac_cache: &dyn AbacCacheStore,
+    app_id: Option<Uuid>,
+    cache_ttl: i64,
+) {
     if let Err(e) = abac_cache.bump_policy_version(app_id, cache_ttl).await {
         tracing::warn!(error = %e, app_id = ?app_id, "failed to invalidate ABAC policy cache");
     }
 }
 
-pub async fn invalidate_user_cache_best_effort(abac_cache: &dyn AbacCacheStore, user_id: Uuid, cache_ttl: i64) {
+pub async fn invalidate_user_cache_best_effort(
+    abac_cache: &dyn AbacCacheStore,
+    user_id: Uuid,
+    cache_ttl: i64,
+) {
     if let Err(e) = abac_cache.bump_user_version(user_id, cache_ttl).await {
         tracing::warn!(error = %e, %user_id, "failed to invalidate ABAC user cache");
     }

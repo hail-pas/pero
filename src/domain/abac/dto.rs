@@ -121,8 +121,7 @@ impl Validate for UpdatePolicyRequest {
             validation::validate_length(v, 1, 128)
         });
 
-        self.effect
-            .reject_clear("effect", &mut errors, |_| Ok(()));
+        self.effect.reject_clear("effect", &mut errors, |_| Ok(()));
         self.priority
             .reject_clear("priority", &mut errors, |_| Ok(()));
         self.enabled

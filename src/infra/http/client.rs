@@ -1,4 +1,4 @@
-use crate::domain::social::http::HttpClient;
+use crate::domain::federation::http::HttpClient;
 use crate::shared::error::AppError;
 
 pub struct ReqwestHttpClient;
@@ -23,10 +23,14 @@ impl HttpClient for ReqwestHttpClient {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::warn!(url, status = %status, body = %body, "HTTP POST returned error");
-            return Err(AppError::Internal(format!("HTTP POST {url} returned {status}")));
+            return Err(AppError::Internal(format!(
+                "HTTP POST {url} returned {status}"
+            )));
         }
 
-        resp.json().await.map_err(|e| AppError::Internal(format!("HTTP response parse failed: {e}")))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Internal(format!("HTTP response parse failed: {e}")))
     }
 
     async fn get_bearer(
@@ -47,9 +51,13 @@ impl HttpClient for ReqwestHttpClient {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::warn!(url, status = %status, body = %body, "HTTP GET returned error");
-            return Err(AppError::Internal(format!("HTTP GET {url} returned {status}")));
+            return Err(AppError::Internal(format!(
+                "HTTP GET {url} returned {status}"
+            )));
         }
 
-        resp.json().await.map_err(|e| AppError::Internal(format!("HTTP response parse failed: {e}")))
+        resp.json()
+            .await
+            .map_err(|e| AppError::Internal(format!("HTTP response parse failed: {e}")))
     }
 }

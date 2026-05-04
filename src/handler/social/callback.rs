@@ -3,7 +3,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
-use crate::domain::social::service;
+use crate::application::social_login;
 use crate::handler::social::social_callback_url;
 use crate::handler::sso::common::{mark_sso_authenticated, set_account_cookie};
 use crate::shared::error::AppError;
@@ -50,10 +50,18 @@ pub async fn social_callback(
         .ok_or_else(|| AppError::BadRequest("missing state parameter".into()))?;
 
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
-    let (user_info, social_state) =
-        service::handle_callback(&*state.repos.social, &*state.repos.kv, &*state.repos.http, code, state_token, &provider, &redirect_uri).await?;
-
-    let user = service::find_or_create_user(&*state.repos.users, &*state.repos.identities, &user_info).await?;
+    let (user, _user_info, social_state) = social_login::complete_social_login(
+        &*state.repos.social,
+        &*state.repos.identities,
+        &*state.repos.users,
+        &*state.repos.kv,
+        &*state.repos.http,
+        code,
+        state_token,
+        &provider,
+        &redirect_uri,
+    )
+    .await?;
 
     if social_state.account_login.unwrap_or(false) {
         let cookie = set_account_cookie(&state, user.id, &headers).await?;
@@ -82,7 +90,10 @@ pub async fn social_callback(
         return Ok(Redirect::to("/sso/login?error=session_expired").into_response());
     }
 
-    let mut sso = state.repos.sso_sessions.get(sso_sid)
+    let mut sso = state
+        .repos
+        .sso_sessions
+        .get(sso_sid)
         .await?
         .ok_or_else(|| AppError::BadRequest("SSO session expired".into()))?;
 
@@ -119,16 +130,17 @@ pub async fn social_bind_callback(
     let current_user_id =
         crate::handler::account::common::get_account_user_id(&state, &headers).await?;
 
-    service::bind_social_identity(
+    social_login::complete_social_binding(
         &*state.repos.social,
         &*state.repos.identities,
         &*state.repos.kv,
         &*state.repos.http,
-        &state.config.oidc.issuer,
+        current_user_id,
         code,
         state_token,
-        current_user_id,
-    ).await?;
+        &state.config.oidc.issuer,
+    )
+    .await?;
 
     Ok(Redirect::to("/account/social").into_response())
 }

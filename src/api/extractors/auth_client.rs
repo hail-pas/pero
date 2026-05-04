@@ -1,4 +1,4 @@
-use crate::domain::oauth2::models::OAuth2Client;
+use crate::domain::oauth::models::OAuth2Client;
 use crate::shared::error::AppError;
 
 #[derive(Debug, Clone)]

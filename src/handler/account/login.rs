@@ -4,8 +4,8 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::identity::authn::AuthService;
-use crate::domain::identity::models::IdentifierType;
+use crate::domain::auth::service::AuthService;
+use crate::domain::user::models::IdentifierType;
 use crate::handler::account::common::{extract_cookie, render_tpl};
 use crate::handler::social::{ProviderView, load_provider_views, social_callback_url};
 use crate::shared::error::AppError;
@@ -114,7 +114,7 @@ pub async fn account_social_login(
 ) -> Result<Response, AppError> {
     let redirect_uri = social_callback_url(&state.config.oidc.issuer, &provider);
     let next = extract_cookie(&headers, "pero_login_next").filter(|s| s.starts_with('/'));
-    let (url, _) = crate::domain::social::service::build_account_login_url(
+    let (url, _) = crate::domain::federation::service::build_account_login_url(
         &*state.repos.social,
         &*state.repos.kv,
         &provider,

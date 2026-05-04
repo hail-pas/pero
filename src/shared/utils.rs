@@ -113,10 +113,9 @@ pub async fn consume_cached_token<T: DeserializeOwned + Send>(
     value
 }
 
-
 pub fn append_query_params(base: &str, params: &[(&str, &str)]) -> Result<String, AppError> {
-    let mut url = url::Url::parse(base)
-        .map_err(|_| AppError::BadRequest("invalid redirect uri".into()))?;
+    let mut url =
+        url::Url::parse(base).map_err(|_| AppError::BadRequest("invalid redirect uri".into()))?;
     {
         let mut pairs = url.query_pairs_mut();
         for (k, v) in params {
@@ -126,14 +125,10 @@ pub fn append_query_params(base: &str, params: &[(&str, &str)]) -> Result<String
     Ok(url.to_string())
 }
 
-
 pub fn safe_local_path(value: &str) -> Option<String> {
     let decoded = urlencoding::decode(value).ok()?.to_string();
 
-    if decoded.starts_with('/')
-        && !decoded.starts_with("//")
-        && !decoded.contains('\\')
-    {
+    if decoded.starts_with('/') && !decoded.starts_with("//") && !decoded.contains('\\') {
         Some(decoded)
     } else {
         None

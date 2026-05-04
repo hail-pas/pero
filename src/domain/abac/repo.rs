@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::domain::abac::models::{CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest};
+use crate::domain::abac::models::{
+    CreatePolicyRequest, Policy, PolicyCondition, UpdatePolicyRequest,
+};
 use crate::domain::abac::service::AttachedPolicies;
 use crate::shared::error::AppError;
 

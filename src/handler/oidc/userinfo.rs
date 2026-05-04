@@ -1,5 +1,5 @@
 use crate::api::extractors::AuthUser;
-use crate::domain::oidc::claims::ScopedClaims;
+use crate::domain::oauth::claims::ScopedClaims;
 use crate::shared::constants::oauth2::scopes::OPENID;
 use crate::shared::error::{AppError, require_found};
 use crate::shared::state::AppState;
@@ -20,7 +20,6 @@ pub async fn userinfo(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> Result<Json<serde_json::Value>, AppError> {
-
     let has_openid = auth_user
         .scope
         .as_deref()

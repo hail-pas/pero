@@ -1,7 +1,7 @@
 use axum::http::HeaderMap;
 
-use crate::domain::identity::entity::User;
-use crate::domain::identity::session::IdentitySession;
+use crate::domain::auth::session::IdentitySession;
+use crate::domain::user::entity::User;
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
@@ -17,7 +17,10 @@ pub async fn get_verified_account(
         .map_err(|_| AppError::Unauthorized)?;
 
     let sid = claims.sid.ok_or(AppError::Unauthorized)?;
-    let identity_session = state.repos.sessions.get(&sid)
+    let identity_session = state
+        .repos
+        .sessions
+        .get(&sid)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -25,7 +28,10 @@ pub async fn get_verified_account(
         return Err(AppError::Unauthorized);
     }
 
-    let user = state.repos.users.find_by_id(identity_session.user_id)
+    let user = state
+        .repos
+        .users
+        .find_by_id(identity_session.user_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -44,10 +50,7 @@ pub async fn get_account_user_id(
     Ok(user.id)
 }
 
-pub async fn get_account_user(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<User, AppError> {
+pub async fn get_account_user(state: &AppState, headers: &HeaderMap) -> Result<User, AppError> {
     let (user, _) = get_verified_account(state, headers).await?;
     Ok(user)
 }
@@ -65,7 +68,7 @@ pub struct UserView {
 }
 
 impl UserView {
-    pub fn from_user(user: &crate::domain::identity::entity::User) -> Self {
+    pub fn from_user(user: &crate::domain::user::entity::User) -> Self {
         Self {
             username: user.username.clone(),
             email: user.email.clone().unwrap_or_default(),
@@ -88,7 +91,7 @@ pub struct AccountLayout {
 }
 
 impl AccountLayout {
-    pub fn new(active: &str, user: &crate::domain::identity::entity::User) -> Self {
+    pub fn new(active: &str, user: &crate::domain::user::entity::User) -> Self {
         Self {
             active: active.into(),
             user_initial: user_initial(user),
@@ -128,7 +131,7 @@ pub struct SessionView {
     pub expired: bool,
 }
 
-pub fn user_initial(user: &crate::domain::identity::entity::User) -> String {
+pub fn user_initial(user: &crate::domain::user::entity::User) -> String {
     if let Some(ref nick) = user.nickname {
         if !nick.is_empty() {
             return nick.chars().take(1).collect();
@@ -137,7 +140,7 @@ pub fn user_initial(user: &crate::domain::identity::entity::User) -> String {
     user.username.chars().take(1).collect()
 }
 
-pub fn user_display_name(user: &crate::domain::identity::entity::User) -> String {
+pub fn user_display_name(user: &crate::domain::user::entity::User) -> String {
     if let Some(ref nick) = user.nickname {
         if !nick.is_empty() {
             return nick.clone();
@@ -146,6 +149,6 @@ pub fn user_display_name(user: &crate::domain::identity::entity::User) -> String
     user.username.clone()
 }
 
-pub fn user_avatar_url(user: &crate::domain::identity::entity::User) -> String {
+pub fn user_avatar_url(user: &crate::domain::user::entity::User) -> String {
     user.avatar_url.clone().unwrap_or_default()
 }

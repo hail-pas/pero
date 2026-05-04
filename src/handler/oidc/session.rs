@@ -3,7 +3,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
-use crate::domain::session::SessionBinding;
+use crate::domain::auth::SessionBinding;
 use crate::shared::constants::cookies::ACCOUNT_TOKEN;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
@@ -36,7 +36,10 @@ pub async fn end_session(
         };
 
         if let Some(ref uri) = query.post_logout_redirect_uri {
-            let client = match state.repos.oauth2_clients.find_by_client_id(&id_claims.aud)
+            let client = match state
+                .repos
+                .oauth2_clients
+                .find_by_client_id(&id_claims.aud)
                 .await?
             {
                 Some(c) => c,
@@ -50,11 +53,7 @@ pub async fn end_session(
                 &state.jwt_keys,
                 &client.client_id,
             ) {
-                if client
-                    .post_logout_redirect_uris
-                    .iter()
-                    .any(|u| u == uri)
-                {
+                if client.post_logout_redirect_uris.iter().any(|u| u == uri) {
                     redirect_uri = Some(uri.clone());
                     let target_sid = verified.sid.as_deref().or(cookie_sid.as_deref());
                     if let Ok(user_id) = verified.sub.parse::<uuid::Uuid>() {
@@ -93,7 +92,10 @@ pub async fn end_session(
 }
 
 async fn revoke_session_binding(state: &AppState, binding: &SessionBinding) {
-    if let Err(e) = binding.revoke_all(&*state.repos.sessions, &*state.repos.oauth2_tokens).await {
+    if let Err(e) = binding
+        .revoke_all(&*state.repos.sessions, &*state.repos.refresh_tokens)
+        .await
+    {
         tracing::warn!(error = %e, "failed to revoke session binding during end_session");
     }
 }

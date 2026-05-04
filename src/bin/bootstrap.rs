@@ -1,5 +1,6 @@
 use pero::config::AppConfig;
-use pero::domain::identity::entity::{Identity, User};
+use pero::domain::credential::entity::Identity;
+use pero::domain::user::entity::User;
 use std::io::{self, Write};
 
 fn prompt(label: &str) -> String {
@@ -187,7 +188,8 @@ async fn main() {
         if !confirm("Create this admin user?") {
             println!("Skipped.");
         } else {
-            let password_hash = pero::shared::crypto::hash_secret(&password).expect("Failed to hash password");
+            let password_hash =
+                pero::shared::crypto::hash_secret(&password).expect("Failed to hash password");
             let mut tx = pool.begin().await.expect("Failed to begin transaction");
 
             let user = sqlx::query_as::<_, User>(
@@ -293,10 +295,10 @@ async fn main() {
 
             let client_id_str = uuid::Uuid::new_v4().to_string().replace('-', "");
             let client_secret = uuid::Uuid::new_v4().to_string().replace('-', "");
-            let client_secret_hash =
-                pero::shared::crypto::hash_secret(&client_secret).expect("Failed to hash client secret");
+            let client_secret_hash = pero::shared::crypto::hash_secret(&client_secret)
+                .expect("Failed to hash client secret");
 
-            let client = sqlx::query_as::<_, pero::domain::oauth2::entity::OAuth2Client>(
+            let client = sqlx::query_as::<_, pero::domain::oauth::entity::OAuth2Client>(
                 "INSERT INTO oauth2_clients (app_id, client_id, client_secret_hash, client_name, redirect_uris, grant_types, scopes, post_logout_redirect_uris) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
             )
             .bind(app.id)

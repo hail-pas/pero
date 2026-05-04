@@ -68,8 +68,7 @@ impl Action {
             ("POST", _) => Action::Create,
             ("GET", p) => {
                 if !p.contains("/{")
-                    && (p.ends_with("s")
-                        || (p.contains("/users") && !matches_resource_id(p)))
+                    && (p.ends_with("s") || (p.contains("/users") && !matches_resource_id(p)))
                 {
                     Action::List
                 } else {

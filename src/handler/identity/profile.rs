@@ -1,7 +1,7 @@
 use crate::api::extractors::{AuthUser, Pagination, ValidatedJson};
 use crate::api::response::{ApiResponse, MessageResponse, PageData};
-use crate::domain::identity::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
-use crate::domain::identity::service;
+use crate::domain::user::models::{UpdateMeRequest, UpdateUserRequest, UserDTO};
+use crate::domain::user::service;
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -118,10 +118,11 @@ pub async fn update_user(
         service::update_user(
             &*state.repos.users,
             &*state.repos.sessions,
-            &*state.repos.oauth2_tokens,
+            &*state.repos.refresh_tokens,
             id,
             &input,
-        ).await?,
+        )
+        .await?,
     )))
 }
 
@@ -143,10 +144,13 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    Ok(Json(service::delete_user(
-        &*state.repos.users,
-        &*state.repos.sessions,
-        &*state.repos.oauth2_tokens,
-        id,
-    ).await?))
+    Ok(Json(
+        service::delete_user(
+            &*state.repos.users,
+            &*state.repos.sessions,
+            &*state.repos.refresh_tokens,
+            id,
+        )
+        .await?,
+    ))
 }

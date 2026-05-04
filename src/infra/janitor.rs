@@ -22,9 +22,10 @@ pub async fn run(pool: PgPool, interval: Duration) {
 }
 
 async fn cleanup(pool: &PgPool) -> Result<(u64, u64), crate::shared::error::AppError> {
-    let codes_result = sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
-        .execute(pool)
-        .await?;
+    let codes_result =
+        sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
+            .execute(pool)
+            .await?;
     let tokens_result = sqlx::query("DELETE FROM oauth2_tokens WHERE expires_at < now()")
         .execute(pool)
         .await?;

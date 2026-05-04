@@ -1,7 +1,7 @@
 use crate::api::extractors::{AuthUser, ValidatedJson};
 use crate::api::response::{ApiResponse, MessageResponse};
-use crate::domain::identity::models::{BindRequest, Identity};
-use crate::domain::identity::service;
+use crate::domain::credential::service;
+use crate::domain::user::models::{BindRequest, Identity};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
@@ -50,7 +50,8 @@ pub async fn bind(
     ValidatedJson(req): ValidatedJson<BindRequest>,
 ) -> Result<Json<MessageResponse>, AppError> {
     Ok(Json(
-        service::bind_identity(&*state.repos.identities, auth_user.user_id, &provider, &req).await?,
+        service::bind_identity(&*state.repos.identities, auth_user.user_id, &provider, &req)
+            .await?,
     ))
 }
 

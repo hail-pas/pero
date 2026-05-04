@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
 
-use crate::domain::oauth2::oauth2_error::OAuth2Error;
+use crate::domain::oauth::error::OAuth2Error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -43,7 +43,9 @@ impl AppError {
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::OAuth2(e) => StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::BAD_REQUEST),
+            AppError::OAuth2(e) => {
+                StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::BAD_REQUEST)
+            }
         }
     }
 
