@@ -1,4 +1,3 @@
-use crate::domain::abac::resource::{AbacContextExt, Action, Resource};
 use crate::shared::state::AppState;
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -14,43 +13,35 @@ pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/policies",
-            post(crate::handler::abac::policies::create_policy)
-                .abac_context(Resource::Policy, Action::Create),
+            post(crate::handler::abac::policies::create_policy),
         )
         .route(
             "/api/policies",
-            get(crate::handler::abac::policies::list_policies)
-                .abac_context(Resource::Policy, Action::List),
+            get(crate::handler::abac::policies::list_policies),
         )
         .route(
             "/api/policies/{id}",
-            get(crate::handler::abac::policies::get_policy)
-                .abac_context(Resource::Policy, Action::Read),
+            get(crate::handler::abac::policies::get_policy),
         )
         .route(
             "/api/policies/{id}",
-            put(crate::handler::abac::policies::update_policy)
-                .abac_context(Resource::Policy, Action::Update),
+            put(crate::handler::abac::policies::update_policy),
         )
         .route(
             "/api/policies/{id}",
-            delete(crate::handler::abac::policies::delete_policy)
-                .abac_context(Resource::Policy, Action::Delete),
+            delete(crate::handler::abac::policies::delete_policy),
         )
         .route(
             "/api/users/{user_id}/policies",
-            get(crate::handler::abac::policies::list_user_policies)
-                .abac_context(Resource::Policy, Action::List),
+            get(crate::handler::abac::policies::list_user_policies),
         )
         .route(
             "/api/users/{user_id}/policies/{policy_id}",
-            post(crate::handler::abac::policies::assign_policy)
-                .abac_context(Resource::Policy, Action::Assign),
+            post(crate::handler::abac::policies::assign_policy),
         )
         .route(
             "/api/users/{user_id}/policies/{policy_id}",
-            delete(crate::handler::abac::policies::unassign_policy)
-                .abac_context(Resource::Policy, Action::Unassign),
+            delete(crate::handler::abac::policies::unassign_policy),
         )
 }
 

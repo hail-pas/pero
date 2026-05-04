@@ -44,8 +44,7 @@ pub enum RouteScope {
 #[derive(Debug, Clone)]
 pub struct EvalContext {
     pub subject_attrs: HashMap<String, Vec<String>>,
-    pub resource: String,
-    pub action: String,
+    pub resource_id: String,
     pub domain_resource: Option<Resource>,
     pub domain_action: Option<Action>,
     pub app_id: Option<Uuid>,

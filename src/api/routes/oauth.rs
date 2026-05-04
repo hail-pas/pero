@@ -1,4 +1,3 @@
-use crate::domain::abac::resource::{AbacContextExt, Action, Resource};
 use crate::shared::state::AppState;
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -31,27 +30,22 @@ pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/oauth2/clients",
-            post(crate::handler::oauth2::client_management::create_client)
-                .abac_context(Resource::OAuth2Client, Action::Create),
+            post(crate::handler::oauth2::client_management::create_client),
         )
         .route(
             "/api/oauth2/clients",
-            get(crate::handler::oauth2::client_management::list_clients)
-                .abac_context(Resource::OAuth2Client, Action::List),
+            get(crate::handler::oauth2::client_management::list_clients),
         )
         .route(
             "/api/oauth2/clients/{id}",
-            get(crate::handler::oauth2::client_management::get_client)
-                .abac_context(Resource::OAuth2Client, Action::Read),
+            get(crate::handler::oauth2::client_management::get_client),
         )
         .route(
             "/api/oauth2/clients/{id}",
-            put(crate::handler::oauth2::client_management::update_client)
-                .abac_context(Resource::OAuth2Client, Action::Update),
+            put(crate::handler::oauth2::client_management::update_client),
         )
         .route(
             "/api/oauth2/clients/{id}",
-            delete(crate::handler::oauth2::client_management::delete_client)
-                .abac_context(Resource::OAuth2Client, Action::Delete),
+            delete(crate::handler::oauth2::client_management::delete_client),
         )
 }

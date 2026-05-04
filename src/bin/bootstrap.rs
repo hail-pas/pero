@@ -223,8 +223,8 @@ async fn main() {
             .expect("Failed to create policy");
 
             for (condition_type, key, operator, value) in [
-                ("resource", "path", "wildcard", "/api/**"),
-                ("action", "method", "in", "GET,POST,PUT,DELETE"),
+                ("resource", "id", "wildcard", "/api/**"),
+                ("action", "id", "in", "get,post,put,delete"),
             ] {
                 sqlx::query(
                     "INSERT INTO policy_conditions (policy_id, condition_type, key, operator, value) VALUES ($1, $2, $3, $4, $5)",

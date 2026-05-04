@@ -143,16 +143,16 @@ impl From<CreateConditionRequest> for crate::domain::abac::dto::CreateConditionR
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct EvaluateRequest {
-    pub resource: String,
-    pub action: String,
+    pub resource_id: String,
+    pub action_id: String,
     pub app_id: Option<Uuid>,
 }
 
 impl From<EvaluateRequest> for crate::domain::abac::dto::EvaluateRequest {
     fn from(r: EvaluateRequest) -> Self {
         Self {
-            resource: r.resource,
-            action: r.action,
+            resource_id: r.resource_id,
+            action_id: r.action_id,
             app_id: r.app_id,
         }
     }

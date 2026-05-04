@@ -45,15 +45,12 @@ pub async fn evaluate(
     )
     .await?;
 
-    let domain_resource = Resource::from_path(&req.resource);
-    let domain_action = Action::from_method_and_path(&req.action, &req.resource);
-
+    let action = req.action_id.to_ascii_lowercase();
     let ctx = EvalContext {
         subject_attrs,
-        resource: req.resource,
-        action: req.action,
-        domain_resource: Some(domain_resource),
-        domain_action: Some(domain_action),
+        resource_id: req.resource_id,
+        domain_action: Some(Action::from_http_method(&action)),
+        domain_resource: Some(Resource::Api),
         app_id: req.app_id,
         route_scope: if req.app_id.is_some() {
             RouteScope::App

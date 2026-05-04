@@ -21,7 +21,7 @@ pub fn eval_condition(
     let target_values: Vec<&str> = match cond.condition_type.as_str() {
         "subject" => subject_values(ctx, &cond.key).collect(),
         "resource" => match cond.key.as_str() {
-            "path" => vec![ctx.resource.as_str()],
+            "id" => vec![ctx.resource_id.as_str()],
             "type" => ctx
                 .domain_resource
                 .as_ref()
@@ -30,8 +30,7 @@ pub fn eval_condition(
             _ => vec![],
         },
         "action" => match cond.key.as_str() {
-            "method" => vec![ctx.action.as_str()],
-            "type" => ctx
+            "id" => ctx
                 .domain_action
                 .as_ref()
                 .map(|a| vec![a.as_str()])

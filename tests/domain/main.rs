@@ -3,7 +3,10 @@ mod common;
 
 use async_trait::async_trait;
 use pero::domain::abac::engine::evaluate;
-use pero::domain::abac::models::{EvalContext, Policy, PolicyCondition, RouteScope};
+use pero::domain::abac::models::{
+    ConditionOperator, ConditionType, CreateConditionRequest, EvalContext, Policy, PolicyCondition,
+    RouteScope,
+};
 use pero::domain::abac::resource::{Action, Resource};
 use pero::domain::app::models::{App, CreateAppRequest, UpdateAppRequest};
 use pero::domain::app::repo::AppStore;
@@ -25,7 +28,6 @@ use pero::domain::oauth::service::{
 };
 use pero::domain::oauth::{service as oauth_service, token_builder::build_token_response};
 use pero::domain::user::entity::User;
-use pero::domain::user::repo::UserStore;
 use pero::shared::constants::oauth2::scopes;
 use pero::shared::constants::oauth2::{
     GRANT_TYPE_AUTH_CODE, GRANT_TYPE_REFRESH_TOKEN, PKCE_METHOD_S256,
@@ -254,10 +256,9 @@ fn abac_evaluator_matches_subject_resource_action_app_and_deny_precedence() {
     subject_attrs.insert("level".into(), vec!["9".into()]);
     let ctx = EvalContext {
         subject_attrs,
-        resource: "/api/users/123".into(),
-        action: "GET".into(),
-        domain_resource: Some(Resource::User),
-        domain_action: Some(Action::Read),
+        resource_id: "/api/users/123".into(),
+        domain_resource: Some(Resource::Api),
+        domain_action: Some(Action::Get),
         app_id: Some(app_id),
         route_scope: RouteScope::App,
     };
@@ -267,15 +268,15 @@ fn abac_evaluator_matches_subject_resource_action_app_and_deny_precedence() {
         vec![
             condition("subject", "role", "in", "admin,owner"),
             condition("subject", "level", "gt", "5"),
-            condition("resource", "path", "wildcard", "/api/users/*"),
-            condition("resource", "type", "eq", "user"),
-            condition("action", "type", "eq", "read"),
+            condition("resource", "id", "wildcard", "/api/users/*"),
+            condition("resource", "type", "eq", "api"),
+            condition("action", "id", "eq", "get"),
             condition("app", "app_id", "eq", &app_id.to_string()),
         ],
     );
     let deny = (
         policy("deny", Some(app_id), 20),
-        vec![condition("resource", "path", "regex", r"^/api/users/\d+$")],
+        vec![condition("resource", "id", "regex", r"^/api/users/\d+$")],
     );
 
     assert_eq!(evaluate(&[allow, deny], &ctx, "deny"), "deny");
@@ -286,8 +287,7 @@ fn abac_evaluator_respects_scope_compatibility_and_default_action() {
     let app_id = Uuid::new_v4();
     let ctx = EvalContext {
         subject_attrs: HashMap::new(),
-        resource: "/admin".into(),
-        action: "POST".into(),
+        resource_id: "/admin".into(),
         domain_resource: None,
         domain_action: None,
         app_id: None,
@@ -295,7 +295,7 @@ fn abac_evaluator_respects_scope_compatibility_and_default_action() {
     };
     let app_scoped = (
         policy("allow", Some(app_id), 1),
-        vec![condition("resource", "path", "eq", "/admin")],
+        vec![condition("resource", "id", "eq", "/admin")],
     );
     let empty_conditions = (policy("allow", None, 2), vec![]);
 
@@ -318,8 +318,9 @@ async fn app_service_creates_lists_updates_gets_and_deletes_apps() {
     assert_eq!(created.code, "admin");
     assert!(create_app(&store, &req).await.is_err());
 
-    let page = list_apps(&store, 1, 10).await.unwrap();
-    assert_eq!(page.total, 1);
+    let (items, total) = list_apps(&store, 1, 10).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items[0].id, created.id);
 
     let updated = update_app(
         &store,
@@ -337,10 +338,7 @@ async fn app_service_creates_lists_updates_gets_and_deletes_apps() {
     assert_eq!(updated.description, None);
 
     assert_eq!(get_app(&store, created.id).await.unwrap().id, created.id);
-    assert_eq!(
-        delete_app(&store, created.id).await.unwrap().message,
-        "app deleted"
-    );
+    assert!(delete_app(&store, created.id).await.is_ok());
     assert!(get_app(&store, created.id).await.is_err());
 }
 
@@ -457,47 +455,64 @@ fn dto_validation_rejects_bad_app_and_oauth_updates() {
         .validate()
         .is_err()
     );
+
+    assert!(
+        CreateConditionRequest {
+            condition_type: ConditionType::Resource,
+            key: "type".into(),
+            operator: ConditionOperator::Eq,
+            value: "API".into(),
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        CreateConditionRequest {
+            condition_type: ConditionType::Resource,
+            key: "path".into(),
+            operator: ConditionOperator::Wildcard,
+            value: "/api/**".into(),
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        CreateConditionRequest {
+            condition_type: ConditionType::Action,
+            key: "method".into(),
+            operator: ConditionOperator::In,
+            value: "get,post".into(),
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        CreateConditionRequest {
+            condition_type: ConditionType::Action,
+            key: "id".into(),
+            operator: ConditionOperator::In,
+            value: "get,post,custom_approve".into(),
+        }
+        .validate()
+        .is_ok()
+    );
 }
 
 #[test]
-fn resource_and_action_classify_routes_and_methods() {
-    assert_eq!(Resource::from_path("/api/users/1").as_str(), "user");
-    assert_eq!(Resource::from_path("/api/apps").as_str(), "app");
-    assert_eq!(
-        Resource::from_path("/api/oauth2/clients").as_str(),
-        "oauth2_client"
-    );
-    assert_eq!(
-        Resource::from_path("/api/social-providers").as_str(),
-        "social_provider"
-    );
-    assert_eq!(Resource::from_path("/oauth2/userinfo").as_str(), "userinfo");
-    assert_eq!(
-        Resource::from_path("/api/abac/evaluate").as_str(),
-        "evaluate"
-    );
-    assert_eq!(Resource::from_path("/custom/path").as_str(), "/custom/path");
+fn resource_and_action_use_constrained_generic_labels_with_custom_compatibility() {
+    assert_eq!(Resource::Api.as_str(), "api");
+    assert_eq!(Resource::custom("workflow").as_str(), "workflow");
 
-    assert_eq!(
-        Action::from_method_and_path("GET", "/api/users").as_str(),
-        "list"
-    );
-    assert_eq!(
-        Action::from_method_and_path("GET", "/api/users/123/profile").as_str(),
-        "read"
-    );
-    assert_eq!(
-        Action::from_method_and_path("POST", "/api/users/1/policies/2/assign").as_str(),
-        "assign"
-    );
-    assert_eq!(
-        Action::from_method_and_path("DELETE", "/api/users/1/policies/2").as_str(),
-        "unassign"
-    );
-    assert_eq!(
-        Action::from_method_and_path("PATCH", "/x").as_str(),
-        "PATCH"
-    );
+    assert_eq!(Action::Get.as_str(), "get");
+    assert_eq!(Action::Post.as_str(), "post");
+    assert_eq!(Action::Put.as_str(), "put");
+    assert_eq!(Action::Patch.as_str(), "patch");
+    assert_eq!(Action::Delete.as_str(), "delete");
+    assert_eq!(Action::Head.as_str(), "head");
+    assert_eq!(Action::Options.as_str(), "options");
+    assert_eq!(Action::custom("approve").as_str(), "approve");
+    assert_eq!(Action::from_http_method("GET").as_str(), "get");
+    assert_eq!(Action::from_http_method("trace").as_str(), "trace");
 }
 
 #[test]

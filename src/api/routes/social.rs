@@ -1,4 +1,3 @@
-use crate::domain::abac::resource::{AbacContextExt, Action, Resource};
 use crate::shared::state::AppState;
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -27,27 +26,22 @@ pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route(
             "/api/social-providers",
-            post(crate::handler::social::management::create_provider)
-                .abac_context(Resource::SocialProvider, Action::Create),
+            post(crate::handler::social::management::create_provider),
         )
         .route(
             "/api/social-providers",
-            get(crate::handler::social::management::list_providers)
-                .abac_context(Resource::SocialProvider, Action::List),
+            get(crate::handler::social::management::list_providers),
         )
         .route(
             "/api/social-providers/{id}",
-            get(crate::handler::social::management::get_provider)
-                .abac_context(Resource::SocialProvider, Action::Read),
+            get(crate::handler::social::management::get_provider),
         )
         .route(
             "/api/social-providers/{id}",
-            put(crate::handler::social::management::update_provider)
-                .abac_context(Resource::SocialProvider, Action::Update),
+            put(crate::handler::social::management::update_provider),
         )
         .route(
             "/api/social-providers/{id}",
-            delete(crate::handler::social::management::delete_provider)
-                .abac_context(Resource::SocialProvider, Action::Delete),
+            delete(crate::handler::social::management::delete_provider),
         )
 }

@@ -2,127 +2,85 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Resource {
-    User,
-    App,
-    OAuth2Client,
-    Policy,
-    SocialProvider,
-    UserInfo,
-    Evaluate,
-    Other(String),
+    Api,
+    Type(String),
 }
 
 impl Resource {
-    pub fn from_path(path: &str) -> Self {
-        if path.starts_with("/api/users") {
-            Resource::User
-        } else if path.starts_with("/api/apps") {
-            Resource::App
-        } else if path.starts_with("/api/oauth2/clients") {
-            Resource::OAuth2Client
-        } else if path.starts_with("/api/policies") {
-            Resource::Policy
-        } else if path.starts_with("/api/social-providers") {
-            Resource::SocialProvider
-        } else if path.starts_with("/oauth2/userinfo") {
-            Resource::UserInfo
-        } else if path.starts_with("/api/abac/evaluate") {
-            Resource::Evaluate
-        } else {
-            Resource::Other(path.to_string())
-        }
+    pub fn custom(value: impl Into<String>) -> Self {
+        Resource::Type(value.into())
+    }
+
+    pub fn is_valid_label(value: &str) -> bool {
+        value == "api" || is_custom_label(value)
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            Resource::User => "user",
-            Resource::App => "app",
-            Resource::OAuth2Client => "oauth2_client",
-            Resource::Policy => "policy",
-            Resource::SocialProvider => "social_provider",
-            Resource::UserInfo => "userinfo",
-            Resource::Evaluate => "evaluate",
-            Resource::Other(s) => s.as_str(),
+            Resource::Api => "api",
+            Resource::Type(s) => s.as_str(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
-    Create,
-    Read,
-    Update,
+    Get,
+    Post,
+    Put,
+    Patch,
     Delete,
-    List,
-    Assign,
-    Unassign,
-    Other(String),
+    Head,
+    Options,
+    Type(String),
 }
 
 impl Action {
-    pub fn from_method_and_path(method: &str, path: &str) -> Self {
-        match (method, path) {
-            ("POST", p) if p.contains("/assign") => Action::Assign,
-            ("POST", p) if p.contains("/policies") && p.contains("/users") => Action::Assign,
-            ("DELETE", p) if p.contains("/policies") && p.contains("/users") => Action::Unassign,
-            ("POST", _) => Action::Create,
-            ("GET", p) => {
-                if !p.contains("/{")
-                    && (p.ends_with("s") || (p.contains("/users") && !matches_resource_id(p)))
-                {
-                    Action::List
-                } else {
-                    Action::Read
-                }
-            }
-            ("PUT", _) => Action::Update,
-            ("DELETE", _) => Action::Delete,
-            _ => Action::Other(method.to_string()),
+    pub fn custom(value: impl Into<String>) -> Self {
+        Action::Type(value.into())
+    }
+
+    pub fn from_http_method(method: &str) -> Self {
+        match method.to_ascii_uppercase().as_str() {
+            "GET" => Action::Get,
+            "POST" => Action::Post,
+            "PUT" => Action::Put,
+            "PATCH" => Action::Patch,
+            "DELETE" => Action::Delete,
+            "HEAD" => Action::Head,
+            "OPTIONS" => Action::Options,
+            _ => Action::custom(method.to_ascii_lowercase()),
         }
+    }
+
+    pub fn is_valid_label(value: &str) -> bool {
+        matches!(
+            value,
+            "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
+        ) || is_custom_label(value)
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            Action::Create => "create",
-            Action::Read => "read",
-            Action::Update => "update",
+            Action::Get => "get",
+            Action::Post => "post",
+            Action::Put => "put",
+            Action::Patch => "patch",
             Action::Delete => "delete",
-            Action::List => "list",
-            Action::Assign => "assign",
-            Action::Unassign => "unassign",
-            Action::Other(s) => s.as_str(),
+            Action::Head => "head",
+            Action::Options => "options",
+            Action::Type(s) => s.as_str(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AbacRouteContext {
-    pub resource: Resource,
-    pub action: Action,
-}
-
-fn matches_resource_id(path: &str) -> bool {
-    path.matches('/').count() > 3
-}
-
-pub trait AbacContextExt<S>: Sized {
-    fn abac_context(self, resource: Resource, action: Action) -> Self;
-}
-
-impl<S> AbacContextExt<S> for axum::routing::MethodRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    fn abac_context(self, resource: Resource, action: Action) -> Self {
-        self.layer(axum::middleware::from_fn(
-            move |mut req: axum::extract::Request, next: axum::middleware::Next| {
-                let ctx = AbacRouteContext {
-                    resource: resource.clone(),
-                    action: action.clone(),
-                };
-                req.extensions_mut().insert(ctx);
-                async move { next.run(req).await }
-            },
-        ))
+fn is_custom_label(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
     }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | ':'))
 }

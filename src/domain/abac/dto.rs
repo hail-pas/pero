@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use validator::{Validate, ValidationErrors};
+use validator::{Validate, ValidationError, ValidationErrors};
 
+use super::resource::{Action, Resource};
 use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
@@ -22,7 +23,7 @@ impl PolicyEffect {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ConditionType {
     Subject,
@@ -42,7 +43,7 @@ impl ConditionType {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ConditionOperator {
     Eq,
@@ -131,22 +132,86 @@ impl Validate for UpdatePolicyRequest {
     }
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize)]
 pub struct CreateConditionRequest {
     pub condition_type: ConditionType,
-    #[validate(length(min = 1, max = 128))]
     pub key: String,
     pub operator: ConditionOperator,
-    #[validate(length(min = 1, max = 1024))]
     pub value: String,
+}
+
+impl Validate for CreateConditionRequest {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        let mut errors = ValidationErrors::new();
+
+        if let Err(err) = validation::validate_length(&self.key, 1, 128) {
+            errors.add("key", err);
+        }
+        if let Err(err) = validation::validate_length(&self.value, 1, 1024) {
+            errors.add("value", err);
+        }
+
+        if self.condition_type == ConditionType::Resource {
+            match self.key.as_str() {
+                "id" => {}
+                "type" => {
+                    if matches!(self.operator, ConditionOperator::Eq | ConditionOperator::In) {
+                        validate_type_labels(
+                            &mut errors,
+                            &self.value,
+                            Resource::is_valid_label,
+                            "invalid_resource_type",
+                        );
+                    }
+                }
+                _ => errors.add("key", ValidationError::new("invalid_resource_key")),
+            }
+        }
+
+        if self.condition_type == ConditionType::Action {
+            if self.key == "id" {
+                if matches!(self.operator, ConditionOperator::Eq | ConditionOperator::In) {
+                    validate_type_labels(
+                        &mut errors,
+                        &self.value,
+                        Action::is_valid_label,
+                        "invalid_action_type",
+                    );
+                }
+            } else {
+                errors.add("key", ValidationError::new("invalid_action_key"));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+fn validate_type_labels(
+    errors: &mut ValidationErrors,
+    value: &str,
+    is_valid: fn(&str) -> bool,
+    code: &'static str,
+) {
+    let invalid = value
+        .split(',')
+        .map(str::trim)
+        .any(|label| !is_valid(label));
+    if invalid {
+        errors.add("value", ValidationError::new(code));
+    }
 }
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct EvaluateRequest {
     #[validate(length(min = 1, max = 512))]
-    pub resource: String,
+    pub resource_id: String,
     #[validate(length(min = 1, max = 32))]
-    pub action: String,
+    pub action_id: String,
     pub app_id: Option<Uuid>,
 }
 
