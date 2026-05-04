@@ -1,9 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, sqlx::FromRow, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Identity {
     pub id: Uuid,
     pub user_id: Uuid,

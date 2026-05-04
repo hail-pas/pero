@@ -1,3 +1,5 @@
+pub mod auth;
+pub mod identity;
 pub mod password_reset;
 pub mod social_login;
 pub mod sso_login;

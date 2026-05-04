@@ -1,3 +1,4 @@
+use crate::application::identity::register as register_use_case;
 use crate::domain::auth::service::AuthService;
 use crate::domain::credential::repo::IdentityStore;
 use crate::domain::sso::models::{LoginForm, RegisterForm, SsoSession};
@@ -36,7 +37,7 @@ pub async fn register_and_authenticate(
     form: &RegisterForm,
     ttl_seconds: i64,
 ) -> Result<User, AppError> {
-    let user = AuthService::register_user_with_password(
+    let user = register_use_case::register_user_with_password(
         users,
         identities,
         &form.username,

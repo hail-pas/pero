@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -8,7 +7,7 @@ use crate::domain::user::entity::User;
 use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
-#[derive(Debug, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone)]
 pub struct UserDTO {
     pub id: Uuid,
     pub username: String,
@@ -41,7 +40,7 @@ impl From<User> for UserDTO {
     }
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct RegisterRequest {
     #[validate(length(min = 3, max = 64))]
     pub username: String,
@@ -72,25 +71,19 @@ pub struct RegisterRequest {
 
 pub type CreateUserRequest = RegisterRequest;
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateUserRequest {
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub username: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub email: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub phone: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub nickname: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub avatar_url: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<i16>)]
     pub status: FieldUpdate<i16>,
 }
 
@@ -126,19 +119,15 @@ impl Validate for UpdateUserRequest {
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateMeRequest {
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub email: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub nickname: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub avatar_url: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub phone: FieldUpdate<String>,
 }
 
@@ -162,7 +151,7 @@ impl Validate for UpdateMeRequest {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IdentifierType {
     #[default]
@@ -171,7 +160,7 @@ pub enum IdentifierType {
     Phone,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct LoginRequest {
     #[validate(length(min = 1, max = 255))]
     pub identifier: String,
@@ -181,26 +170,26 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
     pub user: UserDTO,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct RefreshTokenResponse {
     pub access_token: String,
     pub refresh_token: String,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct RefreshRequest {
     #[validate(length(min = 1))]
     pub refresh_token: String,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 #[allow(dead_code)]
 pub struct BindRequest {
     #[validate(length(min = 1))]
@@ -209,7 +198,7 @@ pub struct BindRequest {
     pub redirect_uri: String,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct ChangePasswordRequest {
     #[validate(length(min = 8, max = 128))]
     pub old_password: String,
@@ -219,7 +208,7 @@ pub struct ChangePasswordRequest {
 
 impl ChangePasswordRequest {}
 
-#[derive(Debug, sqlx::FromRow, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UserAttribute {
     pub id: Uuid,
     pub user_id: Uuid,
@@ -227,13 +216,13 @@ pub struct UserAttribute {
     pub value: String,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct SetAttributes {
     #[validate(length(min = 1))]
     pub attributes: Vec<AttributeItem>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate)]
 pub struct AttributeItem {
     #[validate(length(min = 1, max = 128))]
     pub key: String,

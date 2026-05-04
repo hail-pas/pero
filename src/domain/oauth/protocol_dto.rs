@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -10,20 +9,20 @@ use crate::domain::oauth::entity::OAuth2Client;
 use crate::shared::constants::oauth2::{self as oauth2_constants, scopes as oauth2_scopes};
 use crate::shared::validation;
 
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantType {
     AuthorizationCode,
     RefreshToken,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseType {
     Code,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum CodeChallengeMethod {
     #[default]
@@ -38,7 +37,7 @@ impl CodeChallengeMethod {
     }
 }
 
-#[derive(Debug, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone)]
 pub struct OAuth2ClientDTO {
     pub id: Uuid,
     pub app_id: Uuid,
@@ -71,13 +70,13 @@ impl From<OAuth2Client> for OAuth2ClientDTO {
     }
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct CreateClientResponse {
     pub client: OAuth2ClientDTO,
     pub client_secret: String,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct CreateClientRequest {
     pub app_id: Uuid,
     #[validate(length(min = 1, max = 128))]
@@ -156,25 +155,19 @@ fn default_scopes() -> Vec<String> {
     ]
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateClientRequest {
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub client_name: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<Vec<String>>)]
     pub redirect_uris: FieldUpdate<Vec<String>>,
     #[serde(default)]
-    #[schema(value_type = Option<Vec<String>>)]
     pub grant_types: FieldUpdate<Vec<String>>,
     #[serde(default)]
-    #[schema(value_type = Option<Vec<String>>)]
     pub scopes: FieldUpdate<Vec<String>>,
     #[serde(default)]
-    #[schema(value_type = Option<Vec<String>>)]
     pub post_logout_redirect_uris: FieldUpdate<Vec<String>>,
     #[serde(default)]
-    #[schema(value_type = Option<bool>)]
     pub enabled: FieldUpdate<bool>,
 }
 
@@ -216,7 +209,7 @@ impl Validate for UpdateClientRequest {
     }
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct AuthorizeQuery {
     #[validate(length(min = 1))]
     pub client_id: String,
@@ -238,7 +231,7 @@ pub struct AuthorizeQuery {
     pub provider: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct TokenRequest {
     pub grant_type: GrantType,
     #[validate(length(max = 128))]
@@ -258,8 +251,7 @@ pub struct TokenRequest {
     pub refresh_token: Option<String>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
-#[schema(as = OAuth2TokenResponse)]
+#[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
@@ -272,7 +264,7 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct RevokeRequest {
     #[validate(length(min = 1, max = 256))]
     pub token: String,

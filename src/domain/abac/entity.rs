@@ -2,12 +2,11 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::resource::{Action, Resource};
 
-#[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Policy {
     pub id: Uuid,
     pub name: String,
@@ -20,7 +19,7 @@ pub struct Policy {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, sqlx::FromRow, Serialize, Deserialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PolicyCondition {
     pub id: Uuid,
     pub policy_id: Uuid,
@@ -30,7 +29,7 @@ pub struct PolicyCondition {
     pub value: String,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct UserAttribute {
     pub key: String,
     pub value: String,

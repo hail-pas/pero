@@ -252,17 +252,23 @@ async fn real_backend_oauth_token_and_revoke_use_real_persistence() {
         )
         .await
         .unwrap();
+    let password_hash = pero::shared::crypto::hash_secret("password123").unwrap();
     let user = app
         .state
         .repos
         .users
-        .create_with_password(
+        .create_user(
             &format!("{prefix}user"),
             Some(&format!("{prefix}user@example.test")),
             None,
             None,
-            &pero::shared::crypto::hash_secret("password123").unwrap(),
         )
+        .await
+        .unwrap();
+    app.state
+        .repos
+        .identities
+        .create_password(user.id, &password_hash)
         .await
         .unwrap();
     let verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~123456";
@@ -381,17 +387,23 @@ async fn real_backend_sso_consent_uses_real_redis_and_auth_code_store() {
         )
         .await
         .unwrap();
+    let password_hash = pero::shared::crypto::hash_secret("password123").unwrap();
     let user = app
         .state
         .repos
         .users
-        .create_with_password(
+        .create_user(
             &format!("{prefix}user"),
             Some(&format!("{prefix}user@example.test")),
             None,
             Some("Consent"),
-            &pero::shared::crypto::hash_secret("password123").unwrap(),
         )
+        .await
+        .unwrap();
+    app.state
+        .repos
+        .identities
+        .create_password(user.id, &password_hash)
         .await
         .unwrap();
     let sso = SsoSession {

@@ -3,7 +3,9 @@ use crate::domain::oauth::entity::AuthorizationCode;
 use crate::domain::oauth::error::OAuth2Error;
 use crate::domain::oauth::models::{GrantType, RevokeRequest, TokenRequest, TokenResponse};
 use crate::domain::oauth::pkce;
-use crate::domain::oauth::repo::{OAuth2ClientStore, RefreshTokenStore, TokenFamilyStore, TokenSigner};
+use crate::domain::oauth::repo::{
+    OAuth2ClientStore, RefreshTokenStore, TokenFamilyStore, TokenSigner,
+};
 use crate::domain::oauth::service::{InvalidClientError, authenticate_client};
 use crate::domain::oauth::token_builder::build_token_response;
 use crate::domain::user::repo::UserStore;
@@ -73,7 +75,9 @@ pub async fn revoke_token(
     .await?;
 
     crate::domain::oauth::service::ensure_app_enabled_pub(apps, &client).await?;
-    refresh_tokens.revoke_token_if_owned(&req.token, client.id).await?;
+    refresh_tokens
+        .revoke_token_if_owned(&req.token, client.id)
+        .await?;
     Ok(())
 }
 
@@ -148,7 +152,10 @@ async fn exchange_refresh_token(
     )
     .await?;
 
-    let stored = match refresh_tokens.find_active_refresh_for_update(old_refresh).await? {
+    let stored = match refresh_tokens
+        .find_active_refresh_for_update(old_refresh)
+        .await?
+    {
         Some(token) => token,
         None => {
             return handle_refresh_replay_or_missing(refresh_tokens, token_families, old_refresh)

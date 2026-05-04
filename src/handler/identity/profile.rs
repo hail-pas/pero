@@ -6,17 +6,14 @@ use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
-use utoipa;
-
 #[utoipa::path(
     get,
     path = "/api/users/me",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Current user profile", body = ApiResponse<UserDTO>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Current user profile", body = crate::api::response::ApiResponse<crate::api::schemas::user::UserDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_me(
     State(state): State<AppState>,
@@ -31,12 +28,11 @@ pub async fn get_me(
     put,
     path = "/api/users/me",
     tag = "Identity",
-    security(("bearer_auth" = [])),
-    request_body = UpdateMeRequest,
+    request_body = crate::api::schemas::user::UpdateMeRequest,
     responses(
-        (status = 200, description = "Profile updated", body = ApiResponse<UserDTO>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Profile updated", body = crate::api::response::ApiResponse<crate::api::schemas::user::UserDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn update_me(
     State(state): State<AppState>,
@@ -52,38 +48,36 @@ pub async fn update_me(
     get,
     path = "/api/users",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
-        ("page" = Option<i64>, Query, description = "Page number (default: 1)"),
-        ("page_size" = Option<i64>, Query, description = "Page size (default: 10)"),
+        ("page" = Option<i64>, Query, description = "Page number"),
+        ("page_size" = Option<i64>, Query, description = "Page size"),
     ),
     responses(
-        (status = 200, description = "User list", body = ApiResponse<PageData<UserDTO>>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "User list", body = crate::api::response::ApiResponse<crate::api::response::PageData<crate::api::schemas::user::UserDTO>>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn list_users(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<UserDTO>>>, AppError> {
-    Ok(Json(ApiResponse::success(
-        service::list_users(&*state.repos.users, page, page_size).await?,
-    )))
+    let (items, total) = service::list_users(&*state.repos.users, page, page_size).await?;
+    Ok(Json(ApiResponse::success(PageData::new(
+        items, total, page, page_size,
+    ))))
 }
 
 #[utoipa::path(
     get,
     path = "/api/users/{id}",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "User ID"),
     ),
     responses(
-        (status = 200, description = "User details", body = ApiResponse<UserDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User not found"),
-    )
+        (status = 200, description = "User detail", body = crate::api::response::ApiResponse<crate::api::schemas::user::UserDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_user(
     State(state): State<AppState>,
@@ -98,16 +92,14 @@ pub async fn get_user(
     put,
     path = "/api/users/{id}",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "User ID"),
     ),
-    request_body = UpdateUserRequest,
+    request_body = crate::api::schemas::user::UpdateUserRequest,
     responses(
-        (status = 200, description = "User updated", body = ApiResponse<UserDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User not found"),
-    )
+        (status = 200, description = "User updated", body = crate::api::response::ApiResponse<crate::api::schemas::user::UserDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn update_user(
     State(state): State<AppState>,
@@ -130,27 +122,24 @@ pub async fn update_user(
     delete,
     path = "/api/users/{id}",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "User ID"),
     ),
     responses(
-        (status = 200, description = "User deleted", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User not found"),
-    )
+        (status = 200, description = "User deleted", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    Ok(Json(
-        service::delete_user(
-            &*state.repos.users,
-            &*state.repos.sessions,
-            &*state.repos.refresh_tokens,
-            id,
-        )
-        .await?,
-    ))
+    service::delete_user(
+        &*state.repos.users,
+        &*state.repos.sessions,
+        &*state.repos.refresh_tokens,
+        id,
+    )
+    .await?;
+    Ok(Json(MessageResponse::success("user deleted")))
 }

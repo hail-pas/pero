@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::shared::error::AppError;
 
-#[derive(Debug, sqlx::FromRow, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct OAuth2Client {
     pub id: Uuid,
     pub app_id: Uuid,
@@ -30,7 +30,7 @@ impl OAuth2Client {
     }
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 #[allow(dead_code)]
 pub struct AuthorizationCode {
     pub code: String,
@@ -48,7 +48,7 @@ pub struct AuthorizationCode {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 #[allow(dead_code)]
 pub struct RefreshToken {
     pub id: Uuid,
@@ -63,7 +63,7 @@ pub struct RefreshToken {
     pub family_id: Option<Uuid>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct UserAuthorization {
     pub client_name: String,
     pub scopes: Vec<String>,
@@ -71,7 +71,7 @@ pub struct UserAuthorization {
     pub token_id: Uuid,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct TokenFamily {
     pub id: Uuid,
     pub client_id: Uuid,

@@ -361,11 +361,7 @@ impl AbacCacheStore for RedisAbacCacheStore {
         let uv: Option<String> = cache::get(&self.pool, &user_version_key(user_id)).await?;
         match uv {
             Some(user_v) => {
-                cache::get_json(
-                    &self.pool,
-                    &policy_key(user_id, app_id, &app_pv, &user_v),
-                )
-                .await
+                cache::get_json(&self.pool, &policy_key(user_id, app_id, &app_pv, &user_v)).await
             }
             None => Ok(None),
         }
@@ -422,12 +418,6 @@ impl AbacCacheStore for RedisAbacCacheStore {
 
     async fn bump_user_version(&self, user_id: Uuid, ttl: i64) -> Result<(), AppError> {
         let new_version = Uuid::new_v4().to_string();
-        cache::set(
-            &self.pool,
-            &user_version_key(user_id),
-            &new_version,
-            ttl,
-        )
-        .await
+        cache::set(&self.pool, &user_version_key(user_id), &new_version, ttl).await
     }
 }

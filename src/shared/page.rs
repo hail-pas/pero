@@ -2,14 +2,14 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct PageData<T: Serialize + ToSchema> {
+pub struct PageData<T: Serialize> {
     pub items: Vec<T>,
     pub total: i64,
     pub page: i64,
     pub page_size: i64,
 }
 
-impl<T: Serialize + ToSchema> PageData<T> {
+impl<T: Serialize> PageData<T> {
     pub fn new(items: Vec<T>, total: i64, page: i64, page_size: i64) -> Self {
         Self {
             items,

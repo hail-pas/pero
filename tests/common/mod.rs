@@ -455,6 +455,19 @@ impl MemoryIdentityStore {
         self.users.lock().unwrap().len()
     }
 
+    pub async fn create_with_password(
+        &self,
+        username: &str,
+        email: Option<&str>,
+        phone: Option<&str>,
+        nickname: Option<&str>,
+        password_hash: &str,
+    ) -> Result<User, AppError> {
+        let user = self.create_user(username, email, phone, nickname).await?;
+        self.create_password(user.id, password_hash).await?;
+        Ok(user)
+    }
+
     fn user(
         id: Uuid,
         username: &str,
@@ -705,24 +718,17 @@ impl UserStore for MemoryIdentityStore {
         Ok(())
     }
 
-    async fn create_with_password(
+    async fn create_user(
         &self,
         username: &str,
         email: Option<&str>,
         phone: Option<&str>,
         nickname: Option<&str>,
-        password_hash: &str,
     ) -> Result<User, AppError> {
         self.check_new_user_conflicts(username, email, phone)
             .await?;
         let user = Self::user(Uuid::new_v4(), username, email, phone, nickname);
         self.users.lock().unwrap().insert(user.id, user.clone());
-        self.identities.lock().unwrap().push(Self::identity(
-            user.id,
-            "password",
-            &user.id.to_string(),
-            Some(password_hash),
-        ));
         Ok(user)
     }
 

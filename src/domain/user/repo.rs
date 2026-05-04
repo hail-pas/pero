@@ -42,13 +42,12 @@ pub trait UserStore: Send + Sync {
         email: Option<&str>,
         phone: Option<&str>,
     ) -> Result<(), AppError>;
-    async fn create_with_password(
+    async fn create_user(
         &self,
         username: &str,
         email: Option<&str>,
         phone: Option<&str>,
         nickname: Option<&str>,
-        password_hash: &str,
     ) -> Result<User, AppError>;
     async fn find_by_social_identity(
         &self,

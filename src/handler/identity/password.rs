@@ -6,19 +6,15 @@ use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
-use utoipa;
-
 #[utoipa::path(
     put,
     path = "/api/identity/password/change",
     tag = "Identity",
-    security(("bearer_auth" = [])),
-    request_body = ChangePasswordRequest,
+    request_body = crate::api::schemas::user::ChangePasswordRequest,
     responses(
-        (status = 200, description = "Password changed", body = MessageResponse),
-        (status = 400, description = "Old password incorrect"),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Password changed", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn change_password(
     State(state): State<AppState>,

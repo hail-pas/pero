@@ -6,16 +6,6 @@ use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
 
-#[utoipa::path(
-    get,
-    path = "/oauth2/userinfo",
-    tag = "OIDC",
-    security(("bearer_auth" = [])),
-    responses(
-        (status = 200, description = "User info claims"),
-        (status = 401, description = "Unauthorized"),
-    )
-)]
 pub async fn userinfo(
     State(state): State<AppState>,
     auth_user: AuthUser,

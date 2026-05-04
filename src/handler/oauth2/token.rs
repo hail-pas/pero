@@ -8,19 +8,6 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 
-#[utoipa::path(
-    post,
-    path = "/oauth2/token",
-    tag = "OAuth2",
-    request_body(
-        content = crate::domain::oauth::models::TokenRequest,
-        content_type = "application/x-www-form-urlencoded",
-    ),
-    responses(
-        (status = 200, description = "Token response", body = crate::domain::oauth::models::TokenResponse),
-        (status = 400, description = "Invalid request"),
-    )
-)]
 pub async fn token(
     State(state): State<AppState>,
     headers: HeaderMap,

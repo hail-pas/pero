@@ -67,10 +67,9 @@ impl AuthorizationCodeStore for SqlxAuthCodeStore {
     }
 
     async fn purge_expired_auth_codes(&self) -> Result<u64, AppError> {
-        let result =
-            sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
-                .execute(&*self.pool)
-                .await?;
+        let result = sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
+            .execute(&*self.pool)
+            .await?;
         Ok(result.rows_affected())
     }
 }

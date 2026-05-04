@@ -14,12 +14,11 @@ use uuid::Uuid;
     post,
     path = "/api/policies",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
-    request_body = CreatePolicyRequest,
+    request_body = crate::api::schemas::abac::CreatePolicyRequest,
     responses(
-        (status = 200, description = "Policy created", body = ApiResponse<PolicyDTO>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Policy created", body = crate::api::response::ApiResponse<crate::api::schemas::abac::PolicyDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn create_policy(
     State(state): State<AppState>,
@@ -32,15 +31,14 @@ pub async fn create_policy(
     get,
     path = "/api/policies",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
     params(
-        ("page" = Option<i64>, Query, description = "Page number (default: 1)"),
-        ("page_size" = Option<i64>, Query, description = "Page size (default: 10)"),
+        ("page" = Option<i64>, Query, description = "Page number"),
+        ("page_size" = Option<i64>, Query, description = "Page size"),
     ),
     responses(
-        (status = 200, description = "Policy list", body = ApiResponse<PageData<PolicyDTO>>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Policy list", body = crate::api::response::ApiResponse<crate::api::response::PageData<crate::api::schemas::abac::PolicyDTO>>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn list_policies(
     State(state): State<AppState>,
@@ -53,13 +51,13 @@ pub async fn list_policies(
     get,
     path = "/api/policies/{id}",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
-    params(("id" = uuid::Uuid, Path, description = "Policy ID")),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
     responses(
-        (status = 200, description = "Policy details", body = ApiResponse<PolicyDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Policy not found"),
-    )
+        (status = 200, description = "Policy detail", body = crate::api::response::ApiResponse<crate::api::schemas::abac::PolicyDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_policy(
     State(state): State<AppState>,
@@ -72,14 +70,14 @@ pub async fn get_policy(
     put,
     path = "/api/policies/{id}",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
-    params(("id" = uuid::Uuid, Path, description = "Policy ID")),
-    request_body = UpdatePolicyRequest,
+    params(
+        ("id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
+    request_body = crate::api::schemas::abac::UpdatePolicyRequest,
     responses(
-        (status = 200, description = "Policy updated", body = ApiResponse<PolicyDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Policy not found"),
-    )
+        (status = 200, description = "Policy updated", body = crate::api::response::ApiResponse<crate::api::schemas::abac::PolicyDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn update_policy(
     State(state): State<AppState>,
@@ -93,13 +91,13 @@ pub async fn update_policy(
     delete,
     path = "/api/policies/{id}",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
-    params(("id" = uuid::Uuid, Path, description = "Policy ID")),
+    params(
+        ("id" = uuid::Uuid, Path, description = "Policy ID"),
+    ),
     responses(
-        (status = 200, description = "Policy deleted", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Policy not found"),
-    )
+        (status = 200, description = "Policy deleted", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_policy(
     State(state): State<AppState>,
@@ -112,16 +110,14 @@ pub async fn delete_policy(
     post,
     path = "/api/users/{user_id}/policies/{policy_id}",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
     params(
         ("user_id" = uuid::Uuid, Path, description = "User ID"),
         ("policy_id" = uuid::Uuid, Path, description = "Policy ID"),
     ),
     responses(
-        (status = 200, description = "Policy assigned", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User or policy not found"),
-    )
+        (status = 200, description = "Policy assigned", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn assign_policy(
     State(state): State<AppState>,
@@ -134,16 +130,14 @@ pub async fn assign_policy(
     delete,
     path = "/api/users/{user_id}/policies/{policy_id}",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
     params(
         ("user_id" = uuid::Uuid, Path, description = "User ID"),
         ("policy_id" = uuid::Uuid, Path, description = "Policy ID"),
     ),
     responses(
-        (status = 200, description = "Policy unassigned", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Assignment not found"),
-    )
+        (status = 200, description = "Policy unassigned", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn unassign_policy(
     State(state): State<AppState>,
@@ -156,12 +150,13 @@ pub async fn unassign_policy(
     get,
     path = "/api/users/{user_id}/policies",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
-    params(("user_id" = uuid::Uuid, Path, description = "User ID")),
+    params(
+        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+    ),
     responses(
-        (status = 200, description = "User policies", body = ApiResponse<Vec<PolicyDTO>>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "User policies", body = crate::api::response::ApiResponse<Vec<crate::api::schemas::abac::PolicyDTO>>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn list_user_policies(
     State(state): State<AppState>,

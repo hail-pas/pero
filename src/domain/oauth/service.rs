@@ -6,7 +6,6 @@ use crate::domain::oauth::models::{
     CreateClientRequest, OAuth2Client, OAuth2ClientDTO, UpdateClientRequest,
 };
 use crate::domain::oauth::repo::OAuth2ClientStore;
-use crate::shared::page::PageData;
 
 pub use crate::domain::oauth::token_exchange::{exchange_token, revoke_token};
 
@@ -127,13 +126,13 @@ pub async fn list_clients(
     clients: &dyn OAuth2ClientStore,
     page: i64,
     page_size: i64,
-) -> Result<PageData<OAuth2ClientDTO>, AppError> {
+) -> Result<(Vec<OAuth2ClientDTO>, i64), AppError> {
     let (clients_list, total) = clients.list(page, page_size).await?;
     let items = clients_list
         .into_iter()
         .map(OAuth2ClientDTO::from)
         .collect();
-    Ok(PageData::new(items, total, page, page_size))
+    Ok((items, total))
 }
 
 pub async fn get_client(

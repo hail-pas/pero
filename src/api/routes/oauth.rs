@@ -1,7 +1,7 @@
 use crate::domain::abac::resource::{AbacContextExt, Action, Resource};
 use crate::shared::state::AppState;
-use axum::routing::{delete, get, post, put};
 use axum::Router;
+use axum::routing::{delete, get, post, put};
 
 pub fn public_routes() -> Router<AppState> {
     Router::new()

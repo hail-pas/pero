@@ -14,12 +14,11 @@ use crate::shared::state::AppState;
     post,
     path = "/api/social-providers",
     tag = "Social",
-    security(("bearer_auth" = [])),
-    request_body = CreateSocialProviderRequest,
+    request_body = crate::api::schemas::social::CreateSocialProviderRequest,
     responses(
-        (status = 200, description = "Provider created", body = ApiResponse<SocialProviderDTO>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Provider created", body = crate::api::response::ApiResponse<crate::api::schemas::social::SocialProviderDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn create_provider(
     State(state): State<AppState>,
@@ -33,11 +32,10 @@ pub async fn create_provider(
     get,
     path = "/api/social-providers",
     tag = "Social",
-    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Provider list", body = ApiResponse<Vec<SocialProviderDTO>>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Provider list", body = crate::api::response::ApiResponse<Vec<crate::api::schemas::social::SocialProviderDTO>>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn list_providers(
     State(state): State<AppState>,
@@ -51,15 +49,13 @@ pub async fn list_providers(
     get,
     path = "/api/social-providers/{id}",
     tag = "Social",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "Provider ID"),
     ),
     responses(
-        (status = 200, description = "Provider details", body = ApiResponse<SocialProviderDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Provider not found"),
-    )
+        (status = 200, description = "Provider detail", body = crate::api::response::ApiResponse<crate::api::schemas::social::SocialProviderDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_provider(
     State(state): State<AppState>,
@@ -73,16 +69,14 @@ pub async fn get_provider(
     put,
     path = "/api/social-providers/{id}",
     tag = "Social",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "Provider ID"),
     ),
-    request_body = UpdateSocialProviderRequest,
+    request_body = crate::api::schemas::social::UpdateSocialProviderRequest,
     responses(
-        (status = 200, description = "Provider updated", body = ApiResponse<SocialProviderDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Provider not found"),
-    )
+        (status = 200, description = "Provider updated", body = crate::api::response::ApiResponse<crate::api::schemas::social::SocialProviderDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn update_provider(
     State(state): State<AppState>,
@@ -97,15 +91,13 @@ pub async fn update_provider(
     delete,
     path = "/api/social-providers/{id}",
     tag = "Social",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "Provider ID"),
     ),
     responses(
         (status = 200, description = "Provider deleted", body = crate::api::response::MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Provider not found"),
-    )
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_provider(
     State(state): State<AppState>,

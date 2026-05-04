@@ -1,23 +1,20 @@
 use crate::api::extractors::ValidatedJson;
 use crate::api::response::ApiResponse;
-use crate::domain::credential::service;
+use crate::application::identity::register as register_use_case;
 use crate::domain::user::models::{CreateUserRequest, RegisterRequest, TokenResponse, UserDTO};
 use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use utoipa;
-
 #[utoipa::path(
     post,
     path = "/api/identity/register",
     tag = "Identity",
-    request_body = RegisterRequest,
+    request_body = crate::api::schemas::user::RegisterRequest,
     responses(
-        (status = 200, description = "Registration successful", body = ApiResponse<TokenResponse>),
-        (status = 400, description = "Bad request"),
-        (status = 409, description = "Username or email already exists"),
+        (status = 200, description = "User registered", body = crate::api::response::ApiResponse<crate::api::schemas::user::TokenResponse>),
+        (status = 400, description = "Validation error"),
     )
 )]
 pub async fn register(
@@ -27,8 +24,9 @@ pub async fn register(
 ) -> Result<Json<ApiResponse<TokenResponse>>, AppError> {
     let (device, location) = crate::shared::utils::parse_user_agent(&headers);
     Ok(Json(ApiResponse::success(
-        service::register_user(
+        register_use_case::register_user(
             &*state.repos.users,
+            &*state.repos.identities,
             &*state.repos.sessions,
             &*state.repos.token_signer,
             &req,
@@ -45,19 +43,18 @@ pub async fn register(
     post,
     path = "/api/users",
     tag = "Identity",
-    security(("bearer_auth" = [])),
-    request_body = CreateUserRequest,
+    request_body = crate::api::schemas::user::CreateUserRequest,
     responses(
-        (status = 200, description = "User created", body = ApiResponse<UserDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 409, description = "Username or email already exists"),
-    )
+        (status = 200, description = "User created", body = crate::api::response::ApiResponse<crate::api::schemas::user::UserDTO>),
+        (status = 400, description = "Validation error"),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn create_user(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<CreateUserRequest>,
 ) -> Result<Json<ApiResponse<UserDTO>>, AppError> {
     Ok(Json(ApiResponse::success(
-        service::create_user(&*state.repos.users, &req).await?,
+        register_use_case::create_user(&*state.repos.users, &*state.repos.identities, &req).await?,
     )))
 }

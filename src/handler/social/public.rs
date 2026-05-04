@@ -12,7 +12,7 @@ use crate::shared::state::AppState;
     path = "/api/social-providers/enabled",
     tag = "Social",
     responses(
-        (status = 200, description = "Enabled social providers", body = ApiResponse<Vec<SocialProviderPublic>>),
+        (status = 200, description = "Enabled providers", body = crate::api::response::ApiResponse<Vec<crate::api::schemas::social::SocialProviderPublicDTO>>),
     )
 )]
 pub async fn list_enabled_providers(

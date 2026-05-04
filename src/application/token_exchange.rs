@@ -1,6 +1,8 @@
 use crate::domain::app::repo::AppStore;
 use crate::domain::oauth::models::{RevokeRequest, TokenRequest, TokenResponse};
-use crate::domain::oauth::repo::{OAuth2ClientStore, RefreshTokenStore, TokenFamilyStore, TokenSigner};
+use crate::domain::oauth::repo::{
+    OAuth2ClientStore, RefreshTokenStore, TokenFamilyStore, TokenSigner,
+};
 use crate::domain::user::repo::UserStore;
 use crate::shared::error::AppError;
 

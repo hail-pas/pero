@@ -228,43 +228,15 @@ impl UserStore for SqlxUserStore {
         Ok(())
     }
 
-    async fn create_with_password(
+    async fn create_user(
         &self,
         username: &str,
         email: Option<&str>,
         phone: Option<&str>,
         nickname: Option<&str>,
-        password_hash: &str,
     ) -> Result<User, AppError> {
-        let mut tx = self.pool.begin().await?;
-        {
-            #[derive(sqlx::FromRow)]
-            struct Check {
-                username_exists: bool,
-                email_exists: bool,
-                phone_exists: bool,
-            }
-            let check: Check = sqlx::query_as(
-                "SELECT \
-                    EXISTS(SELECT 1 FROM users WHERE username = $1) AS username_exists, \
-                    COALESCE(($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE email = $2)), false) AS email_exists, \
-                    COALESCE(($3::text IS NOT NULL AND EXISTS(SELECT 1 FROM users WHERE phone = $3)), false) AS phone_exists"
-            )
-            .bind(username)
-            .bind(email)
-            .bind(phone)
-            .fetch_one(&mut *tx)
+        self.check_new_user_conflicts(username, email, phone)
             .await?;
-            if check.username_exists {
-                return Err(error::username_exists(username));
-            }
-            if check.email_exists {
-                return Err(error::email_exists(email.unwrap_or("")));
-            }
-            if check.phone_exists {
-                return Err(error::phone_exists(phone.unwrap_or("")));
-            }
-        }
         let user = sqlx::query_as::<_, User>(
             "INSERT INTO users (username, email, phone, nickname) VALUES ($1, $2, $3, $4) RETURNING *"
         )
@@ -272,16 +244,8 @@ impl UserStore for SqlxUserStore {
         .bind(email)
         .bind(phone)
         .bind(nickname)
-        .fetch_one(&mut *tx)
+        .fetch_one(&*self.pool)
         .await?;
-        sqlx::query_as::<_, Identity>(
-            "INSERT INTO identities (user_id, provider, provider_uid, credential, verified) VALUES ($1, 'password', $1, $2, true) RETURNING *"
-        )
-        .bind(user.id)
-        .bind(password_hash)
-        .fetch_one(&mut *tx)
-        .await?;
-        tx.commit().await?;
         Ok(user)
     }
 

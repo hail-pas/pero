@@ -14,7 +14,7 @@ pub struct HealthStatus {
     path = "/health",
     tag = "Health",
     responses(
-        (status = 200, description = "Health status", body = ApiResponse<HealthStatus>)
+        (status = 200, description = "Health status", body = ApiResponse<HealthStatus>),
     )
 )]
 pub async fn health() -> Json<ApiResponse<HealthStatus>> {

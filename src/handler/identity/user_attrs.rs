@@ -6,21 +6,17 @@ use crate::shared::error::AppError;
 use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
-use utoipa;
-
 #[utoipa::path(
     get,
-    path = "/api/users/{user_id}/attributes",
+    path = "/api/users/{id}/attributes",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
-        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+        ("id" = uuid::Uuid, Path, description = "User ID"),
     ),
     responses(
-        (status = 200, description = "User attributes", body = ApiResponse<Vec<UserAttribute>>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User not found"),
-    )
+        (status = 200, description = "User attributes", body = crate::api::response::ApiResponse<Vec<crate::api::schemas::user::UserAttributeDTO>>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn list_attributes(
     State(state): State<AppState>,
@@ -34,65 +30,58 @@ pub async fn list_attributes(
 
 #[utoipa::path(
     put,
-    path = "/api/users/{user_id}/attributes",
+    path = "/api/users/{id}/attributes",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
-        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+        ("id" = uuid::Uuid, Path, description = "User ID"),
     ),
-    request_body = SetAttributes,
     responses(
-        (status = 200, description = "Attributes updated", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User not found"),
-    )
+        (status = 200, description = "Attributes updated", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn set_attributes(
     State(state): State<AppState>,
     Path(user_id): Path<uuid::Uuid>,
     ValidatedJson(input): ValidatedJson<SetAttributes>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    Ok(Json(
-        service::set_user_attributes(
-            &*state.repos.users,
-            &*state.repos.user_attributes,
-            &*state.repos.abac_cache,
-            state.config.abac.policy_cache_ttl_seconds,
-            user_id,
-            &input,
-        )
-        .await?,
-    ))
+    service::set_user_attributes(
+        &*state.repos.users,
+        &*state.repos.user_attributes,
+        &*state.repos.abac_cache,
+        state.config.abac.policy_cache_ttl_seconds,
+        user_id,
+        &input,
+    )
+    .await?;
+    Ok(Json(MessageResponse::success("attributes updated")))
 }
 
 #[utoipa::path(
     delete,
-    path = "/api/users/{user_id}/attributes/{key}",
+    path = "/api/users/{id}/attributes/{key}",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     params(
-        ("user_id" = uuid::Uuid, Path, description = "User ID"),
+        ("id" = uuid::Uuid, Path, description = "User ID"),
         ("key" = String, Path, description = "Attribute key"),
     ),
     responses(
-        (status = 200, description = "Attribute deleted", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "User not found"),
-    )
+        (status = 200, description = "Attribute deleted", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_attribute(
     State(state): State<AppState>,
     Path((user_id, key)): Path<(uuid::Uuid, String)>,
 ) -> Result<Json<MessageResponse>, AppError> {
-    Ok(Json(
-        service::delete_user_attribute(
-            &*state.repos.users,
-            &*state.repos.user_attributes,
-            &*state.repos.abac_cache,
-            state.config.abac.policy_cache_ttl_seconds,
-            user_id,
-            &key,
-        )
-        .await?,
-    ))
+    service::delete_user_attribute(
+        &*state.repos.users,
+        &*state.repos.user_attributes,
+        &*state.repos.abac_cache,
+        state.config.abac.policy_cache_ttl_seconds,
+        user_id,
+        &key,
+    )
+    .await?;
+    Ok(Json(MessageResponse::success("attribute deleted")))
 }

@@ -16,12 +16,14 @@ use pero::domain::oauth::models::{
     CreateClientRequest, GrantType, RevokeRequest, TokenRequest, UpdateClientRequest,
 };
 use pero::domain::oauth::pkce::verify_pkce;
-use pero::domain::oauth::repo::{AuthorizationCodeStore, CreateAuthCodeParams, OAuth2ClientStore, RefreshTokenStore};
+use pero::domain::oauth::repo::{
+    AuthorizationCodeStore, CreateAuthCodeParams, OAuth2ClientStore, RefreshTokenStore,
+};
 use pero::domain::oauth::service::{
     ensure_authorization_client_ready, ensure_client_grant_allowed, ensure_redirect_uri_allowed,
     parse_basic_client_auth_header, resolve_client_credentials,
 };
-use pero::domain::oauth::{authorize as oauth_authorize, token_builder::build_token_response};
+use pero::domain::oauth::{service as oauth_service, token_builder::build_token_response};
 use pero::domain::user::entity::User;
 use pero::domain::user::repo::UserStore;
 use pero::shared::constants::oauth2::scopes;
@@ -600,7 +602,7 @@ async fn oauth_authorize_module_validates_clients_and_scopes() {
         .await
         .unwrap();
 
-    let valid = oauth_authorize::validate_authorization_client(
+    let valid = oauth_service::validate_authorization_client(
         &clients,
         &apps,
         &client.client_id,
@@ -612,7 +614,7 @@ async fn oauth_authorize_module_validates_clients_and_scopes() {
     assert_eq!(valid.id, client.id);
 
     assert!(
-        oauth_authorize::validate_authorization_client(
+        oauth_service::validate_authorization_client(
             &clients,
             &apps,
             &client.client_id,
@@ -623,7 +625,7 @@ async fn oauth_authorize_module_validates_clients_and_scopes() {
         .is_err()
     );
     assert!(
-        oauth_authorize::validate_authorization_client(
+        oauth_service::validate_authorization_client(
             &clients,
             &apps,
             &client.client_id,

@@ -6,7 +6,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use crate::domain::credential::service;
+use crate::domain::user::service;
 use crate::handler::account::common;
 use crate::handler::account::common::{AccountLayout, SocialProviderView};
 use crate::shared::error::AppError;
@@ -98,11 +98,9 @@ pub async fn unbind_post(
     axum::Form(form): axum::Form<UnbindForm>,
 ) -> Result<Response, AppError> {
     let user_id = common::get_account_user_id(&state, &headers).await?;
-    match service::unbind_identity(&*state.repos.identities, user_id, &form.provider).await {
-        Ok(_) => Ok(axum::Json(crate::api::response::MessageResponse::success(
-            "Social account unlinked.",
-        ))
-        .into_response()),
-        Err(err) => Err(err),
-    }
+    service::unbind_identity(&*state.repos.identities, user_id, &form.provider).await?;
+    Ok(axum::Json(crate::api::response::MessageResponse::success(
+        "Social account unlinked.",
+    ))
+    .into_response())
 }

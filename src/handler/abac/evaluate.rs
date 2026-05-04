@@ -15,12 +15,11 @@ use crate::shared::state::AppState;
     post,
     path = "/api/abac/evaluate",
     tag = "ABAC",
-    security(("bearer_auth" = [])),
-    request_body = EvaluateRequest,
+    request_body = crate::api::schemas::abac::EvaluateRequest,
     responses(
-        (status = 200, description = "Policy evaluated", body = ApiResponse<EvaluateResponse>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Evaluation result", body = crate::api::response::ApiResponse<crate::api::schemas::abac::EvaluateResponse>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn evaluate(
     State(state): State<AppState>,

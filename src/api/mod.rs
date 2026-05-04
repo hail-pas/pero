@@ -4,6 +4,7 @@ pub mod health;
 pub mod middleware;
 pub mod response;
 pub mod routes;
+pub mod schemas;
 
 use std::time::Duration;
 

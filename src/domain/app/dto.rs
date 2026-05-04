@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationErrors};
 
@@ -8,7 +7,7 @@ use crate::domain::app::entity::App;
 use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
-#[derive(Debug, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone)]
 pub struct AppDTO {
     pub id: Uuid,
     pub name: String,
@@ -33,7 +32,7 @@ impl From<App> for AppDTO {
     }
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct CreateAppRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
@@ -47,16 +46,13 @@ pub struct CreateAppRequest {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateAppRequest {
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub name: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub description: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<bool>)]
     pub enabled: FieldUpdate<bool>,
 }
 

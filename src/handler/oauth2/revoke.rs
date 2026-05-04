@@ -9,19 +9,6 @@ use crate::domain::oauth::service;
 use crate::infra::http::oauth2 as error;
 use crate::shared::state::AppState;
 
-#[utoipa::path(
-    post,
-    path = "/oauth2/revoke",
-    tag = "OAuth2",
-    request_body(
-        content = crate::domain::oauth::models::RevokeRequest,
-        content_type = "application/x-www-form-urlencoded",
-    ),
-    responses(
-        (status = 200, description = "Token revoked"),
-        (status = 400, description = "Invalid request"),
-    )
-)]
 pub async fn revoke(
     State(state): State<AppState>,
     headers: HeaderMap,

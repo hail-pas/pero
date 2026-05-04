@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationErrors};
 
@@ -66,7 +65,7 @@ impl SocialProviderName {
     }
 }
 
-#[derive(Debug, sqlx::FromRow, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SocialProvider {
     pub id: Uuid,
     pub name: String,
@@ -83,7 +82,7 @@ pub struct SocialProvider {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SocialProviderPublic {
     pub name: String,
     pub display_name: String,
@@ -98,7 +97,7 @@ impl From<&SocialProvider> for SocialProviderPublic {
     }
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct CreateSocialProviderRequest {
     #[validate(length(min = 1, max = 32))]
     pub name: String,
@@ -122,31 +121,23 @@ pub struct CreateSocialProviderRequest {
     pub scopes: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdateSocialProviderRequest {
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub display_name: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub client_id: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub client_secret: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub authorize_url: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub token_url: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub userinfo_url: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<Vec<String>>)]
     pub scopes: FieldUpdate<Vec<String>>,
     #[serde(default)]
-    #[schema(value_type = Option<bool>)]
     pub enabled: FieldUpdate<bool>,
 }
 
@@ -185,7 +176,7 @@ impl Validate for UpdateSocialProviderRequest {
     }
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct SocialProviderDTO {
     pub id: Uuid,
     pub name: String,

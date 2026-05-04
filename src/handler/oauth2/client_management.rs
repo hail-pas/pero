@@ -14,12 +14,11 @@ use crate::shared::state::AppState;
     post,
     path = "/api/oauth2/clients",
     tag = "OAuth2",
-    security(("bearer_auth" = [])),
-    request_body = crate::domain::oauth::models::CreateClientRequest,
+    request_body = crate::api::schemas::oauth::CreateClientRequest,
     responses(
-        (status = 200, description = "Client created", body = ApiResponse<CreateClientResponse>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Client created", body = crate::api::response::ApiResponse<crate::api::schemas::oauth::CreateClientResponse>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn create_client(
     State(state): State<AppState>,
@@ -38,38 +37,37 @@ pub async fn create_client(
     get,
     path = "/api/oauth2/clients",
     tag = "OAuth2",
-    security(("bearer_auth" = [])),
     params(
-        ("page" = Option<i64>, Query, description = "Page number (default: 1)"),
-        ("page_size" = Option<i64>, Query, description = "Page size (default: 10)"),
+        ("page" = Option<i64>, Query, description = "Page number"),
+        ("page_size" = Option<i64>, Query, description = "Page size"),
     ),
     responses(
-        (status = 200, description = "Client list", body = ApiResponse<PageData<OAuth2ClientDTO>>),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Client list", body = crate::api::response::ApiResponse<crate::api::response::PageData<crate::api::schemas::oauth::OAuth2ClientDTO>>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn list_clients(
     State(state): State<AppState>,
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<PageData<OAuth2ClientDTO>>>, AppError> {
-    Ok(Json(ApiResponse::success(
-        service::list_clients(&*state.repos.oauth2_clients, page, page_size).await?,
-    )))
+    let (items, total) =
+        service::list_clients(&*state.repos.oauth2_clients, page, page_size).await?;
+    Ok(Json(ApiResponse::success(PageData::new(
+        items, total, page, page_size,
+    ))))
 }
 
 #[utoipa::path(
     get,
     path = "/api/oauth2/clients/{id}",
     tag = "OAuth2",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "Client ID"),
     ),
     responses(
-        (status = 200, description = "Client details", body = ApiResponse<OAuth2ClientDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Client not found"),
-    )
+        (status = 200, description = "Client detail", body = crate::api::response::ApiResponse<crate::api::schemas::oauth::OAuth2ClientDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn get_client(
     State(state): State<AppState>,
@@ -84,16 +82,14 @@ pub async fn get_client(
     put,
     path = "/api/oauth2/clients/{id}",
     tag = "OAuth2",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "Client ID"),
     ),
-    request_body = crate::domain::oauth::models::UpdateClientRequest,
+    request_body = crate::api::schemas::oauth::UpdateClientRequest,
     responses(
-        (status = 200, description = "Client updated", body = ApiResponse<OAuth2ClientDTO>),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Client not found"),
-    )
+        (status = 200, description = "Client updated", body = crate::api::response::ApiResponse<crate::api::schemas::oauth::OAuth2ClientDTO>),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn update_client(
     State(state): State<AppState>,
@@ -109,15 +105,13 @@ pub async fn update_client(
     delete,
     path = "/api/oauth2/clients/{id}",
     tag = "OAuth2",
-    security(("bearer_auth" = [])),
     params(
         ("id" = uuid::Uuid, Path, description = "Client ID"),
     ),
     responses(
-        (status = 200, description = "Client deleted", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Client not found"),
-    )
+        (status = 200, description = "Client deleted", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn delete_client(
     State(state): State<AppState>,

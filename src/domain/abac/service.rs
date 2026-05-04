@@ -3,16 +3,14 @@ use super::repo::{AbacCacheStore, AbacStore, PolicyFilter};
 use crate::domain::user::repo::UserStore;
 use crate::shared::constants::identity;
 use crate::shared::error::{AppError, require_found};
-use crate::shared::page::PageData;
 use crate::shared::patch::FieldUpdate;
 use serde::Serialize;
 use std::collections::HashMap;
-use utoipa::ToSchema;
 use uuid::Uuid;
 
 pub type AttachedPolicies = Vec<(Policy, Vec<PolicyCondition>)>;
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct PolicyDTO {
     pub id: Uuid,
     pub name: String,
@@ -112,7 +110,7 @@ pub async fn list_policy_page(
     scope: PolicyScope,
     page: i64,
     page_size: i64,
-) -> Result<PageData<PolicyDTO>, AppError> {
+) -> Result<(Vec<PolicyDTO>, i64), AppError> {
     let (policies_list, total) = match scope {
         PolicyScope::Any => policies.list_policies(page, page_size).await?,
         PolicyScope::App(app_id) => {
@@ -122,12 +120,7 @@ pub async fn list_policy_page(
         }
     };
     let attached = policies.attach_conditions(policies_list).await?;
-    Ok(PageData::new(
-        PolicyDTO::from_attached(attached),
-        total,
-        page,
-        page_size,
-    ))
+    Ok((PolicyDTO::from_attached(attached), total))
 }
 
 pub async fn get_policy_dto(

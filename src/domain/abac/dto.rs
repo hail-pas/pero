@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::{Validate, ValidationErrors};
 
 use crate::shared::patch::FieldUpdate;
 use crate::shared::validation;
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyEffect {
     #[default]
@@ -23,7 +22,7 @@ impl PolicyEffect {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ConditionType {
     Subject,
@@ -43,7 +42,7 @@ impl ConditionType {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ConditionOperator {
     Eq,
@@ -69,7 +68,7 @@ impl ConditionOperator {
     }
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct CreatePolicyRequest {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
@@ -88,28 +87,21 @@ pub struct CreatePolicyRequest {
     pub conditions: Vec<CreateConditionRequest>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
 pub struct UpdatePolicyRequest {
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub name: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<String>)]
     pub description: FieldUpdate<String>,
     #[serde(default)]
-    #[schema(value_type = Option<PolicyEffect>)]
     pub effect: FieldUpdate<PolicyEffect>,
     #[serde(default)]
-    #[schema(value_type = Option<i32>)]
     pub priority: FieldUpdate<i32>,
     #[serde(default)]
-    #[schema(value_type = Option<bool>)]
     pub enabled: FieldUpdate<bool>,
     #[serde(default)]
-    #[schema(value_type = Option<Uuid>)]
     pub app_id: FieldUpdate<Uuid>,
     #[serde(default)]
-    #[schema(value_type = Option<Vec<CreateConditionRequest>>)]
     pub conditions: FieldUpdate<Vec<CreateConditionRequest>>,
 }
 
@@ -139,7 +131,7 @@ impl Validate for UpdatePolicyRequest {
     }
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct CreateConditionRequest {
     pub condition_type: ConditionType,
     #[validate(length(min = 1, max = 128))]
@@ -149,7 +141,7 @@ pub struct CreateConditionRequest {
     pub value: String,
 }
 
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct EvaluateRequest {
     #[validate(length(min = 1, max = 512))]
     pub resource: String,
@@ -158,7 +150,7 @@ pub struct EvaluateRequest {
     pub app_id: Option<Uuid>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct EvaluateResponse {
     pub allowed: bool,
     pub effect: String,

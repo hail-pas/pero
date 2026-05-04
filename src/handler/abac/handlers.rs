@@ -1,5 +1,5 @@
 use crate::api::extractors::Pagination;
-use crate::api::response::{ApiResponse, MessageResponse};
+use crate::api::response::{ApiResponse, MessageResponse, PageData};
 use crate::domain::abac::models::{CreatePolicyRequest, UpdatePolicyRequest};
 pub use crate::domain::abac::service::PolicyDTO;
 use crate::domain::abac::service::{
@@ -34,8 +34,10 @@ pub async fn list(
     scope: PolicyScope,
     Pagination { page, page_size }: Pagination,
 ) -> Result<Json<ApiResponse<crate::api::response::PageData<PolicyDTO>>>, AppError> {
-    let data = list_policy_page(&*state.repos.policies, scope, page, page_size).await?;
-    Ok(Json(ApiResponse::success(data)))
+    let (items, total) = list_policy_page(&*state.repos.policies, scope, page, page_size).await?;
+    Ok(Json(ApiResponse::success(PageData::new(
+        items, total, page, page_size,
+    ))))
 }
 
 pub async fn get(

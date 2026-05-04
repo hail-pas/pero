@@ -12,15 +12,13 @@ use crate::shared::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use utoipa;
-
 #[utoipa::path(
     post,
     path = "/api/identity/login",
     tag = "Identity",
-    request_body = LoginRequest,
+    request_body = crate::api::schemas::user::LoginRequest,
     responses(
-        (status = 200, description = "Login successful", body = ApiResponse<TokenResponse>),
+        (status = 200, description = "Login successful", body = crate::api::response::ApiResponse<crate::api::schemas::user::TokenResponse>),
         (status = 401, description = "Invalid credentials"),
     )
 )]
@@ -39,7 +37,7 @@ pub async fn login(
     .await?;
 
     let (device, location) = crate::shared::utils::parse_user_agent(&headers);
-    let token_response = crate::domain::auth::service::issue_tokens(
+    let token_response = crate::application::auth::session_issuer::issue_tokens(
         &*state.repos.token_signer,
         &*state.repos.sessions,
         &user,
@@ -56,9 +54,9 @@ pub async fn login(
     post,
     path = "/auth/refresh",
     tag = "Identity",
-    request_body = RefreshRequest,
+    request_body = crate::api::schemas::user::RefreshRequest,
     responses(
-        (status = 200, description = "Token refreshed", body = ApiResponse<RefreshTokenResponse>),
+        (status = 200, description = "Token refreshed", body = crate::api::response::ApiResponse<crate::api::schemas::user::RefreshTokenResponse>),
         (status = 401, description = "Invalid refresh token"),
     )
 )]
@@ -138,11 +136,10 @@ pub async fn refresh(
     post,
     path = "/auth/logout",
     tag = "Identity",
-    security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Logged out", body = MessageResponse),
-        (status = 401, description = "Unauthorized"),
-    )
+        (status = 200, description = "Logged out", body = crate::api::response::MessageResponse),
+    ),
+    security(("bearer_auth" = []))
 )]
 pub async fn logout(
     State(state): State<AppState>,

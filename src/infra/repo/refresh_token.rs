@@ -4,7 +4,9 @@ use chrono::{TimeDelta, Utc};
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-use crate::domain::oauth::entity::{AuthorizationCode, OAuth2Client, RefreshToken, TokenFamily, UserAuthorization};
+use crate::domain::oauth::entity::{
+    AuthorizationCode, OAuth2Client, RefreshToken, TokenFamily, UserAuthorization,
+};
 use crate::domain::oauth::models::{CreateClientRequest, UpdateClientRequest};
 use crate::domain::oauth::repo::{
     AccessTokenParams, OAuth2ClientStore, RefreshTokenStore, TokenSigner,
@@ -359,7 +361,6 @@ impl RefreshTokenStore for SqlxRefreshTokenStore {
             .await?;
         Ok(result.rows_affected())
     }
-
 }
 
 pub struct JwtTokenSigner {

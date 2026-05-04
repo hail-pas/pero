@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-#[derive(Debug, sqlx::FromRow, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct User {
     pub id: Uuid,
     pub username: String,

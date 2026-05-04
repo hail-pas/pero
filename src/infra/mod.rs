@@ -5,3 +5,4 @@ pub mod janitor;
 pub mod jwt;
 pub mod logging;
 pub mod repo;
+pub mod sqlx_mappers;

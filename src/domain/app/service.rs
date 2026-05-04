@@ -2,8 +2,6 @@ use crate::domain::app::error;
 use crate::domain::app::models::{AppDTO, CreateAppRequest, UpdateAppRequest};
 use crate::domain::app::repo::AppStore;
 use crate::shared::error::AppError;
-use crate::shared::message::MessageResponse;
-use crate::shared::page::PageData;
 
 pub async fn create_app(store: &dyn AppStore, req: &CreateAppRequest) -> Result<AppDTO, AppError> {
     if store.find_by_code(&req.code).await?.is_some() {
@@ -17,10 +15,10 @@ pub async fn list_apps(
     store: &dyn AppStore,
     page: i64,
     page_size: i64,
-) -> Result<PageData<AppDTO>, AppError> {
+) -> Result<(Vec<AppDTO>, i64), AppError> {
     let (apps, total) = store.list(page, page_size).await?;
     let items = apps.into_iter().map(AppDTO::from).collect();
-    Ok(PageData::new(items, total, page, page_size))
+    Ok((items, total))
 }
 
 pub async fn get_app(store: &dyn AppStore, id: uuid::Uuid) -> Result<AppDTO, AppError> {
@@ -36,7 +34,6 @@ pub async fn update_app(
     Ok(store.update(id, req).await?.into())
 }
 
-pub async fn delete_app(store: &dyn AppStore, id: uuid::Uuid) -> Result<MessageResponse, AppError> {
-    store.delete(id).await?;
-    Ok(MessageResponse::success("app deleted"))
+pub async fn delete_app(store: &dyn AppStore, id: uuid::Uuid) -> Result<(), AppError> {
+    store.delete(id).await
 }

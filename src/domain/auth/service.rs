@@ -8,8 +8,6 @@ use crate::shared::constants::identity::PROVIDER_PASSWORD;
 use crate::shared::error::AppError;
 use uuid::Uuid;
 
-pub use crate::domain::user::service::{delete_user, issue_tokens};
-
 pub struct AuthService;
 
 impl AuthService {
@@ -42,26 +40,6 @@ impl AuthService {
             .ok_or(AppError::Unauthorized)?;
 
         identity.credential.ok_or(AppError::Unauthorized)
-    }
-
-    pub async fn register_user_with_password(
-        users: &dyn UserStore,
-        identities: &dyn IdentityStore,
-        username: &str,
-        email: Option<&str>,
-        phone: Option<&str>,
-        nickname: Option<&str>,
-        password: &str,
-    ) -> Result<User, AppError> {
-        let password_hash = crate::domain::credential::service::hash_password(password)?;
-        users
-            .check_new_user_conflicts(username, email, phone)
-            .await?;
-        let user = users
-            .create_with_password(username, email, phone, nickname, &password_hash)
-            .await?;
-        identities.create_password(user.id, &password_hash).await?;
-        Ok(user)
     }
 
     pub async fn authenticate_with_password(
@@ -122,12 +100,10 @@ impl AuthService {
         old_password: &str,
         new_password: &str,
     ) -> Result<(), AppError> {
-        if old_password == new_password {
-            return Err(error::password_must_differ());
-        }
+        crate::domain::credential::service::change_password_rule(old_password, new_password)?;
 
         let credential = Self::load_password_credential(identities, user_id).await?;
-        let valid = crate::shared::crypto::verify_secret(old_password, &credential)?;
+        let valid = crate::domain::credential::service::verify_password(old_password, &credential)?;
         if !valid {
             return Err(error::old_password_incorrect());
         }

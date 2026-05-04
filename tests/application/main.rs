@@ -6,7 +6,10 @@ use common::{
     MemoryAbacStore, MemoryAppStore, MemoryIdentityStore, MemoryOAuth2ClientStore,
     MemoryOAuthTokenStore, MemorySessionStore, MemorySsoStore,
 };
-use pero::application::{password_reset, social_login, sso_login, token_exchange};
+use pero::application::{
+    identity::register as register_use_case, password_reset, social_login, sso_login,
+    token_exchange,
+};
 use pero::domain::app::models::CreateAppRequest;
 use pero::domain::app::repo::AppStore;
 use pero::domain::auth::repo::SessionStore;
@@ -552,7 +555,8 @@ async fn user_service_updates_attributes_and_unbinds_non_password_identity() {
     let sessions = MemorySessionStore::default();
     let tokens = MemoryOAuthTokenStore::default();
     let abac_cache = MemoryAbacStore::default();
-    let response = pero::domain::user::service::register_user(
+    let response = register_use_case::register_user(
+        &users,
         &users,
         &sessions,
         &common::NoopStore,
@@ -668,7 +672,7 @@ async fn auth_service_registers_authenticates_and_changes_password_with_revocati
     let sessions = MemorySessionStore::default();
     let tokens = MemoryOAuthTokenStore::default();
 
-    let user = AuthService::register_user_with_password(
+    let user = register_use_case::register_user_with_password(
         &users,
         &users,
         "auth_user",

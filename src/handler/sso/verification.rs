@@ -200,17 +200,6 @@ pub async fn verify_phone_post(
     Ok(render_tpl(&tpl)?.into_response())
 }
 
-#[utoipa::path(
-    post,
-    path = "/api/identity/send-verify-email",
-    tag = "Identity",
-    security(("bearer_auth" = [])),
-    responses(
-        (status = 200, description = "Verification email sent", body = crate::api::response::MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 409, description = "Email already verified"),
-    )
-)]
 pub async fn send_verify_email_post(
     State(state): State<AppState>,
     auth_user: crate::api::extractors::AuthUser,
@@ -253,17 +242,6 @@ pub async fn send_verify_email_post(
     )))
 }
 
-#[utoipa::path(
-    post,
-    path = "/api/identity/send-verify-phone",
-    tag = "Identity",
-    security(("bearer_auth" = [])),
-    responses(
-        (status = 200, description = "Verification SMS sent", body = crate::api::response::MessageResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 409, description = "Phone already verified"),
-    )
-)]
 pub async fn send_verify_phone_post(
     State(state): State<AppState>,
     auth_user: crate::api::extractors::AuthUser,
