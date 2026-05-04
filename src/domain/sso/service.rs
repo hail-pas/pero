@@ -1,4 +1,4 @@
-use crate::domain::oauth::repo::{OAuth2ClientStore, OAuth2TokenStore};
+use crate::domain::oauth::repo::{AuthorizationCodeStore, OAuth2ClientStore};
 use crate::domain::oauth::service as oauth2_service;
 use crate::domain::sso::models::{ConsentDecision, SsoSession};
 use crate::domain::sso::repo::SsoSessionStore;
@@ -31,7 +31,7 @@ pub async fn handle_consent_action(
     apps: &dyn crate::domain::app::repo::AppStore,
     users: &dyn UserStore,
     sso_store: &dyn SsoSessionStore,
-    tokens: &dyn OAuth2TokenStore,
+    tokens: &dyn AuthorizationCodeStore,
     auth_code_ttl_minutes: i64,
     sid: &str,
     sso: &SsoSession,

@@ -31,7 +31,8 @@ use pero::domain::federation::repo::SocialStore;
 use pero::domain::oauth::entity::{AuthorizationCode, OAuth2Client, RefreshToken, TokenFamily};
 use pero::domain::oauth::models::{CreateClientRequest, UpdateClientRequest};
 use pero::domain::oauth::repo::{
-    AccessTokenParams, CreateAuthCodeParams, OAuth2ClientStore, OAuth2TokenStore, TokenSigner,
+    AccessTokenParams, AuthorizationCodeStore, CreateAuthCodeParams, OAuth2ClientStore,
+    RefreshTokenStore, TokenFamilyStore, TokenSigner,
 };
 use pero::domain::sso::models::SsoSession;
 use pero::domain::sso::repo::SsoSessionStore;
@@ -1145,7 +1146,7 @@ fn clone_refresh_token(token: &RefreshToken) -> RefreshToken {
 }
 
 #[async_trait]
-impl OAuth2TokenStore for MemoryOAuthTokenStore {
+impl AuthorizationCodeStore for MemoryOAuthTokenStore {
     async fn create_auth_code(
         &self,
         params: CreateAuthCodeParams,
@@ -1184,9 +1185,18 @@ impl OAuth2TokenStore for MemoryOAuthTokenStore {
             .filter(|stored| !stored.used && stored.expires_at > Utc::now())
             .map(clone_auth_code))
     }
+
     async fn consume_auth_code(&self, code: &str) -> Result<bool, AppError> {
         Ok(self.auth_codes.lock().unwrap().remove(code).is_some())
     }
+
+    async fn purge_expired_auth_codes(&self) -> Result<u64, AppError> {
+        Ok(0)
+    }
+}
+
+#[async_trait]
+impl RefreshTokenStore for MemoryOAuthTokenStore {
     async fn create_refresh_token(
         &self,
         client_id: Uuid,
@@ -1280,23 +1290,6 @@ impl OAuth2TokenStore for MemoryOAuthTokenStore {
     async fn revoke_for_user(&self, _id: Uuid, _user_id: Uuid) -> Result<(), AppError> {
         Ok(())
     }
-    async fn create_token_family(
-        &self,
-        client_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<TokenFamily, AppError> {
-        Ok(TokenFamily {
-            id: Uuid::new_v4(),
-            client_id,
-            user_id,
-            revoked: false,
-            created_at: Utc::now(),
-        })
-    }
-    async fn revoke_token_family(&self, family_id: Uuid) -> Result<(), AppError> {
-        self.revoked_families.lock().unwrap().insert(family_id);
-        Ok(())
-    }
     async fn exchange_auth_code(
         &self,
         code: &str,
@@ -1377,8 +1370,27 @@ impl OAuth2TokenStore for MemoryOAuthTokenStore {
     async fn purge_expired_tokens(&self) -> Result<u64, AppError> {
         Ok(0)
     }
-    async fn purge_expired_auth_codes(&self) -> Result<u64, AppError> {
-        Ok(0)
+}
+
+#[async_trait]
+impl TokenFamilyStore for MemoryOAuthTokenStore {
+    async fn create_token_family(
+        &self,
+        client_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<TokenFamily, AppError> {
+        Ok(TokenFamily {
+            id: Uuid::new_v4(),
+            client_id,
+            user_id,
+            revoked: false,
+            created_at: Utc::now(),
+        })
+    }
+
+    async fn revoke_token_family(&self, family_id: Uuid) -> Result<(), AppError> {
+        self.revoked_families.lock().unwrap().insert(family_id);
+        Ok(())
     }
 }
 
@@ -1990,9 +2002,24 @@ impl AbacCacheStore for MemoryAbacStore {
         Ok(())
     }
 
-    async fn bump_policy_version(&self, _app_id: Option<Uuid>, _ttl: i64) -> Result<(), AppError> {
+    async fn get_app_policy_version(
+        &self,
+        _app_id: Option<Uuid>,
+    ) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+
+    async fn bump_app_policy_version(
+        &self,
+        _app_id: Option<Uuid>,
+        _ttl: i64,
+    ) -> Result<(), AppError> {
         self.policy_cache.lock().unwrap().clear();
         Ok(())
+    }
+
+    async fn get_user_version(&self, _user_id: Uuid) -> Result<Option<String>, AppError> {
+        Ok(None)
     }
 
     async fn bump_user_version(&self, user_id: Uuid, _ttl: i64) -> Result<(), AppError> {
@@ -2206,8 +2233,21 @@ impl AbacCacheStore for NoopStore {
     ) -> Result<(), AppError> {
         Ok(())
     }
-    async fn bump_policy_version(&self, _app_id: Option<Uuid>, _ttl: i64) -> Result<(), AppError> {
+    async fn get_app_policy_version(
+        &self,
+        _app_id: Option<Uuid>,
+    ) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+    async fn bump_app_policy_version(
+        &self,
+        _app_id: Option<Uuid>,
+        _ttl: i64,
+    ) -> Result<(), AppError> {
         Ok(())
+    }
+    async fn get_user_version(&self, _user_id: Uuid) -> Result<Option<String>, AppError> {
+        Ok(None)
     }
     async fn bump_user_version(&self, _user_id: Uuid, _ttl: i64) -> Result<(), AppError> {
         Ok(())

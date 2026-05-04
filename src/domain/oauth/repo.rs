@@ -47,7 +47,7 @@ pub trait OAuth2ClientStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait OAuth2TokenStore: Send + Sync {
+pub trait AuthorizationCodeStore: Send + Sync {
     async fn create_auth_code(
         &self,
         params: CreateAuthCodeParams,
@@ -57,6 +57,11 @@ pub trait OAuth2TokenStore: Send + Sync {
         code: &str,
     ) -> Result<Option<AuthorizationCode>, AppError>;
     async fn consume_auth_code(&self, code: &str) -> Result<bool, AppError>;
+    async fn purge_expired_auth_codes(&self) -> Result<u64, AppError>;
+}
+
+#[async_trait]
+pub trait RefreshTokenStore: Send + Sync {
     async fn create_refresh_token(
         &self,
         client_id: Uuid,
@@ -84,12 +89,6 @@ pub trait OAuth2TokenStore: Send + Sync {
     async fn revoke_all_for_user(&self, user_id: Uuid) -> Result<(), AppError>;
     async fn list_active_by_user(&self, user_id: Uuid) -> Result<Vec<UserAuthorization>, AppError>;
     async fn revoke_for_user(&self, id: Uuid, user_id: Uuid) -> Result<(), AppError>;
-    async fn create_token_family(
-        &self,
-        client_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<TokenFamily, AppError>;
-    async fn revoke_token_family(&self, family_id: Uuid) -> Result<(), AppError>;
     async fn exchange_auth_code(
         &self,
         code: &str,
@@ -111,7 +110,16 @@ pub trait OAuth2TokenStore: Send + Sync {
     ) -> Result<(RefreshToken, Option<String>), AppError>;
     async fn revoke_token_if_owned(&self, token: &str, client_id: Uuid) -> Result<(), AppError>;
     async fn purge_expired_tokens(&self) -> Result<u64, AppError>;
-    async fn purge_expired_auth_codes(&self) -> Result<u64, AppError>;
+}
+
+#[async_trait]
+pub trait TokenFamilyStore: Send + Sync {
+    async fn create_token_family(
+        &self,
+        client_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<TokenFamily, AppError>;
+    async fn revoke_token_family(&self, family_id: Uuid) -> Result<(), AppError>;
 }
 
 #[async_trait]

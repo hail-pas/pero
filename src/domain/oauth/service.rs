@@ -50,7 +50,10 @@ pub async fn authenticate_client(
         ensure_client_grant_allowed(&client, grant_type)?;
     }
     if !client.verify_secret(client_secret)? {
-        return Err(AppError::Unauthorized);
+        return Err(match invalid_client_error {
+            InvalidClientError::BadRequest => OAuth2Error::InvalidClientCredentials.into(),
+            InvalidClientError::Unauthorized => OAuth2Error::InvalidClientCredentials.into(),
+        });
     }
     if require_enabled {
         ensure_app_enabled(apps, &client).await?;
@@ -65,13 +68,13 @@ pub fn parse_basic_client_auth_header(auth_header: &str) -> Result<(String, Stri
         .ok_or_else(|| OAuth2Error::InvalidAuthHeader)?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(encoded)
-        .map_err(|_| AppError::Unauthorized)?;
-    let decoded_str = String::from_utf8(decoded).map_err(|_| AppError::Unauthorized)?;
+        .map_err(|_| OAuth2Error::InvalidAuthHeader)?;
+    let decoded_str = String::from_utf8(decoded).map_err(|_| OAuth2Error::InvalidAuthHeader)?;
     let mut parts = decoded_str.splitn(2, ':');
     let raw_id = parts.next().unwrap_or("");
     let raw_secret = parts.next().unwrap_or("");
     if raw_id.is_empty() || raw_secret.is_empty() {
-        return Err(AppError::Unauthorized);
+        return Err(OAuth2Error::InvalidAuthHeader.into());
     }
     let client_id = urlencoding::decode(raw_id)
         .map(|s| s.into_owned())

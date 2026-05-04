@@ -96,7 +96,7 @@ pub async fn consent_post(
         &*state.repos.apps,
         &*state.repos.users,
         &*state.repos.sso_sessions,
-        &*state.repos.refresh_tokens,
+        &*state.repos.auth_codes,
         state.config.oauth2.auth_code_ttl_minutes,
         &sid,
         &sso,

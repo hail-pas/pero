@@ -1,5 +1,6 @@
 use super::models::{EvalContext, PolicyCondition, RouteScope};
 use regex::RegexBuilder;
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 const REGEX_SIZE_LIMIT: usize = 1024;
@@ -95,37 +96,66 @@ pub fn evaluate(
         }
     }
 
-    let mut matched_deny = false;
-    let mut matched_allow = false;
+    if policies.is_empty() {
+        return default_action.to_string();
+    }
 
-    for (policy, conditions) in policies {
+    let mut sorted: Vec<_> = policies.to_vec();
+    sorted.sort_by_key(|(p, _)| Reverse(p.priority));
+
+    let mut prev_priority: Option<i32> = None;
+
+    for (i, (policy, conditions)) in sorted.iter().enumerate() {
         if conditions.is_empty() {
-            tracing::warn!(
-                policy_id = %policy.id,
-                "policy has no conditions, skipping evaluation"
-            );
             continue;
         }
         if !is_scope_compatible(policy, ctx) {
             continue;
         }
-        if conditions
-            .iter()
-            .all(|c| eval_condition(c, ctx, &regex_cache))
-        {
-            match policy.effect.as_str() {
-                "deny" => matched_deny = true,
-                _ => matched_allow = true,
+
+        match prev_priority {
+            Some(pp) if pp != policy.priority => {
+                return default_action.to_string();
             }
+            _ => {}
+        }
+        prev_priority = Some(policy.priority);
+
+        let matched = conditions
+            .iter()
+            .all(|c| eval_condition(c, ctx, &regex_cache));
+
+        if !matched {
+            continue;
+        }
+
+        if policy.effect == "deny" {
+            return "deny".to_string();
+        }
+
+        let mut remaining_allow = false;
+        for (next_policy, next_conditions) in &sorted[i + 1..] {
+            if next_policy.priority != policy.priority {
+                break;
+            }
+            if next_conditions.is_empty() || !is_scope_compatible(next_policy, ctx) {
+                continue;
+            }
+            if next_conditions
+                .iter()
+                .all(|c| eval_condition(c, ctx, &regex_cache))
+                && next_policy.effect == "deny"
+            {
+                return "deny".to_string();
+            }
+            remaining_allow = true;
+        }
+
+        if !remaining_allow {
+            return "allow".to_string();
         }
     }
 
-    if matched_deny {
-        return "deny".to_string();
-    }
-    if matched_allow {
-        return "allow".to_string();
-    }
     default_action.to_string()
 }
 

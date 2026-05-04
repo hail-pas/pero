@@ -74,6 +74,12 @@ pub trait AbacCacheStore: Send + Sync {
         policies: &AttachedPolicies,
         ttl: i64,
     ) -> Result<(), AppError>;
-    async fn bump_policy_version(&self, app_id: Option<Uuid>, ttl: i64) -> Result<(), AppError>;
+    async fn get_app_policy_version(
+        &self,
+        app_id: Option<Uuid>,
+    ) -> Result<Option<String>, AppError>;
+    async fn bump_app_policy_version(&self, app_id: Option<Uuid>, ttl: i64)
+        -> Result<(), AppError>;
+    async fn get_user_version(&self, user_id: Uuid) -> Result<Option<String>, AppError>;
     async fn bump_user_version(&self, user_id: Uuid, ttl: i64) -> Result<(), AppError>;
 }

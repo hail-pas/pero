@@ -1,6 +1,6 @@
 use crate::domain::auth::repo::SessionStore;
 use crate::domain::credential::repo::IdentityStore;
-use crate::domain::oauth::repo::OAuth2TokenStore;
+use crate::domain::oauth::repo::RefreshTokenStore;
 use crate::domain::user::repo::UserStore;
 use crate::shared::constants::cache_keys::PASSWORD_RESET_PREFIX;
 use crate::shared::error::AppError;
@@ -29,7 +29,7 @@ pub async fn complete_reset(
     users: &dyn UserStore,
     identities: &dyn IdentityStore,
     sessions: &dyn SessionStore,
-    tokens: &dyn OAuth2TokenStore,
+    tokens: &dyn RefreshTokenStore,
     kv: &dyn KvStore,
     token: &str,
     new_password: &str,

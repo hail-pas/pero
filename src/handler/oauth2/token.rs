@@ -36,6 +36,7 @@ pub async fn token(
     match token_exchange::exchange_token(
         &*state.repos.oauth2_clients,
         &*state.repos.refresh_tokens,
+        &*state.repos.token_families,
         &*state.repos.apps,
         &*state.repos.users,
         &*state.repos.token_signer,

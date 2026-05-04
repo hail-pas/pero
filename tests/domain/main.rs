@@ -16,7 +16,7 @@ use pero::domain::oauth::models::{
     CreateClientRequest, GrantType, RevokeRequest, TokenRequest, UpdateClientRequest,
 };
 use pero::domain::oauth::pkce::verify_pkce;
-use pero::domain::oauth::repo::{CreateAuthCodeParams, OAuth2ClientStore, OAuth2TokenStore};
+use pero::domain::oauth::repo::{AuthorizationCodeStore, CreateAuthCodeParams, OAuth2ClientStore, RefreshTokenStore};
 use pero::domain::oauth::service::{
     ensure_authorization_client_ready, ensure_client_grant_allowed, ensure_redirect_uri_allowed,
     parse_basic_client_auth_header, resolve_client_credentials,
@@ -696,6 +696,7 @@ async fn oauth_token_exchange_authorization_code_success_and_pkce_failure() {
     let response = pero::domain::oauth::token_exchange::exchange_token(
         &clients,
         &tokens,
+        &tokens,
         &apps,
         &users,
         &common::NoopStore,
@@ -737,6 +738,7 @@ async fn oauth_token_exchange_authorization_code_success_and_pkce_failure() {
     assert!(
         pero::domain::oauth::token_exchange::exchange_token(
             &clients,
+            &tokens,
             &tokens,
             &apps,
             &users,
@@ -815,6 +817,7 @@ async fn oauth_token_exchange_rotates_refresh_and_revokes_family_on_replay() {
     let rotated = pero::domain::oauth::token_exchange::exchange_token(
         &clients,
         &tokens,
+        &tokens,
         &apps,
         &users,
         &common::NoopStore,
@@ -839,6 +842,7 @@ async fn oauth_token_exchange_rotates_refresh_and_revokes_family_on_replay() {
     assert!(
         pero::domain::oauth::token_exchange::exchange_token(
             &clients,
+            &tokens,
             &tokens,
             &apps,
             &users,

@@ -186,6 +186,7 @@ pub async fn assign_policy_to_user_in_scope(
     let policy = load_policy_in_scope(policies, policy_id, scope).await?;
     policies.assign_policy(user_id, policy_id).await?;
     invalidate_policy_cache_best_effort(abac_cache, policy.app_id, cache_ttl).await;
+    invalidate_user_cache_best_effort(abac_cache, user_id, cache_ttl).await;
     Ok(())
 }
 
@@ -200,6 +201,7 @@ pub async fn unassign_policy_from_user_in_scope(
     let policy = load_policy_in_scope(policies, policy_id, scope).await?;
     policies.unassign_policy(user_id, policy_id).await?;
     invalidate_policy_cache_best_effort(abac_cache, policy.app_id, cache_ttl).await;
+    invalidate_user_cache_best_effort(abac_cache, user_id, cache_ttl).await;
     Ok(())
 }
 
@@ -271,7 +273,7 @@ pub async fn invalidate_policy_cache_best_effort(
     app_id: Option<Uuid>,
     cache_ttl: i64,
 ) {
-    if let Err(e) = abac_cache.bump_policy_version(app_id, cache_ttl).await {
+    if let Err(e) = abac_cache.bump_app_policy_version(app_id, cache_ttl).await {
         tracing::warn!(error = %e, app_id = ?app_id, "failed to invalidate ABAC policy cache");
     }
 }

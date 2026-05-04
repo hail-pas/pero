@@ -4,12 +4,10 @@ use chrono::{TimeDelta, Utc};
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-use crate::domain::oauth::entity::{
-    AuthorizationCode, OAuth2Client, RefreshToken, TokenFamily, UserAuthorization,
-};
+use crate::domain::oauth::entity::{AuthorizationCode, OAuth2Client, RefreshToken, TokenFamily, UserAuthorization};
 use crate::domain::oauth::models::{CreateClientRequest, UpdateClientRequest};
 use crate::domain::oauth::repo::{
-    AccessTokenParams, CreateAuthCodeParams, OAuth2ClientStore, OAuth2TokenStore, TokenSigner,
+    AccessTokenParams, OAuth2ClientStore, RefreshTokenStore, TokenSigner,
 };
 use crate::infra::jwt::{self, IdTokenClaims};
 use crate::shared::error::{AppError, require_found, require_rows_affected};
@@ -115,54 +113,7 @@ impl OAuth2ClientStore for SqlxOAuth2ClientStore {
 }
 
 #[async_trait::async_trait]
-impl OAuth2TokenStore for SqlxRefreshTokenStore {
-    async fn create_auth_code(
-        &self,
-        params: CreateAuthCodeParams,
-    ) -> Result<AuthorizationCode, AppError> {
-        let expires_at = Utc::now() + TimeDelta::minutes(params.ttl_minutes);
-        let ac = sqlx::query_as::<_, AuthorizationCode>(
-            "INSERT INTO oauth2_authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, nonce, sid, auth_time, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *",
-        )
-        .bind(params.code)
-        .bind(params.client_id)
-        .bind(params.user_id)
-        .bind(params.redirect_uri)
-        .bind(params.scopes)
-        .bind(params.code_challenge)
-        .bind(params.code_challenge_method)
-        .bind(params.nonce)
-        .bind(params.sid)
-        .bind(params.auth_time)
-        .bind(expires_at)
-        .fetch_one(&*self.pool)
-        .await?;
-        Ok(ac)
-    }
-
-    async fn find_active_auth_code(
-        &self,
-        code: &str,
-    ) -> Result<Option<AuthorizationCode>, AppError> {
-        sqlx::query_as::<_, AuthorizationCode>(
-            "SELECT * FROM oauth2_authorization_codes WHERE code = $1 AND used = false AND expires_at > now()",
-        )
-        .bind(code)
-        .fetch_optional(&*self.pool)
-        .await
-        .map_err(Into::into)
-    }
-
-    async fn consume_auth_code(&self, code: &str) -> Result<bool, AppError> {
-        let result = sqlx::query(
-            "UPDATE oauth2_authorization_codes SET used = true WHERE code = $1 AND used = false AND expires_at > now()",
-        )
-        .bind(code)
-        .execute(&*self.pool)
-        .await?;
-        Ok(result.rows_affected() == 1)
-    }
-
+impl RefreshTokenStore for SqlxRefreshTokenStore {
     async fn create_refresh_token(
         &self,
         client_id: Uuid,
@@ -273,33 +224,6 @@ impl OAuth2TokenStore for SqlxRefreshTokenStore {
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound("authorization".into()));
         }
-        Ok(())
-    }
-
-    async fn create_token_family(
-        &self,
-        client_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<TokenFamily, AppError> {
-        sqlx::query_as::<_, TokenFamily>(
-            "INSERT INTO token_families (client_id, user_id) VALUES ($1, $2) RETURNING *",
-        )
-        .bind(client_id)
-        .bind(user_id)
-        .fetch_one(&*self.pool)
-        .await
-        .map_err(Into::into)
-    }
-
-    async fn revoke_token_family(&self, family_id: Uuid) -> Result<(), AppError> {
-        sqlx::query("UPDATE token_families SET revoked = true WHERE id = $1")
-            .bind(family_id)
-            .execute(&*self.pool)
-            .await?;
-        sqlx::query("UPDATE oauth2_tokens SET revoked = true WHERE family_id = $1")
-            .bind(family_id)
-            .execute(&*self.pool)
-            .await?;
         Ok(())
     }
 
@@ -436,12 +360,6 @@ impl OAuth2TokenStore for SqlxRefreshTokenStore {
         Ok(result.rows_affected())
     }
 
-    async fn purge_expired_auth_codes(&self) -> Result<u64, AppError> {
-        let result = sqlx::query("DELETE FROM oauth2_authorization_codes WHERE expires_at < now()")
-            .execute(&*self.pool)
-            .await?;
-        Ok(result.rows_affected())
-    }
 }
 
 pub struct JwtTokenSigner {

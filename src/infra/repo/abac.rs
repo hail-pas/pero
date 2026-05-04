@@ -13,7 +13,7 @@ use crate::domain::abac::repo::{AbacCacheStore, AbacStore};
 use crate::domain::abac::service::AttachedPolicies;
 use crate::infra::cache;
 use crate::shared::cache_keys::abac::{
-    app_version_key, policy_key, policy_version_key, subject_key, subject_version_key,
+    app_policy_version_key, policy_key, subject_key, subject_version_key, user_version_key,
 };
 use crate::shared::error::{AppError, require_found, require_rows_affected};
 use crate::shared::pagination::{POLICIES, offset, paginate};
@@ -330,12 +330,11 @@ impl AbacCacheStore for RedisAbacCacheStore {
         &self,
         user_id: Uuid,
     ) -> Result<Option<HashMap<String, Vec<String>>>, AppError> {
-        read_versioned(
-            &self.pool,
-            &subject_key(user_id),
-            &subject_version_key(user_id),
-        )
-        .await
+        let version: Option<String> = cache::get(&self.pool, &subject_version_key(user_id)).await?;
+        match version {
+            Some(v) => cache::get_json(&self.pool, &subject_key(user_id, &v)).await,
+            None => Ok(None),
+        }
     }
 
     async fn set_subject_attrs(
@@ -344,14 +343,10 @@ impl AbacCacheStore for RedisAbacCacheStore {
         attrs: &HashMap<String, Vec<String>>,
         ttl: i64,
     ) -> Result<(), AppError> {
-        write_versioned(
-            &self.pool,
-            &subject_key(user_id),
-            &subject_version_key(user_id),
-            attrs,
-            ttl,
-        )
-        .await
+        let version = Uuid::new_v4().to_string();
+        cache::set_json(&self.pool, &subject_key(user_id, &version), attrs, ttl).await?;
+        cache::set(&self.pool, &subject_version_key(user_id), &version, ttl).await?;
+        Ok(())
     }
 
     async fn get_policies(
@@ -359,12 +354,21 @@ impl AbacCacheStore for RedisAbacCacheStore {
         user_id: Uuid,
         app_id: Option<Uuid>,
     ) -> Result<Option<AttachedPolicies>, AppError> {
-        read_versioned(
-            &self.pool,
-            &policy_key(user_id, app_id),
-            &policy_version_key(user_id, app_id),
-        )
-        .await
+        let app_pv = self
+            .get_app_policy_version(app_id)
+            .await?
+            .unwrap_or_default();
+        let uv: Option<String> = cache::get(&self.pool, &user_version_key(user_id)).await?;
+        match uv {
+            Some(user_v) => {
+                cache::get_json(
+                    &self.pool,
+                    &policy_key(user_id, app_id, &app_pv, &user_v),
+                )
+                .await
+            }
+            None => Ok(None),
+        }
     }
 
     async fn set_policies(
@@ -374,62 +378,56 @@ impl AbacCacheStore for RedisAbacCacheStore {
         policies: &AttachedPolicies,
         ttl: i64,
     ) -> Result<(), AppError> {
-        write_versioned(
+        let app_pv = self
+            .get_app_policy_version(app_id)
+            .await?
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let uv: String = cache::get(&self.pool, &user_version_key(user_id))
+            .await?
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        cache::set_json(
             &self.pool,
-            &policy_key(user_id, app_id),
-            &policy_version_key(user_id, app_id),
+            &policy_key(user_id, app_id, &app_pv, &uv),
             policies,
             ttl,
         )
         .await
     }
 
-    async fn bump_policy_version(&self, app_id: Option<Uuid>, ttl: i64) -> Result<(), AppError> {
+    async fn get_app_policy_version(
+        &self,
+        app_id: Option<Uuid>,
+    ) -> Result<Option<String>, AppError> {
+        cache::get(&self.pool, &app_policy_version_key(app_id)).await
+    }
+
+    async fn bump_app_policy_version(
+        &self,
+        app_id: Option<Uuid>,
+        ttl: i64,
+    ) -> Result<(), AppError> {
         let new_version = Uuid::new_v4().to_string();
-        cache::set(&self.pool, &app_version_key(app_id), &new_version, ttl).await
+        cache::set(
+            &self.pool,
+            &app_policy_version_key(app_id),
+            &new_version,
+            ttl,
+        )
+        .await
+    }
+
+    async fn get_user_version(&self, user_id: Uuid) -> Result<Option<String>, AppError> {
+        cache::get(&self.pool, &user_version_key(user_id)).await
     }
 
     async fn bump_user_version(&self, user_id: Uuid, ttl: i64) -> Result<(), AppError> {
-        {
-            let new_version = Uuid::new_v4().to_string();
-            cache::set(
-                &self.pool,
-                &policy_version_key(user_id, None),
-                &new_version,
-                ttl,
-            )
-            .await?;
-        }
         let new_version = Uuid::new_v4().to_string();
-        cache::set(&self.pool, &subject_version_key(user_id), &new_version, ttl).await
+        cache::set(
+            &self.pool,
+            &user_version_key(user_id),
+            &new_version,
+            ttl,
+        )
+        .await
     }
-}
-
-async fn read_versioned<T: serde::de::DeserializeOwned>(
-    pool: &cache::Pool,
-    base_key: &str,
-    version_key: &str,
-) -> Result<Option<T>, AppError> {
-    let version: Option<String> = cache::get(pool, version_key).await?;
-    match version {
-        Some(v) => {
-            let keyed = format!("{}:{}", base_key, v);
-            cache::get_json(pool, &keyed).await
-        }
-        None => Ok(None),
-    }
-}
-
-async fn write_versioned<T: serde::Serialize>(
-    pool: &cache::Pool,
-    base_key: &str,
-    version_key: &str,
-    value: &T,
-    ttl: i64,
-) -> Result<(), AppError> {
-    let version = Uuid::new_v4().to_string();
-    let keyed = format!("{}:{}", base_key, version);
-    cache::set_json(pool, &keyed, value, ttl).await?;
-    cache::set(pool, version_key, &version, ttl).await?;
-    Ok(())
 }

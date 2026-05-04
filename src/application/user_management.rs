@@ -1,12 +1,12 @@
 use crate::domain::auth::repo::SessionStore;
-use crate::domain::oauth::repo::OAuth2TokenStore;
+use crate::domain::oauth::repo::RefreshTokenStore;
 use crate::domain::user::repo::UserStore;
 use crate::shared::error::AppError;
 
 pub async fn disable_user(
     users: &dyn UserStore,
     sessions: &dyn SessionStore,
-    tokens: &dyn OAuth2TokenStore,
+    tokens: &dyn RefreshTokenStore,
     user_id: uuid::Uuid,
 ) -> Result<(), AppError> {
     users.delete(user_id).await?;

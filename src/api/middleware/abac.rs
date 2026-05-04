@@ -1,6 +1,6 @@
 use crate::domain::abac::engine;
 use crate::domain::abac::models::{EvalContext, RouteScope};
-use crate::domain::abac::resource::{Action, Resource};
+use crate::domain::abac::resource::AbacRouteContext;
 use crate::domain::abac::service;
 use crate::infra::jwt::TokenClaims;
 use crate::shared::constants::headers;
@@ -75,26 +75,32 @@ pub async fn abac_middleware(
     )
     .await?;
 
-    let domain_resource = Resource::from_path(&path);
-    let domain_action = Action::from_method_and_path(req.method().as_str(), &path);
+    let ctx = req
+        .extensions()
+        .get::<AbacRouteContext>()
+        .cloned()
+        .ok_or_else(|| {
+            tracing::error!(path = %path, "ABAC route missing explicit AbacRouteContext");
+            AppError::Internal("route not configured for ABAC".into())
+        })?;
 
-    let ctx = EvalContext {
+    let eval_ctx = EvalContext {
         subject_attrs,
         resource: path,
         action: req.method().to_string(),
-        domain_resource: Some(domain_resource),
-        domain_action: Some(domain_action),
+        domain_resource: Some(ctx.resource),
+        domain_action: Some(ctx.action),
         app_id,
         route_scope,
     };
 
-    let effect = engine::evaluate(&policies, &ctx, &state.config.abac.default_action);
+    let effect = engine::evaluate(&policies, &eval_ctx, &state.config.abac.default_action);
 
     if effect != "allow" {
         tracing::warn!(
             user_id = %claims.sub,
-            resource = %ctx.resource,
-            action = %ctx.action,
+            resource = %eval_ctx.resource,
+            action = %eval_ctx.action,
             app_id = ?app_id,
             "ABAC denied access"
         );

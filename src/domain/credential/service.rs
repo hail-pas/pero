@@ -1,7 +1,7 @@
 use crate::domain::abac;
 use crate::domain::auth::repo::SessionStore;
 use crate::domain::credential::repo::IdentityStore;
-use crate::domain::oauth::repo::{OAuth2TokenStore, TokenSigner};
+use crate::domain::oauth::repo::{RefreshTokenStore, TokenSigner};
 use crate::domain::user::error;
 use crate::domain::user::models::{
     BindRequest, CreateUserRequest, Identity, RegisterRequest, TokenResponse, UpdateMeRequest,
@@ -151,7 +151,7 @@ pub async fn get_user(users: &dyn UserStore, id: uuid::Uuid) -> Result<UserDTO, 
 pub async fn update_user(
     users: &dyn UserStore,
     sessions_store: &dyn SessionStore,
-    token_store: &dyn OAuth2TokenStore,
+    token_store: &dyn RefreshTokenStore,
     id: uuid::Uuid,
     req: &UpdateUserRequest,
 ) -> Result<UserDTO, AppError> {
@@ -197,7 +197,7 @@ pub async fn update_user(
 pub async fn delete_user(
     users: &dyn UserStore,
     sessions_store: &dyn SessionStore,
-    token_store: &dyn OAuth2TokenStore,
+    token_store: &dyn RefreshTokenStore,
     id: uuid::Uuid,
 ) -> Result<MessageResponse, AppError> {
     users.delete(id).await?;

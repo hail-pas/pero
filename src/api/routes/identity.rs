@@ -1,6 +1,7 @@
+use crate::domain::abac::resource::{AbacContextExt, Action, Resource};
 use crate::shared::state::AppState;
-use axum::Router;
 use axum::routing::{delete, get, post, put};
+use axum::Router;
 
 pub fn public_routes() -> Router<AppState> {
     Router::new()
@@ -152,21 +153,41 @@ pub fn admin_routes() -> Router<AppState> {
         .route(
             "/api/users",
             post(crate::handler::identity::registration::create_user)
-                .get(crate::handler::identity::profile::list_users),
+                .abac_context(Resource::User, Action::Create),
+        )
+        .route(
+            "/api/users",
+            get(crate::handler::identity::profile::list_users)
+                .abac_context(Resource::User, Action::List),
         )
         .route(
             "/api/users/{id}",
             get(crate::handler::identity::profile::get_user)
-                .put(crate::handler::identity::profile::update_user)
-                .delete(crate::handler::identity::profile::delete_user),
+                .abac_context(Resource::User, Action::Read),
+        )
+        .route(
+            "/api/users/{id}",
+            put(crate::handler::identity::profile::update_user)
+                .abac_context(Resource::User, Action::Update),
+        )
+        .route(
+            "/api/users/{id}",
+            delete(crate::handler::identity::profile::delete_user)
+                .abac_context(Resource::User, Action::Delete),
         )
         .route(
             "/api/users/{id}/attributes",
             get(crate::handler::identity::user_attrs::list_attributes)
-                .put(crate::handler::identity::user_attrs::set_attributes),
+                .abac_context(Resource::User, Action::Read),
+        )
+        .route(
+            "/api/users/{id}/attributes",
+            put(crate::handler::identity::user_attrs::set_attributes)
+                .abac_context(Resource::User, Action::Update),
         )
         .route(
             "/api/users/{id}/attributes/{key}",
-            delete(crate::handler::identity::user_attrs::delete_attribute),
+            delete(crate::handler::identity::user_attrs::delete_attribute)
+                .abac_context(Resource::User, Action::Delete),
         )
 }

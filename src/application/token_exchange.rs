@@ -1,12 +1,13 @@
 use crate::domain::app::repo::AppStore;
 use crate::domain::oauth::models::{RevokeRequest, TokenRequest, TokenResponse};
-use crate::domain::oauth::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
+use crate::domain::oauth::repo::{OAuth2ClientStore, RefreshTokenStore, TokenFamilyStore, TokenSigner};
 use crate::domain::user::repo::UserStore;
 use crate::shared::error::AppError;
 
 pub async fn exchange_token(
     clients: &dyn OAuth2ClientStore,
-    tokens: &dyn OAuth2TokenStore,
+    refresh_tokens: &dyn RefreshTokenStore,
+    token_families: &dyn TokenFamilyStore,
     apps: &dyn AppStore,
     users: &dyn UserStore,
     signer: &dyn TokenSigner,
@@ -17,7 +18,8 @@ pub async fn exchange_token(
 ) -> Result<TokenResponse, AppError> {
     crate::domain::oauth::token_exchange::exchange_token(
         clients,
-        tokens,
+        refresh_tokens,
+        token_families,
         apps,
         users,
         signer,
@@ -31,7 +33,8 @@ pub async fn exchange_token(
 
 pub async fn exchange_authorization_code(
     clients: &dyn OAuth2ClientStore,
-    tokens: &dyn OAuth2TokenStore,
+    refresh_tokens: &dyn RefreshTokenStore,
+    token_families: &dyn TokenFamilyStore,
     apps: &dyn AppStore,
     users: &dyn UserStore,
     signer: &dyn TokenSigner,
@@ -42,7 +45,8 @@ pub async fn exchange_authorization_code(
 ) -> Result<TokenResponse, AppError> {
     exchange_token(
         clients,
-        tokens,
+        refresh_tokens,
+        token_families,
         apps,
         users,
         signer,
@@ -56,7 +60,8 @@ pub async fn exchange_authorization_code(
 
 pub async fn rotate_refresh_token(
     clients: &dyn OAuth2ClientStore,
-    tokens: &dyn OAuth2TokenStore,
+    refresh_tokens: &dyn RefreshTokenStore,
+    token_families: &dyn TokenFamilyStore,
     apps: &dyn AppStore,
     users: &dyn UserStore,
     signer: &dyn TokenSigner,
@@ -67,7 +72,8 @@ pub async fn rotate_refresh_token(
 ) -> Result<TokenResponse, AppError> {
     exchange_token(
         clients,
-        tokens,
+        refresh_tokens,
+        token_families,
         apps,
         users,
         signer,
@@ -81,9 +87,9 @@ pub async fn rotate_refresh_token(
 
 pub async fn revoke_token(
     clients: &dyn OAuth2ClientStore,
-    tokens: &dyn OAuth2TokenStore,
+    refresh_tokens: &dyn RefreshTokenStore,
     apps: &dyn AppStore,
     req: &RevokeRequest,
 ) -> Result<(), AppError> {
-    crate::domain::oauth::token_exchange::revoke_token(clients, tokens, apps, req).await
+    crate::domain::oauth::token_exchange::revoke_token(clients, refresh_tokens, apps, req).await
 }

@@ -50,7 +50,10 @@ pub async fn authenticate_client(
         ensure_client_grant_allowed(&client, grant_type)?;
     }
     if !client.verify_secret(client_secret)? {
-        return Err(AppError::Unauthorized);
+        return Err(match invalid_client_error {
+            InvalidClientError::BadRequest => OAuth2Error::InvalidClientCredentials.into(),
+            InvalidClientError::Unauthorized => OAuth2Error::InvalidClientCredentials.into(),
+        });
     }
     if require_enabled {
         ensure_app_enabled(apps, &client).await?;

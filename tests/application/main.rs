@@ -407,6 +407,7 @@ async fn token_exchange_application_wrappers_return_validation_errors_fast() {
         token_exchange::exchange_authorization_code(
             &noop,
             &tokens,
+            &tokens,
             &noop,
             &users,
             &noop,
@@ -431,6 +432,7 @@ async fn token_exchange_application_wrappers_return_validation_errors_fast() {
     assert!(
         token_exchange::rotate_refresh_token(
             &noop,
+            &tokens,
             &tokens,
             &noop,
             &users,

@@ -5,7 +5,9 @@ use crate::domain::auth::repo::SessionStore;
 use crate::domain::credential::repo::IdentityStore;
 use crate::domain::federation::http::HttpClient;
 use crate::domain::federation::repo::SocialStore;
-use crate::domain::oauth::repo::{OAuth2ClientStore, OAuth2TokenStore, TokenSigner};
+use crate::domain::oauth::repo::{
+    AuthorizationCodeStore, OAuth2ClientStore, RefreshTokenStore, TokenFamilyStore, TokenSigner,
+};
 use crate::domain::sso::repo::SsoSessionStore;
 use crate::domain::user::repo::{UserAttributeStore, UserStore};
 use crate::infra::jwt::JwtKeys;
@@ -23,9 +25,9 @@ pub struct Repos {
     pub policies: Arc<dyn AbacStore>,
     pub abac_cache: Arc<dyn AbacCacheStore>,
     pub oauth2_clients: Arc<dyn OAuth2ClientStore>,
-    pub auth_codes: Arc<dyn OAuth2TokenStore>,
-    pub token_families: Arc<dyn OAuth2TokenStore>,
-    pub refresh_tokens: Arc<dyn OAuth2TokenStore>,
+    pub auth_codes: Arc<dyn AuthorizationCodeStore>,
+    pub token_families: Arc<dyn TokenFamilyStore>,
+    pub refresh_tokens: Arc<dyn RefreshTokenStore>,
     pub social: Arc<dyn SocialStore>,
     pub apps: Arc<dyn AppStore>,
     pub kv: Arc<dyn KvStore>,

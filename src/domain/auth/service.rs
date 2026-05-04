@@ -1,6 +1,6 @@
 use crate::domain::auth::repo::SessionStore;
 use crate::domain::credential::repo::IdentityStore;
-use crate::domain::oauth::repo::OAuth2TokenStore;
+use crate::domain::oauth::repo::RefreshTokenStore;
 use crate::domain::user::error;
 use crate::domain::user::models::{IdentifierType, User};
 use crate::domain::user::repo::UserStore;
@@ -117,7 +117,7 @@ impl AuthService {
         _users: &dyn UserStore,
         identities: &dyn IdentityStore,
         sessions_store: &dyn SessionStore,
-        token_store: &dyn OAuth2TokenStore,
+        token_store: &dyn RefreshTokenStore,
         user_id: Uuid,
         old_password: &str,
         new_password: &str,

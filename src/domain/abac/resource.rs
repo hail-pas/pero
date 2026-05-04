@@ -64,7 +64,8 @@ impl Action {
     pub fn from_method_and_path(method: &str, path: &str) -> Self {
         match (method, path) {
             ("POST", p) if p.contains("/assign") => Action::Assign,
-            ("DELETE", p) if p.contains("/policies") => Action::Unassign,
+            ("POST", p) if p.contains("/policies") && p.contains("/users") => Action::Assign,
+            ("DELETE", p) if p.contains("/policies") && p.contains("/users") => Action::Unassign,
             ("POST", _) => Action::Create,
             ("GET", p) => {
                 if !p.contains("/{")
@@ -95,6 +96,34 @@ impl Action {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AbacRouteContext {
+    pub resource: Resource,
+    pub action: Action,
+}
+
 fn matches_resource_id(path: &str) -> bool {
     path.matches('/').count() > 3
+}
+
+pub trait AbacContextExt<S>: Sized {
+    fn abac_context(self, resource: Resource, action: Action) -> Self;
+}
+
+impl<S> AbacContextExt<S> for axum::routing::MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    fn abac_context(self, resource: Resource, action: Action) -> Self {
+        self.layer(axum::middleware::from_fn(
+            move |mut req: axum::extract::Request, next: axum::middleware::Next| {
+                let ctx = AbacRouteContext {
+                    resource: resource.clone(),
+                    action: action.clone(),
+                };
+                req.extensions_mut().insert(ctx);
+                async move { next.run(req).await }
+            },
+        ))
+    }
 }

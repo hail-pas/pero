@@ -1,5 +1,5 @@
 use crate::domain::auth::repo::SessionStore;
-use crate::domain::oauth::repo::OAuth2TokenStore;
+use crate::domain::oauth::repo::RefreshTokenStore;
 use crate::shared::error::AppError;
 use uuid::Uuid;
 
@@ -12,7 +12,7 @@ impl SessionBinding {
     pub async fn revoke_all(
         &self,
         sessions: &dyn SessionStore,
-        tokens: &dyn OAuth2TokenStore,
+        tokens: &dyn RefreshTokenStore,
     ) -> Result<(), AppError> {
         if let Some(ref sid) = self.session_id {
             let _ = sessions.revoke(sid).await;
