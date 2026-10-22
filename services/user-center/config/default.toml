@@ -1,0 +1,69 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+request_body_limit_bytes = 1048576
+# Select the only header sanitized by trusted_proxies; no fallback to other headers.
+client_ip_header = "x_forwarded_for"
+
+[database]
+url = ""
+max_connections = 20
+min_connections = 5
+encrypt_key = ""
+
+[redis]
+url = ""
+pool_size = 10
+
+[log]
+level = "info"
+format = "json"
+dir = "./logs"
+rotation = "daily"
+
+[oidc]
+issuer = ""
+
+[oauth2]
+# 0 preserves per-login upstream JWKS checks; opt in to at most 300 seconds.
+upstream_jwks_cache_ttl_seconds = 0
+auth_code_ttl_seconds = 600
+default_access_token_ttl_seconds = 7200
+default_refresh_token_ttl_days = 30
+default_id_token_ttl_seconds = 7200
+
+[sso]
+base_url = ""
+session_ttl_seconds = 600
+cookie_secure = true
+cookie_same_site = "Lax"
+cookie_signing_secret = ""
+
+[password]
+min_length = 8
+max_length = 128
+require_uppercase = true
+require_lowercase = true
+require_digit = true
+require_special = false
+
+[password_reset]
+signing_key = ""
+ttl_seconds = 3600
+
+[i18n]
+default_locale = "en"
+available_locales = ["zh", "en"]
+fallback_locale = "en"
+
+[askama]
+static_dir = "ui/static"
+static_url_prefix = "/static"
+
+[http_config]
+
+[notification]
+# HTTPS gateway accepting the documented JSON payload and Idempotency-Key header.
+# Empty disables recovery/contact notification submission rather than pretending to send.
+endpoint = ""
+bearer_token = ""

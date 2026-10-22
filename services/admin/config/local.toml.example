@@ -1,0 +1,9 @@
+[oauth2]
+issuer = "http://localhost:8080"
+client_id = "admin-panel-client"
+client_secret = "" # Set the registered client secret
+redirect_uri = "http://localhost:3000/callback"
+post_logout_redirect_uri = "http://localhost:3000"
+
+[cookie]
+secure = false

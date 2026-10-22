@@ -1,0 +1,25 @@
+**
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+!services/
+!services/**
+!scripts/
+!scripts/migrate.sh
+!scripts/package-ui-assets.py
+!deploy/
+!deploy/pero/
+!deploy/pero/initialize.py
+# Exclude service-local secrets even when present in a source checkout.
+services/**/config/**
+!services/**/config/default.toml
+!services/**/config/*.example
+**/*.pem
+**/*.key
+**/.DS_Store
+**/.env
+**/.env.*
+**/keys/
+**/logs/
+**/target/

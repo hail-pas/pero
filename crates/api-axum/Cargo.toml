@@ -1,0 +1,27 @@
+[package]
+name = "pero-api-axum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+pero-error.workspace = true
+pero-config.workspace = true
+pero-types.workspace = true
+pero-validate-core.workspace = true
+pero-utils.workspace = true
+
+axum.workspace = true
+axum-extra.workspace = true
+askama.workspace = true
+cookie.workspace = true
+ipnetwork.workspace = true
+time.workspace = true
+tower-http = { workspace = true, features = ["cors", "request-id", "trace"] }
+tower = "0.5"
+

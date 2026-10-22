@@ -1,0 +1,35 @@
+name: pero
+services:
+  pero:
+    image: pero-user-center:local
+    platform: linux/amd64
+    build:
+      context: ../source
+      dockerfile: deploy/pero/Dockerfile
+    container_name: pero-user-center
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      PERO_RUN_MODE: production
+    volumes:
+      - ./config:/opt/pero/config:ro
+      - ./logs:/opt/pero/logs
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "3", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,25 @@
+# Private deployment overrides. Copy outside Git, e.g. local/deploy/pero/config/production.toml.
+# The packager overlays these values onto the current source default.toml.
+[database]
+url = "postgres://postgres:REPLACE_DATABASE_PASSWORD@127.0.0.1:5432/pero"
+encrypt_key = "REPLACE_DATABASE_ENCRYPTION_KEY"
+
+[redis]
+url = "redis://127.0.0.1:6379/0"
+
+[oidc]
+issuer = "https://auth.example.com"
+
+[sso]
+base_url = "https://auth.example.com"
+cookie_secure = true
+cookie_signing_secret = "REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_CHARS"
+
+[password_reset]
+signing_key = "REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET_AT_LEAST_32_CHARS"
+
+[askama]
+static_dir = "prd/ui/static"
+
+[log]
+dir = "./logs/prd"

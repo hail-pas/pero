@@ -1,0 +1,95 @@
+[workspace]
+members = [
+    "crates/api-axum",
+    "crates/cache-redis",
+    "crates/config",
+    "crates/error",
+    "crates/http-client-core",
+    "crates/http-client-reqwest",
+    "crates/types",
+    "crates/utils",
+    "crates/validate-core",
+    "crates/validate-validator",
+    "crates/db-seaorm",
+    "services/user-center",
+    "services/admin",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Crypto & Auth
+jsonwebtoken = { version = "11.1", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+argon2 = "0.5"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.9"
+bcrypt = "0.19.3"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Web
+axum = { version = "0.8", features = ["json", "form"] }
+tower = "0.5"
+tower-http = "0.6"
+reqwest = { version = "0.13.5", default-features = false }
+http = "1.4.0"
+webpki-root-certs = "1"
+toml = "1.1.6"
+validator = { version = "0.20", features = ["derive"] }
+url = "2"
+# Use the default templates/ directory; config would pull in unmaintained basic-toml.
+askama = { version = "0.15", default-features = false, features = ["derive", "std", "urlencode"] }
+cookie = "0.18"
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+time = "0.3"
+ipnetwork = { version = "0.21", features = ["serde"] }
+
+# Database
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres"] }
+sea-orm = { version = "2.0.4", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "with-uuid", "with-time", "with-json", "with-ipnetwork"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# i18n
+rust-i18n = { version = "4.2.2", features = ["load-path"] }
+
+
+pero-api-axum = { path = "crates/api-axum" }
+pero-config = { path = "crates/config" }
+pero-error = { path = "crates/error" }
+pero-types = { path = "crates/types" }
+pero-validate-core = { path = "crates/validate-core" }
+pero-validate-validator = { path = "crates/validate-validator" }
+pero-cache-redis = { path = "crates/cache-redis" }
+pero-db-seaorm = { path = "crates/db-seaorm" }
+pero-http-client-core = { path = "crates/http-client-core" }
+pero-http-client-reqwest = { path = "crates/http-client-reqwest" }
+pero-utils = { path = "crates/utils" }

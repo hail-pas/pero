@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-brand">管理后台</div>
+        <div class="navbar-user">
+            {% if !picture.is_empty() %}
+            <img src="{{ picture }}" alt="avatar" class="avatar">
+            {% endif %}
+            <span>{{ username }}</span>
+            <form method="POST" action="/logout" style="display:inline">
+                <button type="submit" class="btn btn-sm btn-outline">退出</button>
+            </form>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="card-grid">
+            <div class="card">
+                <h3>个人信息</h3>
+                <p>用户名: {{ username }}</p>
+                {% if !email.is_empty() %}
+                <p>邮箱: {{ email }}</p>
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <h3>账户管理</h3>
+                <ul class="link-list">
+                    <li><a href="{{ profile_url }}" target="_blank">个人资料设置</a></li>
+                    <li><a href="{{ password_url }}" target="_blank">修改密码</a></li>
+                    <li><a href="{{ issuer }}/account/profile" target="_blank">邮箱/手机管理</a></li>
+                </ul>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

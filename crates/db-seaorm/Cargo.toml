@@ -1,0 +1,14 @@
+[package]
+name = "pero-db-seaorm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pero-types.workspace = true
+pero-validate-core.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+tracing.workspace = true
+

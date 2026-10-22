@@ -1,0 +1,17 @@
+[package]
+name = "pero-http-client-reqwest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pero-http-client-core.workspace = true
+pero-error.workspace = true
+pero-validate-core.workspace = true
+async-trait.workspace = true
+http.workspace = true
+webpki-root-certs.workspace = true
+reqwest = { workspace = true, features = ["http2", "rustls"] }
+tokio = { workspace = true, features = ["time"] }
+pero-utils.workspace = true

@@ -1,0 +1,27 @@
+{% extends "layouts/account.html" %}
+{% block title %}Pero · Verify Contact{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1 data-i18n="verify.title">验证联系方式</h1><p data-i18n="verify.subtitle">请输入收到的验证码完成验证</p></div></div>
+<section class="card-panel form-card">
+  <div class="notice info">
+    <span>{% if change_type == "email" %}📧{% else %}📱{% endif %}</span>
+    <span>
+      {% if change_type == "email" %}
+        <span data-i18n="verify.sentToEmail">验证码已发送到</span>
+      {% else %}
+        <span data-i18n="verify.sentToPhone">验证码已发送到</span>
+      {% endif %}
+      <strong>{{ masked_value }}</strong>
+    </span>
+  </div>
+  <form class="stack" method="post" action="/account/profile/verify-contact" data-ajax-form data-redirect="/account/profile" data-toast-i18n="toast.verifySuccess" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="nonce" value="{{ nonce }}" />
+    <label class="field"><span data-i18n="field.verificationCode">验证码</span><input name="code" type="text" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" required placeholder="请输入6位验证码" data-i18n-placeholder="field.codePlaceholder" autocomplete="one-time-code" /></label>
+    <div class="button-row">
+      <button class="btn primary" type="submit" data-i18n="common.submit">提交验证</button>
+      <button class="btn danger" type="button" data-post-action="/account/profile/cancel-contact" data-post-field="nonce" data-post-value="{{ nonce }}" data-redirect="/account/profile" data-toast-i18n="toast.cancelled" data-i18n="verify.cancel">撤销变更</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

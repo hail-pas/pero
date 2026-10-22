@@ -1,0 +1,139 @@
+{% extends "layouts/dashboard.html" %}
+
+{% block title %}{{ user.username }} - 用户详情{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>{{ user.username }}</h1>
+    <p>{% if user.nickname.is_some() %}{{ user.nickname.as_ref().unwrap() }}{% endif %}</p>
+  </div>
+  <div style="display: flex; gap: 8px;">
+    <a href="/dashboard/users/{{ user.id }}/edit" class="btn secondary" data-i18n="dash.edit">编辑</a>
+    <button type="button" class="btn small" data-dialog-open="reset-password" data-i18n="dash.user.resetPassword">重置密码</button>
+    <button type="button" class="btn small" data-dialog-open="set-status" data-i18n="dash.user.setStatus">修改状态</button>
+  </div>
+</div>
+
+<div class="card-panel" style="margin-bottom: 16px;">
+  <div class="section-heading"><h2 data-i18n="dash.user.basicInfo">基本信息</h2></div>
+  <dl class="profile-meta">
+    <dt data-i18n="dash.user.username">用户名</dt><dd>{{ user.username }}</dd>
+    <dt data-i18n="dash.user.email">邮箱</dt>
+    <dd>
+      {{ user.email.as_deref().unwrap_or_default() }}
+      {% if user.email_verified_at.is_some() %}<span class="badge success" data-i18n="dash.user.verified">已验证</span>{% endif %}
+    </dd>
+    <dt data-i18n="dash.user.phone">手机</dt>
+    <dd>
+      {{ user.phone.as_deref().unwrap_or_default() }}
+      {% if user.phone_verified_at.is_some() %}<span class="badge success" data-i18n="dash.user.verified">已验证</span>{% endif %}
+    </dd>
+    <dt data-i18n="dash.user.status">状态</dt>
+    <dd><span class="badge {% if user.status == "active" %}success{% else if user.status == "locked" %}warning{% else %}danger{% endif %}"><span data-i18n="{% if user.status == "active" %}dash.active{% else if user.status == "locked" %}dash.locked{% else %}dash.disabled{% endif %}">{% if user.status == "active" %}正常{% else if user.status == "locked" %}锁定{% else %}禁用{% endif %}</span></span></dd>
+    <dt data-i18n="dash.user.createdAt">创建时间</dt><dd><time data-local-ts="{{ user.created_at }}">{{ user.created_at }}</time></dd>
+  </dl>
+</div>
+
+<div class="card-panel" style="margin-bottom: 16px;">
+  <div class="section-heading"><h2 data-i18n="dash.user.identities">登录身份</h2></div>
+  {% if identities.is_empty() %}
+  <div style="padding: 16px; color: var(--muted);" data-i18n="dash.user.noIdentities">无登录身份</div>
+  {% else %}
+  {% for id in identities %}
+  <div style="display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px;">
+    <span class="badge {% if id.kind == "password" %}info{% else %}verified{% endif %}"><span data-i18n="{% if id.kind == "password" %}dash.user.identityPassword{% else %}dash.user.identityOAuth{% endif %}">{% if id.kind == "password" %}密码{% else %}OAuth{% endif %}</span></span>
+    <span>{{ id.provider_name }}</span>
+    {% if id.last_login_at.is_some() %}<span style="color: var(--muted); font-size: 13px; margin-left: auto;"><span data-i18n="dash.lastLogin">最后登录</span>: <time data-local-ts="{{ id.last_login_at.as_ref().unwrap() }}">{{ id.last_login_at.as_ref().unwrap() }}</time></span>{% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+<div class="card-panel">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+    <div class="section-heading" style="margin-bottom: 0;"><h2 data-i18n="dash.user.appAccess">应用访问权限</h2></div>
+    <button type="button" class="btn small primary" data-dialog-open="grant-app" data-i18n="dash.user.grantAccess">授予访问</button>
+  </div>
+
+  {% if access_list.is_empty() %}
+  <div style="padding: 16px; color: var(--muted);" data-i18n="dash.user.noAccess">无应用访问权限</div>
+  {% else %}
+  {% for a in access_list %}
+  <div style="display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px;">
+    <div style="flex: 1;">
+      <strong>{{ a.app_name }}</strong>
+      <span style="color: var(--muted); margin-left: 6px;">{{ a.app_code }}</span>
+    </div>
+    <span class="badge {% if a.status == "active" %}success{% else %}danger{% endif %}"><span data-i18n="{% if a.status == "active" %}dash.user.authorized{% else %}dash.disabled_{% endif %}">{% if a.status == "active" %}已授权{% else %}已禁用{% endif %}</span></span>
+    <button type="button" class="btn tiny danger-outline"
+      data-post-action="/dashboard/users/{{ user.id }}/revoke-app"
+      data-post-field="app_id" data-post-value="{{ a.app_id }}"
+      data-reload="true"><span data-i18n="dash.revoke">撤销</span></button>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+{# Dialog: Reset Password #}
+<div data-dialog="reset-password" class="dialog-panel">
+  <h3 data-i18n="dash.user.resetPassword">重置密码</h3>
+  <p><span data-i18n="dash.setPasswordFor">为用户</span> <strong>{{ user.username }}</strong> </p>
+  <form method="post" action="/dashboard/users/{{ user.id }}/reset-password" data-ajax-form data-toast-i18n="toast.saved" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="stack">
+      <label class="field"><span data-i18n="dash.user.newPassword">新密码</span><input name="new_password" type="password" required data-password-strength /></label>
+      <div class="password-meter" data-password-meter><span></span><span></span><span></span><span></span></div>
+      <div class="button-row center">
+        <button type="button" class="btn secondary" data-dialog-close data-i18n="dash.cancel">取消</button>
+        <button type="submit" class="btn primary" data-i18n="dash.confirm">确认重置</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+{# Dialog: Set Status #}
+<div data-dialog="set-status" class="dialog-panel">
+  <h3 data-i18n="dash.user.setStatusTitle">修改用户状态</h3>
+  <form method="post" action="/dashboard/users/{{ user.id }}/set-status" data-ajax-form data-toast-i18n="toast.saved" data-reload="true" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="stack">
+      <label class="field">
+        <span data-i18n="dash.user.status">状态</span>
+        <select name="status">
+          <option value="active" data-i18n="dash.active" {% if user.status == "active" %}selected{% endif %}>正常</option>
+          <option value="disabled" data-i18n="dash.disabled" {% if user.status == "disabled" %}selected{% endif %}>禁用</option>
+          <option value="locked" data-i18n="dash.locked" {% if user.status == "locked" %}selected{% endif %}>锁定</option>
+        </select>
+      </label>
+      <div class="button-row center">
+        <button type="button" class="btn secondary" data-dialog-close data-i18n="dash.cancel">取消</button>
+        <button type="submit" class="btn primary" data-i18n="dash.confirm">确认</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+{# Dialog: Grant App Access #}
+<div data-dialog="grant-app" class="dialog-panel">
+  <h3 data-i18n="dash.user.grantAppTitle">授予应用访问权限</h3>
+  <form method="post" action="/dashboard/users/{{ user.id }}/grant-app" data-ajax-form data-toast-i18n="toast.saved" data-reload="true" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="stack">
+      <label class="field">
+        <span data-i18n="dash.user.selectApp">选择应用</span>
+        <select name="app_id">
+          <option value="" data-i18n="dash.user.selectAppPlaceholder">请选择...</option>
+          {% for (aid, acode, aname) in all_apps %}
+          <option value="{{ aid }}">{{ aname }} ({{ acode }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="button-row center">
+        <button type="button" class="btn secondary" data-dialog-close data-i18n="dash.cancel">取消</button>
+        <button type="submit" class="btn primary" data-i18n="dash.grant">授权</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

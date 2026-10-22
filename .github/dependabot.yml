@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      database:
+        patterns: ["sea-orm*", "sea-query*", "sqlx*"]
+      validation:
+        patterns: ["validator*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+  - package-ecosystem: npm
+    directory: /tests/browser
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1

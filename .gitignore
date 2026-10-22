@@ -1,0 +1,55 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Logs
+logs/
+
+# Keys & secrets
+keys/
+*.pem
+*.key
+
+# Service configs (keep defaults and examples only)
+services/**/config/*
+!services/**/config/default.toml
+!services/**/config/*.example
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Tool caches
+.ruff_cache/
+.opencode/
+
+# AI tool config
+.claude/
+
+# AI tool generated docs
+docs/superpowers/
+
+# Deploy templates are tracked; binaries, private config and release archives are not.
+/deploy/*
+!/deploy/pero/
+/deploy/pero/*
+!/deploy/pero/Dockerfile
+!/deploy/pero/compose.yaml
+!/deploy/pero/Dockerfile.dockerignore
+!/deploy/pero/initialize.py
+!/deploy/pero/production.toml.example
+!/deploy/pero/README.md
+
+# Local notes / drafts
+local/
+
+# Publicly committed, test-only RSA fixtures (never deployment keys)
+!tests/fixtures/rsa-private.pem
+!tests/fixtures/rsa-public.pem
+
+# Browser regression tooling
+tests/browser/node_modules/
+tests/browser/test-results/
