@@ -59,7 +59,7 @@ reqwest = { version = "0.13.5", default-features = false }
 http = "1.4.0"
 webpki-root-certs = "1"
 toml = "1.1.6"
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }
 url = "2"
 # Use the default templates/ directory; config would pull in unmaintained basic-toml.
 askama = { version = "0.15", default-features = false, features = ["derive", "std", "urlencode"] }
