@@ -1,0 +1,10 @@
+[provider]
+code = "local"
+name = "Local"
+# kid = "key-2026-01"  # 可选，默认自动生成
+
+[admin]
+username = "admin"
+password = "replace-with-a-strong-admin-password"
+email = "admin@example.com"  # 可选
+phone = "+8613800138000"     # 可选

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <script>try{document.documentElement.lang=(localStorage.getItem('pero.lang')||'zh')==='en'?'en':'zh-CN'}catch(e){}</script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pero · {% block title %}User Center{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="home-body">
+
+  <header class="home-header">
+    <div class="home-header-inner">
+      <a class="brand compact" href="/"><img class="logo-mark" src="/static/icons/logo.png" alt="P" /><span>Pero</span></a>
+      <div class="home-header-actions">
+        <div class="top-tools">
+          <button class="lang-pill is-active" type="button" data-lang="zh">中</button>
+          <button class="lang-pill" type="button" data-lang="en">EN</button>
+        </div>
+        <a class="btn secondary small" href="/sso/login" data-i18n="home.login">登录</a>
+        <a class="btn primary small" href="/sso/register" data-i18n="home.register">注册</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="home-main">
+
+    <section class="hero-section">
+      <div class="hero-inner">
+        <div class="hero-badge" data-i18n="home.heroBadge">统一身份认证平台</div>
+        <h1 class="hero-title">Pero <span class="hero-title-accent" data-i18n="home.heroTitleAccent">User Center</span></h1>
+        <p class="hero-desc" data-i18n="home.heroDesc">基于 OAuth 2.0 / OpenID Connect 的统一身份认证与管理服务，为你的应用提供安全、可靠、易集成的用户体系。</p>
+        <div class="hero-actions">
+          <a class="btn primary" href="/sso/login" data-i18n="home.getStarted">开始使用</a>
+          <a class="btn secondary" href="/dashboard/apps" data-i18n="home.viewDashboard">管理后台</a>
+        </div>
+        <div class="hero-tags tag-row">
+          <span>OAuth 2.0</span>
+          <span>OIDC</span>
+          <span>SSO</span>
+          <span>Rust</span>
+        </div>
+      </div>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="glass-illustration"></div>
+        <div class="hero-orbit hero-orbit-1"></div>
+        <div class="hero-orbit hero-orbit-2"></div>
+        <div class="hero-orbit hero-orbit-3"></div>
+        <div class="hero-dot hero-dot-1"></div>
+        <div class="hero-dot hero-dot-2"></div>
+        <div class="hero-dot hero-dot-3"></div>
+      </div>
+    </section>
+
+    <section class="features-section">
+      <div class="section-header">
+        <h2 data-i18n="home.featuresTitle">核心能力</h2>
+        <p data-i18n="home.featuresDesc">一站式身份解决方案，覆盖认证、授权、管理的完整链路</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-card-icon icon-auth">🔐</div>
+          <h3 data-i18n="home.featAuthTitle">OAuth 2.0 / OIDC</h3>
+          <p data-i18n="home.featAuthDesc">完整的 OAuth 2.0 授权码流程和 OpenID Connect 身份层，支持授权码、客户端凭证等多种授权模式。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon icon-social">🌐</div>
+          <h3 data-i18n="home.featSocialTitle">多方式登录</h3>
+          <p data-i18n="home.featSocialDesc">支持用户名/邮箱/手机号 + 密码登录，可扩展接入微信、GitHub 等社交账号统一认证。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon icon-security">🛡</div>
+          <h3 data-i18n="home.featSecurityTitle">安全可靠</h3>
+          <p data-i18n="home.featSecurityDesc">密码强度策略、CSRF 防护、会话管理、Token 签名验证，多维度保障账户安全。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-icon icon-admin">⚙</div>
+          <h3 data-i18n="home.featAdminTitle">管理后台</h3>
+          <p data-i18n="home.featAdminDesc">可视化管理应用、OAuth 客户端、用户和身份提供者，轻松配置和监控系统运行状态。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="tech-section">
+      <div class="section-header">
+        <h2 data-i18n="home.techTitle">技术优势</h2>
+        <p data-i18n="home.techDesc">基于现代技术栈构建，兼顾性能与可靠性</p>
+      </div>
+      <div class="tech-grid">
+        <div class="tech-item">
+          <div class="tech-icon">⚡</div>
+          <div>
+            <strong data-i18n="home.techRust">Rust + Axum</strong>
+            <small data-i18n="home.techRustDesc">高性能异步运行时，内存安全保障</small>
+          </div>
+        </div>
+        <div class="tech-item">
+          <div class="tech-icon">🗄</div>
+          <div>
+            <strong data-i18n="home.techPg">PostgreSQL</strong>
+            <small data-i18n="home.techPgDesc">企业级关系数据库，数据持久可靠</small>
+          </div>
+        </div>
+        <div class="tech-item">
+          <div class="tech-icon">🔄</div>
+          <div>
+            <strong data-i18n="home.techRedis">Redis</strong>
+            <small data-i18n="home.techRedisDesc">高速缓存与会话存储，低延迟响应</small>
+          </div>
+        </div>
+        <div class="tech-item">
+          <div class="tech-icon">🔑</div>
+          <div>
+            <strong data-i18n="home.techJWKS">JWKS / RSA</strong>
+            <small data-i18n="home.techJWKSDesc">标准 JWT 签名与密钥轮换机制</small>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <div class="cta-card">
+        <h2 data-i18n="home.ctaTitle">开始接入 Pero</h2>
+        <p data-i18n="home.ctaDesc">创建账号，配置你的第一个应用，几分钟内完成 OAuth 2.0 接入。</p>
+        <div class="cta-actions">
+          <a class="btn primary" href="/sso/register" data-i18n="home.ctaRegister">免费注册</a>
+          <a class="btn secondary" href="/sso/login" data-i18n="home.ctaLogin">已有账号，去登录</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="home-footer">
+    <div class="home-footer-inner">
+      <a class="brand compact" href="/"><img class="logo-mark" src="/static/icons/logo.png" alt="P" /><span>Pero</span></a>
+      <div class="footer-info">
+        <p data-i18n="home.footerCopy">&copy; 2026 Pero. 统一身份认证中心</p>
+        <p><a href="https://beian.miit.gov.cn" target="_blank" rel="noopener">渝ICP备2025069387号-1</a></p>
+      </div>
+    </div>
+  </footer>
+
+  {% include "partials/scripts_base.html" %}
+</body>
+</html>

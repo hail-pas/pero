@@ -1,0 +1,21 @@
+[package]
+name = "pero-cache-redis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pero-types.workspace = true
+pero-validate-core.workspace = true
+pero-error.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+deadpool-redis = { version = "0.23", features = ["rt_tokio_1"] }
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

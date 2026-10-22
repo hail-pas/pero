@@ -1,0 +1,47 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Logs
+logs/
+
+# Keys & secrets
+keys/
+*.pem
+*.key
+
+# Service configs (keep defaults and examples only)
+services/**/config/*
+!services/**/config/default.toml
+!services/**/config/*.example
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Tool caches
+.ruff_cache/
+.opencode/
+
+# AI tool config
+.claude/
+
+# AI tool generated docs
+docs/superpowers/
+
+# Deploy artifacts
+deploy/
+
+# Local notes / drafts
+local/
+
+# Publicly committed, test-only RSA fixtures (never deployment keys)
+!tests/fixtures/rsa-private.pem
+!tests/fixtures/rsa-public.pem
+
+# Browser regression tooling
+tests/browser/node_modules/
+tests/browser/test-results/

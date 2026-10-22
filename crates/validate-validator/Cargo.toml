@@ -1,0 +1,11 @@
+[package]
+name = "pero-validate-validator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pero-validate-core.workspace = true
+
+validator.workspace = true

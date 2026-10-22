@@ -1,0 +1,33 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Pero · Link Account{% endblock %}
+{% block content %}
+<div class="auth-card split-card narrow">
+  <section class="auth-hero-panel">
+    <a class="brand compact" href="/sso/login"><img class="logo-mark" src="/static/icons/logo.png" alt="P" /><span>Pero</span></a>
+    <h2 data-i18n="social_link.title">关联已有账号</h2>
+    <p class="accent-copy">{{ provider_name }}</p>
+    <p data-i18n="social_link.desc">该社交账号的邮箱已属于一个 Pero 账号。请输入该账号密码以完成关联。</p>
+    <div class="glass-illustration shield" aria-hidden="true"></div>
+  </section>
+
+  <section class="form-panel center-y">
+    {% include "partials/error_notice.html" %}
+    <div class="notice info">
+      <strong>i</strong>
+      <span><span data-i18n="social_link.account">待关联账号</span> · {{ display_name }} · {{ account_email }}</span>
+    </div>
+    <form class="stack" method="post" action="/sso/social/link" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="nonce" value="{{ nonce }}" />
+      <label class="field has-action">
+        <span data-i18n="field.currentPassword">当前密码</span>
+        <input name="password" required type="password" autocomplete="current-password" placeholder="请输入当前密码" data-i18n-placeholder="field.currentPasswordPlaceholder" />
+        <button class="input-action" type="button" data-toggle-password>👁</button>
+      </label>
+      <button class="btn primary full" type="submit" data-i18n="social_link.confirm">确认关联并登录</button>
+      <p class="fine-print" data-i18n="social_link.securityNote">我们只会在密码验证通过后把该社交身份关联到你的账号。</p>
+      <a class="center-link" href="/sso/login" data-i18n="common.backToLogin">返回登录</a>
+    </form>
+  </section>
+</div>
+{% endblock %}

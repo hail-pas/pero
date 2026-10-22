@@ -1,0 +1,23 @@
+# Local development only. Replace every placeholder before starting.
+[database]
+url = "postgres://pero:CHANGE_ME@127.0.0.1:5432/pero"
+encrypt_key = "" # Set a random encryption key
+
+[redis]
+url = "redis://127.0.0.1:6379"
+
+[oidc]
+issuer = "http://localhost:8080"
+
+[sso]
+base_url = "http://localhost:8080"
+cookie_secure = false
+cookie_signing_secret = "" # Set at least 32 random bytes
+
+[password_reset]
+signing_key = "" # Set a different secret of at least 32 random bytes
+
+# Optional authenticated notification gateway; absent means notification features are unavailable.
+# [notification]
+# endpoint = "https://notifications.example.com/send"
+# bearer_token = "REPLACE_WITH_NOTIFICATION_GATEWAY_SECRET"

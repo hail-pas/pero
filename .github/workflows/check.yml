@@ -1,0 +1,80 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pero_test
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: pero_security_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8.2
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PERO_TEST_REDIS_URL: redis://127.0.0.1:6379
+      DATABASE_URL: postgres://pero_test:test-only-password@127.0.0.1:5432/pero_security_test
+      PERO_TEST_DATABASE_URL: postgres://pero_test:test-only-password@127.0.0.1:5432/pero_security_test
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy
+      - run: rustup default 1.95.0
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: bash scripts/migrate.sh
+      - run: cargo test --workspace --locked
+      - run: cargo test -p user-center --locked -- --ignored
+      - run: cargo test -p pero-cache-redis --locked --test live_redis -- --ignored
+      - run: bash tests/migrations_test.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix tests/browser --ignore-scripts
+      - run: npx --prefix tests/browser playwright install --with-deps chromium
+      - run: cargo test -p user-center --locked --test logout -- --ignored
+        env:
+          PERO_BROWSER_TEST: '1'
+      - run: node tests/forms_test.cjs
+      - run: bash tests/generate_entity_postprocess_test.sh
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.95.0 --profile minimal && rustup default 1.95.0
+      - run: cargo install cargo-audit --locked
+      - name: Collect complete advisory report
+        run: |
+          set +e
+          cargo audit --json --deny warnings > audit.json
+          result=$?
+          set -e
+          # The policy checker must parse a valid audit report even when findings exist.
+          if [ "$result" -gt 1 ]; then exit "$result"; fi
+      - run: python3 tests/check_advisories_test.py
+      - run: python3 scripts/check-advisories.py audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit
+          path: audit.json
+  linux-musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.95.0 --profile minimal --target x86_64-unknown-linux-musl
+      - run: rustup default 1.95.0
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools cmake clang
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p user-center -p admin
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc

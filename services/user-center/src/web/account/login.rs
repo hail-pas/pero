@@ -1,0 +1,79 @@
+use axum::extract::State;
+use axum::response::{IntoResponse, Redirect, Response};
+use axum_extra::extract::cookie::CookieJar;
+use pero_api_axum::extractor::ClientIp;
+
+use crate::state::app::AppState;
+use crate::web::login_flow::{LoginFormError, authenticate_password_form};
+use crate::web::session::extract_session;
+use crate::web::sso::template::{AccountLoginTemplate, LoginForm};
+use crate::web::sso::utility::find_enabled_social_providers;
+use crate::web::util::safe_redirect;
+
+/// EP-18: GET /account/login
+pub async fn get(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let redirect = query.get("redirect").cloned().unwrap_or_default();
+
+    if (match extract_session(&state, &jar).await {
+        Ok(session) => session,
+        Err(status) => return status.into_response(),
+    })
+    .is_some()
+    {
+        return Redirect::to(&safe_redirect(&redirect)).into_response();
+    }
+
+    let providers = find_enabled_social_providers(&state).await;
+    let error = query.get("error").cloned().unwrap_or_default();
+    state
+        .web_security()
+        .render_with_csrf(jar, |csrf_token| AccountLoginTemplate {
+            error,
+            providers,
+            csrf_token,
+            redirect,
+        })
+}
+
+/// EP-19: POST /account/login
+pub async fn post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    ClientIp(ip): ClientIp,
+    axum::Form(form): axum::Form<LoginForm>,
+) -> Response {
+    let redirect = safe_redirect(&form.redirect);
+
+    let token = match authenticate_password_form(&state, &jar, ip, &form).await {
+        Ok(token) => token,
+        Err(LoginFormError::ServiceUnavailable) => {
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        Err(LoginFormError::Internal) => {
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Err(error) => {
+            let key = error.message_key().unwrap_or("invalid_credentials");
+            return render_error(&state, jar, key, &redirect).await;
+        }
+    };
+
+    let cookie = state.cookie_factory().build_session_cookie(&token);
+    (jar.add(cookie), Redirect::to(&redirect)).into_response()
+}
+
+async fn render_error(state: &AppState, jar: CookieJar, error: &str, redirect: &str) -> Response {
+    let providers = find_enabled_social_providers(state).await;
+    state
+        .web_security()
+        .render_with_csrf(jar, |csrf_token| AccountLoginTemplate {
+            error: error.to_owned(),
+            providers,
+            csrf_token,
+            redirect: redirect.to_owned(),
+        })
+}

@@ -1,0 +1,35 @@
+[package]
+name = "admin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+pero-api-axum.workspace = true
+pero-config.workspace = true
+pero-error.workspace = true
+pero-types.workspace = true
+pero-validate-core.workspace = true
+pero-utils.workspace = true
+
+axum.workspace = true
+axum-extra.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tower-http = { workspace = true, features = ["cors", "request-id", "limit", "fs", "compression-gzip", "uuid"] }
+
+askama.workspace = true
+time.workspace = true
+clap = { version = "4", features = ["derive"] }
+reqwest = { workspace = true, features = ["json", "form", "rustls"] }
+
+pero-http-client-core.workspace = true
+pero-http-client-reqwest.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+jsonwebtoken.workspace = true
