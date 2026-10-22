@@ -38,7 +38,7 @@ cp services/admin/config/local.toml.example services/admin/config/local.toml
 
 ## 初始化与配置
 
-Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。服务器源码位于 `/root/projects/pero/source`，运行目录为 `/root/projects/pero/runtime`。从 GitHub 拉取源码后由 Docker 多阶段构建，无需本机 Rust/Zig；`scripts/package-production-config.sh` 只打包原生产配置与密钥，私有包不提交 Git。
+Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机通过 `scripts/build-docker-image.sh` 构建 Linux amd64 镜像并导出，服务器加载后在 `/root/projects/pero/runtime` 启动，无需服务器编译或本机 Rust/Zig。现有 `/root/projects/pero/source` 可保留；`scripts/package-production-config.sh` 仅在需要迁移配置时使用，私有包不提交 Git。
 
 项目以首次部署为基线，仅提供 `001_init.sql`，适用于空数据库。`scripts/migrate.sh` 在事务内初始化并记录 checksum，重复执行会校验并跳过已应用的 SQL。标准 `scripts/deploy.sh` 部署包包含配置默认值、示例、初始化 SQL 和迁移脚本；不包含真实配置或私钥。目标环境需独立提供密钥。
 

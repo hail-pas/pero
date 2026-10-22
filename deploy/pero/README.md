@@ -1,164 +1,124 @@
-# Linux x86_64：GitHub 源码 + Docker 多阶段构建
+# Linux x86_64：本地构建镜像，服务器加载运行
 
-数据已手动清理，本流程不再清库。原 PostgreSQL、Redis 容器继续使用。源码与运行数据分开：
-
-```text
-/root/projects/pero/
-├── source/                    # GitHub 仓库，可 git pull
-│   ├── Cargo.toml / Cargo.lock
-│   ├── crates/ / services/
-│   └── deploy/pero/            # 通用 Docker 文件、初始化程序、指南
-└── runtime/                   # 不属于 Git 仓库
-    ├── compose.yaml           # 从 source/deploy/pero 复制
-    ├── config/                # 生产配置、bootstrap、keys
-    └── logs/prd/              # 持久化日志
-```
-
-容器内部仍使用 /opt/pero；程序、SQL、静态资源在镜像内 prd/，宿主机无需放二进制。原 /root/projects/pero 下的历史 config/prd 不会被本流程删除，确认迁移完成后可自行归档。
-
-## 1. 首先提交并推送部署文件
-
-本次新增/修改的部署文件须先提交推送到 GitHub，服务器才能拉到。推送前查看 git status，确认不包含生产秘密。
-
-| 可以追踪 | 不追踪 |
-| --- | --- |
-| deploy/pero/Dockerfile、Dockerfile.dockerignore、compose.yaml、initialize.py、README.md、production.toml.example | local/ 下真实生产配置和私钥 |
-| scripts/package-production-config.sh、sync-deploy-config.py、tests/docker_deploy_test.py | deploy/*.tar.gz、校验文件、日志、构建缓存 |
-| Cargo.lock、业务源码、原默认配置及示例 | runtime 中全部运行信息（其本身在仓库外） |
-
-旧 scripts/deploy.sh 是单独的二进制交叉编译入口，Docker 流程不再调用它，不需要 Zig/cargo-zigbuild 或本机 Rust。原 prepare-docker-release.sh 已移除。
-
-## 2. 本机只打包原生产配置
-
-在本机仓库根目录运行。只需 Python 3.11+、bash/tar/shasum，不需要本机 Docker 或 Rust：
-
-```bash
-bash scripts/package-production-config.sh
-# python3 低于 3.11 时：
-# PERO_PYTHON=/可用Python路径 bash scripts/package-production-config.sh
-```
-
-默认读取 local/deploy/pero/config，生成最新 default.toml，并按其字段结构生成 production.toml，再迁入原匹配字段的值；bootstrap 与 RSA 密钥原样保留。输出：
+适用当前状态：服务器 /root/projects/pero/source 和 runtime 已配置，数据库/Redis 已手动清理。复用 runtime/config 中的原生产信息，本流程不再次清库、不重新传配置，服务器不再编译。
 
 ```text
-deploy/pero-config.tar.gz
-deploy/pero-config.tar.gz.sha256
+本机 Git 仓库                  /root/projects/pero/
+├── scripts/build-docker-image.sh   ├── source/       # 现有源码可保留
+├── deploy/pero/                    └── runtime/      # 服务器实际运行目录
+│   ├── Dockerfile                     ├── compose.yaml
+│   ├── Dockerfile.dockerignore         ├── config/    # 原配置及密钥
+│   └── compose.yaml                   └── logs/prd/
+└── deploy/*.tar.gz             Docker 镜像存储由 Docker 引擎管理
 ```
 
-私有包仅含 config/，没有源码或二进制。原域名、数据库/Redis 连接、密码、密钥、管理员保持不变。配置包和 GitHub 源码应来自同一版本；以后新增可选字段按最新代码在生产配置中补充。
+## 1. 本机准备 Docker
 
-上传到服务器，替换服务器地址：
-
-```bash
-scp deploy/pero-config.tar.gz deploy/pero-config.tar.gz.sha256 root@SERVER:/tmp/
-```
-
-## 3. 服务器准备目录与源码
-
-以下以 root 登录 x86_64 Linux 服务器执行。需要 Git、Docker Engine、Compose V2/BuildKit；不需要宿主机 Rust、Zig、Python、psql。构建需访问 Docker Hub、Debian 软件源及 crates.io。
+本机需要可用的 Docker 引擎和 Buildx（例如 Docker Desktop），不需要本机 Rust、Zig 或 Python。先启动 Docker，再在本机终端确认：
 
 ```bash
-uname -m
-git --version
 docker version
-docker compose version
-install -d -m 700 /root/projects/pero
-install -d -m 700 /root/projects/pero/runtime
+docker buildx version
+docker info
 ```
 
-首次拉取（需服务器已配置该 GitHub 仓库的 SSH 访问权限）：
+docker version 必须同时显示 Client 和 Server。Mac 安装说明见 [Docker 官方文档](https://docs.docker.com/desktop/setup/install/mac-install/)。
+
+脚本会识别 Mac 常见的 ~/.docker/bin/docker 路径。若本机需通过代理访问 Docker Hub，在 Docker Desktop 的代理设置中使用当前可用代理；CLI 访问认证服务也可能需要显式设置 HTTP_PROXY/HTTPS_PROXY，例如 HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 bash scripts/build-docker-image.sh。代理地址按本机实际配置填写，不在 Dockerfile 中固定。
+
+## 2. 本机构建并导出
+
+在本机仓库根目录执行：
 
 ```bash
-git clone git@github.com:hail-pas/pero.git /root/projects/pero/source
+bash scripts/build-docker-image.sh
 ```
 
-如果 source 已经是该仓库，则改为：
+脚本固定 linux/amd64，即服务器 x86_64；即使本机是 Apple Silicon 也不会误生成 ARM 镜像。使用 Docker 多阶段构建，--load 将结果放入本机引擎；检查架构后用 docker image save 导出压缩包。镜像名固定为 pero-user-center:local。
+
+Dockerfile 保持官方基础镜像摘要锁定，避免加速源的陈旧 tag。编译采用 Rust 1.95/Cargo.lock、原生 GNU 工具链；静态字典来自同次构建。私有配置不进入构建上下文或镜像。
+
+输出：
+
+```text
+deploy/pero-user-center-linux-amd64.tar.gz
+deploy/pero-user-center-linux-amd64.tar.gz.sha256
+```
+
+第一次会下载基础镜像和依赖，并执行完整编译。构建失败时脚本退出，不能把上次遗留的压缩包当作此次成功产物。默认编译并行度为 2，调整方式为 PERO_BUILD_JOBS=4 bash scripts/build-docker-image.sh。
+
+## 3. 上传镜像和最新 Compose
+
+替换服务器地址，在本机执行：
 
 ```bash
-git -C /root/projects/pero/source status --short
-git -C /root/projects/pero/source pull --ff-only
+scp deploy/pero-user-center-linux-amd64.tar.gz \
+    deploy/pero-user-center-linux-amd64.tar.gz.sha256 \
+    root@SERVER:/tmp/
+scp deploy/pero/compose.yaml root@SERVER:/root/projects/pero/runtime/compose.yaml
 ```
 
-不要在有未处理本地改动时覆盖。默认使用仓库默认分支/当前跟踪分支；需要特定发布版本时自行 checkout 已确认的分支或 tag。
+必须同步本版 Compose：已移除 build 配置，并设置 pull_policy: never，只使用加载的本地镜像，不会在服务器触发编译或访问镜像仓库。不要再从服务器 source 覆盖成旧版含 build 的 Compose；只有 source 同步到本版之后才可复制模板。
 
-```bash
-git -C /root/projects/pero/source log -1 --oneline
-ls /root/projects/pero/source/deploy/pero/Dockerfile
-cp /root/projects/pero/source/deploy/pero/compose.yaml /root/projects/pero/runtime/compose.yaml
-```
+## 4. 服务器校验、加载
 
-compose.yaml 必须放在 runtime：其构建上下文 ../source 指向源码，./config、./logs 指向 runtime 内的私有数据。
-
-## 4. 安装原生产配置与权限
+以下以 root 登录服务器执行：
 
 ```bash
 cd /tmp
-chmod 600 pero-config.tar.gz
-sha256sum -c pero-config.tar.gz.sha256
+sha256sum -c pero-user-center-linux-amd64.tar.gz.sha256
 ```
 
-必须看到 OK，再继续：
+必须看到 OK，然后执行：
 
 ```bash
-tar -xzf /tmp/pero-config.tar.gz -C /root/projects/pero/runtime
+docker load -i /tmp/pero-user-center-linux-amd64.tar.gz
+docker image inspect pero-user-center:local --format '{{.Os}}/{{.Architecture}}'
+```
+
+应看到 Loaded image: pero-user-center:local，架构为 linux/amd64。使用 docker load，不使用 docker import。镜像已含程序、SQL、静态资源和初始化所需工具，服务器不用拉基础镜像、安装构建依赖。
+
+## 5. 检查现有 runtime
+
+```bash
 cd /root/projects/pero/runtime
+docker compose config --quiet
+ls -l config/default.toml config/production.toml config/bootstrap.toml
+ls -l config/keys/private.pem config/keys/public.pem
+ss -ltnp 'sport = :8080'
+```
+
+确认旧进程已停止、8080 空闲、PostgreSQL 18+ 与 Redis 通过原宿主机 5432/6379 提供服务。Compose 继续使用 Linux host 网络，原域名映射不变。
+
+当前存储容器名为 postgres、redis，可用 docker port postgres、docker port redis 核对宿主机端口发布。host 网络下仍使用 127.0.0.1，不直接改成容器名。初始化连接预检显式向 psql 传入完整 URI；失败时输出已隐藏密码的 PostgreSQL 错误，便于区分端口、密码、库名与 pg_hba 问题。
+
+原先权限若已配置成功，不需要重复修改；需要时执行：
+
+```bash
 chown -R root:10001 config
 find config -type d -exec chmod 750 {} +
 find config -type f -exec chmod 640 {} +
 install -d -o 10001 -g 10001 -m 750 logs logs/prd
 ```
 
-镜像进程按 UID/GID 10001 运行，配置只读挂载、日志可写。权限适用于普通 Docker Engine；rootless/userns-remap 场景需按宿主机 UID 映射调整。
+## 6. 首次初始化与启动
 
-原配置采用 0.0.0.0:8080、127.0.0.1:5432/pero、127.0.0.1:6379/0。Compose 使用 Linux host 网络，因此这些连接信息无需改为容器名，也无需 ports 映射。确认存储容器发布了对应宿主机端口或本身采用 host 网络，PostgreSQL 必须为 18+，8080 不被旧服务占用：
-
-```bash
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
-docker exec 实际PostgreSQL容器名 postgres --version
-ss -ltnp 'sport = :8080'
-```
-
-## 5. 在服务器 Docker 内构建
-
-```bash
-cd /root/projects/pero/runtime
-docker compose config --quiet
-docker compose build --pull
-```
-
-Dockerfile 使用 rust:1.95.0-bookworm 在 Linux amd64 构建阶段原生编译，使用 Cargo.lock；GNU 工具链由构建镜像提供，不涉及 Zig/musl 交叉编译。同次构建生成的字典会复制到运行镜像。第二阶段使用同代 Debian 运行环境，复制二进制、静态资源和 SQL，不包含 Rust 工具链或源码。
-
-Dockerfile.dockerignore 从构建上下文中排除 Git 数据、local/、生产配置、私钥及缓存；生产配置目录又在源码目录外。构建默认并行任务数为 2，可按机器资源调整：
-
-```bash
-# 资源有限时可用此命令代替上面的 build；链接仍需足够内存。
-docker compose build --pull --build-arg CARGO_BUILD_JOBS=1
-```
-
-首次编译耗时取决于服务器 CPU、内存和网络；后续可复用 Docker/Cargo 缓存。构建失败时先排查完整编译输出，不启动旧镜像充当本次部署。
-
-## 6. 初始化已清空的数据库（本次仅一次）
-
-构建成功后执行：
+如果此次清库后尚未成功初始化，执行一次：
 
 ```bash
 docker compose run --rm --no-deps --entrypoint python3 pero initialize.py
 ```
 
-先核对数据库连接与 PostgreSQL 18+，再执行最新 migrate.sh，最后按原配置创建 Provider、签名 key 和管理员。不删除任何数据。看到 Initialization complete 后继续。管理员创建不幂等，成功后不要再次初始化；失败时先查看原因，不盲目重复或再次清库。
-
-如需代理后的真实客户端 IP，在 production.toml 已有 [server] 中按实际代理来源添加 trusted_proxies，匹配代理清洗的 client_ip_header。同机 loopback 代理可用 ["127.0.0.1/32", "::1/128"]；容器/远端代理需实际核对。notification 未配置时不会发送邮件/短信。
-
-## 7. 启动和验收
+它检查数据库版本、运行新版 migrate.sh，并按原配置创建 Provider、签名 key 和管理员。看到 Initialization complete 后继续。如果此前已经成功初始化，跳过本命令；管理员创建不幂等，不能重复全量 bootstrap。
 
 ```bash
-docker compose up -d
+docker compose up -d --no-build
 docker compose ps
 docker compose logs --tail=100 pero
 curl -fsS http://127.0.0.1:8080/health
 ```
 
-将下面域名替换为生产配置中的 issuer：
+生产域名验收（替换为 production.toml 中的域名）：
 
 ```bash
 AUTH_URL=https://auth.example.com
@@ -168,31 +128,22 @@ curl -fsS "$AUTH_URL/api/oauth2/jwks"
 curl -fsS "$AUTH_URL/static/js/i18n.js" -o /dev/null
 ```
 
-原域名映射继续指向 8080。推荐 /static 一并反向代理到服务；如果原代理直接 alias 到旧 prd/ui/static，需改为转发到 8080，或另行导出静态资源并调整 alias，不能继续指向历史资源目录。
+浏览器登录生产域名 /dashboard，用原管理员验证用户/应用管理、退出重登。/health 只检查进程存活。清库后业务 OAuth client 要重新创建并更新业务端凭证。若原代理 alias 到旧静态目录，改为将 /static 转发到服务的 8080，避免继续读取历史资源。
 
-浏览器打开生产域名 /dashboard，用原管理员登录，验证用户/应用管理与退出重登。/health 仅为进程存活检查，不能代替真实登录验收。清库后业务 OAuth client 需重新创建并更新业务端凭证。
+## 7. 后续更新
 
-## 8. 后续维护
+本机修改代码后重新运行 build-docker-image.sh，上传镜像和校验文件；服务器验证 SHA256、docker load，再执行：
 
 ```bash
 cd /root/projects/pero/runtime
-docker compose logs -f --tail=100 pero
-docker compose restart pero
-docker compose stop pero
+docker compose up -d --no-build --force-recreate
+docker compose logs --tail=100 pero
 ```
 
-以后更新源码并重新构建：
+不重新清库、不重复初始化、不覆盖原生产配置；未来 schema 变更要单独评估升级路径。服务器 source 只作为参考/同步源码保留，运行服务不依赖它，也不执行 docker compose build。
 
-```bash
-git -C /root/projects/pero/source pull --ff-only
-cp /root/projects/pero/source/deploy/pero/compose.yaml /root/projects/pero/runtime/compose.yaml
-cd /root/projects/pero/runtime
-docker compose build --pull
-docker compose up -d
-```
+## 8. Git 管理与可选配置打包
 
-不重新清库、不重复 bootstrap，不从示例覆盖真实配置。如果未来 schema 改变，需要先评估升级路径。配置变更后使用 docker compose up -d --force-recreate 使进程重新读取。
+通用 Docker 文件、构建/配置打包脚本、部署测试和本指南随代码追踪。local/ 下真实配置、私钥，以及 deploy/*.tar.gz、校验文件、缓存、日志不提交。
 
-容器退出会按 unless-stopped 策略恢复；健康检查失败仅标记 unhealthy，不自动重启。日志权限错误先检查组 10001；数据库连接失败检查存储端口、密码和 pg_hba；端口冲突检查旧服务。镜像构建阶段内存不足应增加可用内存/交换空间或降低并行度。
-
-参考：[Docker 多阶段构建](https://docs.docker.com/build/building/multi-stage/)、[构建上下文排除规则](https://docs.docker.com/build/concepts/context/#dockerignore-files)、[Linux host 网络](https://docs.docker.com/engine/network/drivers/host/)。
+scripts/package-production-config.sh 仍可用于首次迁移配置，本机需要 Python 3.11+；当前 runtime 已配置，无需再次打包或上传。旧 scripts/deploy.sh 的 Zig 交叉编译流程独立保留，不用于本 Docker 部署。

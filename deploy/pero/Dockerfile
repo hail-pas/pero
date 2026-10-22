@@ -1,5 +1,6 @@
-# syntax=docker/dockerfile:1
-FROM rust:1.95.0-bookworm AS builder
+# Use Docker's bundled BuildKit frontend; no extra frontend image download is needed.
+# Official multi-platform manifest digests prevent stale mirror tags selecting old images.
+FROM docker.io/library/rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential cmake pkg-config python3 perl \
     && rm -rf /var/lib/apt/lists/*
@@ -23,7 +24,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp services/user-center/migrations/*.sql /out/migrations/ \
     && cp scripts/migrate.sh /out/migrate.sh
 
-FROM debian:bookworm-slim AS runtime
+FROM docker.io/library/debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl python3 postgresql-client libdigest-sha-perl libgcc-s1 \
     && rm -rf /var/lib/apt/lists/* \

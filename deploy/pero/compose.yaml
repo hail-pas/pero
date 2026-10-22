@@ -3,9 +3,7 @@ services:
   pero:
     image: pero-user-center:local
     platform: linux/amd64
-    build:
-      context: ../source
-      dockerfile: deploy/pero/Dockerfile
+    pull_policy: never
     container_name: pero-user-center
     network_mode: host
     restart: unless-stopped
