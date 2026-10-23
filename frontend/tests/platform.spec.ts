@@ -86,6 +86,12 @@ test("home and all main navigation routes render without runtime errors", async 
   await expect(
     page.getByRole("heading", { name: /User Center/ }),
   ).toBeVisible();
+  const filing = page.getByRole("link", { name: "渝ICP备2025069387号-1" });
+  await expect(filing).toBeVisible();
+  await expect(filing).toHaveAttribute("href", "https://beian.miit.gov.cn");
+  await expect(filing).toHaveAttribute("target", "_blank");
+  await page.goto("/account/login");
+  await expect(filing).toBeVisible();
   for (const [path, title] of [
     ["/account/profile", "个人资料"],
     ["/account/change-password", "账户安全"],

@@ -1,4 +1,5 @@
 import { IdentityGraphic } from "./components/identity-graphic";
+import { FilingLink } from "./components/filing-link";
 import {
   AppsRounded,
   ArrowForwardRounded,
@@ -185,6 +186,7 @@ export function Home() {
           </Box>
         </Box>
         <Stack
+          component="footer"
           direction={{ xs: "column", sm: "row" }}
 
           sx={{
@@ -196,9 +198,15 @@ export function Home() {
           <Typography variant="body2" color="text.secondary">
             {t("Pero · 统一身份认证平台")}
           </Typography>
-          <Typography variant="caption" color="text.disabled">
-            Rust + Axum / PostgreSQL / Redis
-          </Typography>
+          <Stack
+            spacing={0.5}
+            sx={{ alignItems: { xs: "flex-start", sm: "flex-end" } }}
+          >
+            <Typography variant="caption" color="text.disabled">
+              Rust + Axum / PostgreSQL / Redis
+            </Typography>
+            <FilingLink />
+          </Stack>
         </Stack>
       </Container>
     </>

@@ -1,4 +1,5 @@
 import { IdentityGraphic } from "./components/identity-graphic";
+import { FilingLink } from "./components/filing-link";
 import { CheckCircleRounded } from "@mui/icons-material";
 import {
   Alert,
@@ -462,6 +463,9 @@ export function Auth({
         >
           {t("返回首页")}
         </Button>
+        <Box component="footer" sx={{ mt: 3, textAlign: "center" }}>
+          <FilingLink />
+        </Box>
       </Stack>
     </Box>
   );
