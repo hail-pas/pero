@@ -71,9 +71,18 @@ pub async fn post(
     State(state): State<AppState>,
     jar: CookieJar,
     ClientIp(ip): ClientIp,
+    headers: axum::http::HeaderMap,
     axum::Form(form): axum::Form<LoginForm>,
 ) -> Response {
-    let token = match authenticate_password_form(&state, &jar, ip, &form).await {
+    let token = match authenticate_password_form(
+        &state,
+        &jar,
+        ip,
+        &form,
+        crate::web::util::user_agent(&headers),
+    )
+    .await
+    {
         Ok(token) => token,
         Err(LoginFormError::ServiceUnavailable) => {
             return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();

@@ -90,3 +90,11 @@ pub fn dependency_error(error: impl std::fmt::Display) -> Response {
     )
         .into_response()
 }
+
+/// Bound user-controlled device metadata before persisting it.
+pub fn user_agent(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.chars().take(512).collect())
+}

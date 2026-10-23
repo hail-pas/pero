@@ -36,9 +36,13 @@ impl DatabaseFixture {
     }
 
     pub async fn migrate(&self, db: &DatabaseConnection) {
-        db.execute_unprepared(include_str!("../../migrations/001_init.sql"))
-            .await
-            .unwrap();
+        db.execute_unprepared(concat!(
+            include_str!("../../migrations/001_init.sql"),
+            "\n",
+            include_str!("../../migrations/002_audit_events.sql")
+        ))
+        .await
+        .unwrap();
     }
 
     pub async fn cleanup(self) {

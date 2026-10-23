@@ -26,6 +26,7 @@ Run `bash scripts/build-frontend.sh` from the repository root. It builds `dist/`
 - `account.tsx`, `management.tsx`, `management-form.tsx`, `auth.tsx`, `home.tsx`: business interfaces.
 - `layout.tsx`, `shared.tsx`, `forms.tsx`: common navigation, components, forms.
 - `components/identity-graphic.tsx`: original rounded-square orbital graphic shared by the homepage and authentication, with a compact rotated authentication variant.
+- `security.tsx`: sessions, sign-in activity, application consent, linked accounts and administrative audit pages.
 - `api.ts`: HTTP transport, CSRF form submission, error messages and dates.
 - `tests/platform.spec.ts`: browser UI regressions with explicit API fixtures.
 - `tests/backend-logout.cjs`: real Rust/PostgreSQL/Redis browser integration, invoked by Rust's logout test.

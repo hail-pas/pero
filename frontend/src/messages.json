@@ -96,5 +96,6 @@
   "lowercase": "密码需包含小写字母",
   "digit": "密码需包含数字",
   "special": "密码需包含特殊字符",
-  "provider_identity_namespace_immutable": "身份来源不可更换，请新建身份提供方"
+  "provider_identity_namespace_immutable": "身份来源不可更换，请新建身份提供方",
+  "last_login_identity": "至少保留一种可用登录方式，无法解绑最后一个登录身份。"
 }

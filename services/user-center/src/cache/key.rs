@@ -35,6 +35,8 @@ pub struct SocialStateValue {
     pub redirect: String,
     #[serde(default)]
     pub auth_request_id: Option<String>,
+    #[serde(default)]
+    pub account_link: Option<(uuid::Uuid, uuid::Uuid)>,
     pub provider_id: String,
     pub nonce: Option<String>,
     pub code_verifier: Option<String>,

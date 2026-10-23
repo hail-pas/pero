@@ -66,6 +66,7 @@ impl<'a> SocialLoginService<'a> {
         provider_code: &str,
         auth_request_id: Option<Uuid>,
         redirect: &str,
+        binding: Option<(Uuid, Uuid)>,
     ) -> Result<PreparedLoginState, SocialLoginError> {
         crate::service::provider::validate_configuration(
             provider,
@@ -111,6 +112,7 @@ impl<'a> SocialLoginService<'a> {
             nonce: nonce.clone(),
             code_verifier: pkce.as_ref().map(|p| p.code_verifier.clone()),
             reauthenticate_after,
+            account_link: binding,
         };
 
         if let Ok(key) = social_state.key_with_ttl(

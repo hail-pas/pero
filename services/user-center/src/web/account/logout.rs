@@ -17,6 +17,8 @@ pub struct LogoutForm {
 pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
+    ip: pero_api_axum::extractor::ClientIp,
+    headers: axum::http::HeaderMap,
     axum::Form(form): axum::Form<LogoutForm>,
 ) -> Response {
     if !state
@@ -46,8 +48,8 @@ pub async fn logout(
                 identity_id: session.identity_id,
                 provider_id: None,
                 event_type: LoginEventType::Logout,
-                ip: None,
-                user_agent: None,
+                ip: ip.0,
+                user_agent: crate::web::util::user_agent(&headers),
                 detail: serde_json::json!({}),
             },
         )

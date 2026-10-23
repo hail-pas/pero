@@ -47,7 +47,13 @@ pub async fn login(
     };
 
     let prepared = match svc
-        .prepare_login_state(&provider, &provider_code, auth_request_id, &query.redirect)
+        .prepare_login_state(
+            &provider,
+            &provider_code,
+            auth_request_id,
+            &query.redirect,
+            None,
+        )
         .await
     {
         Ok(p) => p,
@@ -76,6 +82,7 @@ pub async fn callback(
     jar: CookieJar,
     ClientIp(ip): ClientIp,
     Path(provider_code): Path<String>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<CallbackParams>,
 ) -> Response {
     if let Some(err) = params.error {
@@ -150,6 +157,36 @@ pub async fn callback(
         Err(_) => return Redirect::to("/sso/error?code=userinfo_failed").into_response(),
     };
 
+    if let Some((user_id, session_id)) = cb_state.social_value.account_link {
+        let session = match crate::web::session::extract_session(&state, &jar).await {
+            Ok(Some(session)) if session.user_id == user_id && session.id == session_id => session,
+            Ok(_) => {
+                return Redirect::to("/account/login?redirect=%2Faccount%2Fidentities")
+                    .into_response();
+            }
+            Err(status) => return status.into_response(),
+        };
+        let result = svc
+            .bind_social_identity(&session, cb_state.provider.provider.id, &user_info)
+            .await;
+        let target = match result {
+            Ok(_) => "/account/identities",
+            Err(SocialLinkError::InvalidSession) => {
+                "/account/login?redirect=%2Faccount%2Fidentities"
+            }
+            Err(SocialLinkError::ProviderAlreadyLinked) => {
+                "/account/identities?error=provider_already_linked"
+            }
+            Err(SocialLinkError::IdentityTaken) => {
+                "/account/identities?error=social_identity_taken"
+            }
+            Err(SocialLinkError::Internal(error)) => {
+                return crate::web::util::dependency_error(error);
+            }
+        };
+        return (jar, Redirect::to(target)).into_response();
+    }
+
     let authenticated_at = user_info.authenticated_at;
     let resolution = match svc
         .resolve_identity(
@@ -182,6 +219,7 @@ pub async fn callback(
                     auth_request_id: cb_state.auth_request_id,
                     ip,
                     authenticated_at,
+                    user_agent: crate::web::util::user_agent(&headers),
                 },
             )
             .await
@@ -215,6 +253,7 @@ pub async fn callback(
                     auth_request_id,
                     ip,
                     authenticated_at,
+                    user_agent: crate::web::util::user_agent(&headers),
                 },
             )
             .await
@@ -238,6 +277,7 @@ pub async fn link_post(
     State(state): State<AppState>,
     jar: CookieJar,
     ClientIp(ip): ClientIp,
+    headers: axum::http::HeaderMap,
     Form(form): Form<SocialLinkForm>,
 ) -> Response {
     let svc = state.social_service();
@@ -304,6 +344,9 @@ pub async fn link_post(
         .await
     {
         Ok(id) => id,
+        Err(SocialLinkError::InvalidSession) => {
+            return render_social_link(&state, jar, &form.nonce, "unauthorized").await;
+        }
         Err(SocialLinkError::ProviderAlreadyLinked) => {
             return render_social_link(&state, jar, &form.nonce, "provider_already_linked").await;
         }
@@ -330,6 +373,7 @@ pub async fn link_post(
             auth_request_id,
             ip,
             authenticated_at: None,
+            user_agent: crate::web::util::user_agent(&headers),
         },
     )
     .await
@@ -352,6 +396,7 @@ struct SocialLoginContext {
     auth_request_id: Option<Uuid>,
     ip: Option<ipnetwork::IpNetwork>,
     authenticated_at: Option<time::OffsetDateTime>,
+    user_agent: Option<String>,
 }
 
 async fn finish_social_login(
@@ -371,6 +416,7 @@ async fn finish_social_login(
             provider_id,
             ctx.ip,
             ctx.authenticated_at,
+            ctx.user_agent.clone(),
         )
         .await
     {
@@ -381,7 +427,8 @@ async fn finish_social_login(
         }
     };
 
-    let login_svc = LoginService::new(&state.db, &state.cache);
+    let login_svc =
+        LoginService::new(&state.db, &state.cache).with_user_agent(ctx.user_agent.clone());
     login_svc
         .record_success(
             user.id,

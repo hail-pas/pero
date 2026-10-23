@@ -44,7 +44,7 @@ cp services/admin/config/local.toml.example services/admin/config/local.toml
 
 Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机通过 `scripts/build-docker-image.sh` 构建 Linux amd64 镜像并导出，服务器加载后在 `/root/projects/pero/runtime` 启动，无需服务器编译或本机 Rust/Zig。现有 `/root/projects/pero/source` 可保留；`scripts/package-production-config.sh` 仅在需要迁移配置时使用，私有包不提交 Git。
 
-项目以首次部署为基线，仅提供 `001_init.sql`，适用于空数据库。`scripts/migrate.sh` 在事务内初始化并记录 checksum，重复执行会校验并跳过已应用的 SQL。标准 `scripts/deploy.sh` 部署包包含配置默认值、示例、初始化 SQL 和迁移脚本；不包含真实配置或私钥。目标环境需独立提供密钥。
+`001_init.sql` 用于空数据库初始化，后续变更通过增量 SQL 迁移。`scripts/migrate.sh` 按文件顺序在事务内应用迁移并记录 checksum，重复执行会校验并跳过已应用的 SQL。本次新增 `002_audit_events.sql`，已有部署需先运行迁移，再启动新版服务。标准 `scripts/deploy.sh` 部署包包含配置默认值、示例、初始化 SQL 和迁移脚本；不包含真实配置或私钥。目标环境需独立提供密钥。
 
 配置 `notification.endpoint` 和 `notification.bearer_token` 后，服务将通知加密入库并由后台任务投递；数据库连接使用的 `app.encrypt_key` 必须保持一致。没有配置通知网关时，联系方式验证和密码恢复不会报告已发送。
 
@@ -60,7 +60,7 @@ OAuth 客户端密钥统一使用 Argon2id 哈希。已有 bcrypt 客户端密�
 
 页面 URL 对 `Accept: application/json` 返回 `{ view, data }`；浏览器导航返回 Vite 应用。写操作沿用服务端表单接口与 CSRF 校验，布尔值统一为 `true/false`，页面 DTO 时间统一为 RFC3339、枚举使用协议字符串；JSON 请求中的跳转以 `{ redirect }` 返回，由前端执行，避免 OAuth 跨域 fetch。Rust 保留认证、授权、业务校验和数据库操作，已移除 Askama 及旧页面资源。
 
-授权确认页携带绑定用户、SSO 会话和授权请求的签名 token；多标签页分别提交各自展示的请求，互不覆盖。授权码重放只有在客户端、回调地址和 PKCE 校验通过后才触发撤销，撤销范围与刷新令牌重放一致：对应 SSO 会话及该会话下所有客户端的刷新令牌，在线 UserInfo 随即拒绝该会话的访问令牌。
+授权确认页携带绑定用户、SSO 会话和授权请求的签名 token；多标签页分别提交各自展示的请求，互不覆盖。签发授权码时在事务内重新校验并锁定有效会话，避免已撤销会话写入授权码或同意记录。授权码重放只有在客户端、回调地址和 PKCE 校验通过后才触发撤销，撤销范围与刷新令牌重放一致：对应 SSO 会话及该会话下所有客户端的刷新令牌，在线 UserInfo 随即拒绝该会话的访问令牌。
 
 Access Token 必须携带客户端策略版本和用户应用授权版本。客户端安全配置变更、重置密钥或切换状态，以及撤销应用权限或停用应用，会在事务内推进相应版本；UserInfo 拒绝旧版本令牌，恢复权限或重新启用也不会让旧令牌恢复有效。签发授权码令牌和刷新令牌时均绑定当前版本，不影响其他客户端的策略版本或整个 SSO 会话。初始化 schema 的 `oauth_clients` 和 `user_app_access` 均新增 `token_version` 字段，继续采用空库初始化基线，不提供旧 schema/旧令牌兼容。
 
@@ -128,3 +128,13 @@ PERO_BROWSER_TEST=1 cargo test -p user-center --locked --test logout -- --ignore
 ## License
 
 MIT OR Apache-2.0
+
+## 账户安全与操作审计
+
+个人中心新增 `/account/sessions`、`/account/activity`、`/account/authorizations`、`/account/identities`。会话列表只展示当前用户的有效会话，可退出指定、其他或全部设备，并同步撤销关联刷新令牌。新登录会记录有长度限制的 User-Agent，历史记录缺失的设备信息显示为未知。
+
+用户撤销应用授权会移除该应用所有客户端的 consent，撤销关联刷新令牌和未使用授权码，并推进当前用户的应用令牌版本；保留管理员分配的应用访问资格，其他应用不受影响。主动撤销覆盖刷新令牌的轮换历史，此后使用旧令牌只返回 invalid_grant，不触发整个 SSO 会话退出；有效授权中的轮换令牌重放仍会撤销关联会话。重新授权不会恢复旧令牌。离线验签的接入应用仍需自行处理撤销感知。
+
+关联账号通过带 CSRF 的 POST 发起，第三方登录 state 绑定当前用户与当前会话；回调必须保留同一会话，不根据相同邮箱自动合并。解绑只针对自己的第三方身份，禁止移除最后一种可用登录方式，并撤销使用该身份建立的会话。原有登录时账号冲突关联流程继续保留。
+
+管理控制台新增 `/dashboard/events` 和 `/dashboard/audit`，支持分页及事件类型/结果筛选；用户详情可直接查看该用户登录记录。所有通过后台门禁的 POST 在执行业务前持久化 pending 审计，响应后记录成功/失败和 HTTP 状态。初始审计写入失败时返回 503 并阻止执行；结果写入失败时保留 pending 记录并记录错误，继续返回原业务响应，避免丢失已生成的一次性密钥。审计仅存操作者、操作路由、目标路径、来源与请求编号，不存表单、响应正文、密码或密钥，也不提供修改/删除接口。

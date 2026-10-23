@@ -99,13 +99,14 @@ impl<'a> SessionService<'a> {
         &self,
         identity: &crate::db::entity::identities::Model,
         ip: Option<IpNetwork>,
+        user_agent: Option<String>,
     ) -> Result<(String, Uuid), AppError> {
         self.create_checked(CreateSession {
             user_id: identity.user_id,
             identity_id: Some(identity.id),
             provider_id: None,
             ip,
-            user_agent: None,
+            user_agent,
             verified: Some(identity),
             authenticated_at: None,
         })
@@ -119,13 +120,14 @@ impl<'a> SessionService<'a> {
         provider_id: Uuid,
         ip: Option<IpNetwork>,
         authenticated_at: Option<OffsetDateTime>,
+        user_agent: Option<String>,
     ) -> Result<(String, Uuid), AppError> {
         self.create_checked(CreateSession {
             user_id,
             identity_id: Some(identity_id),
             provider_id: Some(provider_id),
             ip,
-            user_agent: None,
+            user_agent,
             verified: None,
             authenticated_at,
         })
@@ -151,6 +153,21 @@ impl<'a> SessionService<'a> {
             .map_err(db_error)?;
         if user.status != UserStatus::Active {
             return Err(AppError::unauthorized("user_inactive", "User is inactive"));
+        }
+        if verified.is_none()
+            && let Some(identity_id) = identity_id
+            && crate::db::entity::identities::Entity::find_by_id(identity_id)
+                .filter(crate::db::entity::identities::Column::UserId.eq(user_id))
+                .filter(crate::db::entity::identities::Column::UnboundAt.is_null())
+                .one(&txn)
+                .await
+                .map_err(db_error)?
+                .is_none()
+        {
+            return Err(AppError::unauthorized(
+                "credentials_changed",
+                "Login identity is no longer bound",
+            ));
         }
         if let Some(provider_id) = provider_id {
             crate::service::provider::require_enabled_social(&txn, provider_id).await?;
@@ -319,7 +336,13 @@ impl<'a> SessionService<'a> {
                 refresh_tokens::Column::RevokeReason,
                 sea_orm::sea_query::Expr::value(Some(reason.to_owned())),
             )
-            .filter(refresh_tokens::Column::RevokedAt.is_null());
+            // Policy revocation also retires rotation predecessors, so an old
+            // token cannot turn an app-only withdrawal into SSO-wide logout.
+            .filter(
+                refresh_tokens::Column::RevokedAt
+                    .is_null()
+                    .or(refresh_tokens::Column::RevokeReason.eq("rotation")),
+            );
 
         apply_filters(query).exec(db).await?;
         Ok(())

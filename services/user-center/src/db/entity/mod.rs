@@ -3,6 +3,7 @@
 pub mod prelude;
 
 pub mod apps;
+pub mod audit_events;
 pub mod authorization_codes;
 pub mod authorization_requests;
 pub mod contact_change_requests;

@@ -38,7 +38,12 @@ impl AppState {
     }
 
     pub fn oauth_service(&self) -> crate::service::oauth::OAuthService<'_> {
-        crate::service::oauth::OAuthService::new(&self.db, &self.cache, &self.config.oauth2)
+        crate::service::oauth::OAuthService::new(
+            &self.db,
+            &self.cache,
+            &self.config.oauth2,
+            &self.config.sso,
+        )
     }
 
     pub fn social_service(&self) -> crate::service::social::SocialLoginService<'_> {

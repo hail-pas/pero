@@ -110,3 +110,19 @@ pub fn active_query(
                 .gt(now - time::Duration::seconds(idle_ttl_seconds as i64)),
         )
 }
+
+/// Called after the user policy lock; keep revocation from racing a credential write.
+pub async fn lock_active<C: ConnectionTrait>(
+    db: &C,
+    session_id: Uuid,
+    user_id: Uuid,
+    idle_ttl_seconds: u64,
+) -> Result<Option<sso_sessions::Model>, sea_orm::DbErr> {
+    use sea_orm::QuerySelect;
+    active_query(OffsetDateTime::now_utc(), idle_ttl_seconds)
+        .filter(sso_sessions::Column::Id.eq(session_id))
+        .filter(sso_sessions::Column::UserId.eq(user_id))
+        .lock_shared()
+        .one(db)
+        .await
+}

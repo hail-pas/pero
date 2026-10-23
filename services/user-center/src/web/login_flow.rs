@@ -56,6 +56,7 @@ pub async fn authenticate_password_form(
     jar: &CookieJar,
     ip: Option<IpNetwork>,
     form: &LoginForm,
+    user_agent: Option<String>,
 ) -> Result<String, LoginFormError> {
     if !state.web_security().verify_csrf(jar, &form.csrf_token) {
         return Err(LoginFormError::InvalidCsrf);
@@ -68,7 +69,7 @@ pub async fn authenticate_password_form(
         return Err(LoginFormError::InvalidCredentials);
     }
 
-    let login_svc = LoginService::new(&state.db, &state.cache);
+    let login_svc = LoginService::new(&state.db, &state.cache).with_user_agent(user_agent);
     let session_svc = state.session_service();
 
     login_svc

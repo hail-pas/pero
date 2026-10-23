@@ -19,11 +19,21 @@ pub enum PasswordLoginError {
 pub struct LoginService<'a> {
     db: &'a DatabaseConnection,
     cache: &'a RedisCacheStore,
+    user_agent: Option<String>,
 }
 
 impl<'a> LoginService<'a> {
     pub fn new(db: &'a DatabaseConnection, cache: &'a RedisCacheStore) -> Self {
-        Self { db, cache }
+        Self {
+            db,
+            cache,
+            user_agent: None,
+        }
+    }
+
+    pub fn with_user_agent(mut self, user_agent: Option<String>) -> Self {
+        self.user_agent = user_agent;
+        self
     }
 
     pub async fn check_rate_limit(
@@ -124,7 +134,7 @@ impl<'a> LoginService<'a> {
                 provider_id,
                 event_type: LoginEventType::LoginFailure,
                 ip,
-                user_agent: None,
+                user_agent: self.user_agent.clone(),
                 detail: serde_json::json!({}),
             },
         )
@@ -147,7 +157,7 @@ impl<'a> LoginService<'a> {
                 provider_id,
                 event_type: LoginEventType::LoginSuccess,
                 ip,
-                user_agent: None,
+                user_agent: self.user_agent.clone(),
                 detail,
             },
         )
@@ -204,7 +214,7 @@ impl<'a> LoginService<'a> {
         }
 
         let (token, _session_id) = session_svc
-            .create_verified_password(&identity, ip)
+            .create_verified_password(&identity, ip, self.user_agent.clone())
             .await
             .map_err(|e| {
                 tracing::error!("Session create error: {e}");

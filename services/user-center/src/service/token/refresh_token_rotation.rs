@@ -100,6 +100,13 @@ impl TokenService<'_> {
             );
         }
         if existing.revoked_at.is_some() {
+            // Explicit withdrawal is not evidence of a rotation replay.
+            if existing.revoke_reason.as_deref() != Some("rotation") {
+                return TokenEndpointResult::error_desc(
+                    OAuth2ErrorCode::InvalidGrant,
+                    "Refresh token revoked",
+                );
+            }
             // Release issuance locks before the shared session-wide revocation path.
             // A failed attempt remains retryable with this same revoked token.
             if let Err(error) = txn.rollback().await {

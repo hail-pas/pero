@@ -83,8 +83,11 @@ pub async fn require_admin_middleware(
         }
     }
 
-    req.extensions_mut().insert(AdminContext { session, user });
-    next.run(req).await
+    req.extensions_mut().insert(AdminContext {
+        session,
+        user: user.clone(),
+    });
+    super::audit::run(&state, req, &user, next).await
 }
 
 async fn find_active_user(

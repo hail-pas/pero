@@ -716,3 +716,151 @@ test("social-only accounts are guided to set a password before linking", async (
     "/account/login?redirect=%2Faccount%2Fchange-password",
   );
 });
+
+test("security pages preserve confirmations, ownership contracts and event filters", async ({
+  page,
+}) => {
+  const base = {
+    layout,
+    csrf_token: "csrf-test",
+    page: 1,
+    total_pages: 2,
+    event_type: "",
+  };
+  const timestamp = "2026-10-23T08:00:00Z";
+  await mock(page, {
+    "/account/sessions": {
+      view: "SessionListView",
+      data: {
+        ...base,
+        rows: [
+          {
+            id: "session-1",
+            ip: "127.0.0.1",
+            user_agent: "Test browser",
+            current: true,
+            created_at: timestamp,
+            last_seen_at: timestamp,
+            expires_at: timestamp,
+          },
+        ],
+      },
+    },
+    "/account/activity": {
+      view: "ActivityListView",
+      data: {
+        ...base,
+        rows: [
+          {
+            id: "event-1",
+            username: "lin",
+            event_type: "login_success",
+            provider_name: "",
+            ip: "127.0.0.1",
+            user_agent: "Test browser",
+            created_at: timestamp,
+          },
+        ],
+      },
+    },
+    "/account/authorizations": {
+      view: "AuthorizationListView",
+      data: {
+        ...base,
+        rows: [
+          {
+            client_id: "client-1",
+            app_id: "app-1",
+            app_name: "团队协作平台",
+            client_name: "Web",
+            scopes: ["openid", "email"],
+            granted_at: timestamp,
+          },
+        ],
+      },
+    },
+    "/account/identities": {
+      view: "IdentityListView",
+      data: {
+        ...base,
+        error: "",
+        has_password: true,
+        rows: [
+          {
+            id: "identity-1",
+            provider_name: "GitHub",
+            enabled: true,
+            last_login_at: timestamp,
+          },
+        ],
+        providers: [{ key: "oidc", name: "Company SSO" }],
+      },
+    },
+    "/dashboard/audit": {
+      view: "AuditListView",
+      data: {
+        ...base,
+        outcome: "",
+        rows: [
+          {
+            id: "audit-1",
+            actor_username: "lin",
+            target: "/dashboard/users/user-1/reset-password",
+            outcome: "success",
+            http_status: 200,
+            ip: "127.0.0.1",
+            created_at: timestamp,
+          },
+        ],
+      },
+    },
+  });
+  await page.goto("/account/sessions");
+  await expect(page.getByText("当前设备", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "退出其他设备", exact: true }).click();
+  const revoke = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      request.url().endsWith("/account/sessions/revoke"),
+  );
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "确认", exact: true })
+    .click();
+  const body = new URLSearchParams((await revoke).postData() || "");
+  expect(body.get("scope")).toBe("others");
+  expect(body.get("csrf_token")).toBe("csrf-test");
+  await page.goto("/account/activity?page=2");
+  await expect(page.getByText("登录成功", { exact: true })).toBeVisible();
+  await page.getByLabel("事件类型").click();
+  await page.getByRole("option", { name: "登录失败", exact: true }).click();
+  await expect(page).toHaveURL(/event_type=login_failure/);
+  expect(new URL(page.url()).searchParams.has("page")).toBe(false);
+  await page.goto("/account/authorizations");
+  await page.getByRole("button", { name: "撤销应用授权", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("所有客户端");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  await page.goto("/account/identities");
+  await expect(page.getByText("GitHub", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Company SSO", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("绑定到当前账户");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  await page.goto("/dashboard/audit");
+  await expect(
+    page.getByText("/dashboard/users/user-1/reset-password", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/audit.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/account/sessions");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+});

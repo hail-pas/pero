@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod audit;
 pub mod clients;
 pub mod dto;
 pub mod guard;
@@ -16,6 +17,11 @@ use guard::require_admin_middleware;
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/dashboard/audit", get(audit::list))
+        .route(
+            "/dashboard/events",
+            get(crate::web::account::security::admin_activity),
+        )
         .route(
             "/dashboard",
             get(|| async { Redirect::to("/dashboard/apps") }),

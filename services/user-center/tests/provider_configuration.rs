@@ -132,7 +132,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     }
     let service = state.social_service();
     let prepared = service
-        .prepare_login_state(&provider.provider, "wechat", None, "/dashboard")
+        .prepare_login_state(&provider.provider, "wechat", None, "/dashboard", None)
         .await
         .ok()
         .unwrap();
@@ -246,7 +246,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     let sessions = state.session_service();
     assert!(
         sessions
-            .create_social(user_id, identity_id, row.id, None, None)
+            .create_social(user_id, identity_id, row.id, None, None, None)
             .await
             .is_ok()
     );
@@ -262,10 +262,11 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         prepared.state_hash,
     ));
     let response = user_center::web::sso::social::callback(
-        State(callback_state),
+        State(callback_state.clone()),
         jar,
         pero_api_axum::extractor::ClientIp(None),
         Path("wechat".into()),
+        axum::http::HeaderMap::new(),
         axum::extract::Query(user_center::web::sso::social::CallbackParams {
             code: Some("one-use-code".into()),
             state: Some(prepared.state_token),
@@ -274,6 +275,60 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     )
     .await;
     assert_eq!(response.headers()["location"], "/dashboard");
+    // Proactive linking must retain the exact session that initiated the flow.
+    for same_session in [true, false] {
+        let (raw, session_id) = sessions
+            .create(user_id, None, None, None, None)
+            .await
+            .unwrap();
+        let prepared = service
+            .prepare_login_state(
+                &provider.provider,
+                "wechat",
+                None,
+                "/account/identities",
+                Some((user_id, session_id)),
+            )
+            .await
+            .ok()
+            .unwrap();
+        let raw = if same_session {
+            raw
+        } else {
+            sessions
+                .create(user_id, None, None, None, None)
+                .await
+                .unwrap()
+                .0
+        };
+        let jar = CookieJar::new()
+            .add(axum_extra::extract::cookie::Cookie::new(
+                state.cookie_factory().social_state_cookie_name(),
+                prepared.state_hash,
+            ))
+            .add(axum_extra::extract::cookie::Cookie::new("pero_sso", raw));
+        let response = user_center::web::sso::social::callback(
+            State(callback_state.clone()),
+            jar,
+            pero_api_axum::extractor::ClientIp(None),
+            Path("wechat".into()),
+            axum::http::HeaderMap::new(),
+            axum::extract::Query(user_center::web::sso::social::CallbackParams {
+                code: Some("link-code".into()),
+                state: Some(prepared.state_token),
+                error: None,
+            }),
+        )
+        .await;
+        assert_eq!(
+            response.headers()["location"],
+            if same_session {
+                "/account/identities"
+            } else {
+                "/account/login?redirect=%2Faccount%2Fidentities"
+            }
+        );
+    }
     let pending = service
         .create_social_link(
             &provider,
@@ -391,7 +446,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         .await
         .is_ok();
     let accepted_session = sessions
-        .create_social(user_id, identity_id, row.id, None, None)
+        .create_social(user_id, identity_id, row.id, None, None, None)
         .await
         .is_ok();
     assert!(

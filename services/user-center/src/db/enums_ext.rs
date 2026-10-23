@@ -20,3 +20,6 @@ impl crate::db::enums::IdentityProviderKind {
         matches!(self, Self::Oauth2 | Self::Oidc | Self::Wechat)
     }
 }
+
+pero_db_seaorm::enum_display_cmp!(crate::db::enums::LoginEventType { LoginSuccess => "login_success", LoginFailure => "login_failure", Logout => "logout" });
+pero_db_seaorm::enum_from_str!(crate::db::enums::LoginEventType { "login_success" => LoginSuccess, "login_failure" => LoginFailure, "logout" => Logout });

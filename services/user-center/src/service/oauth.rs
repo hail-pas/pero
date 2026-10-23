@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::cache::{PendingReqValue, pending_req};
-use crate::config::OAuth2Config;
+use crate::config::{OAuth2Config, SsoConfig};
 use crate::db::entity::apps;
 use crate::db::entity::authorization_requests;
 use crate::db::entity::oauth_clients;
@@ -36,6 +36,7 @@ pub struct OAuthService<'a> {
     db: &'a DatabaseConnection,
     cache: &'a RedisCacheStore,
     config: &'a OAuth2Config,
+    sso_config: &'a SsoConfig,
 }
 
 impl<'a> OAuthService<'a> {
@@ -43,8 +44,14 @@ impl<'a> OAuthService<'a> {
         db: &'a DatabaseConnection,
         cache: &'a RedisCacheStore,
         config: &'a OAuth2Config,
+        sso_config: &'a SsoConfig,
     ) -> Self {
-        Self { db, cache, config }
+        Self {
+            db,
+            cache,
+            config,
+            sso_config,
+        }
     }
 
     /// 校验 OAuth2 客户端：identifier 查找 → 状态检查 → redirect_uri 白名单 → scope 白名单
@@ -210,6 +217,30 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
 
+        if crate::db::helper::session::lock_active(
+            &txn,
+            session.id,
+            session.user_id,
+            self.sso_config.session_idle_ttl_seconds,
+        )
+        .await
+        .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+        .is_none()
+        {
+            return Err(OAuthError::AccessDenied);
+        }
+
+        if !grant_consent {
+            let consent = user_consents::Entity::find_by_id((session.user_id, client.id))
+                .one(&txn)
+                .await
+                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+            if !consent.is_some_and(|consent| {
+                crate::service::scope::allowed(&request.scopes, &consent.scopes)
+            }) {
+                return Err(OAuthError::AccessDenied);
+            }
+        }
         let auth_request = authorization_requests::Entity::find_by_id(auth_request_id)
             .lock_exclusive()
             .one(&txn)

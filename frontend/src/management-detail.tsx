@@ -278,7 +278,17 @@ export function ManagementDetail({
               </Stack>
             ))}
           </Panel>
-          <Panel title={t("登录身份")}>
+          <Panel
+            title={t("登录身份")}
+            action={
+              <Button
+                component={RouterLink}
+                to={`/dashboard/events?user_id=${data.user.id}`}
+              >
+                {t("查看登录记录")}
+              </Button>
+            }
+          >
             {data.identities?.length ? (
               data.identities.map((identity) => (
                 <Stack

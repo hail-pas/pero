@@ -98,7 +98,60 @@ interface FormPage extends AccountPage {
   form: Values;
   error: string;
 }
+export interface RowsPage<T> extends ListPage {
+  rows: T[];
+}
 export interface ViewDataMap {
+  SessionListView: RowsPage<{
+    id: string;
+    ip: string | null;
+    user_agent: string | null;
+    current: boolean;
+    created_at: string;
+    last_seen_at: string;
+    expires_at: string;
+  }>;
+  ActivityListView: RowsPage<{
+    id: string;
+    user_id: string | null;
+    username: string;
+    provider_name: string;
+    event_type: string;
+    ip: string | null;
+    user_agent: string | null;
+    created_at: string;
+  }>;
+  AuthorizationListView: RowsPage<{
+    client_id: string;
+    client_name: string;
+    app_id: string;
+    app_name: string;
+    scopes: string[];
+    granted_at: string;
+  }>;
+  IdentityListView: AccountPage & {
+    rows: {
+      id: string;
+      provider_name: string;
+      enabled: boolean;
+      last_login_at: string | null;
+    }[];
+    providers: { key: string; name: string; icon: string }[];
+    has_password: boolean;
+    error: string;
+  };
+  AuditListView: RowsPage<{
+    id: string;
+    actor_id: string;
+    actor_username: string;
+    action: string;
+    target: string;
+    outcome: string;
+    http_status: number | null;
+    ip: string | null;
+    request_id: string | null;
+    created_at: string;
+  }>;
   HomeView: null;
   AdminHomeView: CsrfPage & {
     username: string;

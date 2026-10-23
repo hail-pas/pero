@@ -1,6 +1,7 @@
 import { Alert } from "@mui/material";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { ViewEnvelope } from "./contracts";
+import { Security } from "./security";
 import { Profile } from "./account";
 import { Auth } from "./auth";
 import { FieldsForm } from "./forms";
@@ -26,6 +27,12 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "SessionListView":
+    case "ActivityListView":
+    case "AuthorizationListView":
+    case "IdentityListView":
+    case "AuditListView":
+      return <Security page={page} {...actions} />;
     case "HomeView":
       return <Home />;
     case "AdminHomeView":

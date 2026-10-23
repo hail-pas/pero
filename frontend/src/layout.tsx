@@ -1,5 +1,9 @@
 import {
   AppsRounded,
+  DevicesRounded,
+  HistoryRounded,
+  LinkRounded,
+  FactCheckRounded,
   DashboardRounded,
   FingerprintRounded,
   HomeRounded,
@@ -85,6 +89,8 @@ export function Layout({
           />,
         ],
         ["/dashboard/providers", t("身份提供方"), <FingerprintRounded />],
+        ["/dashboard/events", t("登录记录"), <HistoryRounded />],
+        ["/dashboard/audit", t("操作审计"), <FactCheckRounded />],
       ] as const)
     : ([
         [
@@ -101,6 +107,10 @@ export function Layout({
             src={`${import.meta.env.BASE_URL}resources/icons/navbar/ic-lock.svg`}
           />,
         ],
+        ["/account/sessions", t("登录设备"), <DevicesRounded />],
+        ["/account/activity", t("登录记录"), <HistoryRounded />],
+        ["/account/authorizations", t("已授权应用"), <AppsRounded />],
+        ["/account/identities", t("关联账号"), <LinkRounded />],
       ] as const);
   const name = layout?.user_name || t("我的账户");
   const nav = (

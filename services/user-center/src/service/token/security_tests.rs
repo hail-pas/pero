@@ -865,7 +865,7 @@ async fn recovery_and_contact_expiry() {
     assert!(
         state
             .session_service()
-            .create_verified_password(&original_identity, None)
+            .create_verified_password(&original_identity, None, None)
             .await
             .is_err(),
         "a verified but subsequently changed password cannot establish a new session"
@@ -2183,6 +2183,478 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
             .await
             .unwrap()
             .is_some()
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn account_security_pages_enforce_ownership_and_revoke_grants() {
+    use crate::db::entity::{
+        audit_events, identities, sso_sessions, user_app_access, user_consents,
+    };
+    use crate::db::enums::CommonStatus;
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use axum_extra::extract::{CookieJar, cookie::Cookie};
+    use sea_orm::ColumnTrait;
+    use tower::ServiceExt;
+    async fn request(
+        app: &axum::Router,
+        cookies: &str,
+        path: &str,
+        form: Option<Vec<(&str, String)>>,
+    ) -> (axum::http::StatusCode, serde_json::Value) {
+        let (method, body) = match form {
+            Some(fields) => (
+                "POST",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(fields)
+                    .finish(),
+            ),
+            None => ("GET", String::new()),
+        };
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("cookie", cookies)
+                    .header("accept", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+    let fixture = SecurityFixture::new().await;
+    let state = fixture.state.clone();
+    let db = &state.db;
+    let (raw, current) = state
+        .session_service()
+        .create(fixture.user, None, None, None, Some("Test browser".into()))
+        .await
+        .unwrap();
+    let other_user = Uuid::now_v7();
+    sql(
+        db,
+        "INSERT INTO users(id,username) VALUES($1,'another_user')",
+        vec![other_user.into()],
+    )
+    .await;
+    let (foreign_raw, foreign_session) = state
+        .session_service()
+        .create(other_user, None, None, None, None)
+        .await
+        .unwrap();
+    let account_session = state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let foreign_proof = state
+        .session_service()
+        .validate(&foreign_raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let (jar, csrf) = state
+        .web_security()
+        .ensure_csrf(CookieJar::new().add(Cookie::new("pero_sso", raw)));
+    let cookies = jar
+        .iter()
+        .map(|c| format!("{}={}", c.name(), c.value()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let app = crate::router::build(state.clone());
+    let (_, sessions) = request(&app, &cookies, "/account/sessions", None).await;
+    assert_eq!(sessions["data"]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(sessions["data"]["rows"][0]["current"], true);
+    assert!(!sessions.to_string().contains("token_hash"));
+    request(
+        &app,
+        &cookies,
+        "/account/sessions/revoke",
+        Some(vec![
+            ("csrf_token", csrf.clone()),
+            ("scope", "one".into()),
+            ("session_id", foreign_session.to_string()),
+        ]),
+    )
+    .await;
+    assert!(
+        sso_sessions::Entity::find_by_id(foreign_session)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_none()
+    );
+    assert_eq!(
+        request(
+            &app,
+            &cookies,
+            "/account/sessions/revoke",
+            Some(vec![
+                ("csrf_token", "invalid".into()),
+                ("scope", "all".into())
+            ])
+        )
+        .await
+        .0,
+        400
+    );
+
+    let login = crate::service::login::LoginService::new(db, &state.cache)
+        .with_user_agent(Some("Test browser".into()));
+    login.record_failure(fixture.user, None, None, None).await;
+    login.record_failure(other_user, None, None, None).await;
+    let (_, activity) = request(
+        &app,
+        &cookies,
+        &format!("/account/activity?user_id={other_user}"),
+        None,
+    )
+    .await;
+    assert_eq!(activity["data"]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        activity["data"]["rows"][0]["user_id"],
+        fixture.user.to_string()
+    );
+
+    let provider = Uuid::now_v7();
+    sql(db,"INSERT INTO identity_providers(id,code,name,kind) VALUES($1,'external','External','oauth2')",vec![provider.into()]).await;
+    let info = crate::service::social::SocialUserInfo {
+        authenticated_at: None,
+        sub: "external-subject".into(),
+        email: None,
+        email_verified: false,
+        name: None,
+        avatar_url: None,
+        profile_extra: serde_json::json!({}),
+    };
+    let identity = state
+        .social_service()
+        .bind_social_identity(&account_session, provider, &info)
+        .await
+        .ok()
+        .unwrap();
+    assert!(matches!(
+        state
+            .social_service()
+            .bind_social_identity(&foreign_proof, provider, &info)
+            .await,
+        Err(crate::service::social::SocialLinkError::IdentityTaken)
+    ));
+    let (_, linked_session) = state
+        .session_service()
+        .create_social(fixture.user, identity, provider, None, None, None)
+        .await
+        .unwrap();
+    let path = format!("/account/identities/{identity}/unlink");
+    let (_, denied) = request(
+        &app,
+        &cookies,
+        &path,
+        Some(vec![("csrf_token", csrf.clone())]),
+    )
+    .await;
+    assert_eq!(denied["error"], "last_login_identity");
+    PasswordIdentityService::create(
+        db,
+        fixture.user,
+        fixture.provider,
+        fixture.user.to_string(),
+        "OriginalPass123!",
+        time::OffsetDateTime::now_utc(),
+    )
+    .await
+    .unwrap();
+    let (_, linked) = request(&app, &cookies, "/account/identities", None).await;
+    assert_eq!(linked["data"]["rows"][0]["id"], identity.to_string());
+    let (_, unlinked) = request(
+        &app,
+        &cookies,
+        &path,
+        Some(vec![("csrf_token", csrf.clone())]),
+    )
+    .await;
+    assert_eq!(unlinked["code"], 0);
+    assert!(
+        identities::Entity::find_by_id(identity)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .unbound_at
+            .is_some()
+    );
+    assert!(
+        sso_sessions::Entity::find_by_id(linked_session)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_some()
+    );
+
+    sql(
+        db,
+        "INSERT INTO user_consents(user_id,client_id,scopes) VALUES($1,$2,ARRAY['openid'])",
+        vec![fixture.user.into(), fixture.client.into()],
+    )
+    .await;
+    let refresh_raw = pero_utils::crypto::generate_token();
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into()]).await;
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let token_service = TokenService::new(&state);
+    let TokenEndpointResult::Success(rotated) = token_service
+        .handle_refresh_token(&refresh_form(fixture.client, &refresh_raw), &client)
+        .await
+    else {
+        panic!("valid refresh must rotate before consent withdrawal");
+    };
+    let signing = crate::db::helper::signing_key::require_active_signing_key(db)
+        .await
+        .unwrap();
+    let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
+        .issue_access_token(fixture.user, "openid", Some(current), 0)
+        .unwrap();
+    let userinfo = |token: String| {
+        let state = state.clone();
+        async move {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+            crate::api::userinfo::userinfo(axum::extract::State(state), headers)
+                .await
+                .status()
+        }
+    };
+    assert_eq!(userinfo(old_token.clone()).await, 200);
+    let (_, grants) = request(&app, &cookies, "/account/authorizations", None).await;
+    assert_eq!(grants["data"]["rows"][0]["app_id"], fixture.app.to_string());
+    request(
+        &app,
+        &cookies,
+        &format!("/account/authorizations/{}/revoke", fixture.app),
+        Some(vec![("csrf_token", csrf.clone())]),
+    )
+    .await;
+    assert!(
+        user_consents::Entity::find_by_id((fixture.user, fixture.client))
+            .one(db)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let access = user_app_access::Entity::find_by_id((fixture.user, fixture.app))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.status, CommonStatus::Active);
+    assert_eq!(access.token_version, 1);
+    for revoked_token in [rotated.refresh_token.unwrap(), refresh_raw] {
+        assert!(matches!(
+            token_service
+                .handle_refresh_token(&refresh_form(fixture.client, &revoked_token), &client)
+                .await,
+            TokenEndpointResult::Error {
+                code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
+                ..
+            }
+        ));
+        assert!(
+            sso_sessions::Entity::find_by_id(current)
+                .one(db)
+                .await
+                .unwrap()
+                .unwrap()
+                .revoked_at
+                .is_none(),
+            "consent withdrawal must not let old refresh tokens revoke the SSO session"
+        );
+    }
+    assert_eq!(userinfo(old_token.clone()).await, 401);
+    assert!(
+        refresh_tokens::Entity::find()
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_some()
+    );
+    sql(
+        db,
+        "INSERT INTO user_consents(user_id,client_id,scopes) VALUES($1,$2,ARRAY['openid'])",
+        vec![fixture.user.into(), fixture.client.into()],
+    )
+    .await;
+    assert_eq!(
+        userinfo(old_token).await,
+        401,
+        "renewed consent cannot restore an old token"
+    );
+
+    assert_eq!(
+        request(&app, &cookies, "/dashboard/audit", None).await.0,
+        403
+    );
+    sql(db,"INSERT INTO user_app_access(user_id,app_id) SELECT $1,id FROM apps WHERE code='user-center'",vec![fixture.user.into()]).await;
+    let fields = vec![
+        ("csrf_token", csrf.clone()),
+        ("code", "audited-app".into()),
+        ("name", "Audited".into()),
+        ("app_type", "web".into()),
+        ("description", "".into()),
+        ("homepage_url", "".into()),
+        ("logo_url", "".into()),
+        ("auto_access", "false".into()),
+    ];
+    assert_eq!(
+        request(&app, &cookies, "/dashboard/apps/new", Some(fields.clone()))
+            .await
+            .1["code"],
+        0
+    );
+    assert_eq!(
+        request(&app, &cookies, "/dashboard/apps/new", Some(fields))
+            .await
+            .0,
+        400
+    );
+    let (_, audit) = request(&app, &cookies, "/dashboard/audit", None).await;
+    assert_eq!(audit["data"]["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(audit["data"]["rows"][0]["outcome"], "failure");
+    assert_eq!(audit["data"]["rows"][1]["outcome"], "success");
+    assert_eq!(audit_events::Entity::find().all(db).await.unwrap().len(), 2);
+    assert!(!audit["data"]["rows"].to_string().contains(&csrf));
+
+    // A disjunction must remain inside the authenticated-user ownership constraint.
+    let txn = db.begin().await.unwrap();
+    crate::service::account_security::revoke_sessions(
+        &txn,
+        fixture.user,
+        sea_orm::Condition::any()
+            .add(sso_sessions::Column::Id.eq(foreign_session))
+            .add(sso_sessions::Column::Id.eq(linked_session)),
+        "test_selection",
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+    assert!(
+        sso_sessions::Entity::find_by_id(foreign_session)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_none()
+    );
+
+    // An audit completion outage must not discard a committed one-time client secret.
+    db.execute_unprepared("CREATE FUNCTION reject_audit_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test audit outage'; END $$; CREATE TRIGGER reject_audit_update BEFORE UPDATE ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_audit_update()")
+        .await.unwrap();
+    let (status, reset) = request(
+        &app,
+        &cookies,
+        &format!("/dashboard/clients/{}/reset-secret", fixture.client),
+        Some(vec![("csrf_token", csrf.clone())]),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let secret = reset["data"]["secret"].as_str().unwrap();
+    let updated_client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        pero_utils::crypto::verify_secret_async(
+            secret,
+            updated_client.secret_hash.as_deref().unwrap()
+        )
+        .await
+        .unwrap()
+    );
+    let (_, audit) = request(&app, &cookies, "/dashboard/audit?outcome=pending", None).await;
+    assert_eq!(audit["data"]["rows"].as_array().unwrap().len(), 1);
+    assert!(!audit["data"]["rows"].to_string().contains(secret));
+    let (_, logged_out) = request(
+        &app,
+        &cookies,
+        "/account/sessions/revoke",
+        Some(vec![("csrf_token", csrf), ("scope", "all".into())]),
+    )
+    .await;
+    assert_eq!(logged_out["redirect"], "/account/login");
+    assert!(
+        sso_sessions::Entity::find_by_id(current)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_some()
+    );
+    assert!(
+        matches!(
+            state
+                .social_service()
+                .bind_social_identity(&account_session, provider, &info)
+                .await,
+            Err(crate::service::social::SocialLinkError::InvalidSession)
+        ),
+        "revoked session proof cannot bind a login identity"
+    );
+    assert!(matches!(
+        crate::service::account_security::unlink_identity(
+            db,
+            &account_session,
+            &state.config.sso,
+            identity
+        )
+        .await,
+        Err(crate::service::ManagementError::Invalid("unauthorized"))
+    ));
+    let pending_request = Uuid::now_v7();
+    sql(db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![pending_request.into(),fixture.client.into(),fixture.app.into()]).await;
+    sql(
+        db,
+        "DELETE FROM user_consents WHERE user_id=$1 AND client_id=$2",
+        vec![fixture.user.into(), fixture.client.into()],
+    )
+    .await;
+    assert!(matches!(
+        state
+            .oauth_service()
+            .issue_auth_code_with_consent(pending_request, &account_session, true)
+            .await,
+        Err(crate::service::oauth::OAuthError::AccessDenied)
+    ));
+    assert!(
+        user_consents::Entity::find_by_id((fixture.user, fixture.client))
+            .one(db)
+            .await
+            .unwrap()
+            .is_none(),
+        "revoked session proof cannot restore consent"
     );
     fixture.cleanup().await;
 }

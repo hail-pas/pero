@@ -4,6 +4,7 @@ pub mod dto;
 pub mod login;
 pub mod logout;
 pub mod profile;
+pub mod security;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -12,6 +13,17 @@ use crate::state::app::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/account/sessions", get(security::sessions))
+        .route("/account/sessions/revoke", post(security::revoke_sessions))
+        .route("/account/activity", get(security::activity))
+        .route("/account/authorizations", get(security::authorizations))
+        .route(
+            "/account/authorizations/{id}/revoke",
+            post(security::revoke_authorization),
+        )
+        .route("/account/identities", get(security::identities))
+        .route("/account/identities/{id}/unlink", post(security::unlink))
+        .route("/account/identities/{provider}/link", post(security::link))
         .route("/account/login", get(login::get).post(login::post))
         .route("/account/profile", get(profile::get).post(profile::post))
         .route(
