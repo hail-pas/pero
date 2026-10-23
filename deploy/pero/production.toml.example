@@ -18,7 +18,7 @@ cookie_signing_secret = "REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_CHARS"
 [password_reset]
 signing_key = "REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET_AT_LEAST_32_CHARS"
 
-[askama]
+[frontend]
 static_dir = "prd/ui/static"
 
 [log]

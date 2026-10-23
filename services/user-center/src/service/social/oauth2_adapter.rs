@@ -58,6 +58,8 @@ impl SocialProviderAdapter for OAuth2Adapter {
             .send()
             .await
             .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
             .json()
             .map_err(|e| e.to_string())?;
 
@@ -88,6 +90,8 @@ impl SocialProviderAdapter for OAuth2Adapter {
             .bearer_auth(&token_result.access_token)
             .send()
             .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
             .map_err(|e| e.to_string())?
             .json()
             .map_err(|e| e.to_string())?;

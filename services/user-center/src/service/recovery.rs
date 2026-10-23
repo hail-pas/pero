@@ -82,21 +82,22 @@ pub async fn request(
     {
         return Ok(());
     }
+    // Only verified contacts may recover an account; registration alone proves no ownership.
     // Contact changes and issuance use the same user lock.
-    let (channel, recipient) = if let Some(email) = user
-        .email
-        .as_deref()
-        .filter(|email| email.eq_ignore_ascii_case(identifier))
-    {
-        ("email", email)
-    } else if let Some(phone) = user.phone.as_deref()
-        && (phone == identifier
-            || phone == pero_utils::string::canonical_rate_limit_key(identifier))
-    {
-        ("phone", phone)
-    } else {
-        return Ok(());
-    };
+    let (channel, recipient) =
+        if let Some(email) = user.email.as_deref().filter(|email| {
+            user.email_verified_at.is_some() && email.eq_ignore_ascii_case(identifier)
+        }) {
+            ("email", email)
+        } else if let Some(phone) = user.phone.as_deref()
+            && user.phone_verified_at.is_some()
+            && (phone == identifier
+                || phone == pero_utils::string::canonical_rate_limit_key(identifier))
+        {
+            ("phone", phone)
+        } else {
+            return Ok(());
+        };
     let token = pero_utils::oauth::jwt::sign_password_reset_token(
         &user.id.to_string(),
         state.config.password_reset.ttl_seconds as i64,

@@ -3,6 +3,7 @@ pub mod account;
 pub mod app;
 pub mod client;
 pub mod contact;
+pub mod keys;
 pub mod login;
 pub mod logout;
 pub mod notify;
@@ -21,8 +22,12 @@ pub mod verification;
 pub enum ManagementError {
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("{0}")]
+    Validation(String),
     #[error("Management dependency unavailable")]
     Dependency(sea_orm::DbErr),
+    #[error("Credential processing unavailable")]
+    Credential(#[from] pero_error::AppError),
 }
 
 impl From<sea_orm::DbErr> for ManagementError {

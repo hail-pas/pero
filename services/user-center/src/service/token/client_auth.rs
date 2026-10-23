@@ -66,9 +66,13 @@ impl TokenService<'_> {
             }
         }
 
-        if !client.grant_types.contains(&form.grant_type) {
+        if matches!(
+            form.grant_type.as_str(),
+            "authorization_code" | "refresh_token"
+        ) && !client.grant_types.contains(&form.grant_type)
+        {
             return Err(TokenEndpointResult::error(
-                OAuth2ErrorCode::UnsupportedGrantType,
+                OAuth2ErrorCode::UnauthorizedClient,
             ));
         }
 

@@ -9,7 +9,6 @@ members = [
     "crates/types",
     "crates/utils",
     "crates/validate-core",
-    "crates/validate-validator",
     "crates/db-seaorm",
     "services/user-center",
     "services/admin",
@@ -42,31 +41,27 @@ thiserror = "2"
 
 # Crypto & Auth
 jsonwebtoken = { version = "11.1", default-features = false, features = ["use_pem", "aws_lc_rs"] }
-argon2 = "0.5"
-sha2 = "0.10"
-hmac = "0.12"
-base64 = "0.22"
+argon2 = "0.6"
+sha2 = "0.11.1"
+hmac = "0.13"
+base64 = "0.23"
 hex = "0.4"
-rand = "0.9"
-bcrypt = "0.19.3"
-chrono = { version = "0.4", features = ["serde"] }
+rand = "0.10"
 
 # Web
 axum = { version = "0.8", features = ["json", "form"] }
 tower = "0.5"
-tower-http = "0.6"
+tower-http = "0.7"
 reqwest = { version = "0.13.5", default-features = false }
 http = "1.4.0"
 webpki-root-certs = "1"
 toml = "1.1.6"
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }
 url = "2"
-# Use the default templates/ directory; config would pull in unmaintained basic-toml.
-askama = { version = "0.15", default-features = false, features = ["derive", "std", "urlencode"] }
 cookie = "0.18"
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 uuid = { version = "1", features = ["v7", "serde"] }
-time = "0.3"
+time = { version = "0.3.55", features = ["serde-well-known"] }
 ipnetwork = { version = "0.21", features = ["serde"] }
 
 # Database
@@ -78,16 +73,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 
-# i18n
-rust-i18n = { version = "4.2.2", features = ["load-path"] }
-
-
 pero-api-axum = { path = "crates/api-axum" }
 pero-config = { path = "crates/config" }
 pero-error = { path = "crates/error" }
 pero-types = { path = "crates/types" }
 pero-validate-core = { path = "crates/validate-core" }
-pero-validate-validator = { path = "crates/validate-validator" }
 pero-cache-redis = { path = "crates/cache-redis" }
 pero-db-seaorm = { path = "crates/db-seaorm" }
 pero-http-client-core = { path = "crates/http-client-core" }

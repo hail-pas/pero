@@ -2,15 +2,13 @@ use super::*;
 use pero_cache_redis::RedisCacheStore;
 use pero_http_client_core::HttpClientExt;
 use pero_http_client_core::HttpClientHandle;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::cache::key::{social_link, social_state};
-use crate::db::entity::{
-    external_login_requests as elr, identities, identity_providers as ip, users,
-};
-use crate::db::enums::{IdentityKind, IdentityProviderKind, UserStatus};
+use crate::cache::key::social_state;
+use crate::db::entity::{identities, identity_providers as ip, users};
+use crate::db::enums::{IdentityProviderKind, UserStatus};
 use crate::db::helper::provider::{ProviderWithSecret, find_provider_with_secret};
 
 impl<'a> SocialLoginService<'a> {
@@ -21,6 +19,7 @@ impl<'a> SocialLoginService<'a> {
         sso_config: &'a crate::config::SsoConfig,
         oauth2_config: &'a crate::config::OAuth2Config,
         jwks: &'a super::JwksCache,
+        notification: &'a crate::config::NotificationConfig,
     ) -> Self {
         Self {
             db,
@@ -29,6 +28,7 @@ impl<'a> SocialLoginService<'a> {
             sso_config,
             oauth2_config,
             jwks,
+            notification,
         }
     }
 
@@ -65,6 +65,7 @@ impl<'a> SocialLoginService<'a> {
         provider: &ip::Model,
         provider_code: &str,
         auth_request_id: Option<Uuid>,
+        redirect: &str,
     ) -> Result<PreparedLoginState, SocialLoginError> {
         crate::service::provider::validate_configuration(
             provider,
@@ -104,6 +105,7 @@ impl<'a> SocialLoginService<'a> {
             }
         }
         let social_value = crate::cache::key::SocialStateValue {
+            redirect: pero_utils::redirect::safe_site_redirect(redirect, "/account/profile"),
             auth_request_id: auth_request_id.map(|id| id.to_string()),
             provider_id: provider.id.to_string(),
             nonce: nonce.clone(),
@@ -117,27 +119,6 @@ impl<'a> SocialLoginService<'a> {
         ) {
             self.cache
                 .set(key, &social_value)
-                .await
-                .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
-        }
-
-        if let Some(auth_request_id) = auth_request_id {
-            let now = time::OffsetDateTime::now_utc();
-            let ext_login = elr::ActiveModel {
-                id: Set(Uuid::now_v7()),
-                authorization_request_id: Set(auth_request_id),
-                provider_id: Set(provider.id),
-                state_hash: Set(state_hash.clone()),
-                nonce: Set(nonce.clone()),
-                code_verifier: Set(pkce.as_ref().map(|p| p.code_verifier.clone())),
-                created_at: Set(now),
-                expires_at: Set(
-                    now + time::Duration::seconds(self.oauth2_config.auth_code_ttl_seconds as i64)
-                ),
-                consumed_at: Set(None),
-            };
-            ext_login
-                .insert(self.db)
                 .await
                 .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
         }
@@ -210,32 +191,11 @@ impl<'a> SocialLoginService<'a> {
             _ => return Err(SocialLoginError::InvalidState),
         };
 
-        self.consume_ext_login(state_hash).await;
-
         Ok(ValidatedCallbackState {
             social_value,
             provider,
             auth_request_id,
         })
-    }
-
-    async fn consume_ext_login(&self, state_hash: &str) {
-        let result = elr::Entity::find()
-            .filter(elr::Column::StateHash.eq(state_hash))
-            .filter(elr::Column::ConsumedAt.is_null())
-            .one(self.db)
-            .await;
-        match result {
-            Ok(Some(m)) => {
-                let mut a: elr::ActiveModel = m.into();
-                a.consumed_at = Set(Some(time::OffsetDateTime::now_utc()));
-                if let Err(e) = a.update(self.db).await {
-                    tracing::warn!("consume_ext_login update: {e}");
-                }
-            }
-            Ok(None) => {}
-            Err(e) => tracing::warn!("consume_ext_login query: {e}"),
-        }
     }
 
     pub async fn exchange_code(
@@ -373,6 +333,8 @@ impl<'a> SocialLoginService<'a> {
             .bearer_auth(access_token)
             .send()
             .await
+            .map_err(|e| SocialLoginError::UserinfoFailed(format!("emails fetch: {e}")))?
+            .error_for_status()
             .map_err(|e| SocialLoginError::UserinfoFailed(format!("emails fetch: {e}")))?;
         let emails: serde_json::Value = resp
             .json()
@@ -410,6 +372,7 @@ impl<'a> SocialLoginService<'a> {
         provider: &ProviderWithSecret,
         info: &SocialUserInfo,
         auth_request_id: Option<Uuid>,
+        redirect: &str,
     ) -> Result<IdentityResolution, SocialLoginError> {
         let existing = identities::Entity::find()
             .filter(identities::Column::ProviderId.eq(provider.provider.id))
@@ -431,20 +394,7 @@ impl<'a> SocialLoginService<'a> {
             let id = identity.id;
             let now = time::OffsetDateTime::now_utc();
             let mut a: identities::ActiveModel = identity.into();
-            let mut profile = serde_json::json!({
-                "email": info.email,
-                "email_verified": info.email_verified,
-                "name": info.name,
-                "picture": info.avatar_url,
-            });
-            if let serde_json::Value::Object(ref extra) = info.profile_extra
-                && let serde_json::Value::Object(ref mut p) = profile
-            {
-                for (k, v) in extra {
-                    p.insert(k.clone(), v.clone());
-                }
-            }
-            a.profile = Set(profile);
+            a.profile = Set(info.profile());
             a.last_login_at = Set(Some(now));
             a.update(self.db)
                 .await
@@ -461,7 +411,7 @@ impl<'a> SocialLoginService<'a> {
 
         if let Some(user) = self.find_social_link_user(info).await? {
             let nonce = self
-                .create_social_link(provider, info, &user, auth_request_id)
+                .create_social_link(provider, info, &user, auth_request_id, redirect)
                 .await?;
             return Ok(IdentityResolution::NeedsAccountLink { nonce });
         }
@@ -508,161 +458,6 @@ impl<'a> SocialLoginService<'a> {
             Some(u) if u.status == UserStatus::Active => Ok(Some(u)),
             Some(_) => Err(SocialLoginError::Internal("user unavailable".into())),
             None => Ok(None),
-        }
-    }
-
-    pub async fn create_social_link(
-        &self,
-        provider: &ProviderWithSecret,
-        info: &SocialUserInfo,
-        user: &users::Model,
-        auth_request_id: Option<Uuid>,
-    ) -> Result<String, SocialLoginError> {
-        let nonce = pero_utils::crypto::generate_token();
-        let value = crate::cache::key::SocialLinkValue {
-            auth_request_id: auth_request_id.map(|id| id.to_string()),
-            user_id: user.id.to_string(),
-            provider_id: provider.provider.id.to_string(),
-            provider_code: provider.provider.code.clone(),
-            provider_name: provider.provider.name.clone(),
-            subject: info.sub.clone(),
-            email: info.email.clone(),
-            email_verified: info.email_verified,
-            name: info.name.clone().or_else(|| user.nickname.clone()),
-            avatar_url: info.avatar_url.clone(),
-        };
-        let key = social_link
-            .key_with_ttl(
-                Duration::from_secs(self.oauth2_config.auth_code_ttl_seconds),
-                &nonce,
-            )
-            .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
-        self.cache
-            .set(key, &value)
-            .await
-            .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
-        Ok(nonce)
-    }
-
-    pub async fn load_social_link(
-        &self,
-        nonce: &str,
-    ) -> Result<Option<crate::cache::key::SocialLinkValue>, SocialLoginError> {
-        let key = social_link
-            .key(nonce)
-            .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
-        self.cache
-            .get::<crate::cache::key::SocialLinkValue>(key)
-            .await
-            .map_err(|e| SocialLoginError::Internal(e.to_string()))
-    }
-
-    pub async fn link_social_identity(
-        &self,
-        verified: &identities::Model,
-        provider_id: Uuid,
-        link: &crate::cache::key::SocialLinkValue,
-    ) -> Result<Uuid, SocialLinkError> {
-        let user_id = verified.user_id;
-        let txn = self
-            .db
-            .begin()
-            .await
-            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-        let user = crate::service::password::PasswordIdentityService::lock_user(&txn, user_id)
-            .await
-            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-        if user.status != UserStatus::Active {
-            return Err(SocialLinkError::Internal("user_inactive".into()));
-        }
-        crate::service::provider::require_enabled_social(&txn, provider_id)
-            .await
-            .map_err(|error| SocialLinkError::Internal(error.to_string()))?;
-        crate::service::password::PasswordIdentityService::ensure_unchanged(&txn, verified)
-            .await
-            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-        let now = time::OffsetDateTime::now_utc();
-        let profile = serde_json::json!({
-            "email": link.email,
-            "email_verified": link.email_verified,
-            "name": link.name,
-            "picture": link.avatar_url,
-        });
-
-        let by_subject = identities::Entity::find()
-            .filter(identities::Column::ProviderId.eq(provider_id))
-            .filter(identities::Column::Subject.eq(&link.subject))
-            .filter(identities::Column::UnboundAt.is_null())
-            .one(&txn)
-            .await
-            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-
-        if let Some(identity) = by_subject {
-            if identity.user_id != user_id {
-                return Err(SocialLinkError::IdentityTaken);
-            }
-            let id = identity.id;
-            let mut active: identities::ActiveModel = identity.into();
-            active.profile = Set(profile);
-            active.last_login_at = Set(Some(now));
-            active.updated_at = Set(now);
-            active
-                .update(&txn)
-                .await
-                .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-            txn.commit()
-                .await
-                .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-            return Ok(id);
-        }
-
-        let existing_provider = identities::Entity::find()
-            .filter(identities::Column::UserId.eq(user_id))
-            .filter(identities::Column::ProviderId.eq(provider_id))
-            .filter(identities::Column::Kind.eq(IdentityKind::Oauth))
-            .filter(identities::Column::UnboundAt.is_null())
-            .one(&txn)
-            .await
-            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-        if existing_provider.is_some() {
-            return Err(SocialLinkError::ProviderAlreadyLinked);
-        }
-
-        let identity_id = Uuid::now_v7();
-        identities::ActiveModel {
-            id: Set(identity_id),
-            user_id: Set(user_id),
-            provider_id: Set(provider_id),
-            kind: Set(IdentityKind::Oauth),
-            subject: Set(link.subject.clone()),
-            password_hash: Set(None),
-            password_algorithm: Set(None),
-            password_updated_at: Set(None),
-            profile: Set(profile),
-            last_login_at: Set(Some(now)),
-            created_at: Set(now),
-            updated_at: Set(now),
-            unbound_at: Set(None),
-        }
-        .insert(&txn)
-        .await
-        .map_err(|e| {
-            if crate::db::error::is_unique_violation(&e) {
-                SocialLinkError::ProviderAlreadyLinked
-            } else {
-                SocialLinkError::Internal(e.to_string())
-            }
-        })?;
-
-        txn.commit()
-            .await
-            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
-        Ok(identity_id)
-    }
-
-    pub async fn delete_social_link_cache(&self, nonce: &str) {
-        if let Ok(key) = social_link.key(nonce) {
-            let _ = self.cache.del(key).await;
         }
     }
 }

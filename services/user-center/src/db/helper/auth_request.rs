@@ -1,4 +1,4 @@
-use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -44,22 +44,4 @@ pub async fn create(
         completed_at: Set(None),
     };
     model.insert(db).await
-}
-
-pub async fn mark_completed<C>(db: &C, id: Uuid, user_id: Uuid) -> Result<(), sea_orm::DbErr>
-where
-    C: ConnectionTrait,
-{
-    let now = OffsetDateTime::now_utc();
-    let req = authorization_requests::Entity::find_by_id(id)
-        .one(db)
-        .await?
-        .ok_or(sea_orm::DbErr::RecordNotFound(
-            "authorization request not found".into(),
-        ))?;
-    let mut active: authorization_requests::ActiveModel = req.into();
-    active.completed_at = Set(Some(now));
-    active.authorized_user_id = Set(Some(user_id));
-    active.update(db).await?;
-    Ok(())
 }

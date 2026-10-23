@@ -5,8 +5,8 @@ use tokio::task::JoinHandle;
 
 use crate::db::helper::cleanup::{
     clean_expired_authorization_codes, clean_expired_authorization_requests,
-    clean_expired_contact_change_requests, clean_expired_external_login_requests,
-    clean_expired_password_reset_tokens, clean_expired_refresh_tokens, clean_expired_sso_sessions,
+    clean_expired_contact_change_requests, clean_expired_password_reset_tokens,
+    clean_expired_refresh_tokens, clean_expired_sso_sessions,
 };
 
 pub fn start_cleanup_task(db: DatabaseConnection, interval_secs: u64) -> JoinHandle<()> {
@@ -51,10 +51,6 @@ async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
         clean_expired_authorization_requests
     );
     do_clean!("authorization_codes", clean_expired_authorization_codes);
-    do_clean!(
-        "external_login_requests",
-        clean_expired_external_login_requests
-    );
     do_clean!("sso_sessions", clean_expired_sso_sessions);
     do_clean!("refresh_tokens", clean_expired_refresh_tokens);
     do_clean!(

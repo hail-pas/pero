@@ -1,5 +1,4 @@
 use base64::Engine;
-use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -13,6 +12,8 @@ pub struct AccessTokenClaims {
     pub exp: i64,
     pub iat: i64,
     pub scope: String,
+    pub client_version: i64,
+    pub access_version: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sid: Option<String>,
 }
@@ -84,6 +85,8 @@ pub struct AccessTokenParams<'a> {
     pub user_id: &'a str,
     pub client_identifier: &'a str,
     pub scopes: &'a str,
+    pub client_version: i64,
+    pub access_version: i64,
     pub ttl_seconds: i64,
     pub session_id: Option<&'a str>,
     pub kid: Option<&'a str>,
@@ -93,7 +96,7 @@ pub fn sign_access_token_with_key(
     params: &AccessTokenParams<'_>,
     key: &EncodingKey,
 ) -> Result<String, jsonwebtoken::errors::Error> {
-    let now = Utc::now().timestamp();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let claims = AccessTokenClaims {
         iss: params.issuer.to_owned(),
         sub: params.user_id.to_owned(),
@@ -101,6 +104,8 @@ pub fn sign_access_token_with_key(
         exp: now + params.ttl_seconds,
         iat: now,
         scope: params.scopes.to_owned(),
+        client_version: params.client_version,
+        access_version: params.access_version,
         sid: params.session_id.map(|s| s.to_owned()),
     };
 
@@ -138,7 +143,7 @@ pub fn sign_id_token_with_key(
     params: &IdTokenParams<'_>,
     key: &EncodingKey,
 ) -> Result<String, jsonwebtoken::errors::Error> {
-    let now = Utc::now().timestamp();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let claims = IdTokenClaims {
         iss: params.issuer.to_owned(),
         sub: params.user_id.to_owned(),
@@ -172,7 +177,7 @@ pub fn sign_password_reset_token(
     ttl_seconds: i64,
     signing_key: &str,
 ) -> Result<String, jsonwebtoken::errors::Error> {
-    let now = Utc::now().timestamp();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let claims = PasswordResetClaims {
         sub: user_id.to_owned(),
         exp: now + ttl_seconds,
@@ -332,7 +337,9 @@ where
         .split('.')
         .nth(1)
         .expect("decode_header validates JWT shape before payload extraction");
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload)?;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| jsonwebtoken::errors::ErrorKind::InvalidToken)?;
     Ok(serde_json::from_slice(&payload)?)
 }
 
@@ -344,7 +351,7 @@ mod tests {
 
     #[test]
     fn token_types_cannot_cross_purposes() {
-        let now = Utc::now().timestamp();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let claims =
             serde_json::json!({"iss":"issuer","sub":"user","aud":"client","exp":now+60,"iat":now});
         let sign = |claims: &serde_json::Value, typ: &str| {
@@ -362,6 +369,8 @@ mod tests {
         assert!(verify_access_token(&id, "issuer", "client", PUBLIC).is_err());
         let mut access = claims.clone();
         access["scope"] = "openid".into();
+        access["client_version"] = 0.into();
+        access["access_version"] = 0.into();
         let at = sign(&access, "at+jwt");
         assert!(verify_access_token(&at, "issuer", "client", PUBLIC).is_ok());
         assert!(verify_id_token(&at, "issuer", "client", PUBLIC).is_err());

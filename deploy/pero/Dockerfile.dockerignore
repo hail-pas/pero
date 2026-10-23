@@ -7,7 +7,12 @@
 !services/**
 !scripts/
 !scripts/migrate.sh
-!scripts/package-ui-assets.py
+!frontend/
+!frontend/**
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 !deploy/
 !deploy/pero/
 !deploy/pero/initialize.py

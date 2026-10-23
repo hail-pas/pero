@@ -1,5 +1,3 @@
-use std::sync::RwLock;
-
 use crate::{CacheKey, CacheResult, CacheValue, CommandArg, RedisCacheStore};
 use pero_error::AppError;
 
@@ -57,8 +55,6 @@ end
 return count
 "#;
 
-static SCRIPT_SHA: RwLock<Option<String>> = RwLock::new(None);
-
 pub async fn rate_limit_check<T: CacheValue>(
     store: &RedisCacheStore,
     key: &CacheKey<T>,
@@ -77,52 +73,11 @@ pub async fn rate_limit_check<T: CacheValue>(
 }
 
 async fn eval_incr(store: &RedisCacheStore, key: &str, ttl_secs: u64) -> CacheResult<u64> {
-    let sha = SCRIPT_SHA.read().unwrap().clone();
-
-    if let Some(ref sha) = sha {
-        let result = store
-            .command(
-                "EVALSHA",
-                &[
-                    CommandArg::str(sha),
-                    CommandArg::from(1i64),
-                    CommandArg::str(key),
-                    CommandArg::from(ttl_secs as i64),
-                ],
-            )
-            .await;
-        if let Ok(result) = result {
-            return Ok(result.as_i64().unwrap_or(0) as u64);
-        }
-    }
-
-    let load_result = store
-        .command(
-            "SCRIPT",
-            &[CommandArg::str("LOAD"), CommandArg::str(INCR_SCRIPT)],
-        )
-        .await?;
-
-    let new_sha = load_result
-        .as_str()
-        .ok_or_else(|| {
-            AppError::internal(
-                "rate_limit_script_load_failed",
-                "Failed to load rate limit Lua script",
-            )
-        })?
-        .to_owned();
-
-    {
-        let mut guard = SCRIPT_SHA.write().unwrap();
-        *guard = Some(new_sha.clone());
-    }
-
     let result = store
         .command(
-            "EVALSHA",
+            "EVAL",
             &[
-                CommandArg::str(&new_sha),
+                CommandArg::str(INCR_SCRIPT),
                 CommandArg::from(1i64),
                 CommandArg::str(key),
                 CommandArg::from(ttl_secs as i64),
@@ -130,5 +85,14 @@ async fn eval_incr(store: &RedisCacheStore, key: &str, ttl_secs: u64) -> CacheRe
         )
         .await?;
 
-    Ok(result.as_i64().unwrap_or(0) as u64)
+    result
+        .as_i64()
+        .filter(|count| *count > 0)
+        .map(|count| count as u64)
+        .ok_or_else(|| {
+            AppError::dependency_failure(
+                "rate_limit_invalid_response",
+                "Invalid rate limit counter response",
+            )
+        })
 }

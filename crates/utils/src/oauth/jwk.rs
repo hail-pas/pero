@@ -36,7 +36,7 @@ pub fn validate_signing_key(public: &str, private: Option<&str>) -> Result<(), S
             .map_err(|_| "invalid RSA private key")?;
         let decoding = jsonwebtoken::DecodingKey::from_rsa_pem(public.as_bytes())
             .map_err(|_| "invalid RSA public key")?;
-        let claims = serde_json::json!({"exp": chrono::Utc::now().timestamp() + 60, "probe": crate::crypto::generate_nonce()});
+        let claims = serde_json::json!({"exp": time::OffsetDateTime::now_utc().unix_timestamp() + 60, "probe": crate::crypto::generate_nonce()});
         let token = jsonwebtoken::encode(
             &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
             &claims,

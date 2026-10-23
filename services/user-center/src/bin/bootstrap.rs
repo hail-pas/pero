@@ -322,6 +322,7 @@ async fn run_admin(
             status: Set(CommonStatus::Active),
             created_at: Set(now),
             updated_at: Set(now),
+            ..Default::default()
         };
         access.insert(db).await?;
         tracing::info!(app_code = %system_app.code, "✓ 授予 user-center 系统应用访问权限");

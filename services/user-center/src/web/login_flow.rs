@@ -4,7 +4,28 @@ use ipnetwork::IpNetwork;
 use crate::db::entity::{identities, users};
 use crate::service::login::{LoginService, PasswordLoginError};
 use crate::state::app::AppState;
-use crate::web::sso::template::LoginForm;
+use crate::web::sso::dto::LoginForm;
+
+/// Bound anonymous state creation across OAuth authorization and upstream login starts.
+pub async fn check_login_start_rate_limit(
+    state: &AppState,
+    source: pero_api_axum::extractor::ClientIp,
+) -> Result<(), axum::http::StatusCode> {
+    use axum::http::StatusCode;
+    use pero_cache_redis::{RateLimitError, enforce_rate_limit, rate_limit_key::rl_login_start_ip};
+
+    let key = rl_login_start_ip
+        .key(&source.to_string())
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    match enforce_rate_limit(&state.cache, &key, 60).await {
+        Ok(()) => Ok(()),
+        Err(RateLimitError::Denied { .. }) => Err(StatusCode::TOO_MANY_REQUESTS),
+        Err(RateLimitError::Redis(error)) => {
+            tracing::error!(%error, "Login-start rate limit unavailable");
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginFormError {
@@ -59,7 +80,6 @@ pub async fn authenticate_password_form(
             &form.password,
         )
         .await
-        .map(|result| result.token)
         .map_err(LoginFormError::from)
 }
 

@@ -7,6 +7,7 @@ use crate::service::oauth::OAuthError as ServiceOAuthError;
 pub enum OAuthError {
     BadRequest(String),
     Unavailable,
+    RateLimited,
     RedirectError {
         redirect_uri: String,
         error: String,
@@ -51,6 +52,7 @@ impl From<ServiceOAuthError> for OAuthError {
 impl IntoResponse for OAuthError {
     fn into_response(self) -> Response {
         match self {
+            OAuthError::RateLimited => StatusCode::TOO_MANY_REQUESTS.into_response(),
             OAuthError::Unavailable => StatusCode::SERVICE_UNAVAILABLE.into_response(),
             OAuthError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
             OAuthError::RedirectError {

@@ -13,7 +13,7 @@ pub struct PasswordIdentityService;
 impl PasswordIdentityService {
     pub async fn hash_password(
         password: &str,
-    ) -> Result<pero_utils::crypto::password::PasswordHashResult, String> {
+    ) -> Result<pero_utils::crypto::password::PasswordHashResult, pero_error::AppError> {
         let password = password.to_owned();
         pero_utils::crypto::run_crypto(move || {
             pero_utils::crypto::password::hash_password(&password).map_err(|_| {
@@ -21,7 +21,6 @@ impl PasswordIdentityService {
             })
         })
         .await
-        .map_err(|e| e.to_string())
     }
 
     pub async fn verify_password_hash(
@@ -85,7 +84,9 @@ impl PasswordIdentityService {
     where
         C: ConnectionTrait,
     {
-        let hash_result = Self::hash_password(password).await.map_err(DbErr::Custom)?;
+        let hash_result = Self::hash_password(password)
+            .await
+            .map_err(|error| DbErr::Custom(error.to_string()))?;
         Self::create_hashed(db, user_id, provider_id, subject, hash_result, now).await
     }
 

@@ -11,11 +11,13 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        if let Some(resolved) = parts.extensions.get::<ResolvedClientIp>() {
-            return Ok(ClientIp(resolved.0));
-        }
-        let ip = extract_from_headers(&parts.headers);
-        Ok(ClientIp(ip))
+        // Forwarded headers are interpreted only by the trusted-proxy middleware.
+        Ok(ClientIp(
+            parts
+                .extensions
+                .get::<ResolvedClientIp>()
+                .and_then(|ip| ip.0),
+        ))
     }
 }
 
@@ -34,25 +36,33 @@ impl std::fmt::Display for ClientIp {
     }
 }
 
-fn extract_from_headers(headers: &axum::http::HeaderMap) -> Option<IpNetwork> {
-    if let Some(xff) = headers.get("x-forwarded-for") {
-        let val = xff.to_str().ok()?;
-        let first = val.split(',').next()?.trim();
-        if !first.is_empty()
-            && let Ok(ip) = first.parse()
-        {
-            return Some(ip);
-        }
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if let Some(real) = headers.get("x-real-ip") {
-        let val = real.to_str().ok()?.trim();
-        if !val.is_empty()
-            && let Ok(ip) = val.parse()
-        {
-            return Some(ip);
-        }
+    #[tokio::test]
+    async fn forwarded_headers_require_the_trusted_proxy_layer() {
+        let (mut parts, _) = axum::http::Request::builder()
+            .header("x-forwarded-for", "192.0.2.1")
+            .header("x-real-ip", "192.0.2.2")
+            .body(())
+            .unwrap()
+            .into_parts();
+        assert_eq!(
+            ClientIp::from_request_parts(&mut parts, &())
+                .await
+                .unwrap()
+                .0,
+            None
+        );
+        let resolved = Some("203.0.113.10/32".parse().unwrap());
+        parts.extensions.insert(ResolvedClientIp(resolved));
+        assert_eq!(
+            ClientIp::from_request_parts(&mut parts, &())
+                .await
+                .unwrap()
+                .0,
+            resolved
+        );
     }
-
-    None
 }

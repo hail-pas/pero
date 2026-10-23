@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::response::Response;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
@@ -99,15 +98,16 @@ impl<'a> SsoCookieFactory<'a> {
 pub struct AuthReqCookieValue {
     pub auth_request_id: uuid::Uuid,
     pub user_id: uuid::Uuid,
+    pub session_id: uuid::Uuid,
 }
 
 impl AuthReqCookieValue {
     pub fn encode(&self, key: &[u8]) -> Result<String, serde_json::Error> {
-        pero_api_axum::cookie::encode_signed_json(self, key)
+        pero_utils::crypto::encode_signed_json(self, key)
     }
 
     pub fn decode(value: &str, key: &[u8]) -> Result<Self, serde_json::Error> {
-        pero_api_axum::cookie::decode_signed_json(value, key)
+        pero_utils::crypto::decode_signed_json(value, key)
     }
 }
 
@@ -133,10 +133,6 @@ impl<'a> SsoWebSecurity<'a> {
         pero_api_axum::csrf::DEFAULT_CSRF_COOKIE_NAME
     }
 
-    pub fn generate_csrf(&self, jar: CookieJar) -> (CookieJar, String) {
-        pero_api_axum::csrf::generate_csrf(jar, &self.csrf_config())
-    }
-
     pub fn ensure_csrf(&self, jar: CookieJar) -> (CookieJar, String) {
         pero_api_axum::csrf::ensure_csrf(jar, &self.csrf_config())
     }
@@ -145,12 +141,12 @@ impl<'a> SsoWebSecurity<'a> {
         pero_api_axum::csrf::verify_csrf(jar, form_token, &self.csrf_config())
     }
 
-    pub fn render_with_csrf<T, F>(&self, jar: CookieJar, build: F) -> Response
+    pub fn view_with_csrf<T, F>(&self, jar: CookieJar, view: &'static str, build: F) -> Response
     where
-        T: Template,
+        T: serde::Serialize,
         F: FnOnce(String) -> T,
     {
-        pero_api_axum::form::render_askama_with_csrf(jar, &self.csrf_config(), build)
+        pero_api_axum::form::view_with_csrf(jar, &self.csrf_config(), view, build)
     }
 
     fn csrf_config(&self) -> pero_api_axum::csrf::CsrfConfig<'_> {

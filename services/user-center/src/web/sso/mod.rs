@@ -1,10 +1,10 @@
 pub mod consent;
+pub mod dto;
 pub mod forgot_password;
 pub mod login;
 pub mod register;
 pub mod reset_password;
 pub mod social;
-pub mod template;
 pub mod utility;
 
 use axum::Router;
@@ -30,6 +30,10 @@ pub fn routes() -> Router<AppState> {
             "/sso/social/link",
             get(social::link_get).post(social::link_post),
         )
+}
+
+pub fn social_routes() -> Router<AppState> {
+    Router::new()
         .route("/sso/social/{provider}/login", get(social::login))
         .route("/sso/social/{provider}/callback", get(social::callback))
 }

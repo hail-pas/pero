@@ -1,29 +1,22 @@
-use askama::Template;
 use axum::extract::State;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
+use axum_extra::extract::CookieJar;
 
 use crate::middleware::CurrentUser;
 use crate::state::AppState;
 
-pub async fn home(State(state): State<AppState>, user: CurrentUser) -> Response {
+pub async fn home(State(state): State<AppState>, jar: CookieJar, user: CurrentUser) -> Response {
+    let (jar, csrf_token) =
+        pero_api_axum::csrf::ensure_csrf(jar, &crate::cookie::csrf_config(&state.config));
     let issuer = &state.config.oauth2.issuer;
-    let template = crate::handler::templates::HomeTemplate {
+    let template = crate::handler::dto::AdminHomeView {
+        csrf_token,
         username: user.username.clone(),
         email: user.email.clone().unwrap_or_default(),
         picture: user.picture.clone().unwrap_or_default(),
-        profile_url: format!("{}/account/profile", issuer),
-        password_url: format!("{}/account/change-password", issuer),
+        profile_url: pero_utils::oauth::url::issuer_endpoint(issuer, "account/profile"),
+        password_url: pero_utils::oauth::url::issuer_endpoint(issuer, "account/change-password"),
         issuer: issuer.clone(),
     };
-    template
-        .render()
-        .map(|html| Html(html).into_response())
-        .unwrap_or_else(|err| {
-            tracing::error!(error = %err, "home template render failed");
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal server error",
-            )
-                .into_response()
-        })
+    (jar, pero_api_axum::form::view("AdminHomeView", template)).into_response()
 }

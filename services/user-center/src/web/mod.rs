@@ -10,29 +10,38 @@ pub mod session;
 pub mod sso;
 pub mod util;
 
-use askama::Template;
 use axum::Router;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 
 pub fn routes(state: crate::state::app::AppState) -> Router<crate::state::app::AppState> {
-    Router::new()
+    let directory = state.config.frontend.static_dir.clone();
+    let pages = Router::new()
         .route("/", axum::routing::get(home::home))
+        .merge(sso::routes())
+        .merge(account::routes())
+        .merge(dashboard::routes(state))
+        .route_layer(axum::middleware::from_fn(move |req, next| {
+            let directory = directory.clone();
+            async move { pero_api_axum::spa::serve_page(req, next, directory).await }
+        }));
+
+    Router::new()
+        .merge(pages)
         .route(
             "/.well-known/openid-configuration",
             axum::routing::get(open::openid_configuration),
         )
         .merge(oauth2::routes())
-        .merge(sso::routes())
-        .merge(account::routes())
-        .merge(dashboard::routes(state))
+        .merge(sso::social_routes())
 }
 
 pub async fn not_found() -> Response {
-    let tpl = sso::template::ErrorTemplate {
+    let tpl = sso::dto::ErrorView {
         code: "404".to_owned(),
     };
-    match tpl.render() {
-        Ok(html) => (axum::http::StatusCode::NOT_FOUND, Html(html)).into_response(),
-        Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
-    }
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        pero_api_axum::form::view("ErrorView", tpl),
+    )
+        .into_response()
 }

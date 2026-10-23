@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use std::fmt;
 
 const REDACTED: &str = "********";
@@ -16,16 +16,8 @@ impl SecretString {
         &self.0
     }
 
-    pub fn into_secret(self) -> String {
-        self.0
-    }
-
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-
-    pub fn redacted(&self) -> &'static str {
-        REDACTED
     }
 }
 
@@ -60,11 +52,4 @@ impl From<&str> for SecretString {
     fn from(value: &str) -> Self {
         Self::new(value)
     }
-}
-
-pub fn deserialize_secret_string<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    String::deserialize(deserializer).map(SecretString::new)
 }

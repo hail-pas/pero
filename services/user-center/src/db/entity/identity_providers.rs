@@ -29,6 +29,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub client_id: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
     pub client_secret_enc: Option<String>,
     pub scopes: Vec<String>,
     #[sea_orm(column_type = "JsonBinary")]
@@ -40,8 +41,6 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::external_login_requests::Entity")]
-    ExternalLoginRequests,
     #[sea_orm(has_many = "super::identities::Entity")]
     Identities,
     #[sea_orm(has_one = "super::identity_provider_keys::Entity")]
@@ -50,12 +49,6 @@ pub enum Relation {
     LoginEvents,
     #[sea_orm(has_many = "super::sso_sessions::Entity")]
     SsoSessions,
-}
-
-impl Related<super::external_login_requests::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ExternalLoginRequests.def()
-    }
 }
 
 impl Related<super::identities::Entity> for Entity {

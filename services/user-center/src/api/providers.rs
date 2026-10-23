@@ -1,11 +1,9 @@
 use axum::extract::State;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Serialize;
 
-use crate::db::entity::identity_providers as ip;
-use crate::db::enums::IdentityProviderKind;
+use crate::service::provider;
 use crate::state::app::AppState;
-use pero_api_axum::ApiResponse;
+use pero_api_axum::{ApiResponse, AppErrorResponder};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProviderInfo {
@@ -23,18 +21,24 @@ pub struct ProvidersResponse {
 /// GET /api/providers
 ///
 /// 返回已启用的 social providers 列表，供 OAuth2 客户端（如 admin panel）使用
-pub async fn providers(State(state): State<AppState>) -> ApiResponse<ProvidersResponse> {
-    let rows = ip::Entity::find()
-        .filter(ip::Column::Kind.ne(IdentityProviderKind::Local))
-        .filter(ip::Column::Enabled.eq(true))
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
+pub async fn providers(
+    State(state): State<AppState>,
+) -> Result<ApiResponse<ProvidersResponse>, AppErrorResponder> {
+    let rows = provider::enabled_social(&state.db).await.map_err(|error| {
+        AppErrorResponder(
+            pero_error::AppError::new(
+                pero_error::ErrorKind::ServiceUnavailable,
+                "service_unavailable",
+                "Identity providers unavailable",
+            )
+            .with_source(error),
+        )
+    })?;
 
     let providers = rows
         .into_iter()
         .map(|p| {
-            let icon = crate::web::sso::utility::normalize_provider_icon(
+            let icon = provider::normalize_icon(
                 p.settings
                     .get("icon")
                     .and_then(|v| v.as_str())
@@ -49,5 +53,5 @@ pub async fn providers(State(state): State<AppState>) -> ApiResponse<ProvidersRe
         })
         .collect();
 
-    ApiResponse::success(ProvidersResponse { providers })
+    Ok(ApiResponse::success(ProvidersResponse { providers }))
 }

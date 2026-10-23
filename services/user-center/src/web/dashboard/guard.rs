@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::body::Body;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -12,7 +11,7 @@ use crate::db::entity::{apps, user_app_access, users};
 use crate::db::enums::{CommonStatus, UserStatus};
 use crate::state::app::AppState;
 use crate::state::session::SsoSession;
-use crate::web::dashboard::template::DashboardLayout;
+use crate::web::dashboard::dto::DashboardLayout;
 use crate::web::session::extract_session;
 
 #[derive(Clone)]
@@ -37,23 +36,16 @@ impl FromRequestParts<AppState> for AdminContext {
 }
 
 pub struct AdminPage {
-    pub admin: AdminContext,
     pub layout: DashboardLayout,
     pub jar: CookieJar,
     pub csrf_token: String,
 }
 
 impl AdminPage {
-    pub fn new(
-        state: &AppState,
-        jar: CookieJar,
-        admin: AdminContext,
-        active: &'static str,
-    ) -> Self {
-        let layout = DashboardLayout::from_user(&admin.user, active);
+    pub fn new(state: &AppState, jar: CookieJar, admin: AdminContext) -> Self {
+        let layout = DashboardLayout::from_user(&admin.user);
         let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
         Self {
-            admin,
             layout,
             jar,
             csrf_token,
@@ -120,11 +112,12 @@ pub async fn is_dashboard_admin(
 }
 
 fn render_forbidden(code: &str) -> Response {
-    let tpl = super::template::ForbiddenTemplate {
+    let tpl = super::dto::ForbiddenView {
         code: code.to_owned(),
     };
-    match tpl.render() {
-        Ok(html) => axum::response::Html(html).into_response(),
-        Err(_) => axum::http::StatusCode::FORBIDDEN.into_response(),
-    }
+    (
+        axum::http::StatusCode::FORBIDDEN,
+        pero_api_axum::form::view("ForbiddenView", tpl),
+    )
+        .into_response()
 }

@@ -28,9 +28,6 @@ issuer = ""
 # 0 preserves per-login upstream JWKS checks; opt in to at most 300 seconds.
 upstream_jwks_cache_ttl_seconds = 0
 auth_code_ttl_seconds = 600
-default_access_token_ttl_seconds = 7200
-default_refresh_token_ttl_days = 30
-default_id_token_ttl_seconds = 7200
 
 [sso]
 base_url = ""
@@ -51,14 +48,8 @@ require_special = false
 signing_key = ""
 ttl_seconds = 3600
 
-[i18n]
-default_locale = "en"
-available_locales = ["zh", "en"]
-fallback_locale = "en"
-
-[askama]
+[frontend]
 static_dir = "ui/static"
-static_url_prefix = "/static"
 
 [http_config]
 

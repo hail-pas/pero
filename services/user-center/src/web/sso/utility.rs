@@ -1,14 +1,12 @@
-use askama::Template;
 use axum::extract::State;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum_extra::extract::CookieJar;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use serde::de::Deserializer;
 
-use crate::db::enums::IdentityProviderKind;
+use crate::service::provider;
 use crate::state::app::AppState;
-use crate::web::sso::template::{ErrorTemplate, SocialProvider};
+use crate::web::sso::dto::{ErrorView, SocialProvider};
 
 /// EP-26: GET /sso/error?code=xxx — 渲染错误页面
 pub async fn error_page(
@@ -16,14 +14,8 @@ pub async fn error_page(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let code = params.get("code").cloned().unwrap_or_default();
-    let tpl = ErrorTemplate { code };
-    match tpl.render() {
-        Ok(html) => axum::response::Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Template render error: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    let tpl = ErrorView { code };
+    pero_api_axum::form::view("ErrorView", tpl)
 }
 
 pub(crate) async fn resolve_auth_request_id(
@@ -53,18 +45,15 @@ pub(crate) async fn resolve_auth_request_id(
     }))
 }
 
-pub(crate) async fn find_enabled_social_providers(state: &AppState) -> Vec<SocialProvider> {
-    use crate::db::entity::identity_providers as ip;
-
-    ip::Entity::find()
-        .filter(ip::Column::Kind.ne(IdentityProviderKind::Local))
-        .filter(ip::Column::Enabled.eq(true))
-        .all(&state.db)
+pub(crate) async fn find_enabled_social_providers(
+    state: &AppState,
+) -> Result<Vec<SocialProvider>, Response> {
+    Ok(provider::enabled_social(&state.db)
         .await
-        .unwrap_or_default()
+        .map_err(crate::web::util::dependency_error)?
         .into_iter()
         .map(|provider| SocialProvider {
-            icon: normalize_provider_icon(
+            icon: provider::normalize_icon(
                 provider
                     .settings
                     .get("icon")
@@ -75,20 +64,7 @@ pub(crate) async fn find_enabled_social_providers(state: &AppState) -> Vec<Socia
             key: provider.code,
             name: provider.name,
         })
-        .collect()
-}
-
-pub(crate) fn normalize_provider_icon(raw: &str) -> &'static str {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "github" => "github",
-        "gitlab" => "gitlab",
-        "google" => "google",
-        "microsoft" => "microsoft",
-        "oauth2" => "oauth2",
-        "oidc" => "oidc",
-        "wechat" => "wechat",
-        _ => "",
-    }
+        .collect())
 }
 
 pub(crate) fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>

@@ -1,11 +1,10 @@
-use askama::Template;
 use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
 use crate::state::app::AppState;
-use crate::web::account::template::{AccountLayout, ProfileForm, ProfileTemplate, ProfileUser};
+use crate::web::account::dto::{ProfileForm, ProfileUser, ProfileView};
 use crate::web::session::extract_session;
 
 /// EP-20: GET /account/profile
@@ -28,37 +27,38 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
         }
         Err(e) => {
             tracing::error!("Profile user lookup: {e}");
-            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     };
 
-    let layout = build_layout(&state.db, &user, "profile").await;
+    let layout = super::dto::AccountLayout::from_user(&state.db, &user).await;
 
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
-    let pending_requests = crate::db::entity::contact_change_requests::Entity::find()
+    let pending_requests = match crate::db::entity::contact_change_requests::Entity::find()
         .filter(crate::db::entity::contact_change_requests::Column::UserId.eq(user.id))
         .filter(
             crate::db::entity::contact_change_requests::Column::Status
                 .eq(crate::db::enums::ContactChangeStatus::Pending),
         )
+        .filter(
+            crate::db::entity::contact_change_requests::Column::ExpiresAt
+                .gt(time::OffsetDateTime::now_utc()),
+        )
         .all(&state.db)
         .await
-        .unwrap_or_default();
+    {
+        Ok(rows) => rows,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
 
-    let now = time::OffsetDateTime::now_utc();
-    let active_requests: Vec<_> = pending_requests
-        .into_iter()
-        .filter(|request| request.expires_at >= now)
-        .collect();
-
-    let (pending_email_nonce, pending_email_value) = active_requests
+    let (pending_email_nonce, pending_email_value) = pending_requests
         .iter()
         .find(|r| r.change_type == crate::db::enums::ContactChangeType::Email)
         .map(|r| (r.nonce.clone(), r.new_value.clone()))
         .unwrap_or_default();
 
-    let (pending_phone_nonce, pending_phone_value) = active_requests
+    let (pending_phone_nonce, pending_phone_value) = pending_requests
         .iter()
         .find(|r| r.change_type == crate::db::enums::ContactChangeType::Phone)
         .map(|r| (r.nonce.clone(), r.new_value.clone()))
@@ -86,7 +86,7 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
         phone_verified: user.phone_verified_at.is_some(),
         nickname: user.nickname.unwrap_or_default(),
         avatar_url: user.avatar_url.unwrap_or_default(),
-        created_at: user.created_at.to_string(),
+        created_at: user.created_at,
         pending_email_nonce,
         pending_email_value,
         pending_phone_nonce,
@@ -94,18 +94,12 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
         has_password,
     };
 
-    let tpl = ProfileTemplate {
+    let tpl = ProfileView {
         layout,
         user: profile_user,
         csrf_token,
     };
-    match tpl.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(e) => {
-            tracing::error!("Template: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    (jar, pero_api_axum::form::view("ProfileView", tpl)).into_response()
 }
 
 /// EP-21: POST /account/profile（AJAX）
@@ -135,7 +129,8 @@ pub async fn post(
         .await
     {
         Ok(Some(u)) => u,
-        _ => return axum::Json(serde_json::json!({"error": "not_found"})).into_response(),
+        Ok(None) => return axum::Json(serde_json::json!({"error": "not_found"})).into_response(),
+        Err(error) => return crate::web::util::dependency_error(error),
     };
 
     let mut active: crate::db::entity::users::ActiveModel = user.into();
@@ -186,12 +181,4 @@ pub async fn post(
     }
 
     axum::Json(serde_json::json!({"code": 0, "message": "ok"})).into_response()
-}
-
-pub(crate) async fn build_layout(
-    db: &sea_orm::DatabaseConnection,
-    user: &crate::db::entity::users::Model,
-    active: &str,
-) -> AccountLayout {
-    AccountLayout::from_user(db, user, active).await
 }

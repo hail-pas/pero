@@ -3,10 +3,6 @@ use serde::{Deserialize, Serialize};
 
 pub type ValidationResult<T = ()> = Result<T, ValidationError>;
 
-pub fn treat_as_malformed_input<T>(result: ValidationResult<T>) -> ValidationResult<T> {
-    result.map_err(ValidationError::into_malformed_input)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationErrorKind {
@@ -84,10 +80,6 @@ impl ValidationError {
         &self.report
     }
 
-    pub fn into_report(self) -> ValidationReport {
-        self.report
-    }
-
     pub fn into_parts(
         self,
     ) -> (
@@ -106,12 +98,6 @@ impl ValidationError {
 
     pub fn with_source(mut self, source: ValidationSource) -> Self {
         self.report.source = source;
-        self
-    }
-
-    pub fn into_malformed_input(mut self) -> Self {
-        self.kind = ValidationErrorKind::MalformedInput;
-        self.message = "Malformed input".to_owned();
         self
     }
 }

@@ -2,10 +2,9 @@ use crate::{
     state::app::AppState,
     web::{
         session::extract_session,
-        sso::template::{ConfirmLogoutTemplate, EndSessionTemplate},
+        sso::dto::{ConfirmLogoutView, EndSessionView},
     },
 };
-use askama::Template;
 use axum::{
     body::Bytes,
     extract::{RawQuery, State},
@@ -55,7 +54,7 @@ pub async fn end_session(
     RawQuery(query): RawQuery,
 ) -> Response {
     match parse(query.as_deref().unwrap_or("").as_bytes()) {
-        Ok(params) => handle(&state, jar, params, false).await,
+        Ok(params) => handle(&state, jar, params, false, false).await,
         Err(status) => status.into_response(),
     }
 }
@@ -78,8 +77,13 @@ pub async fn end_session_post(
     {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
     }
+    let accept = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let wants_html = accept.contains("text/html") && !accept.contains("application/json");
     match parse(&body) {
-        Ok(params) => handle(&state, jar, params, true).await,
+        Ok(params) => handle(&state, jar, params, true, wants_html).await,
         Err(status) => status.into_response(),
     }
 }
@@ -89,6 +93,7 @@ async fn handle(
     jar: CookieJar,
     query: EndSessionQuery,
     is_post: bool,
+    wants_html: bool,
 ) -> Response {
     let session = match extract_session(state, &jar).await {
         Ok(session) => session,
@@ -121,9 +126,23 @@ async fn handle(
         return StatusCode::BAD_REQUEST.into_response();
     }
     if plan.needs_confirmation && !confirming {
+        if wants_html {
+            // The React page fetches its data with GET; retain the RP's form context.
+            let mut target = "/oauth2/session/end".to_owned();
+            for (name, value) in [
+                ("id_token_hint", &query.id_token_hint),
+                ("post_logout_redirect_uri", &query.post_logout_redirect_uri),
+                ("state", &query.state),
+            ] {
+                if let Some(value) = value {
+                    pero_utils::encode::append_query_param(&mut target, name, value);
+                }
+            }
+            return Redirect::to(&target).into_response();
+        }
         return state
             .web_security()
-            .render_with_csrf(jar, |csrf_token| ConfirmLogoutTemplate {
+            .view_with_csrf(jar, "ConfirmLogoutView", |csrf_token| ConfirmLogoutView {
                 csrf_token,
                 session_id: session
                     .as_ref()
@@ -169,13 +188,14 @@ async fn handle(
     if let Some(target) = plan.redirect {
         return (jar, Redirect::to(&target)).into_response();
     }
-    match EndSessionTemplate.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(error) => {
-            tracing::error!(%error, "Logout template failed");
-            (jar, StatusCode::INTERNAL_SERVER_ERROR).into_response()
-        }
+    if wants_html {
+        return (jar, Redirect::to("/oauth2/session/end")).into_response();
     }
+    (
+        jar,
+        pero_api_axum::form::view("EndSessionView", EndSessionView),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

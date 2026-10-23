@@ -6,7 +6,7 @@ use pero_api_axum::extractor::ClientIp;
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, authenticate_password_form};
 use crate::web::session::extract_session;
-use crate::web::sso::template::{AccountLoginTemplate, LoginForm};
+use crate::web::sso::dto::{AccountLoginView, LoginForm};
 use crate::web::sso::utility::find_enabled_social_providers;
 use crate::web::util::safe_redirect;
 
@@ -27,11 +27,14 @@ pub async fn get(
         return Redirect::to(&safe_redirect(&redirect)).into_response();
     }
 
-    let providers = find_enabled_social_providers(&state).await;
+    let providers = match find_enabled_social_providers(&state).await {
+        Ok(providers) => providers,
+        Err(response) => return response,
+    };
     let error = query.get("error").cloned().unwrap_or_default();
     state
         .web_security()
-        .render_with_csrf(jar, |csrf_token| AccountLoginTemplate {
+        .view_with_csrf(jar, "AccountLoginView", |csrf_token| AccountLoginView {
             error,
             providers,
             csrf_token,
@@ -67,10 +70,13 @@ pub async fn post(
 }
 
 async fn render_error(state: &AppState, jar: CookieJar, error: &str, redirect: &str) -> Response {
-    let providers = find_enabled_social_providers(state).await;
+    let providers = match find_enabled_social_providers(state).await {
+        Ok(providers) => providers,
+        Err(response) => return response,
+    };
     state
         .web_security()
-        .render_with_csrf(jar, |csrf_token| AccountLoginTemplate {
+        .view_with_csrf(jar, "AccountLoginView", |csrf_token| AccountLoginView {
             error: error.to_owned(),
             providers,
             csrf_token,

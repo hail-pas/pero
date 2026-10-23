@@ -230,6 +230,7 @@ CREATE TABLE oauth_clients (
     id_token_ttl_seconds integer NOT NULL DEFAULT 7200,
 
     status common_status NOT NULL DEFAULT 'active',
+    token_version bigint NOT NULL DEFAULT 0,
 
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -262,6 +263,9 @@ ON oauth_clients (app_id);
 
 CREATE INDEX ix_oauth_clients_status
 ON oauth_clients (status);
+
+COMMENT ON COLUMN oauth_clients.token_version IS
+'客户端安全策略版本，签发及在线验证 access token 时绑定。';
 
 COMMENT ON TABLE oauth_clients IS
 '子应用 OAuth Client 配置表。一个 app 可以有多个 client，例如 Web 端、移动端、测试环境、生产环境。';
@@ -691,69 +695,7 @@ COMMENT ON INDEX ix_authorization_requests_cleanup IS
 
 
 -- ============================================================
--- 8. external_login_requests
--- ============================================================
-
-CREATE TABLE external_login_requests (
-    id uuid PRIMARY KEY DEFAULT uuidv7(),
-
-    authorization_request_id uuid NOT NULL REFERENCES authorization_requests(id) ON DELETE CASCADE,
-    provider_id uuid NOT NULL REFERENCES identity_providers(id) ON DELETE RESTRICT,
-
-    state_hash text NOT NULL,
-    nonce text NULL,
-    code_verifier text NULL,
-
-    created_at timestamptz NOT NULL DEFAULT now(),
-    expires_at timestamptz NOT NULL,
-    consumed_at timestamptz NULL,
-
-    CONSTRAINT ck_external_login_requests_expiry
-        CHECK (expires_at > created_at)
-);
-
-CREATE UNIQUE INDEX ux_external_login_requests_state_hash
-ON external_login_requests (state_hash);
-
-CREATE INDEX ix_external_login_requests_authorization_request_id
-ON external_login_requests (authorization_request_id);
-
-CREATE INDEX ix_external_login_requests_provider_id
-ON external_login_requests (provider_id);
-
-CREATE INDEX ix_external_login_requests_expires_at
-ON external_login_requests (expires_at);
-
-COMMENT ON TABLE external_login_requests IS
-'第三方 OAuth 登录请求上下文表。用户点击 GitHub / Google 登录前创建，用于回调时校验 state 并恢复原始 SSO 授权请求。';
-
-COMMENT ON COLUMN external_login_requests.id IS
-'第三方登录请求 ID，uuid v7。';
-
-COMMENT ON COLUMN external_login_requests.authorization_request_id IS
-'对应的 SSO 授权请求。';
-
-COMMENT ON COLUMN external_login_requests.provider_id IS
-'目标第三方 provider，例如 GitHub 或 Google。';
-
-COMMENT ON COLUMN external_login_requests.state_hash IS
-'发送给第三方 provider 的 state 的哈希值。数据库不保存明文 state。';
-
-COMMENT ON COLUMN external_login_requests.nonce IS
-'第三方 OIDC nonce。GitHub OAuth2 可为空，Google OIDC 建议使用。';
-
-COMMENT ON COLUMN external_login_requests.code_verifier IS
-'如果对第三方 provider 使用 PKCE，可保存 code_verifier。需要换取第三方 token 时使用。';
-
-COMMENT ON COLUMN external_login_requests.expires_at IS
-'第三方登录请求过期时间，建议 5-10 分钟。';
-
-COMMENT ON COLUMN external_login_requests.consumed_at IS
-'第三方回调成功消费时间。非空表示 state 已使用，不能重复使用。';
-
-
--- ============================================================
--- 9. sso_sessions
+-- 8. sso_sessions
 -- ============================================================
 
 CREATE TABLE sso_sessions (
@@ -835,7 +777,7 @@ COMMENT ON INDEX ix_sso_sessions_user_active IS
 
 
 -- ============================================================
--- 10. authorization_codes
+-- 9. authorization_codes
 -- ============================================================
 
 CREATE TABLE authorization_codes (
@@ -928,7 +870,7 @@ COMMENT ON COLUMN authorization_codes.consumed_at IS
 
 
 -- ============================================================
--- 11. refresh_tokens
+-- 10. refresh_tokens
 -- ============================================================
 
 CREATE TABLE refresh_tokens (
@@ -1017,7 +959,7 @@ COMMENT ON COLUMN refresh_tokens.replaced_by_id IS
 
 
 -- ============================================================
--- 12. user_consents
+-- 11. user_consents
 -- ============================================================
 
 CREATE TABLE user_consents (
@@ -1047,7 +989,7 @@ COMMENT ON COLUMN user_consents.granted_at IS
 
 
 -- ============================================================
--- 13. user_app_access
+-- 12. user_app_access
 -- ============================================================
 
 CREATE TABLE user_app_access (
@@ -1055,6 +997,7 @@ CREATE TABLE user_app_access (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
 
     status common_status NOT NULL DEFAULT 'active',
+    token_version bigint NOT NULL DEFAULT 0,
 
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -1067,6 +1010,9 @@ ON user_app_access (app_id);
 
 CREATE INDEX ix_user_app_access_status
 ON user_app_access (status);
+
+COMMENT ON COLUMN user_app_access.token_version IS
+'用户应用授权版本，撤销时递增，重新授权不重置。';
 
 COMMENT ON TABLE user_app_access IS
 '用户与子应用访问关系表。使用 (user_id, app_id) 作为自然主键。';
@@ -1088,7 +1034,7 @@ COMMENT ON COLUMN user_app_access.updated_at IS
 
 
 -- ============================================================
--- 14. contact_change_requests
+-- 13. contact_change_requests
 -- ============================================================
 
 CREATE TABLE contact_change_requests (
@@ -1189,7 +1135,7 @@ COMMENT ON INDEX ux_contact_change_value_pending IS
 
 
 -- ============================================================
--- 15. password_reset_tokens
+-- 14. password_reset_tokens
 -- ============================================================
 
 CREATE TABLE password_reset_tokens (
@@ -1231,7 +1177,7 @@ COMMENT ON COLUMN password_reset_tokens.consumed_at IS
 
 
 -- ============================================================
--- 16. login_events
+-- 15. login_events
 -- ============================================================
 
 CREATE TABLE login_events (

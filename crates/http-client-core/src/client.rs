@@ -13,32 +13,6 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub fn status(&self) -> StatusCode {
-        self.status
-    }
-
-    pub fn headers(&self) -> &HeaderMap {
-        &self.headers
-    }
-
-    pub fn body(&self) -> &[u8] {
-        &self.body
-    }
-
-    pub fn is_success(&self) -> bool {
-        self.status.is_success()
-    }
-
-    pub fn text(&self) -> HttpClientResult<String> {
-        String::from_utf8(self.body.clone()).map_err(|err| {
-            AppError::internal(
-                "http_client_utf8_decode_failed",
-                "Response body is not valid UTF-8",
-            )
-            .with_source(err)
-        })
-    }
-
     pub fn json<T: DeserializeOwned>(&self) -> HttpClientResult<T> {
         serde_json::from_slice(&self.body).map_err(|err| {
             AppError::json_dependency_failure(
@@ -68,10 +42,6 @@ impl HttpResponse {
 #[async_trait]
 pub trait HttpClient: Send + Sync {
     async fn send(&self, request: http::Request<Vec<u8>>) -> HttpClientResult<HttpResponse>;
-}
-
-pub trait ProvideHttpClient: Send + Sync {
-    fn http_client(&self) -> &dyn HttpClient;
 }
 
 /// A shared transport exposes only bounded request execution, not backend escape hatches.

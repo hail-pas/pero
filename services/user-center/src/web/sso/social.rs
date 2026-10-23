@@ -1,29 +1,36 @@
-use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
 use pero_api_axum::extractor::ClientIp;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
+use sea_orm::EntityTrait;
 use uuid::Uuid;
 
-use crate::db::enums::IdentityKind;
 use crate::db::enums::UserStatus;
-use crate::service::access::insert_auto_access;
 use crate::service::login::LoginService;
-use crate::service::social::{
-    IdentityResolution, SocialLinkError, SocialLoginError, SocialUserInfo,
-};
+use crate::service::social::{IdentityResolution, SocialLinkError, SocialLoginError};
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, verify_password_for_user};
-use crate::web::sso::template::{SocialLinkForm, SocialLinkTemplate};
+use crate::web::sso::dto::{SocialLinkForm, SocialLinkView};
 use crate::web::sso::utility::resolve_auth_request_id;
+
+#[derive(serde::Deserialize)]
+pub struct LoginQuery {
+    #[serde(default)]
+    pub redirect: String,
+}
 
 pub async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
+    source: ClientIp,
     Path(provider_code): Path<String>,
+    Query(query): Query<LoginQuery>,
 ) -> Response {
+    if let Err(status) = crate::web::login_flow::check_login_start_rate_limit(&state, source).await
+    {
+        return status.into_response();
+    }
     let svc = state.social_service();
 
     let provider = match svc.find_provider_by_code(&provider_code).await {
@@ -40,7 +47,7 @@ pub async fn login(
     };
 
     let prepared = match svc
-        .prepare_login_state(&provider, &provider_code, auth_request_id)
+        .prepare_login_state(&provider, &provider_code, auth_request_id, &query.redirect)
         .await
     {
         Ok(p) => p,
@@ -145,7 +152,12 @@ pub async fn callback(
 
     let authenticated_at = user_info.authenticated_at;
     let resolution = match svc
-        .resolve_identity(&cb_state.provider, &user_info, cb_state.auth_request_id)
+        .resolve_identity(
+            &cb_state.provider,
+            &user_info,
+            cb_state.auth_request_id,
+            &cb_state.social_value.redirect,
+        )
         .await
     {
         Ok(r) => r,
@@ -166,6 +178,7 @@ pub async fn callback(
                 cb_state.provider.provider.id,
                 &provider_code,
                 &SocialLoginContext {
+                    redirect: cb_state.social_value.redirect,
                     auth_request_id: cb_state.auth_request_id,
                     ip,
                     authenticated_at,
@@ -180,16 +193,16 @@ pub async fn callback(
             info,
             auth_request_id,
         } => {
-            let (user, identity_id) =
-                match register_new_social_user(&state, &cb_state.provider, info, auth_request_id)
-                    .await
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::error!("Social registration: {e}");
-                        return Redirect::to("/sso/error?code=registration_failed").into_response();
-                    }
-                };
+            let (user, identity_id) = match svc
+                .register_user(&cb_state.provider, info, auth_request_id)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Social registration: {e}");
+                    return Redirect::to("/sso/error?code=registration_failed").into_response();
+                }
+            };
             finish_social_login(
                 &state,
                 jar,
@@ -198,6 +211,7 @@ pub async fn callback(
                 cb_state.provider.provider.id,
                 &provider_code,
                 &SocialLoginContext {
+                    redirect: cb_state.social_value.redirect,
                     auth_request_id,
                     ip,
                     authenticated_at,
@@ -312,6 +326,7 @@ pub async fn link_post(
         provider_id,
         &link.provider_code,
         &SocialLoginContext {
+            redirect: link.redirect,
             auth_request_id,
             ip,
             authenticated_at: None,
@@ -332,169 +347,8 @@ pub struct SocialLinkQuery {
     pub nonce: Option<String>,
 }
 
-async fn register_new_social_user(
-    state: &AppState,
-    provider: &crate::db::helper::provider::ProviderWithSecret,
-    info: SocialUserInfo,
-    auth_request_id: Option<Uuid>,
-) -> Result<(crate::db::entity::users::Model, Uuid), String> {
-    use crate::db::entity::contact_change_requests as ccr;
-    use crate::db::entity::{identities, users};
-    use crate::db::enums::{ContactChangeStatus, ContactChangeType};
-
-    let txn = state.db.begin().await.map_err(|e| format!("{e}"))?;
-    crate::service::provider::require_enabled_social(&txn, provider.provider.id)
-        .await
-        .map_err(|error| error.to_string())?;
-    let now = time::OffsetDateTime::now_utc();
-    let user_id = Uuid::now_v7();
-    let username = format!("u_{}", user_id.simple());
-
-    users::ActiveModel {
-        id: Set(user_id),
-        username: Set(username),
-        email: Set(if info.email_verified {
-            info.email.clone()
-        } else {
-            None
-        }),
-        email_verified_at: Set(if info.email_verified { Some(now) } else { None }),
-        phone: Set(None),
-        phone_verified_at: Set(None),
-        nickname: Set(info.name.clone()),
-        avatar_url: Set(info.avatar_url.clone()),
-        status: Set(UserStatus::Active),
-        created_at: Set(now),
-        updated_at: Set(now),
-        deleted_at: Set(None),
-    }
-    .insert(&txn)
-    .await
-    .map_err(|e| format!("{e}"))?;
-
-    let identity_id = Uuid::now_v7();
-    identities::ActiveModel {
-        id: Set(identity_id),
-        user_id: Set(user_id),
-        provider_id: Set(provider.provider.id),
-        kind: Set(IdentityKind::Oauth),
-        subject: Set(info.sub.clone()),
-        password_hash: Set(None),
-        password_algorithm: Set(None),
-        password_updated_at: Set(None),
-        profile: {
-            let mut p = serde_json::json!({
-                "email": info.email,
-                "email_verified": info.email_verified,
-                "name": info.name,
-                "picture": info.avatar_url,
-            });
-            if let serde_json::Value::Object(ref extra) = info.profile_extra
-                && let serde_json::Value::Object(ref mut map) = p
-            {
-                for (k, v) in extra {
-                    map.insert(k.clone(), v.clone());
-                }
-            }
-            Set(p)
-        },
-        last_login_at: Set(Some(now)),
-        created_at: Set(now),
-        updated_at: Set(now),
-        unbound_at: Set(None),
-    }
-    .insert(&txn)
-    .await
-    .map_err(|e| format!("{e}"))?;
-
-    insert_auto_access(&txn, user_id, auth_request_id, now)
-        .await
-        .map_err(|e| format!("auto app access: {e}"))?;
-
-    let pending_email_data =
-        if !info.email_verified && !state.config.notification.endpoint.is_empty() {
-            if let Some(ref email) = info.email {
-                let email_taken = users::Entity::find()
-                    .filter(users::Column::Email.eq(email.as_str()))
-                    .filter(users::Column::DeletedAt.is_null())
-                    .one(&txn)
-                    .await
-                    .map_err(|e| format!("contact availability query: {e}"))?
-                    .is_some();
-                let ccr_taken = ccr::Entity::find()
-                    .filter(ccr::Column::ChangeType.eq(ContactChangeType::Email))
-                    .filter(ccr::Column::NewValue.eq(email.as_str()))
-                    .filter(
-                        ccr::Column::Status
-                            .is_in([ContactChangeStatus::Pending, ContactChangeStatus::Verified]),
-                    )
-                    .one(&txn)
-                    .await
-                    .map_err(|e| format!("contact availability query: {e}"))?
-                    .is_some();
-                if !email_taken && !ccr_taken {
-                    let verification = crate::service::verification::generate_code();
-                    match (ccr::ActiveModel {
-                        id: Set(Uuid::now_v7()),
-                        user_id: Set(user_id),
-                        change_type: Set(ContactChangeType::Email),
-                        new_value: Set(email.clone()),
-                        status: Set(ContactChangeStatus::Pending),
-                        verification_code_hash: Set(verification.code_hash.clone()),
-                        nonce: Set(verification.nonce.clone()),
-                        requested_at: Set(now),
-                        expires_at: Set(crate::service::verification::expires_in(
-                            time::Duration::minutes(15),
-                        )),
-                        verified_at: Set(None),
-                        cancelled_at: Set(None),
-                        created_at: Set(now),
-                        updated_at: Set(now),
-                    })
-                    .insert(&txn)
-                    .await
-                    {
-                        Ok(_) => Some((email.clone(), verification.code, verification.nonce)),
-                        Err(e) => {
-                            tracing::warn!("Social login pending email CCR insert: {e}");
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-    if let Some((email, code, nonce)) = pending_email_data {
-        crate::service::notify::enqueue_verification(
-            &txn,
-            user_id,
-            &state.config.sso.base_url,
-            "email",
-            &email,
-            &code,
-            &nonce,
-        )
-        .await
-        .map_err(|_| "notification_queue_failed".to_owned())?;
-    }
-    txn.commit().await.map_err(|e| format!("{e}"))?;
-
-    let user = users::Entity::find_by_id(user_id)
-        .one(&state.db)
-        .await
-        .map_err(|e| format!("{e}"))?
-        .ok_or("user gone")?;
-
-    Ok((user, identity_id))
-}
-
 struct SocialLoginContext {
+    redirect: String,
     auth_request_id: Option<Uuid>,
     ip: Option<ipnetwork::IpNetwork>,
     authenticated_at: Option<time::OffsetDateTime>,
@@ -540,11 +394,11 @@ async fn finish_social_login(
 
     let cookie = state.cookie_factory().build_session_cookie(&token);
     let redirect_target = if ctx.auth_request_id.is_some() {
-        "/oauth2/authorize/resume"
+        "/oauth2/authorize/resume".to_owned()
     } else {
-        "/account/profile"
+        crate::web::util::safe_redirect(&ctx.redirect)
     };
-    (jar.add(cookie), Redirect::to(redirect_target)).into_response()
+    (jar.add(cookie), Redirect::to(&redirect_target)).into_response()
 }
 
 async fn render_social_link(
@@ -565,8 +419,21 @@ async fn render_social_link(
         Err(_) => return Redirect::to("/sso/error?code=internal_error").into_response(),
     };
 
+    let user_id = match Uuid::parse_str(&link.user_id) {
+        Ok(id) => id,
+        Err(_) => return Redirect::to(&login_error_url("social_link_expired")).into_response(),
+    };
+    let has_password = match LoginService::new(&state.db, &state.cache)
+        .find_password_identity(user_id)
+        .await
+    {
+        Ok(identity) => identity
+            .is_some_and(|identity| identity.password_hash.is_some_and(|hash| !hash.is_empty())),
+        Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
-    let tpl = SocialLinkTemplate {
+    let tpl = SocialLinkView {
+        has_password,
         csrf_token,
         nonce: nonce.to_owned(),
         provider_name: link.provider_name,
@@ -574,13 +441,7 @@ async fn render_social_link(
         display_name: link.name.unwrap_or_else(|| "Pero".to_owned()),
         error: error.to_owned(),
     };
-    match tpl.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(e) => {
-            tracing::error!("Template render error: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    (jar, pero_api_axum::form::view("SocialLinkView", tpl)).into_response()
 }
 
 fn social_link_url(nonce: &str) -> String {

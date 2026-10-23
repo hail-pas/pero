@@ -30,13 +30,6 @@ impl ValidationSource {
             name: None,
         }
     }
-
-    pub fn named(location: ValidationLocation, name: impl Into<String>) -> Self {
-        Self {
-            location,
-            name: Some(name.into()),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -83,11 +76,8 @@ pub struct ValidationIssue {
     /// Stable machine-readable validation code.
     pub code: ValidationCode,
 
-    /// Default developer-facing message. UI copy can be replaced through `message_key`.
+    /// Default developer-facing message.
     pub message: String,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message_key: Option<String>,
 
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, Value>,
@@ -105,14 +95,8 @@ impl ValidationIssue {
             path,
             code: code.into(),
             message: message.into(),
-            message_key: None,
             params: BTreeMap::new(),
         }
-    }
-
-    pub fn with_message_key(mut self, key: impl Into<String>) -> Self {
-        self.message_key = Some(key.into());
-        self
     }
 
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {

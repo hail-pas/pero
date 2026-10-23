@@ -1,3 +1,11 @@
+FROM docker.io/library/node:24-bookworm-slim AS frontend
+WORKDIR /frontend
+RUN npm install --global pnpm@11.25.0
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm build
+
 # Use Docker's bundled BuildKit frontend; no extra frontend image download is needed.
 # Official multi-platform manifest digests prevent stale mirror tags selecting old images.
 FROM docker.io/library/rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS builder
@@ -8,7 +16,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY services/ services/
-COPY scripts/package-ui-assets.py scripts/migrate.sh scripts/
+COPY scripts/migrate.sh scripts/
 ARG CARGO_BUILD_JOBS=2
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
@@ -19,8 +27,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
       || { cat /tmp/build.json; exit 1; }) \
     && mkdir -p /out/ui /out/migrations \
     && cp target/x86_64-unknown-linux-gnu/release/user-center target/x86_64-unknown-linux-gnu/release/bootstrap /out/ \
-    && cp -r services/user-center/ui/static /out/ui/ \
-    && python3 scripts/package-ui-assets.py /tmp/build.json /out/ui/static \
     && cp services/user-center/migrations/*.sql /out/migrations/ \
     && cp scripts/migrate.sh /out/migrate.sh
 
@@ -32,6 +38,7 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin pero
 WORKDIR /opt/pero
 COPY --from=builder /out/ /opt/pero/prd/
+COPY --from=frontend /frontend/dist/ /opt/pero/prd/ui/static/
 COPY deploy/pero/initialize.py /opt/pero/initialize.py
 RUN find /opt/pero/prd -type d -exec chmod 755 {} + \
     && find /opt/pero/prd -type f -exec chmod 644 {} + \

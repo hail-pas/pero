@@ -26,10 +26,6 @@ pub struct LogConfig {
     pub dir: Option<PathBuf>,
 
     pub rotation: LogRotation,
-
-    /// Compatibility flag.
-    /// If true, it overrides `format` and forces JSON output.
-    pub json: bool,
 }
 
 impl Default for LogConfig {
@@ -39,7 +35,6 @@ impl Default for LogConfig {
             format: LogFormat::Pretty,
             dir: Some(PathBuf::from("logs")),
             rotation: LogRotation::Daily,
-            json: false,
         }
     }
 }
@@ -88,7 +83,7 @@ impl LogConfig {
             writer = BoxMakeWriter::new(writer.and(file_writer));
         }
 
-        let format = self.effective_format();
+        let format = self.format;
 
         // When file logging is enabled, disable ANSI globally,
         // otherwise color escape codes will also be written into log files.
@@ -121,14 +116,6 @@ impl LogConfig {
         }?;
 
         Ok(LogGuard { _guards: guards })
-    }
-
-    fn effective_format(&self) -> LogFormat {
-        if self.json {
-            LogFormat::Json
-        } else {
-            self.format
-        }
     }
 
     fn file_appender(&self, dir: &Path) -> RollingFileAppender {

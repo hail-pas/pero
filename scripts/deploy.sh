@@ -51,6 +51,8 @@ if [ "${BOOTSTRAP}" = true ]; then
     BINS+=("--bin" "bootstrap")
 fi
 
+bash scripts/build-frontend.sh
+
 echo "── Building ${SERVICE} (${TARGET}, release) ──"
 
 if ! rustup target list --installed | grep -q "${TARGET}"; then
@@ -94,10 +96,6 @@ fi
 if [ -d "${SERVICE_DIR}/ui/static" ]; then
     mkdir -p "${DEPLOY_DIR}/ui"
     cp -r "${SERVICE_DIR}/ui/static" "${DEPLOY_DIR}/ui/"
-fi
-
-if [ "${SERVICE}" = "user-center" ]; then
-    python3 scripts/package-ui-assets.py "$BUILD_LOG" "${DEPLOY_DIR}/ui/static"
 fi
 
 if [ -d "${SERVICE_DIR}/migrations" ]; then

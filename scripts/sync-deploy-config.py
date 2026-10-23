@@ -43,6 +43,11 @@ def main():
     args = parser.parse_args()
     defaults = tomllib.loads(args.defaults.read_text())
     previous = tomllib.loads(args.previous.read_text())
+    # Preserve the deployed static path when migrating the legacy template section.
+    if 'frontend' in defaults and 'frontend' not in previous:
+        legacy = previous.get('askama', {})
+        if 'static_dir' in legacy:
+            previous['frontend'] = {'static_dir': legacy['static_dir']}
     result = refresh(defaults, previous)
     rendered = emit(result)
     assert tomllib.loads(rendered) == result

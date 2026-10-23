@@ -63,16 +63,17 @@ impl<'a> TokenService<'a> {
     pub async fn token(&self, form: &TokenRequest, source: &str) -> TokenEndpointResult {
         // Unauthenticated traffic must not consume another client's shared quota.
         let client_rate_limit_key = format!("source:{}", pero_utils::crypto::sha256_hex(source));
-        if let Ok(key) = rl_token.key(&client_rate_limit_key) {
-            match enforce_rate_limit(&self.state.cache, &key, 60).await {
-                Ok(()) => {}
-                Err(RateLimitError::Denied { .. }) => {
-                    return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
-                }
-                Err(RateLimitError::Redis(e)) => {
-                    tracing::error!(error = %e, "rate_limit_check redis error");
-                    return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
-                }
+        let Ok(key) = rl_token.key(&client_rate_limit_key) else {
+            return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+        };
+        match enforce_rate_limit(&self.state.cache, &key, 60).await {
+            Ok(()) => {}
+            Err(RateLimitError::Denied { .. }) => {
+                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+            }
+            Err(RateLimitError::Redis(e)) => {
+                tracing::error!(error = %e, "rate_limit_check redis error");
+                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
             }
         }
 

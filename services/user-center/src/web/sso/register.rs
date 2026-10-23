@@ -5,9 +5,9 @@ use pero_api_axum::extractor::ClientIp;
 use pero_cache_redis::RateLimitError;
 use validator::Validate;
 
-use crate::service::account::{AccountService, RegisterUserParams};
+use crate::service::account::{AccountService, RegisterUserError, RegisterUserParams};
 use crate::state::app::AppState;
-use crate::web::sso::template::{RegisterForm, RegisterTemplate};
+use crate::web::sso::dto::{RegisterForm, RegisterView};
 use crate::web::sso::utility::resolve_auth_request_id;
 
 /// EP-04: GET /sso/register — 渲染注册页面
@@ -40,16 +40,17 @@ pub async fn post(
         let ip_str = ip.map(|v| v.to_string()).unwrap_or_else(|| {
             pero_config::blocks::ServerConfig::unknown_ip_placeholder().to_owned()
         });
-        if let Ok(key) = rl_register_ip.key(&ip_str) {
-            match enforce_rate_limit(&state.cache, &key, 5).await {
-                Ok(()) => {}
-                Err(RateLimitError::Denied { .. }) => {
-                    return render_register(jar, &state, "rate_limited");
-                }
-                Err(RateLimitError::Redis(e)) => {
-                    tracing::error!(error = %e, "rate_limit_check redis error");
-                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
+        let Ok(key) = rl_register_ip.key(&ip_str) else {
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+        };
+        match enforce_rate_limit(&state.cache, &key, 5).await {
+            Ok(()) => {}
+            Err(RateLimitError::Denied { .. }) => {
+                return render_register(jar, &state, "rate_limited");
+            }
+            Err(RateLimitError::Redis(e)) => {
+                tracing::error!(error = %e, "rate_limit_check redis error");
+                return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
         }
     }
@@ -84,7 +85,12 @@ pub async fn post(
         })
         .await
     {
-        return render_register(jar, &state, e.message_key());
+        return match e {
+            RegisterUserError::Internal => {
+                crate::web::util::dependency_error("Registration failed")
+            }
+            error => render_register(jar, &state, error.message_key()),
+        };
     }
 
     Redirect::to("/sso/login?registered=1").into_response()
@@ -93,7 +99,7 @@ pub async fn post(
 fn render_register(jar: CookieJar, state: &AppState, error: &str) -> Response {
     state
         .web_security()
-        .render_with_csrf(jar, |csrf_token| RegisterTemplate {
+        .view_with_csrf(jar, "RegisterView", |csrf_token| RegisterView {
             error: error.to_owned(),
             csrf_token,
         })

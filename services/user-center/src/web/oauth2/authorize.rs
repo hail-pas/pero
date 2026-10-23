@@ -106,6 +106,12 @@ impl AuthorizeQuery {
             ));
         }
 
+        if let Some(challenge) = &self.code_challenge
+            && !pero_utils::oauth::pkce::valid_s256_challenge(challenge)
+        {
+            return Err(self.redirect_err("invalid_request", Some("Invalid S256 code_challenge")));
+        }
+
         Ok(())
     }
 
@@ -139,9 +145,16 @@ impl AuthorizeQuery {
 pub async fn authorize(
     State(state): State<AppState>,
     jar: CookieJar,
+    source: pero_api_axum::extractor::ClientIp,
     Query(params): Query<AuthorizeQuery>,
 ) -> Result<(CookieJar, Response), OAuthError> {
     params.validate_oauth()?;
+    crate::web::login_flow::check_login_start_rate_limit(&state, source)
+        .await
+        .map_err(|status| match status {
+            axum::http::StatusCode::TOO_MANY_REQUESTS => OAuthError::RateLimited,
+            _ => OAuthError::Unavailable,
+        })?;
 
     let scopes = params.scopes();
 
@@ -152,15 +165,24 @@ pub async fn authorize(
 
     params.validate_redirectable_oauth()?;
 
+    if !client
+        .grant_types
+        .iter()
+        .any(|grant| grant == "authorization_code")
+    {
+        return Err(params.redirect_err("unauthorized_client", None));
+    }
+
     if !crate::service::scope::allowed(&scopes, &client.scopes) {
         return Err(params.redirect_err("invalid_scope", None));
     }
 
-    if client.r#type == OauthClientType::Public && params.code_challenge.is_none() {
-        return Err(params.redirect_err(
-            "invalid_request",
-            Some("PKCE is required for public clients"),
-        ));
+    if (client.require_pkce || client.r#type == OauthClientType::Public)
+        && params.code_challenge.is_none()
+    {
+        return Err(
+            params.redirect_err("invalid_request", Some("PKCE is required for this client"))
+        );
     }
 
     let app = oauth.validate_app(&client).await?;
@@ -401,6 +423,7 @@ async fn resolve_authorization(
         let cookie_value = AuthReqCookieValue {
             auth_request_id: auth_request.id,
             user_id: session.user_id,
+            session_id: session.id,
         };
         let cookie = cookies.build_short_lived_cookie(
             &req_cookie_name,
@@ -450,4 +473,38 @@ fn report_into_oauth_error(
     }
     let msg = errors.to_string();
     OAuthError::BadRequest(msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_s256_challenges_are_rejected_before_authorization() {
+        let valid = pero_utils::oauth::pkce::PkcePair::generate().code_challenge;
+        let mut query = AuthorizeQuery {
+            response_type: "code".into(),
+            scope: "openid".into(),
+            redirect_uri: "https://client.example.test/callback".into(),
+            state: Some("request-state".into()),
+            code_challenge_method: Some("S256".into()),
+            code_challenge: Some(valid.clone()),
+            ..Default::default()
+        };
+        assert!(query.validate_redirectable_oauth().is_ok());
+        for challenge in [
+            "".into(),
+            "short".into(),
+            format!("{valid}="),
+            "a".repeat(43),
+        ] {
+            query.code_challenge = Some(challenge);
+            let error = query.validate_redirectable_oauth().unwrap_err();
+            assert!(matches!(
+                error,
+                OAuthError::RedirectError { error, state: Some(state), .. }
+                    if error == "invalid_request" && state == "request-state"
+            ));
+        }
+    }
 }

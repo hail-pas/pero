@@ -67,16 +67,14 @@ impl TokenService<'_> {
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
-        match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
-            Ok(true) => {}
-            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+        let access = match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
+            Ok(Some(access)) => access,
+            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
-        }
+        };
 
         let auth_code = match ac::Entity::find()
             .filter(ac::Column::CodeHash.eq(&code_hash))
-            .filter(ac::Column::ConsumedAt.is_null())
-            .filter(ac::Column::ExpiresAt.gt(now))
             .filter(ac::Column::ClientId.eq(client.id))
             .filter(ac::Column::RedirectUri.eq(redirect_uri))
             .lock_exclusive()
@@ -131,8 +129,38 @@ impl TokenService<'_> {
             );
         }
 
+        // Only a replay with the correct client, redirect URI and PKCE proof may revoke
+        // the login session. Release issuance locks before using the shared revocation path.
+        if auth_code.consumed_at.is_some() {
+            if let Err(error) = txn.rollback().await {
+                tracing::error!(%error, "Authorization code replay rollback failed");
+                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            }
+            if let Some(session_id) = auth_code.session_id
+                && let Err(error) = self
+                    .state
+                    .session_service()
+                    .revoke_login_state(session_id, "authorization_code_reuse")
+                    .await
+            {
+                tracing::error!(%error, "Authorization code replay revocation failed");
+                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+            }
+            return TokenEndpointResult::error_desc(
+                OAuth2ErrorCode::InvalidGrant,
+                "Authorization code already used",
+            );
+        }
+
+        if auth_code.expires_at <= now {
+            return TokenEndpointResult::error_desc(
+                OAuth2ErrorCode::InvalidGrant,
+                "Authorization code expired",
+            );
+        }
+
         let body = match self
-            .issue_tokens_from_auth_code(&txn, client, &auth_code, code)
+            .issue_tokens_from_auth_code(&txn, client, &auth_code, code, access.token_version)
             .await
         {
             Ok(body) => body,
@@ -153,6 +181,7 @@ impl TokenService<'_> {
         client: &oc::Model,
         auth_code: &crate::db::entity::authorization_codes::Model,
         raw_code: &str,
+        access_version: i64,
     ) -> Result<TokenSuccessBody, TokenEndpointResult>
     where
         C: ConnectionTrait,
@@ -205,26 +234,6 @@ impl TokenService<'_> {
             ));
         };
 
-        match crate::service::access::can_user_access_active_app(
-            db,
-            auth_code.user_id,
-            auth_code.app_id,
-        )
-        .await
-        {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(TokenEndpointResult::error_desc(
-                    OAuth2ErrorCode::InvalidGrant,
-                    "Access revoked",
-                ));
-            }
-            Err(e) => {
-                tracing::error!("Auth code access check: {e}");
-                return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
-            }
-        }
-
         let signing = match require_active_signing_key(db).await {
             Ok(k) => k,
             Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
@@ -240,13 +249,15 @@ impl TokenService<'_> {
         }
         let scopes_str = auth_code.scopes.join(" ");
         let issuer = TokenIssuer::new(self.state, client, &signing);
-        let access_token = match issuer.issue_access_token(user.id, &scopes_str, Some(session_id)) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!("AT sign: {e}");
-                return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
-            }
-        };
+        let access_token =
+            match issuer.issue_access_token(user.id, &scopes_str, Some(session_id), access_version)
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("AT sign: {e}");
+                    return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
+                }
+            };
 
         let mut id_token = None;
         if crate::service::scope::contains(&auth_code.scopes, "openid") {

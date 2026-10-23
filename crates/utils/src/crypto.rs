@@ -27,19 +27,18 @@ pub fn generate_nonce() -> String {
 }
 
 pub fn hash_secret(secret: &str) -> Result<String, AppError> {
-    bcrypt::hash(secret, bcrypt::DEFAULT_COST).map_err(|e| {
-        AppError::internal("secret_hash_failed", "Failed to hash secret").with_source(e)
-    })
+    password::hash_password(secret)
+        .map(|result| result.hash)
+        .map_err(|_| AppError::internal("secret_hash_failed", "Failed to hash secret"))
 }
 
 pub fn verify_secret(secret: &str, hash: &str) -> Result<bool, AppError> {
-    bcrypt::verify(secret, hash).map_err(|e| {
-        AppError::internal("secret_verify_failed", "Failed to verify secret").with_source(e)
-    })
+    password::verify_password(secret, hash)
+        .map_err(|_| AppError::internal("secret_verify_failed", "Failed to verify secret"))
 }
 
 pub fn hmac_sha256(message: &[u8], key: &[u8]) -> String {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length");
@@ -68,7 +67,7 @@ pub fn decode_signed_json<T: serde::de::DeserializeOwned>(
     let (payload, sig) = value
         .rsplit_once('.')
         .ok_or_else(|| serde::de::Error::custom("missing signature"))?;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let signature = hex::decode(sig).map_err(|_| serde::de::Error::custom("invalid signature"))?;
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC key length");
     mac.update(payload.as_bytes());
@@ -105,4 +104,17 @@ pub async fn hash_secret_async(secret: &str) -> Result<String, AppError> {
 pub async fn verify_secret_async(secret: &str, hash: &str) -> Result<bool, AppError> {
     let (secret, hash) = (secret.to_owned(), hash.to_owned());
     run_crypto(move || verify_secret(&secret, &hash)).await
+}
+
+#[cfg(test)]
+mod secret_tests {
+    #[test]
+    fn client_secret_verification_checks_the_entire_input() {
+        let prefix = "a".repeat(72);
+        let secret = format!("{prefix}original");
+        let hash = super::hash_secret(&secret).unwrap();
+        assert!(hash.starts_with("$argon2id$"));
+        assert!(super::verify_secret(&secret, &hash).unwrap());
+        assert!(!super::verify_secret(&format!("{prefix}different"), &hash).unwrap());
+    }
 }

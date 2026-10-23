@@ -1,7 +1,7 @@
 use user_center::config::AppConfig;
 
 #[test]
-fn shipped_configuration_and_locales_remain_readable() {
+fn shipped_configuration_remains_readable() {
     let mut defaults: toml::Table = toml::from_str(include_str!("../config/default.toml")).unwrap();
     let local: toml::Table = toml::from_str(include_str!("../config/local.toml.example")).unwrap();
     for (section, values) in local {
@@ -22,8 +22,6 @@ fn shipped_configuration_and_locales_remain_readable() {
         include_str!("../config/bootstrap.toml.example"),
         include_str!("../../admin/config/default.toml"),
         include_str!("../../admin/config/local.toml.example"),
-        include_str!("../ui/locales/en.toml"),
-        include_str!("../ui/locales/zh-CN.toml"),
     ] {
         let table: toml::Table = toml::from_str(input).unwrap();
         assert!(!table.is_empty());

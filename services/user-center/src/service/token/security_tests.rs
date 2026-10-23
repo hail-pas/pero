@@ -137,7 +137,7 @@ async fn formatted_identifiers_keep_their_database_identity() {
     let other_user = Uuid::now_v7();
     sql(
         &state.db,
-        "UPDATE users SET username=$2,phone=$2 WHERE id=$1",
+        "UPDATE users SET username=$2,phone=$2,phone_verified_at=now() WHERE id=$1",
         vec![fixture.user.into(), formatted.clone().into()],
     )
     .await;
@@ -170,7 +170,14 @@ async fn formatted_identifiers_keep_their_database_identity() {
             "OriginalPass123!",
         )
         .await;
-    assert!(matches!(result, Ok(result) if result.user.id == fixture.user));
+    let token = result.unwrap_or_else(|_| panic!("password login failed"));
+    let session = state
+        .session_service()
+        .validate(&token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.user_id, fixture.user);
 
     sql(
         &state.db,
@@ -195,8 +202,9 @@ async fn formatted_identifiers_keep_their_database_identity() {
         .ensure_csrf(axum_extra::extract::CookieJar::new());
     let response = crate::web::sso::forgot_password::post_forgot(
         axum::extract::State(state.clone()),
+        pero_api_axum::extractor::ClientIp(None),
         jar,
-        axum::Form(crate::web::sso::template::ForgotPasswordForm {
+        axum::Form(crate::web::sso::dto::ForgotPasswordForm {
             csrf_token,
             identifier: formatted,
         }),
@@ -209,6 +217,67 @@ async fn formatted_identifiers_keep_their_database_identity() {
         .unwrap();
     assert_eq!(tokens.len(), 1);
     assert_eq!(tokens[0].user_id, fixture.user);
+    // Legal mailbox characters must not bypass recovery throttling.
+    let email = format!("{base}{{a}}@example.test");
+    sql(
+        &state.db,
+        "UPDATE users SET email=$2,email_verified_at=now() WHERE id=$1",
+        vec![fixture.user.into(), email.clone().into()],
+    )
+    .await;
+    let (jar, csrf) = state
+        .web_security()
+        .ensure_csrf(axum_extra::extract::CookieJar::new());
+    for attempt in 0..4 {
+        let response = crate::web::sso::forgot_password::post_forgot(
+            axum::extract::State(state.clone()),
+            pero_api_axum::extractor::ClientIp(None),
+            jar.clone(),
+            axum::Form(crate::web::sso::dto::ForgotPasswordForm {
+                csrf_token: csrf.clone(),
+                identifier: email.clone(),
+            }),
+        )
+        .await;
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(page["data"]["success"], attempt < 3);
+        if attempt == 3 {
+            assert_eq!(page["data"]["error"], "rate_limited");
+        }
+    }
+    use sea_orm::PaginatorTrait;
+    assert_eq!(
+        crate::db::entity::password_reset_tokens::Entity::find()
+            .count(&state.db)
+            .await
+            .unwrap(),
+        4
+    );
+    // One source cannot bypass the budget by rotating recipient identifiers.
+    let source = pero_api_axum::extractor::ClientIp(Some("192.0.2.33/32".parse().unwrap()));
+    let source_key = pero_cache_redis::rate_limit_key::rl_reset_ip
+        .key(&source.for_rate_limit())
+        .unwrap();
+    state.cache.set(source_key.clone(), &20_u64).await.unwrap();
+    let response = crate::web::sso::forgot_password::post_forgot(
+        axum::extract::State(state.clone()),
+        source,
+        jar,
+        axum::Form(crate::web::sso::dto::ForgotPasswordForm {
+            csrf_token: csrf,
+            identifier: format!("new-{base}@example.test"),
+        }),
+    )
+    .await;
+    let body = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(page["data"]["error"], "rate_limited");
+    state.cache.del(source_key).await.unwrap();
     // Phone identifiers must match the stored contact.
     let normalized_phone = format!("{base}456");
     let formatted_phone = format!("{base}-456");
@@ -235,7 +304,7 @@ async fn formatted_identifiers_keep_their_database_identity() {
         .all(&state.db)
         .await
         .unwrap();
-    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens.len(), 4);
     assert!(tokens.iter().all(|token| token.user_id == fixture.user));
     let account = AccountService::new(&state);
     let registration = |username: &str| crate::service::account::RegisterUserParams {
@@ -371,6 +440,35 @@ async fn refresh_replay() {
         matches!(result, TokenEndpointResult::Success(_)),
         "valid refresh must work"
     );
+    // Revocation failures must be retryable, rather than claiming replay handling completed.
+    db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON sso_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
+        .await.unwrap();
+    assert!(matches!(
+        service
+            .handle_refresh_token(&refresh_form(client, &raw), &client_model)
+            .await,
+        TokenEndpointResult::Error {
+            code: pero_error::protocol::oauth::OAuth2ErrorCode::TemporarilyUnavailable,
+            ..
+        }
+    ));
+    let row = refresh_tokens::Entity::find_by_id(rt)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let replacement = refresh_tokens::Entity::find_by_id(row.replaced_by_id.unwrap())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(replacement.revoked_at.is_none());
+    db.execute_unprepared(
+        "DROP TRIGGER fail_replay_revoke ON sso_sessions; DROP FUNCTION fail_replay_revoke()",
+    )
+    .await
+    .unwrap();
+    // Retrying the same old token after recovery completes session-wide revocation.
     assert!(matches!(
         service
             .handle_refresh_token(&refresh_form(client, &raw), &client_model)
@@ -520,11 +618,13 @@ async fn authorization_code_claims_and_scope() {
     )
     .await;
     let successful_code = pero_utils::crypto::generate_token();
-    sql(&db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&successful_code).into(),user.into(),app.into(),client.into(),authenticated_session.into()]).await;
-    let successful_form = TokenRequest {
+    let pkce = pero_utils::oauth::pkce::PkcePair::generate();
+    sql(&db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at,code_challenge,code_challenge_method) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes',$6,'S256')",vec![pero_utils::crypto::sha256_hex(&successful_code).into(),user.into(),app.into(),client.into(),authenticated_session.into(),pkce.code_challenge.into()]).await;
+    let mut successful_form = TokenRequest {
         grant_type: "authorization_code".into(),
         code: Some(successful_code),
         redirect_uri: Some("https://client.example.test/callback".into()),
+        code_verifier: Some(pkce.code_verifier.clone()),
         ..refresh_form(client, "")
     };
     let TokenEndpointResult::Success(tokens) = service
@@ -541,6 +641,63 @@ async fn authorization_code_claims_and_scope() {
     )
     .unwrap();
     assert_eq!(claims.auth_time, Some(authenticated_at));
+
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        "authorization",
+        format!("Bearer {}", tokens.access_token).parse().unwrap(),
+    );
+    assert_eq!(
+        crate::api::userinfo::userinfo(axum::extract::State(state.clone()), headers.clone())
+            .await
+            .status(),
+        http::StatusCode::OK
+    );
+    successful_form.code_verifier = Some("wrong-proof".into());
+    assert!(matches!(
+        service
+            .handle_authorization_code(&successful_form, &client_model)
+            .await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    assert_eq!(
+        crate::api::userinfo::userinfo(axum::extract::State(state.clone()), headers.clone())
+            .await
+            .status(),
+        http::StatusCode::OK
+    );
+
+    successful_form.code_verifier = Some(pkce.code_verifier);
+    assert!(matches!(
+        service
+            .handle_authorization_code(&successful_form, &client_model)
+            .await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    assert_eq!(
+        crate::api::userinfo::userinfo(axum::extract::State(state.clone()), headers)
+            .await
+            .status(),
+        http::StatusCode::UNAUTHORIZED
+    );
+    assert!(matches!(
+        service
+            .handle_refresh_token(
+                &refresh_form(client, tokens.refresh_token.as_ref().unwrap()),
+                &client_model
+            )
+            .await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
 
     // Revoked scope cannot be recovered by redeeming a previously issued authorization code.
     let (_, session) = state
@@ -581,7 +738,7 @@ async fn recovery_and_contact_expiry() {
     config.notification.endpoint = "https://notify.example.test".into();
     sql(
         &db,
-        "UPDATE users SET email='recovery@example.test' WHERE id=$1",
+        "UPDATE users SET email='recovery@example.test',phone='+15551234567' WHERE id=$1",
         vec![user.into()],
     )
     .await;
@@ -623,6 +780,26 @@ async fn recovery_and_contact_expiry() {
     .await
     .unwrap();
     txn.commit().await.unwrap();
+    // Neither an unverified primary identifier nor an injected secondary identifier can recover the account.
+    for identifier in ["recovery@example.test", "+15551234567"] {
+        crate::service::recovery::request(&state, identifier)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        password_reset_tokens::Entity::find()
+            .count(&db)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(notification_count().await, 0);
+    sql(
+        &db,
+        "UPDATE users SET email_verified_at=now() WHERE id=$1",
+        vec![user.into()],
+    )
+    .await;
     crate::service::recovery::request(&state, "recovery@example.test")
         .await
         .unwrap();
@@ -635,6 +812,18 @@ async fn recovery_and_contact_expiry() {
     );
     assert_eq!(notification_count().await, 1);
 
+    let mut contacts = ContactVerificationService::new(&db, &state.cache);
+    let (_, pending_nonce) = contacts
+        .create_contact_request(
+            user,
+            ContactChannel::Phone,
+            "+15557654321".into(),
+            Some("https://issuer.example.test"),
+        )
+        .await
+        .ok()
+        .unwrap();
+    assert_eq!(notification_count().await, 2);
     let mut resets = Vec::new();
     for _ in 0..2 {
         let token = pero_utils::oauth::jwt::sign_password_reset_token(
@@ -653,6 +842,19 @@ async fn recovery_and_contact_expiry() {
             .await
             .is_ok()
     );
+    assert!(
+        contacts
+            .load_pending_request(&pending_nonce)
+            .await
+            .ok()
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(notification_count().await, 0);
+    crate::service::recovery::request(&state, "+15551234567")
+        .await
+        .unwrap();
+    assert_eq!(notification_count().await, 0);
     assert!(
         account
             .reset_password(&resets[1], "OtherPassword123", "OtherPassword123")
@@ -734,6 +936,30 @@ async fn signing_key_rotation() {
     let state = fixture.state.clone();
     let db = state.db.clone();
     let provider = fixture.provider;
+    for kid in [".", ".."] {
+        let result = crate::service::keys::create(
+            &db,
+            provider,
+            crate::service::keys::KeyInput {
+                kid: kid.into(),
+                algorithm: crate::db::enums::KeyAlgorithm::Rs256,
+                key_use: crate::db::enums::KeyUse::Sig,
+                public_key_pem: include_str!("../../../../../tests/fixtures/rsa-public.pem").into(),
+                private_key_pem: Some(
+                    include_str!("../../../../../tests/fixtures/rsa-private.pem").into(),
+                ),
+                certificate_pem: None,
+                not_before: None,
+                expires_at: None,
+                active: true,
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(crate::service::ManagementError::Invalid("invalid_key_id"))
+        ));
+    }
     // Switching active keys preserves the old verification key and obeys the partial unique index.
     let new_key = Uuid::now_v7();
     sql(&db,"INSERT INTO identity_provider_keys(id,provider_id,kid,public_key_pem,active) VALUES ($1,$2,'new',$3,false)",vec![new_key.into(),provider.into(),include_str!("../../../../../tests/fixtures/rsa-public.pem").into()]).await;
@@ -747,7 +973,7 @@ async fn signing_key_rotation() {
     let (jar, csrf_token) = state
         .web_security()
         .ensure_csrf(axum_extra::extract::CookieJar::new());
-    let response = crate::web::dashboard::providers::activate_key(
+    let response = crate::web::dashboard::keys::activate(
         axum::extract::State(state.clone()),
         jar,
         axum::extract::Path((provider, "new".into())),
@@ -951,6 +1177,7 @@ async fn policy_revocation_locks() {
         crate::service::access::lock_grant_access(&issuance, user, app)
             .await
             .unwrap()
+            .is_some()
     );
     let (jar, csrf_token) = state
         .web_security()
@@ -961,7 +1188,7 @@ async fn policy_revocation_locks() {
             axum::extract::State(revoke_state),
             jar,
             axum::extract::Path(user),
-            axum::Form(crate::web::dashboard::template::RevokeAppForm {
+            axum::Form(crate::web::dashboard::dto::RevokeAppForm {
                 csrf_token,
                 app_id: app.to_string(),
             }),
@@ -978,10 +1205,32 @@ async fn policy_revocation_locks() {
         "INSERT INTO refresh_tokens(id,token_hash,user_id,app_id,client_id,session_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 day')",
         vec![pending_rt.into(),pending_rt.to_string().into(),user.into(),app.into(),client.into(),fresh_session.into()])).await.unwrap();
     issuance.commit().await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), revoke)
+    let revoked = tokio::time::timeout(std::time::Duration::from_secs(5), revoke)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(revoked.status(), axum::http::StatusCode::OK);
+    assert!(
+        refresh_tokens::Entity::find_by_id(pending_rt)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_some()
+    );
+    // Concurrent grants use one upsert and never revive previously revoked tokens.
+    let (first, second) = tokio::join!(
+        crate::service::access::grant_app(&db, user, app),
+        crate::service::access::grant_app(&db, user, app)
+    );
+    assert!(first.is_ok() && second.is_ok());
+    assert!(
+        crate::service::access::active_app_access(&db, user, app)
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert!(
         refresh_tokens::Entity::find_by_id(pending_rt)
             .one(&db)
@@ -1202,7 +1451,7 @@ async fn notification_cleanup_is_bounded_and_links_preserve_base_paths() {
     config.notification.endpoint = "https://gateway.example.test/send".into();
     sql(
         &db,
-        "UPDATE users SET email='recovery@example.test' WHERE id=$1",
+        "UPDATE users SET email='recovery@example.test',email_verified_at=now() WHERE id=$1",
         vec![fixture.user.into()],
     )
     .await;
@@ -1441,5 +1690,499 @@ async fn upstream_oidc_subject_nonce_and_configuration_cache_contract() {
             .await,
         Err(SocialLoginError::UserinfoFailed(_))
     ));
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn consent_submissions_bind_to_the_displayed_request_and_session() {
+    use crate::web::{
+        security::AuthReqCookieValue,
+        sso::{consent, dto::ConsentForm},
+    };
+    use axum_extra::extract::cookie::{Cookie, CookieJar};
+    let fixture = SecurityFixture::new().await;
+    let state = &fixture.state;
+    let client_b = Uuid::now_v7();
+    sql(&state.db,"INSERT INTO oauth_clients(id,app_id,identifier,type,redirect_uris,scopes) VALUES($1,$2,$3,'public',ARRAY['https://client.example.test/callback'],ARRAY['openid'])",vec![client_b.into(),fixture.app.into(),client_b.to_string().into()]).await;
+    let (raw, sid) = state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let (jar, csrf_token) = state
+        .web_security()
+        .ensure_csrf(CookieJar::new().add(Cookie::new("pero_sso", raw)));
+    let request_cookie = state.cookie_factory().auth_req_cookie_name();
+    let mut requests = Vec::new();
+    for client in [fixture.client, client_b] {
+        let id = Uuid::now_v7();
+        sql(&state.db,"INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![id.into(),client.into(),fixture.app.into()]).await;
+        let token = state
+            .cookie_factory()
+            .encode_auth_request(&AuthReqCookieValue {
+                auth_request_id: id,
+                user_id: fixture.user,
+                session_id: sid,
+            })
+            .unwrap();
+        let page = consent::get(
+            axum::extract::State(state.clone()),
+            jar.clone()
+                .add(Cookie::new(request_cookie.clone(), token.clone())),
+        )
+        .await;
+        let data: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(page.into_body(), 65536).await.unwrap())
+                .unwrap();
+        assert_eq!(data["data"]["request_token"], token);
+        requests.push((id, token));
+    }
+    // The second tab has replaced the shared cookie, but the first tab still submits A.
+    let jar = jar.add(Cookie::new(request_cookie.clone(), requests[1].1.clone()));
+    let (other_raw, _) = state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let other_jar = CookieJar::new().add(Cookie::new("pero_sso", other_raw));
+    let (other_jar, other_csrf) = state.web_security().ensure_csrf(other_jar);
+    let rejected = consent::post(
+        axum::extract::State(state.clone()),
+        other_jar,
+        axum::Form(ConsentForm {
+            action: "allow".into(),
+            csrf_token: other_csrf,
+            request_token: requests[0].1.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(
+        rejected.headers()["location"],
+        "/sso/error?code=invalid_request"
+    );
+    let response = consent::post(
+        axum::extract::State(state.clone()),
+        jar.clone(),
+        axum::Form(ConsentForm {
+            action: "allow".into(),
+            csrf_token: csrf_token.clone(),
+            request_token: requests[0].1.clone(),
+        }),
+    )
+    .await;
+    assert!(
+        response.headers()["location"]
+            .to_str()
+            .unwrap()
+            .contains("code=")
+    );
+    let expected_cookie = format!("{request_cookie}={}", requests[1].1);
+    assert!(
+        response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .all(|value| {
+                let value = value.to_str().unwrap();
+                !value.starts_with(&format!("{request_cookie}="))
+                    || value.split(';').next() == Some(expected_cookie.as_str())
+            })
+    );
+    let codes = crate::db::entity::authorization_codes::Entity::find()
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(codes.len(), 1);
+    assert_eq!(codes[0].client_id, fixture.client);
+    // A failed consent deletion must roll back the terminal request state.
+    state.db.execute_unprepared("CREATE FUNCTION fail_consent_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected consent deletion failure'; END $$; CREATE TRIGGER fail_consent_delete BEFORE DELETE ON user_consents FOR EACH STATEMENT EXECUTE FUNCTION fail_consent_delete()")
+        .await.unwrap();
+    let unavailable = consent::post(
+        axum::extract::State(state.clone()),
+        jar.clone(),
+        axum::Form(ConsentForm {
+            action: "deny".into(),
+            csrf_token: csrf_token.clone(),
+            request_token: requests[1].1.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(
+        unavailable.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    state.db.execute_unprepared("DROP TRIGGER fail_consent_delete ON user_consents; DROP FUNCTION fail_consent_delete()")
+        .await.unwrap();
+    assert!(
+        crate::db::entity::authorization_requests::Entity::find_by_id(requests[1].0)
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap()
+            .completed_at
+            .is_none()
+    );
+    let response = consent::post(
+        axum::extract::State(state.clone()),
+        jar,
+        axum::Form(ConsentForm {
+            action: "deny".into(),
+            csrf_token,
+            request_token: requests[1].1.clone(),
+        }),
+    )
+    .await;
+    assert!(
+        response.headers()["location"]
+            .to_str()
+            .unwrap()
+            .contains("error=access_denied")
+    );
+    let grants = crate::db::entity::user_consents::Entity::find()
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].client_id, fixture.client);
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn concurrent_first_consents_both_issue_codes() {
+    let fixture = SecurityFixture::new().await;
+    let (_, session_id) = fixture
+        .state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let now = time::OffsetDateTime::now_utc();
+    let session = crate::state::session::SsoSession {
+        id: session_id,
+        user_id: fixture.user,
+        identity_id: None,
+        created_at: now,
+        authenticated_at: now,
+    };
+    let mut requests = Vec::new();
+    for _ in 0..2 {
+        let id = Uuid::now_v7();
+        sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![id.into(),fixture.client.into(),fixture.app.into()]).await;
+        requests.push(id);
+    }
+    let oauth = fixture.state.oauth_service();
+    let (first, second) = tokio::join!(
+        oauth.issue_auth_code_with_consent(requests[0], &session, true),
+        oauth.issue_auth_code_with_consent(requests[1], &session, true),
+    );
+    assert!(first.is_ok());
+    assert!(second.is_ok());
+    assert_ne!(first.unwrap(), second.unwrap());
+    let grants = crate::db::entity::user_consents::Entity::find()
+        .all(&fixture.state.db)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1);
+    // A denial that already passed the HTTP precheck must not overwrite a
+    // completion committed while its UPDATE was waiting for the request lock.
+    use axum_extra::extract::cookie::{Cookie, CookieJar};
+    let request = Uuid::now_v7();
+    sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![request.into(),fixture.client.into(),fixture.app.into()]).await;
+    let (raw, _) = fixture
+        .state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let session = fixture
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let request_token = fixture
+        .state
+        .cookie_factory()
+        .encode_auth_request(&crate::web::security::AuthReqCookieValue {
+            auth_request_id: request,
+            user_id: fixture.user,
+            session_id: session.id,
+        })
+        .unwrap();
+    let (jar, csrf_token) = fixture
+        .state
+        .web_security()
+        .ensure_csrf(CookieJar::new().add(Cookie::new("pero_sso", raw)));
+    let txn = fixture.state.db.begin().await.unwrap();
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM authorization_requests WHERE id=$1 FOR UPDATE",
+        [request.into()],
+    ))
+    .await
+    .unwrap();
+    let blocker: i32 = txn
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pid")
+        .unwrap();
+    let state = fixture.state.clone();
+    let denial = tokio::spawn(async move {
+        crate::web::sso::consent::post(
+            axum::extract::State(state),
+            jar,
+            axum::Form(crate::web::sso::dto::ConsentForm {
+                action: "deny".into(),
+                csrf_token,
+                request_token,
+            }),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = fixture.state.db.query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS blocked",
+                [blocker.into()])).await.unwrap().unwrap().try_get("", "blocked").unwrap();
+            if blocked { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("denial reached the request write after its precheck");
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE authorization_requests SET completed_at=now(),authorized_user_id=$2 WHERE id=$1",
+        [request.into(), fixture.user.into()],
+    ))
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+    let response = denial.await.unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/sso/error?code=invalid_request"
+    );
+    assert!(
+        crate::db::entity::user_consents::Entity::find_by_id((fixture.user, fixture.client))
+            .one(&fixture.state.db)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn client_revocation_precedes_authorization_request_locks() {
+    let fixture = SecurityFixture::new().await;
+    let (raw, _) = fixture
+        .state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let session = fixture
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let request = Uuid::now_v7();
+    sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![request.into(),fixture.client.into(),fixture.app.into()]).await;
+    let txn = fixture.state.db.begin().await.unwrap();
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM oauth_clients WHERE id=$1 FOR UPDATE",
+        [fixture.client.into()],
+    ))
+    .await
+    .unwrap();
+    let pid: i32 = txn
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pid")
+        .unwrap();
+    let state = fixture.state.clone();
+    let issuance = tokio::spawn(async move {
+        state
+            .oauth_service()
+            .issue_auth_code_with_consent(request, &session, true)
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let blocked: bool = fixture.state.db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS blocked", [pid.into()])).await.unwrap().unwrap().try_get("", "blocked").unwrap();
+            if blocked { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("issuance must wait on the client policy lock");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::service::session::SessionService::revoke_client_grants(
+            &txn,
+            fixture.client,
+            "test_revocation",
+        ),
+    )
+    .await
+    .expect("revocation must not deadlock on the request")
+    .unwrap();
+    txn.commit().await.unwrap();
+    assert!(issuance.await.unwrap().is_err());
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn access_tokens_stay_revoked_after_policy_restoration() {
+    let fixture = SecurityFixture::new().await;
+    let state = &fixture.state;
+    let (raw_session, session) = state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let issue = async |client_id: Uuid| {
+        let client = oauth_clients::Entity::find_by_id(client_id)
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let code = pero_utils::crypto::generate_token();
+        sql(&state.db, "INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes')", vec![pero_utils::crypto::sha256_hex(&code).into(),fixture.user.into(),fixture.app.into(),client_id.into(),session.into()]).await;
+        let form = TokenRequest {
+            grant_type: "authorization_code".into(),
+            code: Some(code),
+            redirect_uri: Some("https://client.example.test/callback".into()),
+            ..refresh_form(client_id, "")
+        };
+        let TokenEndpointResult::Success(tokens) = TokenService::new(state)
+            .handle_authorization_code(&form, &client)
+            .await
+        else {
+            panic!("valid code exchange failed");
+        };
+        tokens
+    };
+    let status = async |token: &str| {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        crate::api::userinfo::userinfo(axum::extract::State(state.clone()), headers)
+            .await
+            .status()
+    };
+    let original = issue(fixture.client).await;
+    assert_eq!(status(&original.access_token).await, http::StatusCode::OK);
+    crate::service::access::revoke_app(&state.db, fixture.user, fixture.app)
+        .await
+        .unwrap();
+    crate::service::access::grant_app(&state.db, fixture.user, fixture.app)
+        .await
+        .unwrap();
+    assert_eq!(
+        status(&original.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+
+    let regranted = issue(fixture.client).await;
+    assert_eq!(status(&regranted.access_token).await, http::StatusCode::OK);
+    let sibling = Uuid::now_v7();
+    sql(&state.db, "INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'test-hash',ARRAY['https://client.example.test/callback'],ARRAY['openid']::text[],false)", vec![sibling.into(),fixture.app.into(),sibling.to_string().into()]).await;
+    let sibling_tokens = issue(sibling).await;
+    crate::service::client::reset_secret(&state.db, fixture.client)
+        .await
+        .unwrap();
+    assert_eq!(
+        status(&regranted.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+
+    assert_eq!(
+        status(&sibling_tokens.access_token).await,
+        http::StatusCode::OK
+    );
+
+    let rotated = issue(fixture.client).await;
+    assert_eq!(status(&rotated.access_token).await, http::StatusCode::OK);
+    // Refresh issuance also binds the current versions, without revoking its previous AT.
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let TokenEndpointResult::Success(refreshed) = TokenService::new(state)
+        .handle_refresh_token(
+            &refresh_form(fixture.client, rotated.refresh_token.as_ref().unwrap()),
+            &client,
+        )
+        .await
+    else {
+        panic!("valid refresh failed");
+    };
+    assert_eq!(status(&refreshed.access_token).await, http::StatusCode::OK);
+    assert_eq!(status(&rotated.access_token).await, http::StatusCode::OK);
+    crate::service::client::toggle_status(&state.db, fixture.client)
+        .await
+        .unwrap();
+    crate::service::client::toggle_status(&state.db, fixture.client)
+        .await
+        .unwrap();
+    assert_eq!(
+        status(&refreshed.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&rotated.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&original.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+
+    // Application disablement must persist its revocation after re-enabling too.
+    let enabled = issue(fixture.client).await;
+    crate::service::app::toggle_status(&state.db, fixture.app)
+        .await
+        .unwrap();
+    crate::service::app::toggle_status(&state.db, fixture.app)
+        .await
+        .unwrap();
+    assert_eq!(
+        status(&enabled.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&sibling_tokens.access_token).await,
+        http::StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&issue(fixture.client).await.access_token).await,
+        http::StatusCode::OK
+    );
+    assert!(
+        state
+            .session_service()
+            .validate(&raw_session)
+            .await
+            .unwrap()
+            .is_some()
+    );
     fixture.cleanup().await;
 }

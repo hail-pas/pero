@@ -9,13 +9,13 @@ rust-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 pero-api-axum.workspace = true
 pero-config.workspace = true
 pero-error.workspace = true
 pero-types.workspace = true
 pero-validate-core.workspace = true
-pero-validate-validator.workspace = true
 pero-cache-redis.workspace = true
 pero-db-seaorm.workspace = true
 pero-http-client-core.workspace = true
@@ -27,11 +27,10 @@ sqlx.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tower-http = { workspace = true, features = ["cors", "request-id", "limit", "fs", "compression-gzip", "uuid"] }
+tower-http = { workspace = true, features = ["limit", "fs"] }
 
 jsonwebtoken.workspace = true
 url.workspace = true
-askama.workspace = true
 uuid.workspace = true
 time.workspace = true
 ipnetwork.workspace = true
@@ -39,13 +38,8 @@ thiserror.workspace = true
 validator.workspace = true
 clap = { version = "4", features = ["derive"] }
 toml.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 http.workspace = true
 async-trait.workspace = true
-
-[build-dependencies]
-toml.workspace = true
-serde_json = "1"
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

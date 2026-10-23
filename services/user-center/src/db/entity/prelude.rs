@@ -4,7 +4,6 @@ pub use super::apps::Entity as Apps;
 pub use super::authorization_codes::Entity as AuthorizationCodes;
 pub use super::authorization_requests::Entity as AuthorizationRequests;
 pub use super::contact_change_requests::Entity as ContactChangeRequests;
-pub use super::external_login_requests::Entity as ExternalLoginRequests;
 pub use super::identities::Entity as Identities;
 pub use super::identity_provider_keys::Entity as IdentityProviderKeys;
 pub use super::identity_providers::Entity as IdentityProviders;

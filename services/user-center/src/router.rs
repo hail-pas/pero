@@ -24,27 +24,18 @@ pub fn build(state: AppState) -> Router {
         config.server.trusted_proxies.clone(),
         config.server.client_ip_header,
     );
-    let static_url = config.askama.static_url_prefix.clone();
-    let static_dir = config.askama.static_dir.clone();
+    let static_dir = config.frontend.static_dir.clone();
 
     Router::new()
         .nest("/api", api::routes())
         .merge(web::routes(state.clone()))
         .route("/health", get(api::health::health))
-        .route(
-            &format!("{static_url}/js/i18n.js"),
-            get(|| async {
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        "application/javascript; charset=utf-8",
-                    )],
-                    include_str!(concat!(env!("OUT_DIR"), "/i18n.js")),
-                )
-            }),
-        )
-        .nest_service(&static_url, ServeDir::new(static_dir))
+        .nest_service("/static", ServeDir::new(static_dir.clone()))
         .fallback(web::not_found)
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let directory = static_dir.clone();
+            async move { pero_api_axum::spa::serve(req, next, directory).await }
+        }))
         .layer(axum::middleware::from_fn(
             pero_api_axum::headers::security_headers,
         ))

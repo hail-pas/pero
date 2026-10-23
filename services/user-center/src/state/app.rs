@@ -49,6 +49,7 @@ impl AppState {
             &self.config.sso,
             &self.config.oauth2,
             &self.upstream_jwks,
+            &self.config.notification,
         )
     }
 

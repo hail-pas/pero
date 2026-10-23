@@ -93,11 +93,12 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
         return bearer_error_response(BearerError::invalid_token("User account is not active"));
     }
 
-    match crate::service::access::can_user_access_active_app(&state.db, user.id, client.app_id)
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => return bearer_error_response(BearerError::invalid_token("Access revoked")),
+    if claims.client_version != client.token_version {
+        return bearer_error_response(BearerError::invalid_token("Client grant revoked"));
+    }
+    match crate::service::access::active_app_access(&state.db, user.id, client.app_id).await {
+        Ok(Some(access)) if access.token_version == claims.access_version => {}
+        Ok(_) => return bearer_error_response(BearerError::invalid_token("Access revoked")),
         Err(e) => {
             tracing::error!("UserInfo access check: {e}");
             return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -150,9 +151,28 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
 }
 
 fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
-    headers
+    let (scheme, token) = headers
         .get(axum::http::header::AUTHORIZATION)?
         .to_str()
         .ok()?
-        .strip_prefix("Bearer ")
+        .split_once(' ')?;
+    let token = token.trim_start_matches(' ');
+    (scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty()).then_some(token)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bearer_scheme_is_case_insensitive_and_requires_credentials() {
+        for value in ["Bearer token", "bearer token", "bEaReR  token"] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
+            assert_eq!(super::extract_bearer(&headers), Some("token"));
+        }
+        for value in ["Basic token", "Bearer", "Bearer   "] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
+            assert_eq!(super::extract_bearer(&headers), None);
+        }
+    }
 }

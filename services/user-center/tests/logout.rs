@@ -34,11 +34,8 @@ fn params(jwt: &str) -> String {
         .finish()
 }
 fn hidden(html: &str, name: &str) -> String {
-    html.split(&format!("name=\"{name}\" value=\""))
-        .nth(1)
-        .unwrap()
-        .split('"')
-        .next()
+    serde_json::from_str::<serde_json::Value>(html).unwrap()["data"][name]
+        .as_str()
         .unwrap()
         .to_owned()
 }
@@ -49,6 +46,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
     let cfg:user_center::config::AppConfig=serde_json::from_value(serde_json::json!({
         "database":{"url":fixture.url,"encrypt_key":"test-only-key","min_connections":1,"max_connections":8},
         "redis":{"url":std::env::var("PERO_TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:1".into()),"connect_timeout_secs":1,"command_timeout_secs":1},
+        "frontend":{"static_dir":concat!(env!("CARGO_MANIFEST_DIR"),"/ui/static")},
         "sso":{"cookie_signing_secret":"test-only-cookie-secret-long-enough"},
         "oidc":{"issuer":"https://issuer.test"},"password_reset":{"signing_key":"test-only-reset-secret-long-enough"}
     })).unwrap();
@@ -183,8 +181,10 @@ async fn logout_confirmation_expiry_and_form_contract() {
                 .to_vec(),
         )
         .unwrap();
-        assert!(!html.contains("您已成功退出登录"));
-        assert!(html.contains("name=\"confirm\""));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&html).unwrap()["view"],
+            "ConfirmLogoutView"
+        );
         assert!(
             state
                 .session_service()
@@ -248,6 +248,148 @@ async fn logout_confirmation_expiry_and_form_contract() {
                 .is_some()
         );
     }
+    // Browser form POSTs must reach a real confirmation page while preserving RP context.
+    let (raw, sid) = state
+        .session_service()
+        .create(user, None, None, None, None)
+        .await
+        .unwrap();
+    let query = params(&token(user, Some(Uuid::now_v7()), false));
+    let response = router
+        .clone()
+        .oneshot(
+            Request::post("/oauth2/session/end")
+                .header("accept", "text/html")
+                .header("cookie", format!("pero_sso={raw}"))
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(query.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let target = response.headers()["location"].to_str().unwrap().to_owned();
+    let redirect = url::Url::parse(&format!("https://issuer.test{target}")).unwrap();
+    assert_eq!(redirect.query(), Some(query.as_str()));
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(&target)
+                .header("accept", "text/html")
+                .header("cookie", format!("pero_sso={raw}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/html; charset=utf-8"
+    );
+    let response = router
+        .clone()
+        .oneshot(
+            Request::get(&target)
+                .header("accept", "application/json")
+                .header("cookie", format!("pero_sso={raw}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_owned())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let body = String::from_utf8(
+        to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert_eq!(hidden(&body, "state"), "a&b+c");
+    let form = format!(
+        "{query}&{}",
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("confirm", "yes")
+            .append_pair("csrf_token", &hidden(&body, "csrf_token"))
+            .append_pair("session_id", &sid.to_string())
+            .finish()
+    );
+    let response = router
+        .clone()
+        .oneshot(
+            Request::post("/oauth2/session/end")
+                .header("accept", "text/html")
+                .header("cookie", format!("pero_sso={raw}; {cookies}"))
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(form))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert!(
+        response.headers()["location"]
+            .to_str()
+            .unwrap()
+            .starts_with("https://rp.test/out?existing=1&state=")
+    );
+    assert!(
+        state
+            .session_service()
+            .validate(&raw)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // Completing a browser POST without a redirect target also ends on an HTML page.
+    let (raw, sid) = state
+        .session_service()
+        .create(user, None, None, None, None)
+        .await
+        .unwrap();
+    let jar = axum_extra::extract::CookieJar::new().add(axum_extra::extract::cookie::Cookie::new(
+        "pero_sso",
+        raw.clone(),
+    ));
+    let (jar, csrf) = state.web_security().ensure_csrf(jar);
+    let cookies = jar
+        .iter()
+        .map(|c| format!("{}={}", c.name(), c.value()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("confirm", "yes")
+        .append_pair("csrf_token", &csrf)
+        .append_pair("session_id", &sid.to_string())
+        .finish();
+    let response = router
+        .clone()
+        .oneshot(
+            Request::post("/oauth2/session/end")
+                .header("accept", "text/html")
+                .header("cookie", cookies)
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(form))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()["location"], "/oauth2/session/end");
+    assert!(
+        state
+            .session_service()
+            .validate(&raw)
+            .await
+            .unwrap()
+            .is_none()
+    );
     // Missing route is a real HTTP 404, not merely a 404-looking page.
     assert_eq!(
         router
@@ -329,7 +471,7 @@ async fn browser_flow(
         tokio::process::Command::new("node")
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../tests/browser/logout.cjs"
+                "/../../frontend/tests/backend-logout.cjs"
             ))
             .env("PERO_BROWSER_URL", base)
             .kill_on_drop(true)

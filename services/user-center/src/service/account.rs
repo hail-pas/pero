@@ -39,19 +39,12 @@ impl RegisterUserError {
     }
 }
 
-pub struct PasswordResetTokenStatus {
-    pub user_id: Uuid,
-    pub usable: bool,
-}
-
 pub enum PasswordResetError {
     MissingToken,
     InvalidToken,
     TokenAlreadyUsed,
     PasswordMismatch,
     InvalidPassword(String),
-    RateLimited,
-    ServiceUnavailable,
     Internal,
 }
 
@@ -63,8 +56,6 @@ impl PasswordResetError {
             Self::TokenAlreadyUsed => "token_already_used",
             Self::PasswordMismatch => "password_mismatch",
             Self::InvalidPassword(msg) => msg.as_str(),
-            Self::RateLimited => "rate_limited",
-            Self::ServiceUnavailable => "service_unavailable",
             Self::Internal => "internal_error",
         }
     }
@@ -77,6 +68,109 @@ pub struct AccountService<'a> {
 impl<'a> AccountService<'a> {
     pub fn new(state: &'a AppState) -> Self {
         Self { state }
+    }
+
+    pub async fn change_password(
+        &self,
+        session: &crate::state::session::SsoSession,
+        old_password: Option<&str>,
+        new_password: &str,
+        confirm_password: &str,
+    ) -> Result<(), super::ManagementError> {
+        use super::ManagementError;
+        use crate::db::entity::{identities, sso_sessions};
+        use pero_cache_redis::{
+            RateLimitError, enforce_rate_limit, rate_limit_key::rl_change_password,
+        };
+
+        let key = rl_change_password.key(&session.user_id.to_string())?;
+        match enforce_rate_limit(&self.state.cache, &key, 5).await {
+            Ok(()) => {}
+            Err(RateLimitError::Denied { .. }) => {
+                return Err(ManagementError::Invalid("rate_limited"));
+            }
+            Err(RateLimitError::Redis(error)) => {
+                tracing::error!(%error, "Password change rate limit unavailable");
+                return Err(ManagementError::Credential(error));
+            }
+        }
+        if new_password != confirm_password {
+            return Err(ManagementError::Invalid("password_mismatch"));
+        }
+        self.state
+            .config
+            .password
+            .validate_password(new_password)
+            .map_err(ManagementError::Validation)?;
+
+        let verified = identities::Entity::find()
+            .filter(identities::Column::UserId.eq(session.user_id))
+            .filter(identities::Column::Kind.eq(IdentityKind::Password))
+            .filter(identities::Column::UnboundAt.is_null())
+            .one(&self.state.db)
+            .await?;
+        if let Some(identity) = &verified
+            && !PasswordIdentityService::verify_password_hash(
+                old_password.unwrap_or_default(),
+                identity.password_hash.as_deref(),
+            )
+            .await?
+        {
+            return Err(ManagementError::Invalid("invalid_credentials"));
+        }
+        let password_hash = PasswordIdentityService::hash_password(new_password).await?;
+        let txn = self.state.db.begin().await?;
+        let user = PasswordIdentityService::lock_user(&txn, session.user_id).await?;
+        let active_session = crate::db::helper::session::active_query(
+            time::OffsetDateTime::now_utc(),
+            self.state.config.sso.session_idle_ttl_seconds,
+        )
+        .filter(sso_sessions::Column::Id.eq(session.id))
+        .one(&txn)
+        .await?;
+        if user.status != UserStatus::Active || active_session.is_none() {
+            return Err(ManagementError::Invalid("unauthorized"));
+        }
+        let now = time::OffsetDateTime::now_utc();
+        if let Some(identity) = verified {
+            PasswordIdentityService::ensure_unchanged(&txn, &identity)
+                .await
+                .map_err(|error| match error {
+                    sea_orm::DbErr::Custom(_) => ManagementError::Invalid("invalid_credentials"),
+                    error => error.into(),
+                })?;
+            PasswordIdentityService::update_hashed(&txn, identity, password_hash, now).await?;
+        } else {
+            // A concurrent first-password change must not be overwritten without its password.
+            if identities::Entity::find()
+                .filter(identities::Column::UserId.eq(session.user_id))
+                .filter(identities::Column::Kind.eq(IdentityKind::Password))
+                .filter(identities::Column::UnboundAt.is_null())
+                .one(&txn)
+                .await?
+                .is_some()
+            {
+                return Err(ManagementError::Invalid("invalid_credentials"));
+            }
+            let provider = crate::db::helper::identity_provider::find_local_provider(&txn).await?;
+            PasswordIdentityService::create_hashed(
+                &txn,
+                session.user_id,
+                provider.id,
+                session.user_id.to_string(),
+                password_hash,
+                now,
+            )
+            .await?;
+        }
+        super::session::SessionService::revoke_all_login_state_for_user_in_db(
+            &txn,
+            session.user_id,
+            "password_change",
+        )
+        .await?;
+        txn.commit().await?;
+        Ok(())
     }
 
     pub async fn register_user(
@@ -201,10 +295,9 @@ impl<'a> AccountService<'a> {
     pub async fn inspect_password_reset_token(
         &self,
         token: &str,
-    ) -> Result<PasswordResetTokenStatus, PasswordResetError> {
-        let user_id = self.verify_password_reset_token(token)?;
-        let usable = self.reset_token_is_usable(token).await?;
-        Ok(PasswordResetTokenStatus { user_id, usable })
+    ) -> Result<bool, PasswordResetError> {
+        self.verify_password_reset_token(token)?;
+        self.reset_token_is_usable(token).await
     }
 
     pub fn verify_password_reset_token(&self, token: &str) -> Result<Uuid, PasswordResetError> {
@@ -308,7 +401,7 @@ impl<'a> AccountService<'a> {
             }
         }
 
-        crate::service::recovery::invalidate(&txn, user_id)
+        crate::service::contact::invalidate_contact_credentials(&txn, user_id, None)
             .await
             .map_err(|_| PasswordResetError::Internal)?;
 

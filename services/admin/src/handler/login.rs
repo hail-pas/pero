@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
@@ -46,23 +45,12 @@ pub async fn login_page(
             prompt: None,
         });
 
-    let template = crate::handler::templates::LoginTemplate {
+    let template = crate::handler::dto::AdminLoginView {
         error: query.error,
         authorize_url,
     };
 
     let jar = cookie::set_pkce_cookies(jar, &pkce.code_verifier, &state_param, &state.config);
 
-    match template.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "template render failed");
-            let body: axum::response::Response = (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal server error",
-            )
-                .into_response();
-            (jar, body).into_response()
-        }
-    }
+    (jar, pero_api_axum::form::view("AdminLoginView", template)).into_response()
 }

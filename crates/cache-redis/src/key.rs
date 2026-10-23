@@ -40,14 +40,6 @@ impl<T: CacheValue> CacheKey<T> {
         self.ttl
     }
 
-    pub fn spec_name(&self) -> &'static str {
-        self.spec_name
-    }
-
-    pub fn into_string(self) -> String {
-        self.raw
-    }
-
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
         self

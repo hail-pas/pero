@@ -5,7 +5,8 @@ use crate::db::{
     enums::{AppType, CommonStatus},
 };
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, EntityTrait, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
+    TransactionTrait,
 };
 
 pub struct AppUpdate {
@@ -15,6 +16,64 @@ pub struct AppUpdate {
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
     pub auto_access: bool,
+}
+
+impl AppUpdate {
+    fn validate(&self) -> Result<(), ManagementError> {
+        if self.name.trim().is_empty() {
+            return Err(ManagementError::Invalid("name_required"));
+        }
+        for url in [&self.homepage_url, &self.logo_url].into_iter().flatten() {
+            pero_utils::redirect::validate_public_http_url(url)
+                .map_err(|_| ManagementError::Invalid("invalid_url"))?;
+        }
+        Ok(())
+    }
+    fn apply(self, active: &mut apps::ActiveModel) {
+        active.name = Set(self.name);
+        active.r#type = Set(self.app_type);
+        active.description = Set(self.description);
+        active.homepage_url = Set(self.homepage_url);
+        active.logo_url = Set(self.logo_url);
+        active.auto_access = Set(self.auto_access);
+        active.updated_at = Set(time::OffsetDateTime::now_utc());
+    }
+}
+
+pub async fn create(
+    db: &DatabaseConnection,
+    code: &str,
+    input: AppUpdate,
+) -> Result<(), ManagementError> {
+    if code.is_empty() || input.name.is_empty() {
+        return Err(ManagementError::Invalid("code_and_name_required"));
+    }
+    input.validate()?;
+    if apps::Entity::find()
+        .filter(apps::Column::Code.eq(code))
+        .one(db)
+        .await?
+        .is_some()
+    {
+        return Err(ManagementError::Invalid("code_exists"));
+    }
+    let mut active = apps::ActiveModel {
+        id: Set(uuid::Uuid::now_v7()),
+        code: Set(code.to_owned()),
+        system: Set(false),
+        status: Set(CommonStatus::Active),
+        created_at: Set(time::OffsetDateTime::now_utc()),
+        ..Default::default()
+    };
+    input.apply(&mut active);
+    active.insert(db).await.map_err(|error| {
+        if crate::db::error::is_unique_violation(&error) {
+            ManagementError::Invalid("code_exists")
+        } else {
+            error.into()
+        }
+    })?;
+    Ok(())
 }
 
 async fn editable(
@@ -37,22 +96,10 @@ pub async fn update(
     id: uuid::Uuid,
     input: AppUpdate,
 ) -> Result<(), ManagementError> {
-    if input.name.trim().is_empty() {
-        return Err(ManagementError::Invalid("name_required"));
-    }
-    for url in [&input.homepage_url, &input.logo_url].into_iter().flatten() {
-        pero_utils::redirect::validate_public_http_url(url)
-            .map_err(|_| ManagementError::Invalid("invalid_url"))?;
-    }
+    input.validate()?;
     let txn = db.begin().await?;
     let mut active: apps::ActiveModel = editable(&txn, id).await?.into();
-    active.name = Set(input.name);
-    active.r#type = Set(input.app_type);
-    active.description = Set(input.description);
-    active.homepage_url = Set(input.homepage_url);
-    active.logo_url = Set(input.logo_url);
-    active.auto_access = Set(input.auto_access);
-    active.updated_at = Set(time::OffsetDateTime::now_utc());
+    input.apply(&mut active);
     active.update(&txn).await?;
     txn.commit().await?;
     Ok(())

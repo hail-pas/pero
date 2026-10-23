@@ -130,6 +130,11 @@ def postprocess_entity_file(path: Path) -> None:
     text = text.replace("use super::sea_orm_active_enums::", "use super::super::enums::")
     text = fix_custom_attrs(text)
     text = fix_inet_fields(text)
+    # Generated entities must never expose backend credential material through JSON.
+    for field in ("secret_hash", "client_secret_enc", "private_key_pem_enc"):
+        declaration = f"    pub {field}:"
+        if declaration in text and f"#[serde(skip_serializing)]\n{declaration}" not in text:
+            text = text.replace(declaration, f"    #[serde(skip_serializing)]\n{declaration}")
     path.write_text(text)
 
 

@@ -68,11 +68,11 @@ impl TokenService<'_> {
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
-        match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
-            Ok(true) => {}
-            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+        let access = match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
+            Ok(Some(access)) => access,
+            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
-        }
+        };
 
         let existing = match rt::Entity::find()
             .filter(rt::Column::TokenHash.eq(&rt_hash))
@@ -100,19 +100,21 @@ impl TokenService<'_> {
             );
         }
         if existing.revoked_at.is_some() {
-            if let Some(session_id) = existing.session_id {
-                if let Err(e) = txn.rollback().await {
-                    tracing::warn!("RT reuse transaction rollback: {e}");
-                }
-                let session_svc = self.state.session_service();
-                if let Err(e) = session_svc
+            // Release issuance locks before the shared session-wide revocation path.
+            // A failed attempt remains retryable with this same revoked token.
+            if let Err(error) = txn.rollback().await {
+                tracing::error!(%error, "Refresh token replay rollback failed");
+                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+            }
+            if let Some(session_id) = existing.session_id
+                && let Err(error) = self
+                    .state
+                    .session_service()
                     .revoke_login_state(session_id, "refresh_token_reuse")
                     .await
-                {
-                    tracing::error!("RT reuse session revoke: {e}");
-                }
-            } else if let Err(e) = txn.rollback().await {
-                tracing::warn!("RT reuse transaction rollback: {e}");
+            {
+                tracing::error!(%error, "Refresh token replay revocation failed");
+                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
             }
             return TokenEndpointResult::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
@@ -171,26 +173,6 @@ impl TokenService<'_> {
             }
         }
 
-        match crate::service::access::can_user_access_active_app(
-            &txn,
-            existing.user_id,
-            existing.app_id,
-        )
-        .await
-        {
-            Ok(true) => {}
-            Ok(false) => {
-                return TokenEndpointResult::error_desc(
-                    OAuth2ErrorCode::InvalidGrant,
-                    "Access revoked",
-                );
-            }
-            Err(e) => {
-                tracing::error!("RT access check: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
-            }
-        }
-
         let user = match crate::db::entity::users::Entity::find_by_id(existing.user_id)
             .one(&txn)
             .await
@@ -216,13 +198,15 @@ impl TokenService<'_> {
         let scopes_str = requested.join(" ");
         let session_id = existing.session_id;
         let issuer = TokenIssuer::new(self.state, client, &signing);
-        let access_token = match issuer.issue_access_token(user.id, &scopes_str, session_id) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!("AT sign: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
-            }
-        };
+        let access_token =
+            match issuer.issue_access_token(user.id, &scopes_str, session_id, access.token_version)
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("AT sign: {e}");
+                    return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                }
+            };
 
         let new_rt = rt::ActiveModel {
             id: Set(new_rt_id),

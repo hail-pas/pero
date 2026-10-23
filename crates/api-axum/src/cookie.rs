@@ -68,10 +68,6 @@ pub fn build_app_cookie(
     })
 }
 
-pub fn clear_cookie(name: &str, path: &str) -> cookie::Cookie<'static> {
-    clear_cookie_with_domain(name, path, None)
-}
-
 pub fn clear_cookie_with_domain(
     name: &str,
     path: &str,
@@ -89,18 +85,4 @@ pub fn clear_cookie_with_domain(
 pub fn clear_app_cookie(config: &AppCookieConfig<'_>, name: &str) -> cookie::Cookie<'static> {
     let domain = cookie_domain(config.domain);
     clear_cookie_with_domain(name, config.path, domain.as_deref())
-}
-
-pub fn encode_signed_json<T: serde::Serialize>(
-    value: &T,
-    key: &[u8],
-) -> Result<String, serde_json::Error> {
-    pero_utils::crypto::encode_signed_json(value, key)
-}
-
-pub fn decode_signed_json<T: serde::de::DeserializeOwned>(
-    value: &str,
-    key: &[u8],
-) -> Result<T, serde_json::Error> {
-    pero_utils::crypto::decode_signed_json(value, key)
 }

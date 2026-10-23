@@ -131,8 +131,9 @@ impl<'a> OAuthService<'a> {
 
     /// 检查用户是否有权访问该 App（user_app_access 表 status=active）
     pub async fn check_app_access(&self, user_id: Uuid, app_id: Uuid) -> Result<bool, OAuthError> {
-        crate::service::access::can_user_access_active_app(self.db, user_id, app_id)
+        crate::service::access::active_app_access(self.db, user_id, app_id)
             .await
+            .map(|access| access.is_some())
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))
     }
 
@@ -179,6 +180,35 @@ impl<'a> OAuthService<'a> {
             .begin()
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+
+        // Read the owner without locking the request. All grant paths acquire
+        // client -> app -> access -> user policy locks before a grant/request lock.
+        let request = authorization_requests::Entity::find_by_id(auth_request_id)
+            .one(&txn)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+            .ok_or(OAuthError::AccessDenied)?;
+        let client = oauth_clients::Entity::find_by_id(request.client_id)
+            .lock_shared()
+            .one(&txn)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+            .ok_or(OAuthError::AccessDenied)?;
+        if client.status != CommonStatus::Active
+            || client.app_id != request.app_id
+            || !client
+                .grant_types
+                .iter()
+                .any(|grant| grant == "authorization_code")
+            || !client.redirect_uris.contains(&request.redirect_uri)
+            || !crate::service::scope::allowed(&request.scopes, &client.scopes)
+            || crate::service::access::lock_grant_access(&txn, session.user_id, request.app_id)
+                .await
+                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+                .is_none()
+        {
+            return Err(OAuthError::AccessDenied);
+        }
 
         let auth_request = authorization_requests::Entity::find_by_id(auth_request_id)
             .lock_exclusive()
@@ -232,32 +262,26 @@ impl<'a> OAuthService<'a> {
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
 
         if grant_consent {
-            let existing_consent =
-                user_consents::Entity::find_by_id((session.user_id, auth_request.client_id))
-                    .one(&txn)
-                    .await
-                    .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
-
-            if let Some(existing) = existing_consent {
-                let mut active: user_consents::ActiveModel = existing.into();
-                active.scopes = Set(auth_request.scopes.clone());
-                active.granted_at = Set(now);
-                active
-                    .update(&txn)
-                    .await
-                    .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
-            } else {
-                let consent_model = user_consents::ActiveModel {
-                    user_id: Set(session.user_id),
-                    client_id: Set(auth_request.client_id),
-                    scopes: Set(auth_request.scopes.clone()),
-                    granted_at: Set(now),
-                };
-                consent_model
-                    .insert(&txn)
-                    .await
-                    .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
-            }
+            user_consents::Entity::insert(user_consents::ActiveModel {
+                user_id: Set(session.user_id),
+                client_id: Set(auth_request.client_id),
+                scopes: Set(auth_request.scopes.clone()),
+                granted_at: Set(now),
+            })
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    user_consents::Column::UserId,
+                    user_consents::Column::ClientId,
+                ])
+                .update_columns([
+                    user_consents::Column::Scopes,
+                    user_consents::Column::GrantedAt,
+                ])
+                .to_owned(),
+            )
+            .exec(&txn)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
         }
 
         let mut active: authorization_requests::ActiveModel = auth_request.into();
@@ -273,6 +297,46 @@ impl<'a> OAuthService<'a> {
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
 
         Ok(raw_code)
+    }
+
+    /// A request has one terminal decision. Claim it before changing stored consent.
+    pub async fn deny_authorization_request(
+        &self,
+        auth_request_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), OAuthError> {
+        let result: Result<(), sea_orm::DbErr> = async {
+            let txn = self.db.begin().await?;
+            let now = OffsetDateTime::now_utc();
+            let request = authorization_requests::Entity::update_many()
+                .col_expr(
+                    authorization_requests::Column::CompletedAt,
+                    sea_orm::sea_query::Expr::value(Some(now)),
+                )
+                .col_expr(
+                    authorization_requests::Column::AuthorizedUserId,
+                    sea_orm::sea_query::Expr::value(Some(user_id)),
+                )
+                .filter(authorization_requests::Column::Id.eq(auth_request_id))
+                .filter(authorization_requests::Column::CompletedAt.is_null())
+                .filter(authorization_requests::Column::ExpiresAt.gt(now))
+                .exec_with_returning(&txn)
+                .await?;
+            let Some(request) = request.first() else {
+                return Err(sea_orm::DbErr::RecordNotFound(
+                    "Authorization request is no longer valid".into(),
+                ));
+            };
+            user_consents::Entity::delete_by_id((user_id, request.client_id))
+                .exec(&txn)
+                .await?;
+            txn.commit().await
+        }
+        .await;
+        result.map_err(|error| match error {
+            sea_orm::DbErr::RecordNotFound(_) => OAuthError::AccessDenied,
+            error => OAuthError::Internal(crate::db::error::to_app_error(error)),
+        })
     }
 
     /// 将 authorization_request ID 存入 Redis（短命 pending），返回 nonce 作为 cookie 值

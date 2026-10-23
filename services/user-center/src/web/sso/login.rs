@@ -6,7 +6,7 @@ use pero_api_axum::extractor::ClientIp;
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, authenticate_password_form};
 use crate::web::session::extract_session;
-use crate::web::sso::template::{LoginForm, LoginTemplate, SocialProvider};
+use crate::web::sso::dto::{LoginForm, LoginView, SocialProvider};
 use crate::web::sso::utility::find_enabled_social_providers;
 
 /// GET /sso/login 查询参数
@@ -35,14 +35,19 @@ pub async fn get(
             let oauth = state.oauth_service();
             match oauth.pending_request_requires_login(&nonce, &session).await {
                 Ok(true) => {
-                    let providers = find_enabled_social_providers(&state).await;
+                    let providers = match find_enabled_social_providers(&state).await {
+                        Ok(providers) => providers,
+                        Err(response) => return response,
+                    };
                     return render_login(jar, &state, &providers, query.error.unwrap_or_default());
                 }
                 Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
                 Ok(false) => {}
             }
-            if oauth.has_pending_request(&nonce).await.unwrap_or(false) {
-                return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
+            match oauth.has_pending_request(&nonce).await {
+                Ok(true) => return (jar, Redirect::to("/oauth2/authorize/resume")).into_response(),
+                Ok(false) => {}
+                Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
             }
             let cleared = jar.add(cookies.clear_cookie(&nonce_name));
             return (cleared, Redirect::to("/account/profile")).into_response();
@@ -50,7 +55,10 @@ pub async fn get(
         return (jar, Redirect::to("/account/profile")).into_response();
     }
 
-    let providers = find_enabled_social_providers(&state).await;
+    let providers = match find_enabled_social_providers(&state).await {
+        Ok(providers) => providers,
+        Err(response) => return response,
+    };
     let error = query.error.unwrap_or_default();
     render_login(jar, &state, &providers, error)
 }
@@ -87,7 +95,8 @@ pub async fn post(
         let oauth = state.oauth_service();
         match oauth.has_pending_request(&nonce).await {
             Ok(true) => "/oauth2/authorize/resume".to_owned(),
-            _ => {
+            Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            Ok(false) => {
                 jar = jar.add(cookies.clear_cookie(&nonce_name));
                 "/account/profile".to_owned()
             }
@@ -108,7 +117,7 @@ fn render_login(
 ) -> Response {
     state
         .web_security()
-        .render_with_csrf(jar, |csrf_token| LoginTemplate {
+        .view_with_csrf(jar, "LoginView", |csrf_token| LoginView {
             error,
             providers: providers.to_owned(),
             csrf_token,
@@ -116,6 +125,9 @@ fn render_login(
 }
 
 async fn render_login_error_page(state: &AppState, jar: CookieJar, error: &str) -> Response {
-    let providers = find_enabled_social_providers(state).await;
+    let providers = match find_enabled_social_providers(state).await {
+        Ok(providers) => providers,
+        Err(response) => return response,
+    };
     render_login(jar, state, &providers, error.to_owned())
 }

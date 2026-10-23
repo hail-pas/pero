@@ -62,27 +62,8 @@ fn format_source_chain(mut source: Option<&dyn std::error::Error>) -> String {
     parts.join(" → ")
 }
 
-pub(crate) fn from_bad_request(code: &str, detail: &str) -> AppErrorResponder {
-    AppError::bad_request(code, detail).into()
-}
-
-pub(crate) fn from_app_error(err: AppError) -> AppErrorResponder {
-    err.into()
-}
-
-pub(crate) fn from_validation(err: pero_validate_core::ValidationError) -> AppErrorResponder {
-    AppError::from(err).into()
-}
-
 impl<T: serde::Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
-        match self {
-            ApiResponse::Success(s) => (StatusCode::OK, axum::Json(s)).into_response(),
-            ApiResponse::Error(e) => {
-                let status = StatusCode::from_u16((e.code / 100) as u16)
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-                (status, axum::Json(e)).into_response()
-            }
-        }
+        (StatusCode::OK, axum::Json(self)).into_response()
     }
 }

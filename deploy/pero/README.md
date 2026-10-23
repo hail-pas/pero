@@ -125,7 +125,7 @@ AUTH_URL=https://auth.example.com
 curl -fsS "$AUTH_URL/health"
 curl -fsS "$AUTH_URL/.well-known/openid-configuration"
 curl -fsS "$AUTH_URL/api/oauth2/jwks"
-curl -fsS "$AUTH_URL/static/js/i18n.js" -o /dev/null
+curl -fsS "$AUTH_URL/static/index.html" -o /dev/null
 ```
 
 浏览器登录生产域名 /dashboard，用原管理员验证用户/应用管理、退出重登。/health 只检查进程存活。清库后业务 OAuth client 要重新创建并更新业务端凭证。若原代理 alias 到旧静态目录，改为将 /static 转发到服务的 8080，避免继续读取历史资源。

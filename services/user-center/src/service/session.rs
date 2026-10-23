@@ -1,7 +1,8 @@
 use ipnetwork::IpNetwork;
 use pero_error::AppError;
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait, QueryFilter,
+    TransactionTrait,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -232,7 +233,21 @@ impl<'a> SessionService<'a> {
         user_id: Option<Uuid>,
         reason: &str,
     ) -> Result<(), sea_orm::DbErr> {
-        use crate::db::entity::{authorization_codes as codes, authorization_requests as requests};
+        use crate::db::entity::{
+            authorization_codes as codes, authorization_requests as requests,
+            user_app_access as access,
+        };
+        let grants = access::Entity::update_many()
+            .col_expr(
+                access::Column::TokenVersion,
+                sea_orm::sea_query::Expr::col(access::Column::TokenVersion).add(1),
+            )
+            .filter(access::Column::AppId.eq(app_id));
+        let grants = match user_id {
+            Some(user) => grants.filter(access::Column::UserId.eq(user)),
+            None => grants,
+        };
+        grants.exec(db).await?;
         Self::revoke_refresh_tokens_where_on(db, reason, |query| {
             let query = query.filter(refresh_tokens::Column::AppId.eq(app_id));
             match user_id {

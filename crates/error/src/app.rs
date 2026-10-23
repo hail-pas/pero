@@ -1,4 +1,4 @@
-use crate::{kind::ErrorKind, problem::ProblemDetails};
+use crate::kind::ErrorKind;
 use http::StatusCode;
 use pero_validate_core::{ValidationIssue, ValidationReport};
 use serde_json::Value;
@@ -12,10 +12,7 @@ pub(crate) struct AppErrorInner {
     pub(crate) code: String,
     pub(crate) message: String,
     pub(crate) detail: Option<String>,
-    pub(crate) instance: Option<String>,
-    pub(crate) request_id: Option<String>,
     pub(crate) validation: Option<ValidationReport>,
-    pub(crate) numeric_code: Option<u32>,
     pub(crate) extensions: BTreeMap<String, Value>,
     pub(crate) source: Option<BoxError>,
 }
@@ -27,10 +24,7 @@ impl AppErrorInner {
             code: code.into(),
             message: message.into(),
             detail: None,
-            instance: None,
-            request_id: None,
             validation: None,
-            numeric_code: None,
             extensions: BTreeMap::new(),
             source: None,
         }
@@ -121,24 +115,6 @@ impl AppError {
 
     #[inline]
     #[must_use]
-    pub fn instance(&self) -> Option<&str> {
-        self.inner.instance.as_deref()
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn request_id(&self) -> Option<&str> {
-        self.inner.request_id.as_deref()
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn validation_report(&self) -> Option<&ValidationReport> {
-        self.inner.validation.as_ref()
-    }
-
-    #[inline]
-    #[must_use]
     pub fn errors(&self) -> &[ValidationIssue] {
         match self.inner.validation.as_ref() {
             Some(report) => report.issues.as_slice(),
@@ -161,9 +137,7 @@ impl AppError {
     #[inline]
     #[must_use]
     pub fn numeric_code(&self) -> u32 {
-        self.inner
-            .numeric_code
-            .unwrap_or_else(|| self.inner.kind.default_numeric_code())
+        self.inner.kind.default_numeric_code()
     }
 
     #[must_use]
@@ -173,26 +147,8 @@ impl AppError {
     }
 
     #[must_use]
-    pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
-        self.inner.instance = Some(instance.into());
-        self
-    }
-
-    #[must_use]
-    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
-        self.inner.request_id = Some(request_id.into());
-        self
-    }
-
-    #[must_use]
     pub fn with_validation_report(mut self, report: ValidationReport) -> Self {
         self.inner.validation = Some(report);
-        self
-    }
-
-    #[must_use]
-    pub fn with_numeric_code(mut self, code: u32) -> Self {
-        self.inner.numeric_code = Some(code);
         self
     }
 
@@ -209,16 +165,6 @@ impl AppError {
     {
         self.inner.source = Some(Box::new(source));
         self
-    }
-
-    #[must_use]
-    pub fn into_problem(self) -> ProblemDetails {
-        ProblemDetails::from_app_error_into(self)
-    }
-
-    #[must_use]
-    pub fn to_problem(&self) -> ProblemDetails {
-        ProblemDetails::from_app_error(self)
     }
 }
 
@@ -265,15 +211,6 @@ impl AppError {
         err: serde_json::Error,
     ) -> Self {
         Self::attach_json_error_metadata(Self::internal(code, message), err)
-    }
-
-    #[must_use]
-    pub fn json_bad_request(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        err: serde_json::Error,
-    ) -> Self {
-        Self::attach_json_error_metadata(Self::bad_request(code, message), err)
     }
 
     #[must_use]

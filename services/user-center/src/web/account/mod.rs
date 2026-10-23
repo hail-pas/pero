@@ -1,9 +1,9 @@
 pub mod change_password;
 pub mod contact;
+pub mod dto;
 pub mod login;
 pub mod logout;
 pub mod profile;
-pub mod template;
 
 use axum::Router;
 use axum::routing::{get, post};

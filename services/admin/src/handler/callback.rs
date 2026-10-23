@@ -72,7 +72,7 @@ pub async fn callback(
         }
     };
 
-    match oauth2::verify_id_token(
+    let identity = match oauth2::verify_id_token(
         &state.jwks,
         &state.http,
         &state.config.oauth2.issuer,
@@ -81,14 +81,30 @@ pub async fn callback(
     )
     .await
     {
-        Ok(_) => {}
+        Ok(claims) => claims,
         Err(e) => {
             tracing::error!(error = %e, "ID token verification failed");
             return redirect_login_with_error("id_token_invalid");
         }
     };
+    let access = match oauth2::verify_access_token(
+        &state.jwks,
+        &state.http,
+        &state.config.oauth2.issuer,
+        &state.config.oauth2.client_id,
+        &token_resp.access_token,
+    )
+    .await
+    {
+        Ok(claims) => claims,
+        Err(e) => {
+            tracing::error!(error = %e, "Access token verification failed");
+            return redirect_login_with_error("token_exchange_failed");
+        }
+    };
 
-    let jar = handler_cookie::set_auth_cookies(jar, &token_resp, &state.config);
+    let jar =
+        handler_cookie::set_auth_cookies(jar, &token_resp, &state.config, access.exp, identity.exp);
     let jar = handler_cookie::clear_flow_cookies(jar, &state.config);
 
     (jar, (axum::http::StatusCode::FOUND, [("Location", "/")])).into_response()

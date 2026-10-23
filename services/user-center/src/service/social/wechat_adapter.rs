@@ -58,6 +58,8 @@ impl SocialProviderAdapter for WechatAdapter {
             .send()
             .await
             .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
             .json()
             .map_err(|e| e.to_string())?;
 
@@ -82,12 +84,6 @@ impl SocialProviderAdapter for WechatAdapter {
             .ok_or_else(|| "no openid in wechat token response".to_owned())?;
         let unionid = str_field(&token_result.raw, "unionid");
 
-        let subject = unionid
-            .as_deref()
-            .or(Some(openid.as_str()))
-            .unwrap_or_default()
-            .to_owned();
-
         let mut url = userinfo_endpoint.to_owned();
         pero_utils::encode::append_query_param(
             &mut url,
@@ -105,6 +101,8 @@ impl SocialProviderAdapter for WechatAdapter {
             .send()
             .await
             .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
             .json()
             .map_err(|e| e.to_string())?;
 
@@ -114,13 +112,15 @@ impl SocialProviderAdapter for WechatAdapter {
         let headimgurl = str_field(&json, "headimgurl");
 
         let mut extra = serde_json::Map::new();
-        extra.insert("openid".to_owned(), Value::String(openid));
+        extra.insert("openid".to_owned(), Value::String(openid.clone()));
         if let Some(ref uid) = unionid {
             extra.insert("unionid".to_owned(), Value::String(uid.clone()));
         }
 
         Ok(AdapterUserInfo {
-            sub: subject,
+            // OpenID is stable for this provider's immutable AppID. UnionID is optional
+            // and may appear on later logins, so it must not change the identity key.
+            sub: openid,
             email: None,
             email_verified: false,
             name: nickname,

@@ -1,8 +1,10 @@
 mod adapter;
 mod helper;
 mod jwks;
+mod link;
 mod oauth2_adapter;
 mod oidc;
+mod registration;
 pub use jwks::JwksCache;
 mod service_impl;
 mod wechat_adapter;
@@ -26,6 +28,7 @@ pub struct SocialLoginService<'a> {
     http_client: &'a HttpClientHandle,
     jwks: &'a JwksCache,
     sso_config: &'a crate::config::SsoConfig,
+    notification: &'a crate::config::NotificationConfig,
     oauth2_config: &'a crate::config::OAuth2Config,
 }
 
@@ -61,6 +64,23 @@ pub struct SocialUserInfo {
     pub name: Option<String>,
     pub avatar_url: Option<String>,
     pub profile_extra: serde_json::Value,
+}
+
+impl SocialUserInfo {
+    fn profile(&self) -> serde_json::Value {
+        let mut profile = serde_json::json!({
+            "email": self.email,
+            "email_verified": self.email_verified,
+            "name": self.name,
+            "picture": self.avatar_url,
+        });
+        if let (serde_json::Value::Object(fields), serde_json::Value::Object(extra)) =
+            (&mut profile, &self.profile_extra)
+        {
+            fields.extend(extra.clone());
+        }
+        profile
+    }
 }
 
 pub enum SocialLinkError {

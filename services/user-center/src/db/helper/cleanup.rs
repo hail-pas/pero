@@ -51,10 +51,6 @@ clean_expired!(
     "authorization_requests"
 );
 clean_expired!(clean_expired_authorization_codes, "authorization_codes");
-clean_expired!(
-    clean_expired_external_login_requests,
-    "external_login_requests"
-);
 
 pub async fn clean_expired_sso_sessions(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
     let mut total = 0;

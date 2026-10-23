@@ -20,9 +20,8 @@ pero-utils.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tower-http = { workspace = true, features = ["cors", "request-id", "limit", "fs", "compression-gzip", "uuid"] }
+tower-http = { workspace = true, features = ["limit", "fs"] }
 
-askama.workspace = true
 time.workspace = true
 clap = { version = "4", features = ["derive"] }
 reqwest = { workspace = true, features = ["json", "form", "rustls"] }

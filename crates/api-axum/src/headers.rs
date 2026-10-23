@@ -1,8 +1,6 @@
 pub const X_REQUEST_ID: &str = "x-request-id";
-pub const ACCEPT_LANGUAGE: &str = "accept-language";
 pub const X_PROCESS_TIME_MS: &str = "x-process-time-ms";
 pub const SERVER_TIMING: &str = "server-timing";
-pub const X_APP_ID: &str = "x-app-id";
 
 use axum::body::Body;
 use axum::http::{HeaderName, HeaderValue, Request};

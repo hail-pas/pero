@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
@@ -102,7 +101,13 @@ pub async fn verify_contact_get(
 ) -> Response {
     let session = match extract_session(&state, &jar).await {
         Ok(Some(s)) => s,
-        Ok(None) => return Redirect::to("/account/login").into_response(),
+        Ok(None) => {
+            let mut target = "/account/profile/verify-contact".to_owned();
+            pero_utils::encode::append_query_param(&mut target, "nonce", &query.nonce);
+            let mut login = "/account/login".to_owned();
+            pero_utils::encode::append_query_param(&mut login, "redirect", &target);
+            return Redirect::to(&login).into_response();
+        }
         Err(status) => return status.into_response(),
     };
 
@@ -110,7 +115,8 @@ pub async fn verify_contact_get(
 
     let req = match svc.load_pending_request(&query.nonce).await {
         Ok(Some(r)) => r,
-        _ => return Redirect::to("/account/profile").into_response(),
+        Ok(None) => return Redirect::to("/account/profile").into_response(),
+        Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
 
     if req.user_id != session.user_id {
@@ -123,7 +129,8 @@ pub async fn verify_contact_get(
 
     let user = match svc.load_active_user(session.user_id).await {
         Ok(u) => u,
-        Err(_) => return Redirect::to("/account/login").into_response(),
+        Err(ContactError::UserNotFound) => return Redirect::to("/account/login").into_response(),
+        Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
 
     let masked_value = match req.change_type {
@@ -136,24 +143,18 @@ pub async fn verify_contact_get(
         ContactChangeType::Phone => "phone",
     };
 
-    let layout = super::profile::build_layout(&state.db, &user, "profile").await;
+    let layout = super::dto::AccountLayout::from_user(&state.db, &user).await;
 
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
-    let tpl = crate::web::account::template::VerifyContactTemplate {
+    let tpl = crate::web::account::dto::VerifyContactView {
         layout,
         csrf_token,
         change_type: change_type_label.to_owned(),
         masked_value,
         nonce: req.nonce,
     };
-    match tpl.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(e) => {
-            tracing::error!("Template: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    (jar, pero_api_axum::form::view("VerifyContactView", tpl)).into_response()
 }
 
 pub async fn cancel_contact(
@@ -258,7 +259,7 @@ async fn create_and_send_contact_request(
     value: String,
 ) -> Response {
     if state.config.notification.endpoint.is_empty() {
-        return json_ok_with_error("service_unavailable");
+        return crate::web::util::dependency_error("Notifications are not configured");
     }
     if let Err(e) = svc.check_rate_limit(user_id, channel.key()).await {
         return contact_error_response(&e);
@@ -306,10 +307,6 @@ fn format_error(channel: ContactChannel) -> &'static str {
 fn contact_error_to_json(e: &ContactError) -> &'static str {
     match e {
         ContactError::UserNotFound => "user_not_found",
-        ContactError::AlreadyVerified => "already_verified",
-        ContactError::NoValue => "no_value",
-        ContactError::Required => "required",
-        ContactError::SameValue => "same_value",
         ContactError::SamePendingValue => "same_pending_value",
         ContactError::ContactTaken => "contact_taken",
         ContactError::RateLimited => "rate_limited",
@@ -324,9 +321,10 @@ fn contact_error_to_json(e: &ContactError) -> &'static str {
 
 fn contact_error_response(e: &ContactError) -> Response {
     match e {
-        ContactError::ServiceUnavailable => {
-            axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
+        ContactError::ServiceUnavailable | ContactError::SendFailed => {
+            crate::web::util::dependency_error("Contact verification unavailable")
         }
+        ContactError::Internal(error) => crate::web::util::dependency_error(error),
         _ => json_ok_with_error(contact_error_to_json(e)),
     }
 }

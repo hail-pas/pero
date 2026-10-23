@@ -23,6 +23,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub public_key_pem: String,
     #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
     pub private_key_pem_enc: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub certificate_pem: Option<String>,

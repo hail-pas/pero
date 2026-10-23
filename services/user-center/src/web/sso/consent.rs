@@ -1,19 +1,16 @@
-use askama::Template;
 use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
 use sea_orm::EntityTrait;
 
-use crate::db::entity::{authorization_requests, oauth_clients, user_consents, users};
+use crate::db::entity::{authorization_requests, oauth_clients, users};
 use crate::db::enums::UserStatus;
 use crate::state::app::AppState;
 use crate::state::session::SsoSession;
 use crate::web::session::extract_session;
-use crate::web::sso::template::{ConsentForm, ConsentTemplate};
+use crate::web::sso::dto::{ConsentForm, ConsentView};
 
-/// 从 cookie 中解析 auth_request 并校验归属
-///
-/// 校验链：cookie 存在 → JSON 解析 → user_id 匹配 session → auth_request 存在且未完成且未过期
+/// Verify the signed request against the session that rendered the consent page.
 struct ConsentContext {
     auth_request: authorization_requests::Model,
 }
@@ -22,20 +19,14 @@ async fn resolve_consent_context(
     state: &AppState,
     jar: &CookieJar,
     session: &SsoSession,
+    request_token: &str,
 ) -> Result<ConsentContext, Response> {
-    let req_cookie = state.cookie_factory().auth_req_cookie_name();
-    let raw = jar
-        .get(&req_cookie)
-        .map(|c| c.value().to_owned())
-        .ok_or_else(|| Redirect::to("/sso/error?code=missing_request").into_response())?;
-
     let cookie_value = state
         .cookie_factory()
-        .decode_auth_request(&raw)
+        .decode_auth_request(request_token)
         .map_err(|_| Redirect::to("/sso/error?code=invalid_request").into_response())?;
 
-    // 校验 cookie 中的 user_id 与当前 session 匹配
-    if cookie_value.user_id != session.user_id {
+    if cookie_value.user_id != session.user_id || cookie_value.session_id != session.id {
         return Err(Redirect::to("/sso/error?code=invalid_request").into_response());
     }
 
@@ -85,7 +76,12 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
         Err(status) => return status.into_response(),
     };
 
-    let ctx = match resolve_consent_context(&state, &jar, &session).await {
+    let req_cookie = state.cookie_factory().auth_req_cookie_name();
+    let Some(cookie) = jar.get(&req_cookie) else {
+        return Redirect::to("/sso/error?code=missing_request").into_response();
+    };
+    let request_token = cookie.value().to_owned();
+    let ctx = match resolve_consent_context(&state, &jar, &session, &request_token).await {
         Ok(c) => c,
         Err(r) => return r,
     };
@@ -126,8 +122,9 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
 
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
-    let tpl = ConsentTemplate {
+    let tpl = ConsentView {
         csrf_token,
+        request_token,
         client_name: client_display_name.clone(),
         client_url: client_display_name,
         scopes: ctx.auth_request.scopes,
@@ -137,13 +134,7 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
         user_initial,
     };
 
-    match tpl.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(e) => {
-            tracing::error!("Template render error: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    (jar, pero_api_axum::form::view("ConsentView", tpl)).into_response()
 }
 
 /// EP-11: POST /sso/consent
@@ -166,28 +157,35 @@ pub async fn post(
         Err(status) => return status.into_response(),
     };
 
-    let ctx = match resolve_consent_context(&state, &jar, &session).await {
+    let ctx = match resolve_consent_context(&state, &jar, &session, &form.request_token).await {
         Ok(c) => c,
         Err(r) => return r,
     };
 
     let cookies = state.cookie_factory();
     let req_cookie = cookies.auth_req_cookie_name();
+    // Another tab may have started a newer authorization; preserve its cookie.
+    let jar = if jar
+        .get(&req_cookie)
+        .is_some_and(|c| c.value() == form.request_token)
+    {
+        jar.add(cookies.clear_cookie(&req_cookie))
+    } else {
+        jar
+    };
 
     if form.action == "deny" {
-        if let Err(e) = crate::db::helper::auth_request::mark_completed(
-            &state.db,
-            ctx.auth_request.id,
-            session.user_id,
-        )
-        .await
+        match state
+            .oauth_service()
+            .deny_authorization_request(ctx.auth_request.id, session.user_id)
+            .await
         {
-            tracing::error!("Mark completed error: {e}");
+            Ok(()) => {}
+            Err(crate::service::oauth::OAuthError::Internal(error)) => {
+                return crate::web::util::dependency_error(error);
+            }
+            Err(_) => return Redirect::to("/sso/error?code=invalid_request").into_response(),
         }
-        let _ = user_consents::Entity::delete_by_id((session.user_id, ctx.auth_request.client_id))
-            .exec(&state.db)
-            .await;
-        let jar = jar.add(cookies.clear_cookie(&req_cookie));
         let url = pero_utils::oauth::url::build_error_redirect_url(
             &ctx.auth_request.redirect_uri,
             "access_denied",
@@ -217,7 +215,6 @@ pub async fn post(
         }
     };
 
-    let jar = jar.add(cookies.clear_cookie(&req_cookie));
     let redirect = pero_utils::oauth::url::build_code_redirect_url(
         &ctx.auth_request.redirect_uri,
         &raw_code,

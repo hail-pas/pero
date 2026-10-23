@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::CookieJar;
 use pero_api_axum::{json_error, json_ok};
@@ -21,22 +20,8 @@ pub fn parse_lines(s: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn validate_redirect_uris(uris: &[String]) -> Result<(), &'static str> {
-    pero_utils::redirect::validate_oauth_redirect_uris(uris).map_err(|_| "invalid_redirect_uri")
-}
-
-pub fn validate_optional_public_url(value: &str) -> Result<(), &'static str> {
-    pero_utils::redirect::validate_optional_public_http_url(Some(value)).map_err(|_| "invalid_url")
-}
-
-pub fn render_template<T: Template>(tpl: T, jar: CookieJar) -> Response {
-    match tpl.render() {
-        Ok(html) => (jar, axum::response::Html(html)).into_response(),
-        Err(e) => {
-            tracing::error!("Template: {e}");
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+pub fn view_response<T: serde::Serialize>(view: &'static str, tpl: T, jar: CookieJar) -> Response {
+    (jar, pero_api_axum::form::view(view, tpl)).into_response()
 }
 
 const REDIRECT_DEFAULT: &str = "/account/profile";
@@ -71,7 +56,6 @@ pub struct UserInfo {
     pub username: String,
     pub name: String,
     pub avatar_url: String,
-    pub initial: String,
 }
 
 impl UserInfo {
@@ -84,30 +68,25 @@ impl UserInfo {
                 .unwrap_or(&user.username)
                 .to_owned(),
             avatar_url: user.avatar_url.clone().unwrap_or_default(),
-            initial: user
-                .nickname
-                .as_deref()
-                .or(user.email.as_deref())
-                .unwrap_or(&user.username)
-                .chars()
-                .next()
-                .unwrap_or('?')
-                .to_uppercase()
-                .to_string(),
         }
     }
 }
 
-/// Keep the existing JSON contract while distinguishing dependency failure.
+/// Business failures are bad requests; unavailable dependencies are retryable.
 pub fn management_response(result: Result<(), crate::service::ManagementError>) -> Response {
     match result {
         Ok(()) => json_ok(),
         Err(crate::service::ManagementError::Invalid(code)) => json_error(code),
-        Err(error) => {
-            tracing::error!(%error, "Management mutation failed");
-            let mut response = json_error("update_failed");
-            *response.status_mut() = axum::http::StatusCode::SERVICE_UNAVAILABLE;
-            response
-        }
+        Err(crate::service::ManagementError::Validation(message)) => json_error(&message),
+        Err(error) => dependency_error(error),
     }
+}
+
+pub fn dependency_error(error: impl std::fmt::Display) -> Response {
+    tracing::error!(%error, "Web dependency unavailable");
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(serde_json::json!({"error":"service_unavailable"})),
+    )
+        .into_response()
 }

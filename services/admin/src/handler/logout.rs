@@ -5,7 +5,28 @@ use axum_extra::extract::CookieJar;
 use crate::cookie;
 use crate::state::AppState;
 
-pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
+#[derive(serde::Deserialize)]
+pub struct LogoutForm {
+    #[serde(default)]
+    pub csrf_token: String,
+}
+
+pub async fn logout(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    axum::Form(form): axum::Form<LogoutForm>,
+) -> Response {
+    if !pero_api_axum::csrf::verify_csrf(
+        &jar,
+        &form.csrf_token,
+        &cookie::csrf_config(&state.config),
+    ) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"error":"invalid_csrf"})),
+        )
+            .into_response();
+    }
     let id_token = jar
         .get("admin_it")
         .map(|c| c.value().to_owned())

@@ -129,31 +129,15 @@ pub async fn list_user_access(
     db: &DatabaseConnection,
     user_id: Uuid,
 ) -> Result<Vec<(user_app_access::Model, apps::Model)>, DbErr> {
-    let access_rows = user_app_access::Entity::find()
+    let rows = user_app_access::Entity::find()
         .filter(user_app_access::Column::UserId.eq(user_id))
+        .find_also_related(apps::Entity)
         .all(db)
         .await?;
-
-    let app_ids: Vec<Uuid> = access_rows.iter().map(|a| a.app_id).collect();
-    let mut apps_map: std::collections::HashMap<Uuid, apps::Model> = if app_ids.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        apps::Entity::find()
-            .filter(apps::Column::Id.is_in(app_ids))
-            .all(db)
-            .await?
-            .into_iter()
-            .map(|a| (a.id, a))
-            .collect()
-    };
-
-    let mut result = Vec::with_capacity(access_rows.len());
-    for a in access_rows {
-        if let Some(app) = apps_map.remove(&a.app_id) {
-            result.push((a, app));
-        }
-    }
-    Ok(result)
+    Ok(rows
+        .into_iter()
+        .filter_map(|(access, app)| app.map(|app| (access, app)))
+        .collect())
 }
 
 pub async fn list_all_apps_brief(

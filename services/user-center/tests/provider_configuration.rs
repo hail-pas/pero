@@ -9,7 +9,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use user_center::{
     config::AppConfig,
     state::app::AppState,
-    web::dashboard::{providers, template::ProviderFormData},
+    web::dashboard::{dto::ProviderFormData, providers},
 };
 
 #[tokio::test]
@@ -40,9 +40,19 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         userinfo_endpoint: "https://api.weixin.qq.com/sns/userinfo".into(),
         client_id: "test-appid".into(),
         client_secret: "test-secret".into(),
-        enabled: Some("on".into()),
+        enabled: true,
         ..Default::default()
     };
+    for code in [".", ".."] {
+        let mut invalid = form();
+        invalid.code = code.into();
+        assert_eq!(
+            providers::create(State(state.clone()), jar.clone(), Form(invalid))
+                .await
+                .status(),
+            400
+        );
+    }
     assert_eq!(
         providers::create(State(state.clone()), jar.clone(), Form(form()))
             .await
@@ -57,9 +67,15 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         .unwrap()
         .unwrap();
     let mut changed = form();
-    changed.client_id = "changed-appid".into();
+    changed.name = "WeChat renamed".into();
     changed.client_secret = String::new();
-    let response = providers::update(State(state.clone()), jar, Path(row.id), Form(changed)).await;
+    let response = providers::update(
+        State(state.clone()),
+        jar.clone(),
+        Path(row.id),
+        Form(changed),
+    )
+    .await;
     let body = axum::body::to_bytes(response.into_body(), 1024)
         .await
         .unwrap();
@@ -72,20 +88,58 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         .unwrap()
         .unwrap();
     assert_eq!(provider.client_secret.as_deref(), Some("test-secret"));
+    assert_eq!(provider.provider.client_id.as_deref(), Some("test-appid"));
+    // Repointing an existing namespace would reuse other users' upstream subjects.
+    let mut oidc = form();
+    oidc.code = "oidc".into();
+    oidc.kind = "oidc".into();
+    oidc.issuer = "https://old.example.test".into();
+    oidc.jwks_uri = "https://old.example.test/jwks".into();
+    oidc.scopes = "openid".into();
+    providers::create(State(state.clone()), jar.clone(), Form(oidc.clone())).await;
+    let oidc_id = ip::Entity::find()
+        .filter(ip::Column::Code.eq("oidc"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    oidc.issuer = "https://new.example.test".into();
     assert_eq!(
-        provider.provider.client_id.as_deref(),
-        Some("changed-appid")
+        providers::update(State(state.clone()), jar.clone(), Path(oidc_id), Form(oidc))
+            .await
+            .status(),
+        400
     );
+    for field in ["client_id", "userinfo_endpoint"] {
+        let mut repointed = form();
+        if field == "client_id" {
+            repointed.client_id = "different-appid".into();
+        } else {
+            repointed.userinfo_endpoint = "https://new.example.test/userinfo".into();
+        }
+        assert_eq!(
+            providers::update(
+                State(state.clone()),
+                jar.clone(),
+                Path(row.id),
+                Form(repointed)
+            )
+            .await
+            .status(),
+            400
+        );
+    }
     let service = state.social_service();
     let prepared = service
-        .prepare_login_state(&provider.provider, "wechat", None)
+        .prepare_login_state(&provider.provider, "wechat", None, "/dashboard")
         .await
         .ok()
         .unwrap();
     let url = url::Url::parse(&prepared.authorize_url).unwrap();
     assert!(
         url.query_pairs()
-            .any(|(k, v)| k == "appid" && v == "changed-appid")
+            .any(|(k, v)| k == "appid" && v == "test-appid")
     );
     let mut invalid = provider.provider.clone();
     invalid.client_id = None;
@@ -124,7 +178,55 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     )
     .await
     .unwrap();
+    // Reject enc before changing the local provider's active signing key.
+    let (key_jar, key_csrf) = state.web_security().ensure_csrf(CookieJar::new());
+    let key_form = || user_center::web::dashboard::dto::KeyForm {
+        csrf_token: key_csrf.clone(),
+        kid: "local-signing".into(),
+        algorithm: "RS256".into(),
+        key_use: "sig".into(),
+        public_key_pem: include_str!("../../../tests/fixtures/rsa-public.pem").into(),
+        private_key_pem: include_str!("../../../tests/fixtures/rsa-private.pem").into(),
+        certificate_pem: String::new(),
+        active: true,
+        not_before: String::new(),
+        expires_at: String::new(),
+    };
+    assert_eq!(
+        user_center::web::dashboard::keys::create(
+            State(state.clone()),
+            key_jar.clone(),
+            Path(local_id),
+            Form(key_form())
+        )
+        .await
+        .status(),
+        200
+    );
+    let mut invalid = key_form();
+    invalid.kid = "unsupported-encryption".into();
+    invalid.key_use = "enc".into();
+    assert_eq!(
+        user_center::web::dashboard::keys::create(
+            State(state.clone()),
+            key_jar,
+            Path(local_id),
+            Form(invalid)
+        )
+        .await
+        .status(),
+        400
+    );
+    assert_eq!(
+        user_center::db::helper::signing_key::require_active_signing_key(&db)
+            .await
+            .unwrap()
+            .kid,
+        "local-signing"
+    );
+
     let link = user_center::cache::key::SocialLinkValue {
+        redirect: "/dashboard".into(),
         auth_request_id: None,
         user_id: user_id.to_string(),
         provider_id: row.id.to_string(),
@@ -148,6 +250,139 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
             .await
             .is_ok()
     );
+    // The server-side login state retains the destination through the callback.
+    let callback_state = AppState::new(
+        (*state.config).clone(),
+        db.clone(),
+        pero_cache_redis::RedisCacheStore::from_config(&state.config.redis).unwrap(),
+        ProviderHttp,
+    );
+    let jar = CookieJar::new().add(axum_extra::extract::cookie::Cookie::new(
+        state.cookie_factory().social_state_cookie_name(),
+        prepared.state_hash,
+    ));
+    let response = user_center::web::sso::social::callback(
+        State(callback_state),
+        jar,
+        pero_api_axum::extractor::ClientIp(None),
+        Path("wechat".into()),
+        axum::extract::Query(user_center::web::sso::social::CallbackParams {
+            code: Some("one-use-code".into()),
+            state: Some(prepared.state_token),
+            error: None,
+        }),
+    )
+    .await;
+    assert_eq!(response.headers()["location"], "/dashboard");
+    let pending = service
+        .create_social_link(
+            &provider,
+            &user_center::service::social::SocialUserInfo {
+                authenticated_at: None,
+                sub: "another-subject".into(),
+                email: None,
+                email_verified: false,
+                name: None,
+                avatar_url: None,
+                profile_extra: serde_json::json!({}),
+            },
+            &user_center::db::entity::users::Entity::find_by_id(user_id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap(),
+            None,
+            "/dashboard",
+        )
+        .await
+        .ok()
+        .unwrap();
+    assert_eq!(
+        service
+            .load_social_link(&pending)
+            .await
+            .ok()
+            .unwrap()
+            .unwrap()
+            .redirect,
+        "/dashboard"
+    );
+    service.delete_social_link_cache(&pending).await;
+
+    // Optional contact reservations must not prevent either new identity from registering.
+    let mut registration_config = (*state.config).clone();
+    registration_config.notification.endpoint = "https://notify.example.test".into();
+    let registration_state = AppState::new(
+        registration_config,
+        db.clone(),
+        pero_cache_redis::RedisCacheStore::from_config(&state.config.redis).unwrap(),
+        ProviderHttp,
+    );
+    let registration = registration_state.social_service();
+    let info = |subject: &str| user_center::service::social::SocialUserInfo {
+        authenticated_at: None,
+        sub: subject.into(),
+        email: Some("shared-unverified@example.test".into()),
+        email_verified: false,
+        name: None,
+        avatar_url: None,
+        profile_extra: serde_json::json!({}),
+    };
+    let (first, second) = tokio::join!(
+        registration.register_user(&provider, info("new-social-user-1"), None),
+        registration.register_user(&provider, info("new-social-user-2"), None),
+    );
+    for result in [first, second] {
+        let (user, _) = result.unwrap();
+        assert!(user.email.is_none());
+        assert!(
+            user_center::db::entity::users::Entity::find_by_id(user.id)
+                .one(&db)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+    let queued = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM notification_outbox WHERE kind='verify_contact'".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.try_get::<i64>("", "n").unwrap(), 1);
+
+    // Historical verified records and expired reservations must both allow a fresh claim.
+    for (subject, update, expected) in [
+        (
+            "released-email",
+            "status='verified',verified_at=now()",
+            2_i64,
+        ),
+        (
+            "expired-email",
+            "requested_at=now()-interval '30 minutes',expires_at=now()-interval '1 minute'",
+            3_i64,
+        ),
+    ] {
+        db.execute_unprepared(&format!("UPDATE contact_change_requests SET {update} WHERE new_value='shared-unverified@example.test' AND status='pending'")).await.unwrap();
+        registration
+            .register_user(&provider, info(subject), None)
+            .await
+            .unwrap();
+        let queued = db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Postgres,
+                "SELECT count(*) AS n FROM notification_outbox WHERE kind='verify_contact'"
+                    .to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(queued.try_get::<i64>("", "n").unwrap(), expected);
+    }
+
     user_center::service::provider::toggle_enabled(&db, row.id)
         .await
         .unwrap();
@@ -165,4 +400,22 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     );
     guard.shutdown().await;
     fixture.cleanup().await;
+}
+
+struct ProviderHttp;
+#[async_trait::async_trait]
+impl pero_http_client_core::HttpClient for ProviderHttp {
+    async fn send(
+        &self,
+        _: http::Request<Vec<u8>>,
+    ) -> pero_http_client_core::HttpClientResult<pero_http_client_core::HttpResponse> {
+        Ok(pero_http_client_core::HttpResponse {
+            status: http::StatusCode::OK,
+            headers: http::HeaderMap::new(),
+            body: serde_json::to_vec(
+                &serde_json::json!({"access_token":"upstream-token","openid":"wechat-user"}),
+            )
+            .unwrap(),
+        })
+    }
 }

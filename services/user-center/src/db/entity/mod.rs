@@ -6,7 +6,6 @@ pub mod apps;
 pub mod authorization_codes;
 pub mod authorization_requests;
 pub mod contact_change_requests;
-pub mod external_login_requests;
 pub mod identities;
 pub mod identity_provider_keys;
 pub mod identity_providers;

@@ -33,7 +33,7 @@ async fn unauthenticated_request_redirects_to_login() {
         .iter()
         .map(|c| c.to_str().unwrap())
         .collect();
-    assert_eq!(cookies.len(), 4);
+    assert_eq!(cookies.len(), 5);
     assert!(
         cookies
             .iter()
@@ -92,6 +92,8 @@ async fn signed_identity_requires_the_same_client_session_and_live_grant() {
     let claims = serde_json::json!({"sub":"user","iss":issuer,"aud":"client","iat":now,"exp":now+60,"sid":"session"});
     let mut access_claims = claims.clone();
     access_claims["scope"] = "openid".into();
+    access_claims["client_version"] = 0.into();
+    access_claims["access_version"] = 0.into();
     let access = sign(&access_claims);
     let mut id_claims = claims.clone();
     id_claims["at_hash"] = pero_utils::oauth::jwt::oidc_hash(&access).into();
@@ -175,9 +177,14 @@ async fn signed_identity_requires_the_same_client_session_and_live_grant() {
 async fn logout_preserves_the_complete_registered_redirect() {
     let mut cfg = config("https://issuer.example.test/");
     cfg.oauth2.post_logout_redirect_uri = "https://client.example.test/bye?a=1&b=2".into();
+    let (jar, csrf_token) = pero_api_axum::csrf::ensure_csrf(
+        axum_extra::extract::CookieJar::new(),
+        &admin::cookie::csrf_config(&cfg),
+    );
     let response = admin::handler::logout::logout(
         axum::extract::State(AppState::new(cfg)),
-        axum_extra::extract::CookieJar::new(),
+        jar,
+        axum::Form(admin::handler::logout::LogoutForm { csrf_token }),
     )
     .await;
     assert_eq!(
@@ -194,10 +201,6 @@ async fn issuer_endpoints_preserve_prefix_without_double_slashes() {
         .route(
             "/tenant/api/oauth2/token",
             post(|| async { axum::Json(serde_json::json!({"access_token":"test"})) }),
-        )
-        .route(
-            "/tenant/api/providers",
-            get(|| async { axum::Json(serde_json::json!({"data":{"providers":[]}})) }),
         )
         .route(
             "/tenant/api/oauth2/jwks",
@@ -223,11 +226,6 @@ async fn issuer_endpoints_preserve_prefix_without_double_slashes() {
         .await
         .is_ok()
     );
-    assert!(
-        admin::oauth2::fetch_providers(&state.http, &issuer)
-            .await
-            .is_ok()
-    );
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let token =
         sign(&serde_json::json!({"iss":issuer,"sub":"user","aud":"client","iat":now,"exp":now+60}));
@@ -247,5 +245,92 @@ async fn issuer_endpoints_preserve_prefix_without_double_slashes() {
         .await
         .is_err()
     );
+    let response = admin::handler::home::home(
+        axum::extract::State(state),
+        axum_extra::extract::CookieJar::new(),
+        admin::middleware::CurrentUser {
+            sub: "user".into(),
+            username: "test-user".into(),
+            email: None,
+            name: None,
+            picture: None,
+        },
+    )
+    .await;
+    let body = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let base = issuer.trim_end_matches('/');
+    assert_eq!(
+        page["data"]["profile_url"],
+        format!("{base}/account/profile")
+    );
+    assert_eq!(
+        page["data"]["password_url"],
+        format!("{base}/account/change-password")
+    );
     task.abort();
+}
+
+#[tokio::test]
+async fn logout_rejects_missing_forged_and_other_session_csrf_without_clearing_cookies() {
+    use axum_extra::extract::{CookieJar, cookie::Cookie};
+    let cfg = config("https://issuer.example.test");
+    let (jar, token) = pero_api_axum::csrf::ensure_csrf(
+        CookieJar::new().add(Cookie::new("admin_at", "session-one")),
+        &admin::cookie::csrf_config(&cfg),
+    );
+    let app = admin::router::build(AppState::new(cfg));
+    for (session, submitted, expected) in [
+        ("session-one", "", StatusCode::FORBIDDEN),
+        ("session-one", "forged", StatusCode::FORBIDDEN),
+        ("session-two", token.as_str(), StatusCode::FORBIDDEN),
+        ("session-one", token.as_str(), StatusCode::FOUND),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/logout")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .header(
+                        "cookie",
+                        format!(
+                            "admin_at={session}; admin_csrf={}",
+                            jar.get("admin_csrf").unwrap().value()
+                        ),
+                    )
+                    .body(axum::body::Body::from(format!("csrf_token={submitted}")))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(
+            response.headers().contains_key("set-cookie"),
+            expected == StatusCode::FOUND
+        );
+    }
+}
+
+#[test]
+fn authentication_cookies_follow_each_tokens_remaining_lifetime() {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let response = admin::oauth2::TokenResponse {
+        access_token: "access".into(),
+        id_token: Some("identity".into()),
+    };
+    let jar = admin::cookie::set_auth_cookies(
+        axum_extra::extract::CookieJar::new(),
+        &response,
+        &config("https://issuer.example.test"),
+        now + 14400,
+        now + 300,
+    );
+    for (name, lifetime) in [("admin_at", 14400), ("admin_it", 300)] {
+        let remaining = jar.get(name).unwrap().max_age().unwrap().whole_seconds();
+        assert!((lifetime - 1..=lifetime).contains(&remaining));
+    }
 }

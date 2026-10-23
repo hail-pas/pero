@@ -35,7 +35,7 @@ cp "$CONFIG_DIR/keys/private.pem" "$CONFIG_DIR/keys/public.pem" "$STAGE/config/k
 find "$STAGE/config" -type d -exec chmod 700 {} +
 find "$STAGE/config" -type f -exec chmod 600 {} +
 ARCHIVE=pero-config.tar.gz
-tar -czf "$STAGE/config.tar.gz" -C "$STAGE" config
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$STAGE/config.tar.gz" -C "$STAGE" config
 mv -f "$STAGE/config.tar.gz" "$ROOT/deploy/$ARCHIVE"
 chmod 600 "$ROOT/deploy/$ARCHIVE"
 (cd "$ROOT/deploy" && shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256")

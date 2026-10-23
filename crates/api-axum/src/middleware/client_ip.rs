@@ -15,12 +15,6 @@ use tower::{Layer, Service};
 #[derive(Debug, Clone, Copy)]
 pub struct ResolvedClientIp(pub Option<IpNetwork>);
 
-impl ResolvedClientIp {
-    pub fn ip(self) -> Option<IpAddr> {
-        self.0.map(|network| network.ip())
-    }
-}
-
 pub fn client_ip_layer(trusted_proxies: Vec<IpNetwork>, header: ClientIpHeader) -> ClientIpLayer {
     ClientIpLayer {
         trusted_proxies: trusted_proxies.into(),

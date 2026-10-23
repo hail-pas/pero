@@ -1,7 +1,5 @@
-use base64::Engine;
 use http::{HeaderName, HeaderValue, Method};
 use pero_error::{AppError, ErrorKind};
-use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 use crate::client::{HttpClient, HttpClientResult, HttpResponse};
@@ -34,31 +32,11 @@ impl<'a> HttpClientRequest<'a> {
         self
     }
 
-    pub fn headers(mut self, headers: http::HeaderMap) -> Self {
-        for (key, value) in headers {
-            if let Some(key) = key {
-                self.headers.insert(key, value);
-            }
-        }
-        self
-    }
-
     pub fn bearer_auth(mut self, token: &str) -> Self {
         self.headers.insert(
             http::header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}"))
                 .unwrap_or_else(|_| HeaderValue::from_static("Bearer")),
-        );
-        self
-    }
-
-    pub fn basic_auth(mut self, username: &str, password: &str) -> Self {
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-        self.headers.insert(
-            http::header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Basic {encoded}"))
-                .unwrap_or_else(|_| HeaderValue::from_static("Basic")),
         );
         self
     }
@@ -128,11 +106,6 @@ impl<'a> HttpClientRequest<'a> {
         response.error_for_status()
     }
 
-    pub async fn into<T: DeserializeOwned + Send + 'a>(self) -> HttpClientResult<T> {
-        let response = self.send().await?;
-        response.json()
-    }
-
     fn build_request(self) -> HttpClientResult<http::Request<Vec<u8>>> {
         let body = self.body?;
 
@@ -179,18 +152,6 @@ pub trait HttpClientExt: HttpClient + Sized {
 
     fn post<'a>(&'a self, url: &'a str) -> HttpClientRequest<'a> {
         self.request(Method::POST, url)
-    }
-
-    fn put<'a>(&'a self, url: &'a str) -> HttpClientRequest<'a> {
-        self.request(Method::PUT, url)
-    }
-
-    fn patch<'a>(&'a self, url: &'a str) -> HttpClientRequest<'a> {
-        self.request(Method::PATCH, url)
-    }
-
-    fn delete<'a>(&'a self, url: &'a str) -> HttpClientRequest<'a> {
-        self.request(Method::DELETE, url)
     }
 }
 

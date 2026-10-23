@@ -3,6 +3,12 @@ use crate::cache_key_specs;
 cache_key_specs! {
     error = pero_error::AppError;
 
+    pub rl_login_start_ip: RlLoginStartIpKey => u64 {
+        pattern: "rl:login_start:ip:{ip}",
+        ttl: 60,
+        args: (ip: &str),
+    }
+
     pub rl_login_ip: RlLoginIpKey => u64 {
         pattern: "rl:login:ip:{ip}",
         ttl: 900,
@@ -17,6 +23,12 @@ cache_key_specs! {
 
     pub rl_register_ip: RlRegisterIpKey => u64 {
         pattern: "rl:register:ip:{ip}",
+        ttl: 3600,
+        args: (ip: &str),
+    }
+
+    pub rl_reset_ip: RlResetIpKey => u64 {
+        pattern: "rl:reset:ip:{ip}",
         ttl: 3600,
         args: (ip: &str),
     }

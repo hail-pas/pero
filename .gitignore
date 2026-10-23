@@ -50,6 +50,13 @@ local/
 !tests/fixtures/rsa-private.pem
 !tests/fixtures/rsa-public.pem
 
-# Browser regression tooling
-tests/browser/node_modules/
-tests/browser/test-results/
+
+# React build and browser artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+services/*/ui/static/assets/
+services/*/ui/static/index.html
+services/*/ui/static/icons/
+services/*/ui/static/resources/

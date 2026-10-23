@@ -98,54 +98,6 @@ async fn token_key(
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ProvidersApiResponse {
-    pub data: ProvidersData,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProvidersData {
-    pub providers: Vec<ProviderInfo>,
-}
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct ProviderInfo {
-    pub code: String,
-    pub name: String,
-    #[serde(default)]
-    pub icon: String,
-}
-
-pub async fn fetch_providers(
-    http: &reqwest::Client,
-    issuer: &str,
-) -> Result<Vec<ProviderInfo>, AppError> {
-    let url = pero_utils::oauth::url::issuer_endpoint(issuer, "api/providers");
-    let resp = http.get(&url).send().await.map_err(|e| {
-        AppError::dependency_failure(
-            "providers_request_failed",
-            format!("providers request failed: {e}"),
-        )
-    })?;
-
-    if !resp.status().is_success() {
-        tracing::warn!(
-            status = %resp.status(),
-            "providers API returned non-success status"
-        );
-        return Ok(vec![]);
-    }
-
-    let api_resp: ProvidersApiResponse = bounded_json(resp).await.map_err(|e| {
-        AppError::dependency_failure(
-            "providers_parse_failed",
-            format!("providers parse failed: {e}"),
-        )
-    })?;
-
-    Ok(api_resp.data.providers)
-}
-
-#[derive(Debug, Clone, Deserialize)]
 struct JwksResponse {
     keys: Vec<JwkEntry>,
 }

@@ -1,7 +1,9 @@
 pub mod apps;
+pub mod clients;
+pub mod dto;
 pub mod guard;
+pub mod keys;
 pub mod providers;
-pub mod template;
 pub mod users;
 
 use axum::Router;
@@ -29,15 +31,15 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(apps::edit_form).post(apps::update),
         )
         .route("/dashboard/apps/{id}/toggle", post(apps::toggle_status))
-        .route("/dashboard/clients/new", post(apps::create_client))
-        .route("/dashboard/clients/{id}/edit", post(apps::update_client))
+        .route("/dashboard/clients/new", post(clients::create))
+        .route("/dashboard/clients/{id}/edit", post(clients::update))
         .route(
             "/dashboard/clients/{id}/reset-secret",
-            post(apps::reset_client_secret),
+            post(clients::reset_secret),
         )
         .route(
             "/dashboard/clients/{id}/toggle",
-            post(apps::toggle_client_status),
+            post(clients::toggle_status),
         )
         .route("/dashboard/users", get(users::list))
         .route(
@@ -70,17 +72,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/dashboard/providers/{id}/toggle",
             post(providers::toggle_enabled),
         )
-        .route(
-            "/dashboard/providers/{id}/keys/new",
-            post(providers::create_key),
-        )
+        .route("/dashboard/providers/{id}/keys/new", post(keys::create))
         .route(
             "/dashboard/providers/{id}/keys/{kid}/activate",
-            post(providers::activate_key),
+            post(keys::activate),
         )
         .route(
             "/dashboard/providers/{id}/keys/{kid}/revoke",
-            post(providers::revoke_key),
+            post(keys::revoke),
         )
         .layer(middleware::from_fn_with_state(
             state,

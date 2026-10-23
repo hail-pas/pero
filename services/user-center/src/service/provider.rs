@@ -5,6 +5,27 @@ use sea_orm::{
     QuerySelect, Set, TransactionTrait,
 };
 
+pub async fn enabled_social(db: &DatabaseConnection) -> Result<Vec<ip::Model>, sea_orm::DbErr> {
+    ip::Entity::find()
+        .filter(ip::Column::Kind.ne(IdentityProviderKind::Local))
+        .filter(ip::Column::Enabled.eq(true))
+        .all(db)
+        .await
+}
+
+pub fn normalize_icon(raw: &str) -> &'static str {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "github" => "github",
+        "gitlab" => "gitlab",
+        "google" => "google",
+        "microsoft" => "microsoft",
+        "oauth2" => "oauth2",
+        "oidc" => "oidc",
+        "wechat" => "wechat",
+        _ => "",
+    }
+}
+
 /// Hold the provider policy through linking/session creation so disablement
 /// cannot be bypassed by a previously validated callback or cached link.
 pub(crate) async fn require_enabled_social<C: ConnectionTrait>(
@@ -59,6 +80,30 @@ pub struct ProviderInput {
 }
 
 impl ProviderInput {
+    fn validate_identity_namespace(&self, current: &ip::Model) -> Result<(), ProviderError> {
+        // A configured namespace is permanent, including while login callbacks are in flight.
+        // New identity sources must get a new provider ID instead of inheriting old subjects.
+        for (old, new) in [
+            (&current.issuer, &self.issuer),
+            (&current.client_id, &self.client_id),
+        ] {
+            if old.is_some() && old != new {
+                return Err(ProviderError::Invalid(
+                    "provider_identity_namespace_immutable",
+                ));
+            }
+        }
+        if current.kind != IdentityProviderKind::Oidc
+            && current.userinfo_endpoint.is_some()
+            && current.userinfo_endpoint != self.userinfo_endpoint
+        {
+            return Err(ProviderError::Invalid(
+                "provider_identity_namespace_immutable",
+            ));
+        }
+        Ok(())
+    }
+
     fn apply(self, active: &mut ip::ActiveModel) -> String {
         active.name = Set(self.name);
         active.issuer = Set(self.issuer);
@@ -141,6 +186,9 @@ pub async fn create(
     if code.is_empty() || input.name.is_empty() {
         return Err(ProviderError::Invalid("code_and_name_required"));
     }
+    if matches!(code, "." | "..") {
+        return Err(ProviderError::Invalid("invalid_provider_code"));
+    }
     if ip::Entity::find()
         .filter(ip::Column::Code.eq(code))
         .one(db)
@@ -174,6 +222,7 @@ pub async fn update(
         .await?
         .ok_or(ProviderError::Invalid("not_found"))?;
     editable(&current.kind)?;
+    input.validate_identity_namespace(&current)?;
     let mut active = current.into();
     let secret = input.apply(&mut active);
     let result = save_on(&txn, active, &secret, false).await?;

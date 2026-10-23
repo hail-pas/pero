@@ -4,9 +4,9 @@ use axum_extra::extract::cookie::CookieJar;
 use pero_cache_redis::rate_limit_key::rl_reset_submit;
 use pero_cache_redis::{RateLimitError, enforce_rate_limit};
 
-use crate::service::account::AccountService;
+use crate::service::account::{AccountService, PasswordResetError};
 use crate::state::app::AppState;
-use crate::web::sso::template::{ResetPasswordForm, ResetPasswordTemplate};
+use crate::web::sso::dto::{ResetPasswordForm, ResetPasswordView};
 
 /// GET/POST /sso/reset-password 查询参数
 #[derive(Debug, serde::Deserialize)]
@@ -39,8 +39,8 @@ pub async fn get_reset(
         .inspect_password_reset_token(&token)
         .await
     {
-        Ok(status) if status.usable => {}
-        Ok(_) => {
+        Ok(true) => {}
+        Ok(false) => {
             return render_reset(
                 jar,
                 &state,
@@ -50,13 +50,7 @@ pub async fn get_reset(
             );
         }
         Err(e) => {
-            return render_reset(
-                jar,
-                &state,
-                token,
-                e.message_key().to_owned(),
-                String::new(),
-            );
+            return render_reset_error(jar, &state, token, e);
         }
     }
 
@@ -93,26 +87,21 @@ pub async fn post_reset(
     let user_id = match account_svc.verify_password_reset_token(&token) {
         Ok(id) => id,
         Err(e) => {
-            return render_reset(
-                jar,
-                &state,
-                token,
-                e.message_key().to_owned(),
-                String::new(),
-            );
+            return render_reset_error(jar, &state, token, e);
         }
     };
 
-    if let Ok(key) = rl_reset_submit.key(&user_id.to_string()) {
-        match enforce_rate_limit(&state.cache, &key, 5).await {
-            Ok(()) => {}
-            Err(RateLimitError::Denied { .. }) => {
-                return render_reset(jar, &state, token, "rate_limited".to_owned(), String::new());
-            }
-            Err(RateLimitError::Redis(e)) => {
-                tracing::error!(error = %e, "rate_limit_check redis error");
-                return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-            }
+    let Ok(key) = rl_reset_submit.key(&user_id.to_string()) else {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match enforce_rate_limit(&state.cache, &key, 5).await {
+        Ok(()) => {}
+        Err(RateLimitError::Denied { .. }) => {
+            return render_reset(jar, &state, token, "rate_limited".to_owned(), String::new());
+        }
+        Err(RateLimitError::Redis(e)) => {
+            tracing::error!(error = %e, "rate_limit_check redis error");
+            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     }
 
@@ -127,11 +116,25 @@ pub async fn post_reset(
             String::new(),
             "password_reset_success".to_owned(),
         ),
-        Err(e) => render_reset(
+        Err(e) => render_reset_error(jar, &state, token, e),
+    }
+}
+
+fn render_reset_error(
+    jar: CookieJar,
+    state: &AppState,
+    token: String,
+    error: PasswordResetError,
+) -> Response {
+    match error {
+        PasswordResetError::Internal => {
+            crate::web::util::dependency_error("Password reset dependency unavailable")
+        }
+        error => render_reset(
             jar,
-            &state,
+            state,
             token,
-            e.message_key().to_owned(),
+            error.message_key().to_owned(),
             String::new(),
         ),
     }
@@ -146,7 +149,7 @@ fn render_reset(
 ) -> Response {
     state
         .web_security()
-        .render_with_csrf(jar, |csrf_token| ResetPasswordTemplate {
+        .view_with_csrf(jar, "ResetPasswordView", |csrf_token| ResetPasswordView {
             token,
             error,
             success,

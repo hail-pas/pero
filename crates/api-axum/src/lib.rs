@@ -10,6 +10,8 @@ pub mod response;
 
 pub use error::AppErrorResponder;
 pub use response::{
-    ApiResponse, ErrorResponse, ResponseEnvelope, SuccessResponse, json_error, json_ok,
-    json_ok_with_data, json_ok_with_error, json_ok_with_sensitive,
+    ApiResponse, ErrorResponse, json_error, json_ok, json_ok_with_data, json_ok_with_error,
+    json_ok_with_sensitive,
 };
+
+pub mod spa;

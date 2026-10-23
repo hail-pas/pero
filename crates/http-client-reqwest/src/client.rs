@@ -104,32 +104,20 @@ impl HttpClient for ReqwestHttpClient {
             return read_response(response, self.max_response_bytes).await;
         }
 
-        let mut last_err = None;
-
-        for attempt in 0..=self.retry.max_retries {
+        let mut attempt = 0;
+        loop {
             if attempt > 0 {
                 tokio::time::sleep(self.retry.delay_for_attempt(attempt)).await;
             }
-
             let req = convert_request(&self.client, request.clone())?;
-
             match self.client.execute(req).await {
                 Ok(response) => return read_response(response, self.max_response_bytes).await,
-                Err(err) => {
-                    let should_retry = attempt < self.retry.max_retries && is_retryable(&err);
-
-                    if !should_retry {
-                        return Err(map_reqwest_error(err));
-                    }
-
-                    last_err = Some(err);
+                Err(err) if attempt < self.retry.max_retries && is_retryable(&err) => {
+                    attempt += 1;
                 }
+                Err(err) => return Err(map_reqwest_error(err)),
             }
         }
-
-        Err(map_reqwest_error(
-            last_err.expect("at least one attempt was made"),
-        ))
     }
 }
 

@@ -44,8 +44,6 @@ pub enum Relation {
     Apps,
     #[sea_orm(has_many = "super::authorization_codes::Entity")]
     AuthorizationCodes,
-    #[sea_orm(has_many = "super::external_login_requests::Entity")]
-    ExternalLoginRequests,
     #[sea_orm(
         belongs_to = "super::oauth_clients::Entity",
         from = "Column::ClientId",
@@ -73,12 +71,6 @@ impl Related<super::apps::Entity> for Entity {
 impl Related<super::authorization_codes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::AuthorizationCodes.def()
-    }
-}
-
-impl Related<super::external_login_requests::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ExternalLoginRequests.def()
     }
 }
 

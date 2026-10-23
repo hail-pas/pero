@@ -6,7 +6,6 @@ use pero_validate_core::{
 };
 use serde::de::DeserializeOwned;
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -23,7 +22,6 @@ pub trait ParseConfigurable: Validatable + DeserializeOwned {
 }
 
 fn config_error(err: config_rs::ConfigError) -> ValidationError {
-    // returns ValidationError directly
     ValidationError::new(
         ValidationErrorKind::MalformedInput,
         "Failed to load config",
@@ -38,17 +36,6 @@ pub struct ConfigLoader {
     env_prefix: String,
     run_mode_env: String,
     run_mode: Option<RunMode>,
-    prefix_separator: String,
-    separator: String,
-    list_separator: Option<String>,
-    extra_list_parse_keys: Vec<Cow<'static, str>>,
-    extra_files: Vec<ConfigFile>,
-}
-
-#[derive(Debug, Clone)]
-struct ConfigFile {
-    path: PathBuf,
-    required: bool,
 }
 
 impl Default for ConfigLoader {
@@ -58,11 +45,6 @@ impl Default for ConfigLoader {
             env_prefix: DEFAULT_ENV_PREFIX.to_owned(),
             run_mode_env: DEFAULT_RUN_MODE_ENV.to_owned(),
             run_mode: None,
-            prefix_separator: "__".to_owned(),
-            separator: "__".to_owned(),
-            list_separator: Some(",".to_owned()),
-            extra_list_parse_keys: Vec::new(),
-            extra_files: Vec::new(),
         }
     }
 }
@@ -92,32 +74,6 @@ impl ConfigLoader {
         self
     }
 
-    pub fn run_mode_from_str(mut self, mode: &str) -> ValidationResult<Self> {
-        self.run_mode = Some(RunMode::from_str(mode)?);
-        Ok(self)
-    }
-
-    pub fn add_list_parse_key(mut self, key: impl Into<Cow<'static, str>>) -> Self {
-        self.extra_list_parse_keys.push(key.into());
-        self
-    }
-
-    pub fn add_optional_file(mut self, path: impl Into<PathBuf>) -> Self {
-        self.extra_files.push(ConfigFile {
-            path: path.into(),
-            required: false,
-        });
-        self
-    }
-
-    pub fn add_required_file(mut self, path: impl Into<PathBuf>) -> Self {
-        self.extra_files.push(ConfigFile {
-            path: path.into(),
-            required: true,
-        });
-        self
-    }
-
     pub fn load<T>(self) -> ValidationResult<T>
     where
         T: ParseConfigurable,
@@ -130,13 +86,6 @@ impl ConfigLoader {
             .map_err(config_error)?;
         cfg.validate()?;
         Ok(cfg)
-    }
-
-    pub fn build_raw<T>(self) -> ValidationResult<Config>
-    where
-        T: ParseConfigurable,
-    {
-        self.build_sources::<T>()?.build().map_err(config_error)
     }
 
     fn build_sources<T>(
@@ -158,17 +107,10 @@ impl ConfigLoader {
             ));
         }
 
-        let mut builder = Config::builder()
+        Ok(Config::builder()
             .add_source(File::from(default_file).required(true))
-            .add_source(File::from(run_mode_file).required(false));
-
-        for file in &self.extra_files {
-            builder = builder.add_source(File::from(file.path.clone()).required(file.required));
-        }
-
-        builder = builder.add_source(self.environment_source::<T>());
-
-        Ok(builder)
+            .add_source(File::from(run_mode_file).required(false))
+            .add_source(self.environment_source::<T>()))
     }
 
     fn resolve_run_mode(&self) -> ValidationResult<RunMode> {
@@ -186,25 +128,17 @@ impl ConfigLoader {
         T: ParseConfigurable,
     {
         let mut env = Environment::with_prefix(&self.env_prefix)
-            .prefix_separator(&self.prefix_separator)
-            .separator(&self.separator)
+            .prefix_separator("__")
+            .separator("__")
             .ignore_empty(true)
-            .try_parsing(true);
+            .try_parsing(true)
+            .list_separator(",");
 
-        if let Some(list_separator) = &self.list_separator {
-            env = env.list_separator(list_separator);
-
-            for key in COMMON_ENV_LIST_PARSE_KEYS {
-                env = env.with_list_parse_key(key);
-            }
-
-            for key in T::env_list_parse_keys() {
-                env = env.with_list_parse_key(key);
-            }
-
-            for key in &self.extra_list_parse_keys {
-                env = env.with_list_parse_key(key);
-            }
+        for key in COMMON_ENV_LIST_PARSE_KEYS
+            .iter()
+            .chain(T::env_list_parse_keys())
+        {
+            env = env.with_list_parse_key(key);
         }
 
         env

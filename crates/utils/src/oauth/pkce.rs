@@ -1,6 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 
 use crate::crypto::constant_time_eq;
@@ -43,6 +43,13 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str, method: &str) -> b
 pub fn pkce_s256_challenge(code_verifier: &str) -> String {
     let hash = Sha256::digest(code_verifier.as_bytes());
     URL_SAFE_NO_PAD.encode(hash)
+}
+
+pub fn valid_s256_challenge(challenge: &str) -> bool {
+    challenge.len() == 43
+        && URL_SAFE_NO_PAD
+            .decode(challenge)
+            .is_ok_and(|digest| digest.len() == 32)
 }
 
 fn valid_code_verifier(code_verifier: &str) -> bool {

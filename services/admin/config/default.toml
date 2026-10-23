@@ -20,6 +20,5 @@ secure = false
 same_site = "Lax"
 path = "/"
 
-[askama]
+[frontend]
 static_dir = "ui/static"
-static_url_prefix = "/static"

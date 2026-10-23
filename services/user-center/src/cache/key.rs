@@ -32,6 +32,7 @@ pub struct PendingReqValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocialStateValue {
+    pub redirect: String,
     #[serde(default)]
     pub auth_request_id: Option<String>,
     pub provider_id: String,
@@ -43,6 +44,7 @@ pub struct SocialStateValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocialLinkValue {
+    pub redirect: String,
     #[serde(default)]
     pub auth_request_id: Option<String>,
     pub user_id: String,

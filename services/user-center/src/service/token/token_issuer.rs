@@ -25,6 +25,7 @@ impl<'a> TokenIssuer<'a> {
         user_id: uuid::Uuid,
         scopes: &str,
         session_id: Option<uuid::Uuid>,
+        access_version: i64,
     ) -> Result<String, jsonwebtoken::errors::Error> {
         let sid = session_id.map(|id| id.to_string());
         pero_utils::oauth::jwt::sign_access_token_with_key(
@@ -33,6 +34,8 @@ impl<'a> TokenIssuer<'a> {
                 user_id: &user_id.to_string(),
                 client_identifier: &self.client.identifier,
                 scopes,
+                client_version: self.client.token_version,
+                access_version,
                 ttl_seconds: self.client.access_token_ttl_seconds as i64,
                 session_id: sid.as_deref(),
                 kid: Some(&self.signing.kid),

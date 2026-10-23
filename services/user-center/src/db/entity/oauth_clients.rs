@@ -14,6 +14,7 @@ pub struct Model {
     #[sea_orm(column_type = "custom(\"citext\")", select_as = "text", unique)]
     pub identifier: String,
     #[sea_orm(column_type = "Text", nullable)]
+    #[serde(skip_serializing)]
     pub secret_hash: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub name: Option<String>,
@@ -27,6 +28,7 @@ pub struct Model {
     pub refresh_token_ttl_seconds: i32,
     pub id_token_ttl_seconds: i32,
     pub status: CommonStatus,
+    pub token_version: i64,
     pub created_at: TimeDateTimeWithTimeZone,
     pub updated_at: TimeDateTimeWithTimeZone,
 }

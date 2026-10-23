@@ -68,3 +68,83 @@ async fn adapters_encode_urls_and_mark_only_single_use_gets() {
         requests.clear();
     }
 }
+
+struct Reply(http::StatusCode);
+
+#[async_trait::async_trait]
+impl HttpClient for Reply {
+    async fn send(&self, _: http::Request<Vec<u8>>) -> HttpClientResult<HttpResponse> {
+        Ok(HttpResponse {
+            status: self.0,
+            headers: Default::default(),
+            body: br#"{"access_token":"token","openid":"openid","unionid":"unionid","sub":"user"}"#
+                .to_vec(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn upstream_errors_cannot_supply_credentials_or_identities() {
+    for status in [
+        http::StatusCode::FOUND,
+        http::StatusCode::UNAUTHORIZED,
+        http::StatusCode::INTERNAL_SERVER_ERROR,
+    ] {
+        let http = Reply(status);
+        for adapter in [
+            &oauth2_adapter::OAuth2Adapter as &dyn SocialProviderAdapter,
+            &wechat_adapter::WechatAdapter as &dyn SocialProviderAdapter,
+        ] {
+            assert!(
+                adapter
+                    .exchange_code(ExchangeCodeParams {
+                        http_client: &http,
+                        token_endpoint: "https://provider.example/token",
+                        client_id: "client",
+                        client_secret: "secret",
+                        code: "code",
+                        redirect_uri: "https://client.example/callback",
+                        code_verifier: None,
+                    })
+                    .await
+                    .is_err()
+            );
+            let token = TokenResult {
+                access_token: "token".into(),
+                raw: serde_json::json!({"openid":"openid"}),
+            };
+            assert!(
+                adapter
+                    .fetch_userinfo(&http, "https://provider.example/userinfo", &token)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn wechat_optional_unionid_does_not_change_the_identity() {
+    let http = Reply(http::StatusCode::OK);
+    for unionid in [None, Some("unionid")] {
+        let mut raw = serde_json::json!({"openid":"openid"});
+        if let Some(unionid) = unionid {
+            raw["unionid"] = unionid.into();
+        }
+        let token = TokenResult {
+            access_token: "token".into(),
+            raw,
+        };
+        let info = wechat_adapter::WechatAdapter
+            .fetch_userinfo(&http, "https://provider.example/userinfo", &token)
+            .await
+            .unwrap();
+        assert_eq!(info.sub, "openid");
+        assert_eq!(
+            info.profile_extra
+                .get("unionid")
+                .and_then(serde_json::Value::as_str),
+            unionid
+        );
+    }
+}

@@ -1,10 +1,8 @@
 use ipnetwork::IpNetwork;
 use pero_validate_core::{Validatable, ValidationResult};
 use serde::Deserialize;
-use url::Url;
 
 pub const COMMON_ENV_LIST_PARSE_KEYS: &[&str] = &[
-    "server.docs_servers",
     "server.trusted_proxies",
     "server.cors.allow_origins",
     "server.cors.allow_methods",
@@ -20,7 +18,6 @@ pub struct ServerConfig {
     pub request_body_limit_bytes: usize,
     pub graceful_shutdown_timeout_secs: u64,
     pub cleanup_interval_secs: u64,
-    pub docs_servers: Vec<DocsServer>,
     pub trusted_proxies: Vec<IpNetwork>,
     pub client_ip_header: ClientIpHeader,
     pub cors: CorsConfig,
@@ -40,7 +37,6 @@ impl Default for ServerConfig {
             request_body_limit_bytes: 10 * 1024 * 1024,
             graceful_shutdown_timeout_secs: 30,
             cleanup_interval_secs: 3600,
-            docs_servers: Vec::new(),
             trusted_proxies: Vec::new(),
             client_ip_header: ClientIpHeader::default(),
             cors: CorsConfig::default(),
@@ -77,10 +73,6 @@ impl Validatable for ServerConfig {
             1,
             "server.cleanup_interval_secs",
         )?;
-
-        for item in &self.docs_servers {
-            pero_validate_core::not_blank(&item.description, "server.docs_servers[].description")?;
-        }
 
         self.cors.validate()?;
         Ok(())
@@ -127,11 +119,23 @@ impl Validatable for CorsConfig {
     fn validate(&self) -> ValidationResult {
         if self.allow_credentials {
             pero_validate_core::ensure(
-                !self.allow_origins.iter().any(|origin| origin == "*"),
+                !self.allow_origins.is_empty()
+                    && self.allow_origins.iter().all(|origin| origin.trim() != "*"),
                 "server.cors.allow_origins",
                 "invalid",
-                "server.cors.allow_credentials=true cannot be used with wildcard origin `*`",
+                "credentialed CORS requires an explicit origin allowlist",
             )?;
+            for (path, headers) in [
+                ("server.cors.allow_headers", &self.allow_headers),
+                ("server.cors.expose_headers", &self.expose_headers),
+            ] {
+                pero_validate_core::ensure(
+                    headers.iter().all(|header| header.trim() != "*"),
+                    path,
+                    "invalid",
+                    "credentialed CORS requires explicit header names",
+                )?;
+            }
         }
 
         Ok(())
@@ -150,9 +154,48 @@ pub enum HttpMethod {
     Head,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DocsServer {
-    pub url: Url,
-    pub description: String,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credentialed_cors_requires_explicit_origins() {
+        for origins in [vec![], vec!["*".into()], vec![" * ".into()]] {
+            assert!(
+                CorsConfig {
+                    allow_origins: origins,
+                    allow_credentials: true,
+                    ..Default::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            CorsConfig {
+                allow_origins: vec!["https://app.example.com".into()],
+                allow_credentials: true,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(CorsConfig::default().validate().is_ok());
+        for config in [
+            CorsConfig {
+                allow_origins: vec!["https://app.example.com".into()],
+                allow_headers: vec!["*".into()],
+                allow_credentials: true,
+                ..Default::default()
+            },
+            CorsConfig {
+                allow_origins: vec!["https://app.example.com".into()],
+                expose_headers: vec!["*".into()],
+                allow_credentials: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(config.validate().is_err());
+        }
+    }
 }

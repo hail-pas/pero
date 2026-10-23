@@ -1,6 +1,6 @@
 use pero_cache_redis::RedisConfig;
 use pero_config::ParseConfigurable;
-use pero_config::blocks::{AskamaConfig, I18nConfig, LogConfig, ServerConfig};
+use pero_config::blocks::{FrontendConfig, LogConfig, ServerConfig};
 use pero_db_seaorm::DatabaseConfig;
 use pero_http_client_core::HttpClientConfig;
 use pero_types::SecretString;
@@ -119,9 +119,6 @@ impl Validatable for OidcConfig {
 pub struct OAuth2Config {
     pub upstream_jwks_cache_ttl_seconds: u64,
     pub auth_code_ttl_seconds: u64,
-    pub default_access_token_ttl_seconds: u64,
-    pub default_refresh_token_ttl_days: u32,
-    pub default_id_token_ttl_seconds: u64,
 }
 
 impl Default for OAuth2Config {
@@ -129,9 +126,6 @@ impl Default for OAuth2Config {
         Self {
             upstream_jwks_cache_ttl_seconds: 0,
             auth_code_ttl_seconds: 600,
-            default_access_token_ttl_seconds: 7200,
-            default_refresh_token_ttl_days: 30,
-            default_id_token_ttl_seconds: 7200,
         }
     }
 }
@@ -147,21 +141,6 @@ impl Validatable for OAuth2Config {
             self.auth_code_ttl_seconds,
             1,
             "oauth2.auth_code_ttl_seconds",
-        )?;
-        pero_validate_core::min(
-            self.default_access_token_ttl_seconds,
-            1,
-            "oauth2.default_access_token_ttl_seconds",
-        )?;
-        pero_validate_core::min(
-            self.default_refresh_token_ttl_days,
-            1,
-            "oauth2.default_refresh_token_ttl_days",
-        )?;
-        pero_validate_core::min(
-            self.default_id_token_ttl_seconds,
-            1,
-            "oauth2.default_id_token_ttl_seconds",
         )?;
         Ok(())
     }
@@ -314,9 +293,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub password_reset: PasswordResetConfig,
     #[serde(default)]
-    pub i18n: I18nConfig,
-    #[serde(default)]
-    pub askama: AskamaConfig,
+    pub frontend: FrontendConfig,
     #[serde(default)]
     pub http_config: HttpClientConfig,
     #[serde(default)]
@@ -349,8 +326,6 @@ impl Validatable for AppConfig {
         self.oauth2.validate()?;
         self.password.validate()?;
         self.password_reset.validate()?;
-        self.i18n.validate()?;
-        self.askama.validate()?;
         self.http_config.validate()?;
         self.notification.validate()?;
         Ok(())

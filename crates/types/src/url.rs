@@ -35,10 +35,6 @@ where
         })
     }
 
-    pub fn as_url(&self) -> &Url {
-        &self.url
-    }
-
     pub fn expose_secret(&self) -> &str {
         self.url.as_str()
     }
@@ -158,15 +154,6 @@ where
         ))
     }
 }
-
-pub enum MySqlUrlSpec {}
-
-impl TypedUrlSpec for MySqlUrlSpec {
-    const TYPE_NAME: &'static str = "MySqlUrl";
-    const ALLOWED_SCHEMES: &'static [&'static str] = &["mysql"];
-}
-
-pub type MySqlUrl = TypedUrl<MySqlUrlSpec>;
 
 pub enum PgUrlSpec {}
 

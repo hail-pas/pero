@@ -1,5 +1,5 @@
 use pero_config::ParseConfigurable;
-use pero_config::blocks::AskamaConfig;
+use pero_config::blocks::FrontendConfig;
 use pero_config::blocks::{CookieConfig, LogConfig, ServerConfig};
 use pero_types::SecretString;
 use pero_validate_core::{Validatable, ValidationResult};
@@ -15,7 +15,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub cookie: CookieConfig,
     #[serde(default)]
-    pub askama: AskamaConfig,
+    pub frontend: FrontendConfig,
 }
 
 impl ParseConfigurable for AppConfig {

@@ -2,16 +2,11 @@ use ipnetwork::IpNetwork;
 use pero_cache_redis::RedisCacheStore;
 use pero_cache_redis::rate_limit::{RateLimitError, enforce_rate_limit, rate_limit_check};
 use pero_cache_redis::rate_limit_key::{login_fail, rl_login_account, rl_login_ip};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_query::Expr};
 use uuid::Uuid;
 
-use crate::db::entity::{identities, users};
+use crate::db::entity::identities;
 use crate::db::enums::{IdentityKind, LoginEventType};
-
-pub struct PasswordLoginResult {
-    pub user: users::Model,
-    pub token: String,
-}
 
 pub enum PasswordLoginError {
     RateLimited,
@@ -40,14 +35,16 @@ impl<'a> LoginService<'a> {
             pero_config::blocks::ServerConfig::unknown_ip_placeholder().to_owned()
         });
 
-        if let Ok(key) = rl_login_ip.key(&ip_str) {
-            map_rate_limit_result(enforce_rate_limit(self.cache, &key, 20).await)?;
-        }
+        let key = rl_login_ip
+            .key(&ip_str)
+            .map_err(|_| PasswordLoginError::ServiceUnavailable)?;
+        map_rate_limit_result(enforce_rate_limit(self.cache, &key, 20).await)?;
 
         let account_key = pero_utils::string::canonical_rate_limit_key(account);
-        if !account_key.is_empty()
-            && let Ok(key) = rl_login_account.key(&account_key)
-        {
+        if !account_key.is_empty() {
+            let key = rl_login_account
+                .key(&pero_utils::crypto::sha256_hex(&account_key))
+                .map_err(|_| PasswordLoginError::ServiceUnavailable)?;
             map_rate_limit_result(enforce_rate_limit(self.cache, &key, 20).await)?;
         }
 
@@ -99,15 +96,15 @@ impl<'a> LoginService<'a> {
     }
 
     pub async fn update_identity_last_login(&self, identity_id: Uuid) {
-        let Ok(Some(model)) = identities::Entity::find_by_id(identity_id)
-            .one(self.db)
+        if let Err(e) = identities::Entity::update_many()
+            .col_expr(
+                identities::Column::LastLoginAt,
+                Expr::value(Some(time::OffsetDateTime::now_utc())),
+            )
+            .filter(identities::Column::Id.eq(identity_id))
+            .exec(self.db)
             .await
-        else {
-            return;
-        };
-        let mut active: identities::ActiveModel = model.into();
-        active.last_login_at = Set(Some(time::OffsetDateTime::now_utc()));
-        if let Err(e) = active.update(self.db).await {
+        {
             tracing::warn!("Identity last_login_at update: {e}");
         }
     }
@@ -164,7 +161,7 @@ impl<'a> LoginService<'a> {
         identifier_type: &str,
         identifier: &str,
         password: &str,
-    ) -> Result<PasswordLoginResult, PasswordLoginError> {
+    ) -> Result<String, PasswordLoginError> {
         let identifier = identifier.trim();
         self.check_rate_limit(ip, identifier).await?;
 
@@ -219,7 +216,7 @@ impl<'a> LoginService<'a> {
         self.record_success(user.id, identity.id, None, ip, serde_json::json!({}))
             .await;
 
-        Ok(PasswordLoginResult { user, token })
+        Ok(token)
     }
 }
 
