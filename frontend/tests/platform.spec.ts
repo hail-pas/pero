@@ -119,6 +119,51 @@ test("server search resets pagination and preserves filters", async ({
   expect(new URL(page.url()).searchParams.has("page")).toBeFalsy();
   await expect(page.getByText("团队协作平台", { exact: true })).toBeVisible();
 });
+test("workspace switches replace the old page without fading or moving its cards", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await mock(page);
+  await page.goto("/account/profile");
+  await expect(
+    page.getByRole("heading", { name: "个人资料", exact: true }),
+  ).toBeVisible();
+  // Sample painted frames: screenshots normally wait for CSS animations to finish.
+  await page.evaluate(() => {
+    let unstable = 0;
+    Object.assign(window, { workspaceUnstableFrames: () => unstable });
+    function sample() {
+      for (const card of document.querySelectorAll("main .MuiCard-root")) {
+        const style = getComputedStyle(card);
+        if (style.opacity !== "1" || style.transform !== "none") {
+          unstable++;
+        }
+      }
+      requestAnimationFrame(sample);
+    }
+    requestAnimationFrame(sample);
+  });
+  for (const [workspace, title, previous] of [
+    ["管理工作空间", "应用管理", "个人资料"],
+    ["个人工作空间", "个人资料", "应用管理"],
+    ["管理工作空间", "应用管理", "个人资料"],
+  ]) {
+    await page.getByRole("button", { name: "切换工作空间" }).click();
+    await page.getByRole("menuitem", { name: workspace, exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: title, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: previous, exact: true }),
+    ).toHaveCount(0);
+  }
+  expect(
+    await page.evaluate(() =>
+      (Reflect.get(window, "workspaceUnstableFrames") as () => number)(),
+    ),
+  ).toBe(0);
+});
 test("password mismatch is blocked before mutation", async ({ page }) => {
   await mock(page);
   await page.goto("/account/change-password");
@@ -454,7 +499,11 @@ test("English forms, modals, validation and sign-in are fully localized", async 
     "autocomplete",
     "current-password",
   );
-  expect(await page.locator("body").innerText()).not.toMatch(/[\u3400-\u9fff]/);
+  // The registered filing number stays unchanged in either language.
+  const bodyText = await page.locator("body").innerText();
+  expect(bodyText.replace("渝ICP备2025069387号-1", "")).not.toMatch(
+    /[\u3400-\u9fff]/,
+  );
 });
 test("language is available on mobile and errors from the backend use the selected language", async ({
   page,

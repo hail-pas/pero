@@ -2,6 +2,7 @@
 host = "0.0.0.0"
 port = 8080
 request_body_limit_bytes = 1048576
+trusted_proxies = []
 # Select the only header sanitized by trusted_proxies; no fallback to other headers.
 client_ip_header = "x_forwarded_for"
 

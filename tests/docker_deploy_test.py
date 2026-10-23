@@ -77,6 +77,15 @@ class DockerDeployTest(unittest.TestCase):
         self.assertNotEqual(self.run_packager().returncode, 0)
         self.assertFalse(self.archive.exists())
 
+    def test_legacy_static_path_moves_to_frontend(self):
+        path = self.config / 'production.toml'
+        path.write_text(path.read_text() + '\n[askama]\nstatic_dir="prd/ui/static"\n')
+        self.assertEqual(self.run_packager().returncode, 0)
+        with tarfile.open(self.archive) as archive:
+            production = tomllib.loads(archive.extractfile('config/production.toml').read().decode())
+        self.assertEqual(production['frontend']['static_dir'], 'prd/ui/static')
+        self.assertNotIn('askama', production)
+
     def test_git_allows_templates_and_ignores_secrets_and_outputs(self):
         for path in ('deploy/pero/Dockerfile', 'deploy/pero/Dockerfile.dockerignore',
                      'deploy/pero/production.toml.example', 'deploy/pero/initialize.py'):

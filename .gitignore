@@ -21,6 +21,7 @@ services/**/config/*
 *.swo
 *~
 .DS_Store
+*.pyc
 
 # Tool caches
 .ruff_cache/
