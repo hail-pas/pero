@@ -102,11 +102,30 @@ export interface RowsPage<T> extends ListPage {
   rows: T[];
 }
 export interface ViewDataMap {
+  SecurityView: {
+    layout?: UserLayout;
+    csrf_token: string;
+    enabled: boolean;
+    required: boolean;
+    pending: boolean;
+    recovery: boolean;
+    has_password: boolean;
+    secret: string;
+    qr: string;
+    codes: string[];
+    redirect: string;
+    error: string;
+    providers: { key: string; name: string }[];
+  };
+  AdminRolesView: AccountPage & {
+    rows: { user_id: string; username: string; role: string }[];
+  };
   SessionListView: RowsPage<{
     id: string;
     ip: string | null;
     user_agent: string | null;
     current: boolean;
+    authentication_pending: boolean;
     created_at: string;
     last_seen_at: string;
     expires_at: string;

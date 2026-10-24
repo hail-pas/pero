@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 cache_key_specs! {
     error = pero_error::AppError;
 
+    pub mfa_attempt: MfaAttemptKey => u32 { pattern: "mfa_attempt:{user}", ttl: 300, args: (user: &str), }
+
     pub pending_req: PendingReqKey => PendingReqValue {
         pattern: "pending_req:{nonce}",
         ttl: 600,
@@ -32,6 +34,8 @@ pub struct PendingReqValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocialStateValue {
+    #[serde(default)]
+    pub reauth_session: Option<uuid::Uuid>,
     pub redirect: String,
     #[serde(default)]
     pub auth_request_id: Option<String>,

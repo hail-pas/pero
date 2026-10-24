@@ -84,6 +84,7 @@ impl SocialUserInfo {
 }
 
 pub enum SocialLinkError {
+    ReauthenticationRequired,
     InvalidSession,
     ProviderAlreadyLinked,
     IdentityTaken,

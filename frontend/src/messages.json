@@ -97,5 +97,11 @@
   "digit": "密码需包含数字",
   "special": "密码需包含特殊字符",
   "provider_identity_namespace_immutable": "身份来源不可更换，请新建身份提供方",
-  "last_login_identity": "至少保留一种可用登录方式，无法解绑最后一个登录身份。"
+  "last_login_identity": "至少保留一种可用登录方式，无法解绑最后一个登录身份。",
+  "invalid_mfa_code": "验证码无效或已使用，请使用新的验证码。",
+  "mfa_not_enabled": "尚未启用验证器。",
+  "mfa_already_enabled": "验证器已启用。",
+  "reauth_required": "请先重新验证身份，再重试操作。",
+  "mfa_required": "管理员必须保留双重验证。",
+  "last_super_admin": "不能移除最后一个有效超级管理员。"
 }

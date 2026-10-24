@@ -4,11 +4,10 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::EntityTrait;
 
-use crate::config::SYSTEM_APP_CODE;
-use crate::db::entity::{apps, user_app_access, users};
-use crate::db::enums::{CommonStatus, UserStatus};
+use crate::db::entity::users;
+use crate::db::enums::UserStatus;
 use crate::state::app::AppState;
 use crate::state::session::SsoSession;
 use crate::web::dashboard::dto::DashboardLayout;
@@ -74,15 +73,29 @@ pub async fn require_admin_middleware(
         }
     };
 
-    match is_dashboard_admin(&state.db, user.id).await {
-        Ok(true) => {}
-        Ok(false) => return render_forbidden("forbidden"),
-        Err(error) => {
-            tracing::error!(%error, "Admin access lookup failed");
-            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
+    match crate::service::security::role(&state.db, user.id).await {
+        Ok(Some(role)) if role == "super_admin" => {}
+        Ok(_) => return render_forbidden("forbidden"),
+        Err(e) => return crate::web::util::dependency_error(e),
     }
-
+    match crate::service::security::mfa_enabled(&state.db, user.id).await {
+        Ok(true) => {}
+        Ok(false) => return Redirect::to("/account/security").into_response(),
+        Err(e) => return crate::web::util::dependency_error(e),
+    }
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let assurance = crate::db::helper::session::active_query(
+        time::OffsetDateTime::now_utc(),
+        state.config.sso.session_idle_ttl_seconds,
+    )
+    .filter(crate::db::entity::sso_sessions::Column::Id.eq(session.id))
+    .one(&state.db)
+    .await;
+    match assurance {
+        Ok(Some(s)) if s.mfa_verified_at.is_some() => {}
+        Ok(_) => return Redirect::to("/sso/mfa").into_response(),
+        Err(e) => return crate::web::util::dependency_error(e),
+    }
     req.extensions_mut().insert(AdminContext {
         session,
         user: user.clone(),
@@ -104,14 +117,7 @@ pub async fn is_dashboard_admin(
     db: &sea_orm::DatabaseConnection,
     user_id: uuid::Uuid,
 ) -> Result<bool, sea_orm::DbErr> {
-    Ok(user_app_access::Entity::find()
-        .filter(user_app_access::Column::UserId.eq(user_id))
-        .filter(user_app_access::Column::Status.eq(CommonStatus::Active))
-        .inner_join(apps::Entity)
-        .filter(apps::Column::Code.eq(SYSTEM_APP_CODE))
-        .one(db)
-        .await?
-        .is_some())
+    Ok(crate::service::security::role(db, user_id).await?.is_some())
 }
 
 fn render_forbidden(code: &str) -> Response {

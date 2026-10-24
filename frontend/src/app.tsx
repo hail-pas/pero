@@ -93,7 +93,7 @@ function Page() {
       follow(result.redirect);
       return;
     }
-    if (result.data && "secret" in result.data && result.data.secret) {
+    if (!result.view && result.data && "secret" in result.data && result.data.secret) {
       setModal({
         kind: "secret",
         title: t("请保存客户端密钥"),

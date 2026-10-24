@@ -39,7 +39,9 @@ impl DatabaseFixture {
         db.execute_unprepared(concat!(
             include_str!("../../migrations/001_init.sql"),
             "\n",
-            include_str!("../../migrations/002_audit_events.sql")
+            include_str!("../../migrations/002_audit_events.sql"),
+            "\n",
+            include_str!("../../migrations/003_mfa_admin_roles.sql")
         ))
         .await
         .unwrap();

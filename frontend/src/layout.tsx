@@ -80,6 +80,7 @@ export function Layout({
   const admin = pathname.startsWith("/dashboard");
   const links = admin
     ? ([
+        ["/dashboard/admins", t("管理员"), <PersonRounded />],
         ["/dashboard/apps", t("应用管理"), <AppsRounded />],
         [
           "/dashboard/users",
@@ -101,7 +102,7 @@ export function Layout({
           />,
         ],
         [
-          "/account/change-password",
+          "/account/security",
           t("账户安全"),
           <SvgColor
             src={`${import.meta.env.BASE_URL}resources/icons/navbar/ic-lock.svg`}

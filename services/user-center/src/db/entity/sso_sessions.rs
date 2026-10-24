@@ -12,6 +12,13 @@ pub struct Model {
     #[sea_orm(column_type = "Text", unique)]
     pub token_hash: String,
     pub user_id: Uuid,
+    #[serde(default)]
+    pub mfa_required: bool,
+    pub mfa_verified_at: Option<TimeDateTimeWithTimeZone>,
+    pub oidc_reauthenticated_at: Option<TimeDateTimeWithTimeZone>,
+    pub reauthenticated_at: Option<TimeDateTimeWithTimeZone>,
+    #[serde(default)]
+    pub recovery_pending: bool,
     pub identity_id: Option<Uuid>,
     pub provider_id: Option<Uuid>,
     #[sea_orm(column_type = "custom(\"inet\")", nullable)]

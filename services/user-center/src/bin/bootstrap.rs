@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, Set,
-    Statement,
+    Statement, TransactionTrait,
 };
 use serde::Deserialize;
 
@@ -278,10 +278,11 @@ async fn run_admin(
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_admin(cfg)?;
     let system_app = find_system_app(db).await?;
+    let txn = db.begin().await?;
 
     let existing = users::Entity::find()
         .filter(users::Column::Username.eq(&cfg.username))
-        .one(db)
+        .one(&txn)
         .await?;
 
     if existing.is_some() {
@@ -292,15 +293,15 @@ async fn run_admin(
     let user_id = uuid::Uuid::now_v7();
 
     let user = admin_user_model(user_id, cfg, now);
-    user.insert(db).await?;
+    user.insert(&txn).await?;
     tracing::info!(username = %cfg.username, "✓ 用户创建成功: {}", user_id);
 
-    let provider = user_center::db::helper::identity_provider::find_local_provider(db)
+    let provider = user_center::db::helper::identity_provider::find_local_provider(&txn)
         .await
         .map_err(|e| format!("未找到 local provider: {e}"))?;
 
     PasswordIdentityService::create(
-        db,
+        &txn,
         user_id,
         provider.id,
         cfg.username.trim().to_owned(),
@@ -310,24 +311,24 @@ async fn run_admin(
     .await?;
     tracing::info!("✓ 密码身份创建成功");
 
-    let existing_access = user_app_access::Entity::find()
-        .filter(user_app_access::Column::UserId.eq(user_id))
-        .filter(user_app_access::Column::AppId.eq(system_app.id))
-        .one(db)
-        .await?;
-    if existing_access.is_none() {
-        let access = user_app_access::ActiveModel {
-            user_id: Set(user_id),
-            app_id: Set(system_app.id),
-            status: Set(CommonStatus::Active),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        };
-        access.insert(db).await?;
-        tracing::info!(app_code = %system_app.code, "✓ 授予 user-center 系统应用访问权限");
+    user_app_access::ActiveModel {
+        user_id: Set(user_id),
+        app_id: Set(system_app.id),
+        status: Set(CommonStatus::Active),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
     }
+    .insert(&txn)
+    .await?;
 
+    user_center::service::security::execute(
+        &txn,
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+        vec![user_id.into()],
+    )
+    .await?;
+    txn.commit().await?;
     Ok(())
 }
 

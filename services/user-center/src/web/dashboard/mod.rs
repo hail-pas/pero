@@ -1,3 +1,4 @@
+pub mod admins;
 pub mod apps;
 pub mod audit;
 pub mod clients;
@@ -17,6 +18,7 @@ use guard::require_admin_middleware;
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/dashboard/admins", get(admins::list).post(admins::update))
         .route("/dashboard/audit", get(audit::list))
         .route(
             "/dashboard/events",

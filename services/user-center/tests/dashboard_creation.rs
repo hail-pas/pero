@@ -73,6 +73,7 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
         .create(user_id, None, None, None, None)
         .await
         .unwrap();
+    db.execute_unprepared("INSERT INTO admin_roles(user_id,role) SELECT id,'super_admin' FROM users; INSERT INTO user_mfa(user_id,secret_enc,enabled) SELECT id,pgp_sym_encrypt('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',current_setting('app.encrypt_key')),true FROM users; UPDATE sso_sessions SET mfa_required=true,mfa_verified_at=now()").await.unwrap();
     let (jar, csrf) = state
         .web_security()
         .ensure_csrf(CookieJar::new().add(Cookie::new("pero_sso", token)));

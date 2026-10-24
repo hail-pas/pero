@@ -129,6 +129,16 @@ impl SocialLoginService<'_> {
             .map_err(|error| SocialLinkError::Internal(error.to_string()))?;
         match proof {
             LinkProof::Password(verified) => {
+                if crate::service::security::mfa_enabled(&txn, user_id)
+                    .await
+                    .map_err(|e| SocialLinkError::Internal(e.to_string()))?
+                    || crate::service::security::role(&txn, user_id)
+                        .await
+                        .map_err(|e| SocialLinkError::Internal(e.to_string()))?
+                        .is_some()
+                {
+                    return Err(SocialLinkError::ReauthenticationRequired);
+                }
                 crate::service::password::PasswordIdentityService::ensure_unchanged(&txn, verified)
                     .await
                     .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
@@ -145,6 +155,16 @@ impl SocialLoginService<'_> {
                 .is_none()
                 {
                     return Err(SocialLinkError::InvalidSession);
+                }
+                if !crate::service::security::recent(
+                    &txn,
+                    session.id,
+                    self.sso_config.session_idle_ttl_seconds,
+                )
+                .await
+                .map_err(|e| SocialLinkError::Internal(e.to_string()))?
+                {
+                    return Err(SocialLinkError::ReauthenticationRequired);
                 }
             }
         }

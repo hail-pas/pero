@@ -3,6 +3,7 @@ pub mod contact;
 pub mod dto;
 pub mod login;
 pub mod logout;
+pub mod mfa;
 pub mod profile;
 pub mod security;
 
@@ -13,6 +14,10 @@ use crate::state::app::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/account/security", get(mfa::get).post(mfa::post))
+        .route("/account/reauth/{provider}", post(mfa::oidc))
+        .route("/account/reauth", get(mfa::get).post(mfa::post))
+        .route("/sso/mfa", get(mfa::get).post(mfa::post))
         .route("/account/sessions", get(security::sessions))
         .route("/account/sessions/revoke", post(security::revoke_sessions))
         .route("/account/activity", get(security::activity))

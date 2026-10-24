@@ -157,6 +157,44 @@ pub async fn callback(
         Err(_) => return Redirect::to("/sso/error?code=userinfo_failed").into_response(),
     };
 
+    if let Some(session_id) = cb_state.social_value.reauth_session {
+        let session = match crate::web::session::extract_browser_session(&state, &jar).await {
+            Ok(Some(s)) if s.id == session_id => s,
+            Ok(_) => return Redirect::to("/account/reauth").into_response(),
+            Err(e) => return e.into_response(),
+        };
+        let result = crate::service::mfa::record_oidc_reauthentication(
+            &state,
+            &session,
+            cb_state.provider.provider.id,
+            &user_info.sub,
+            user_info.authenticated_at,
+        )
+        .await;
+        if let Err(e) = result {
+            return match e {
+                crate::service::ManagementError::Invalid(code) => {
+                    let mut target = "/sso/error".to_string();
+                    pero_utils::encode::append_query_param(&mut target, "code", code);
+                    (jar, Redirect::to(&target)).into_response()
+                }
+                error => (jar, crate::web::util::dependency_error(error)).into_response(),
+            };
+        }
+        let mut target = if session.mfa_required && session.mfa_verified_at.is_none() {
+            "/account/security"
+        } else {
+            "/account/reauth"
+        }
+        .to_string();
+        pero_utils::encode::append_query_param(
+            &mut target,
+            "redirect",
+            &cb_state.social_value.redirect,
+        );
+        return (jar, Redirect::to(&target)).into_response();
+    }
+
     if let Some((user_id, session_id)) = cb_state.social_value.account_link {
         let session = match crate::web::session::extract_session(&state, &jar).await {
             Ok(Some(session)) if session.user_id == user_id && session.id == session_id => session,
@@ -171,6 +209,13 @@ pub async fn callback(
             .await;
         let target = match result {
             Ok(_) => "/account/identities",
+            Err(SocialLinkError::ReauthenticationRequired) => {
+                return (
+                    jar,
+                    Redirect::to("/account/reauth?redirect=%2Faccount%2Fidentities"),
+                )
+                    .into_response();
+            }
             Err(SocialLinkError::InvalidSession) => {
                 "/account/login?redirect=%2Faccount%2Fidentities"
             }
@@ -344,6 +389,9 @@ pub async fn link_post(
         .await
     {
         Ok(id) => id,
+        Err(SocialLinkError::ReauthenticationRequired) => {
+            return Redirect::to("/account/login?redirect=%2Faccount%2Fidentities").into_response();
+        }
         Err(SocialLinkError::InvalidSession) => {
             return render_social_link(&state, jar, &form.nonce, "unauthorized").await;
         }

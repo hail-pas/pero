@@ -46,6 +46,10 @@ export default defineConfig(({ command }) => ({
               [
                 "/",
                 "/login",
+                "/account/security",
+                "/account/reauth",
+                "/sso/mfa",
+                "/dashboard/admins",
                 "/account/login",
                 "/account/profile",
                 "/account/sessions",

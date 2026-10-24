@@ -4,7 +4,7 @@ use axum_extra::extract::cookie::CookieJar;
 
 use crate::db::enums::LoginEventType;
 use crate::state::app::AppState;
-use crate::web::session::extract_session;
+use crate::web::session::extract_browser_session;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct LogoutForm {
@@ -31,7 +31,7 @@ pub async fn logout(
         )
             .into_response();
     }
-    if let Some(session) = match extract_session(&state, &jar).await {
+    if let Some(session) = match extract_browser_session(&state, &jar).await {
         Ok(session) => session,
         Err(status) => return status.into_response(),
     } {

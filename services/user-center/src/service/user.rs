@@ -62,6 +62,10 @@ pub async fn set_status(
         return Err(ManagementError::Invalid("cannot_modify_self"));
     }
     let txn = db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    if status != UserStatus::Active {
+        super::admin::protect_last_super_admin(&txn, id).await?;
+    }
     let mut active: users::ActiveModel = lock_user(&txn, id).await?.into();
     active.status = Set(status.clone());
     active.updated_at = Set(time::OffsetDateTime::now_utc());

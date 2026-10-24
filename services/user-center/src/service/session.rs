@@ -186,6 +186,13 @@ impl<'a> SessionService<'a> {
         let token_hash = pero_utils::crypto::sha256_hex(&token);
         let expires_at = OffsetDateTime::now_utc()
             + time::Duration::seconds(self.config.session_ttl_seconds as i64);
+        // A local login proves fresh credentials. Upstream login proves their
+        // age only when a validated OIDC auth_time is present.
+        let credential_authenticated_at = if provider_id.is_none() {
+            Some(OffsetDateTime::now_utc())
+        } else {
+            authenticated_at
+        };
 
         let session = session_helper::create(
             &txn,
@@ -198,6 +205,7 @@ impl<'a> SessionService<'a> {
                 user_agent,
                 expires_at,
                 authenticated_at: authenticated_at.unwrap_or_else(OffsetDateTime::now_utc),
+                reauthenticated_at: credential_authenticated_at,
             },
         )
         .await
@@ -205,6 +213,10 @@ impl<'a> SessionService<'a> {
             AppError::internal("session_create_failed", "Failed to create session").with_source(e)
         })?;
 
+        use sea_orm::{DbBackend, Statement};
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE sso_sessions SET mfa_required = (EXISTS(SELECT 1 FROM user_mfa WHERE user_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM admin_roles WHERE user_id=$1)) WHERE id=$2",
+            [user_id.into(), session.id.into()])).await.map_err(db_error)?;
         txn.commit().await.map_err(db_error)?;
         Ok((token, session.id))
     }

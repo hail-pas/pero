@@ -117,6 +117,13 @@ export function Security({
                   {session.current && (
                     <Chip size="small" color="primary" label={t("当前设备")} />
                   )}
+                  {session.authentication_pending && (
+                    <Chip
+                      size="small"
+                      color="warning"
+                      label={t("待完成身份验证")}
+                    />
+                  )}
                   <Button
                     color="warning"
                     onClick={() =>

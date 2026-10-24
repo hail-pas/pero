@@ -106,6 +106,7 @@ impl<'a> SocialLoginService<'a> {
             }
         }
         let social_value = crate::cache::key::SocialStateValue {
+            reauth_session: None,
             redirect: pero_utils::redirect::safe_site_redirect(redirect, "/account/profile"),
             auth_request_id: auth_request_id.map(|id| id.to_string()),
             provider_id: provider.id.to_string(),

@@ -43,22 +43,33 @@ async function mock(page: Page, responses: Record<string, unknown> = {}) {
           ? "AccountLoginView"
           : url.pathname === "/account/profile"
             ? "ProfileView"
-            : url.pathname === "/account/change-password"
-              ? "ChangePasswordView"
-              : url.pathname === "/dashboard/users"
-                ? "UserListView"
-                : url.pathname === "/dashboard/providers"
-                  ? "ProviderListView"
-                  : url.pathname.endsWith("/new")
-                    ? "AppFormView"
-                    : url.pathname === "/dashboard/apps/app-1"
-                      ? "AppDetailView"
-                      : "AppListView";
+            : url.pathname === "/account/security"
+              ? "SecurityView"
+              : url.pathname === "/account/change-password"
+                ? "ChangePasswordView"
+                : url.pathname === "/dashboard/users"
+                  ? "UserListView"
+                  : url.pathname === "/dashboard/providers"
+                    ? "ProviderListView"
+                    : url.pathname.endsWith("/new")
+                      ? "AppFormView"
+                      : url.pathname === "/dashboard/apps/app-1"
+                        ? "AppDetailView"
+                        : "AppListView";
     await route.fulfill({
       json: responses[url.pathname] || {
         view,
         data: {
           layout,
+          enabled: false,
+          required: false,
+          pending: false,
+          recovery: false,
+          secret: "",
+          qr: "",
+          codes: [],
+          redirect: "/account/profile",
+          error: "",
           csrf_token: "csrf-test",
           user,
           has_password: true,
@@ -739,6 +750,17 @@ test("security pages preserve confirmations, ownership contracts and event filte
             ip: "127.0.0.1",
             user_agent: "Test browser",
             current: true,
+            authentication_pending: false,
+            created_at: timestamp,
+            last_seen_at: timestamp,
+            expires_at: timestamp,
+          },
+          {
+            id: "session-pending",
+            ip: "127.0.0.2",
+            user_agent: "Unverified browser",
+            current: false,
+            authentication_pending: true,
             created_at: timestamp,
             last_seen_at: timestamp,
             expires_at: timestamp,
@@ -817,6 +839,7 @@ test("security pages preserve confirmations, ownership contracts and event filte
   });
   await page.goto("/account/sessions");
   await expect(page.getByText("当前设备", { exact: true })).toBeVisible();
+  await expect(page.getByText("待完成身份验证", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "退出其他设备", exact: true }).click();
   const revoke = page.waitForRequest(
     (request) =>
@@ -863,4 +886,119 @@ test("security pages preserve confirmations, ownership contracts and event filte
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBeTruthy();
+});
+
+test("MFA challenge offers recovery without exposing enrollment secrets", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/sso/mfa": {
+      view: "SecurityView",
+      data: {
+        csrf_token: "csrf-test",
+        enabled: true,
+        required: false,
+        pending: true,
+        recovery: false,
+        has_password: true,
+        secret: "",
+        qr: "",
+        codes: [],
+        redirect: "/account/profile",
+        error: "invalid_mfa_code",
+        providers: [],
+      },
+    },
+  });
+  await page.goto("/sso/mfa");
+  await expect(
+    page.getByRole("button", { name: "使用恢复码", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("验证器验证码")).toBeVisible();
+  await expect(page.getByAltText("验证器二维码")).toHaveCount(0);
+  await page.evaluate(() => localStorage.setItem("pero.lang", "en"));
+  await page.reload();
+  await expect(
+    page.getByText("The code is invalid or already used. Enter a new code.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.evaluate(() => localStorage.setItem("pero.lang", "zh-CN"));
+  await page.reload();
+  await page.screenshot({ path: "test-results/mfa.png", fullPage: true });
+  let failSetup = true;
+  await page.route("**/account/security", async (route) => {
+    if (!route.request().headers().accept?.includes("application/json"))
+      return route.continue();
+    const setting = route.request().method() === "POST";
+    if (setting && failSetup) {
+      failSetup = false;
+      return route.fulfill({
+        status: 503,
+        json: { error: "service_unavailable" },
+      });
+    }
+    await route.fulfill({
+      json: {
+        view: "SecurityView",
+        data: {
+          layout,
+          csrf_token: "csrf-test",
+          enabled: false,
+          required: false,
+          pending: false,
+          recovery: false,
+          has_password: true,
+          secret: setting ? "ENROLLMENT-KEY" : "",
+          qr: "",
+          codes: [],
+          redirect: "/account/profile",
+          error: "",
+          providers: [],
+        },
+      },
+    });
+  });
+  await page.goto("/account/security");
+  await page.getByRole("button", { name: "开始设置", exact: true }).click();
+  await expect(
+    page.getByText("服务暂时不可用，请稍后再试", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "开始设置", exact: true }).click();
+  await expect(page.getByAltText("验证器二维码")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.route("**/account/reauth", async (route) => {
+    if (!route.request().headers().accept?.includes("application/json"))
+      return route.continue();
+    await route.fulfill({
+      json: {
+        view: "SecurityView",
+        data: {
+          layout,
+          csrf_token: "csrf-test",
+          enabled: false,
+          required: false,
+          pending: false,
+          recovery: false,
+          has_password: false,
+          secret: "",
+          qr: "",
+          codes: [],
+          redirect: "/account/security",
+          error: "",
+          providers: [],
+        },
+      },
+    });
+  });
+  await page.goto("/account/reauth");
+  await expect(
+    page.getByText(
+      "当前账号没有本地密码或可用的 OIDC 身份，暂不支持重新验证。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "保存更改", exact: true }),
+  ).toHaveCount(0);
 });

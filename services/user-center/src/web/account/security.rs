@@ -109,6 +109,7 @@ pub struct SessionRow {
     pub ip: Option<String>,
     pub user_agent: Option<String>,
     pub current: bool,
+    pub authentication_pending: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -124,7 +125,7 @@ pub async fn sessions(
     Query(query): Query<ListQuery>,
 ) -> Response {
     let page = query.page.unwrap_or(1).max(1);
-    let paginator = crate::db::helper::session::active_query(
+    let paginator = crate::db::helper::session::valid_query(
         time::OffsetDateTime::now_utc(),
         state.config.sso.session_idle_ttl_seconds,
     )
@@ -150,6 +151,8 @@ pub async fn sessions(
             ip: s.ip.map(|ip| ip.to_string()),
             user_agent: s.user_agent,
             current: s.id == account.session.id,
+            authentication_pending: s.recovery_pending
+                || s.mfa_required && s.mfa_verified_at.is_none(),
             created_at: s.created_at,
             last_seen_at: s.last_seen_at,
             expires_at: s.expires_at,

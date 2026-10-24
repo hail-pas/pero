@@ -1,3 +1,4 @@
+import { SecurityCenter, AdminRoles } from "./security-center";
 import { Alert } from "@mui/material";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { ViewEnvelope } from "./contracts";
@@ -27,6 +28,10 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "SecurityView":
+      return <SecurityCenter data={data} mutate={mutate} />;
+    case "AdminRolesView":
+      return <AdminRoles data={data} mutate={mutate} />;
     case "SessionListView":
     case "ActivityListView":
     case "AuthorizationListView":

@@ -16,6 +16,7 @@ pub struct CreateParams {
     pub user_agent: Option<String>,
     pub expires_at: OffsetDateTime,
     pub authenticated_at: OffsetDateTime,
+    pub reauthenticated_at: Option<OffsetDateTime>,
 }
 
 pub async fn create<C>(db: &C, params: CreateParams) -> Result<sso_sessions::Model, sea_orm::DbErr>
@@ -33,10 +34,12 @@ where
         user_agent: Set(params.user_agent),
         created_at: Set(now),
         authenticated_at: Set(params.authenticated_at),
+        reauthenticated_at: Set(params.reauthenticated_at),
         last_seen_at: Set(now),
         expires_at: Set(params.expires_at),
         revoked_at: Set(None),
         revoke_reason: Set(None),
+        ..Default::default()
     };
     model.insert(db).await
 }
@@ -102,6 +105,20 @@ pub fn active_query(
     now: OffsetDateTime,
     idle_ttl_seconds: u64,
 ) -> sea_orm::Select<sso_sessions::Entity> {
+    valid_query(now, idle_ttl_seconds)
+        .filter(
+            sea_orm::Condition::any()
+                .add(sso_sessions::Column::MfaRequired.eq(false))
+                .add(sso_sessions::Column::MfaVerifiedAt.is_not_null()),
+        )
+        .filter(sso_sessions::Column::RecoveryPending.eq(false))
+}
+
+/// Session lifetime checks also apply to incomplete MFA and recovery sessions.
+pub fn valid_query(
+    now: OffsetDateTime,
+    idle_ttl_seconds: u64,
+) -> sea_orm::Select<sso_sessions::Entity> {
     sso_sessions::Entity::find()
         .filter(sso_sessions::Column::RevokedAt.is_null())
         .filter(sso_sessions::Column::ExpiresAt.gt(now))
@@ -125,4 +142,25 @@ pub async fn lock_active<C: ConnectionTrait>(
         .lock_shared()
         .one(db)
         .await
+}
+
+/// Rotate the browser credential without extending the original absolute TTL.
+/// Caller holds the user and session locks; factor changes are already applied.
+pub async fn rotate<C: ConnectionTrait>(
+    db: &C,
+    id: Uuid,
+    token_hash: String,
+) -> Result<Uuid, sea_orm::DbErr> {
+    let row = sso_sessions::Entity::find_by_id(id)
+        .one(db)
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("session not found".into()))?;
+    let next_id = Uuid::now_v7();
+    let mut next: sso_sessions::ActiveModel = row.into();
+    next.id = Set(next_id);
+    next.token_hash = Set(token_hash);
+    next.last_seen_at = Set(OffsetDateTime::now_utc());
+    next.oidc_reauthenticated_at = Set(None);
+    next.insert(db).await?;
+    Ok(next_id)
 }

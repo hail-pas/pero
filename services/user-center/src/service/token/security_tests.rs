@@ -2342,6 +2342,20 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         avatar_url: None,
         profile_extra: serde_json::json!({}),
     };
+    sql(db,"UPDATE sso_sessions SET authenticated_at=now()-interval '6 minutes',reauthenticated_at=NULL WHERE id=$1",vec![account_session.id.into()]).await;
+    assert!(matches!(
+        state
+            .social_service()
+            .bind_social_identity(&account_session, provider, &info)
+            .await,
+        Err(crate::service::social::SocialLinkError::ReauthenticationRequired)
+    ));
+    sql(
+        db,
+        "UPDATE sso_sessions SET authenticated_at=now(),reauthenticated_at=now() WHERE id=$1",
+        vec![account_session.id.into()],
+    )
+    .await;
     let identity = state
         .social_service()
         .bind_social_identity(&account_session, provider, &info)
@@ -2360,6 +2374,16 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         .create_social(fixture.user, identity, provider, None, None, None)
         .await
         .unwrap();
+    assert!(
+        !crate::service::security::recent(
+            db,
+            linked_session,
+            state.config.sso.session_idle_ttl_seconds
+        )
+        .await
+        .unwrap(),
+        "A new OAuth callback without auth_time must not establish recent credential authentication"
+    );
     let path = format!("/account/identities/{identity}/unlink");
     let (_, denied) = request(
         &app,
@@ -2516,6 +2540,19 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         403
     );
     sql(db,"INSERT INTO user_app_access(user_id,app_id) SELECT $1,id FROM apps WHERE code='user-center'",vec![fixture.user.into()]).await;
+    sql(
+        db,
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+        vec![fixture.user.into()],
+    )
+    .await;
+    sql(db,"INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',current_setting('app.encrypt_key')),true)",vec![fixture.user.into()]).await;
+    sql(
+        db,
+        "UPDATE sso_sessions SET mfa_required=true,mfa_verified_at=now() WHERE id=$1",
+        vec![current.into()],
+    )
+    .await;
     let fields = vec![
         ("csrf_token", csrf.clone()),
         ("code", "audited-app".into()),

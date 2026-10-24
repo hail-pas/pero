@@ -6,7 +6,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_que
 use uuid::Uuid;
 
 use crate::db::entity::identities;
-use crate::db::enums::{IdentityKind, LoginEventType};
+use crate::db::enums::LoginEventType;
 
 pub enum PasswordLoginError {
     RateLimited,
@@ -93,11 +93,7 @@ impl<'a> LoginService<'a> {
         &self,
         user_id: Uuid,
     ) -> Result<Option<identities::Model>, PasswordLoginError> {
-        identities::Entity::find()
-            .filter(identities::Column::UserId.eq(user_id))
-            .filter(identities::Column::Kind.eq(IdentityKind::Password))
-            .filter(identities::Column::UnboundAt.is_null())
-            .one(self.db)
+        super::password::PasswordIdentityService::find(self.db, user_id)
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "Password identity lookup failed");

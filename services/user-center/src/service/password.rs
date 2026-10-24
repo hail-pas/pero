@@ -11,6 +11,18 @@ use crate::db::enums::IdentityKind;
 pub struct PasswordIdentityService;
 
 impl PasswordIdentityService {
+    pub async fn find<C: ConnectionTrait>(
+        db: &C,
+        user_id: Uuid,
+    ) -> Result<Option<identities::Model>, DbErr> {
+        identities::Entity::find()
+            .filter(identities::Column::UserId.eq(user_id))
+            .filter(identities::Column::Kind.eq(IdentityKind::Password))
+            .filter(identities::Column::UnboundAt.is_null())
+            .one(db)
+            .await
+    }
+
     pub async fn hash_password(
         password: &str,
     ) -> Result<pero_utils::crypto::password::PasswordHashResult, pero_error::AppError> {

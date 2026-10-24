@@ -268,6 +268,24 @@ async fn authorization_and_recovery_regressions() {
             "{location}"
         );
     }
+    // Incomplete MFA and recovery are unauthenticated for silent authorization;
+    // the protocol must return login_required to the validated client, never UI.
+    for recovery in [false, true] {
+        sql(&db, "UPDATE sso_sessions SET mfa_required=true,mfa_verified_at=NULL,recovery_pending=$2 WHERE token_hash=$1", vec![pero_utils::crypto::sha256_hex(&raw_old).into(), recovery.into()]).await;
+        let response=app.clone().oneshot(Request::builder().uri("/oauth2/authorize?client_id=admin-client&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=none&state=mfa-silent").header("cookie",format!("pero_sso={raw_old}")).body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        let location = response.headers()["location"].to_str().unwrap();
+        assert!(
+            location.starts_with("https://client.example.test/callback?error=login_required")
+                && location.contains("state=mfa-silent"),
+            "{location}"
+        );
+    }
+    sql(
+        &db,
+        "UPDATE sso_sessions SET mfa_required=false,recovery_pending=false WHERE token_hash=$1",
+        vec![pero_utils::crypto::sha256_hex(&raw_old).into()],
+    )
+    .await;
     let selection=app.clone().oneshot(Request::builder().uri("/oauth2/authorize?client_id=admin-client&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=select_account").header("cookie",format!("pero_sso={raw_old}")).body(axum::body::Body::empty()).unwrap()).await.unwrap();
     assert!(
         selection.headers()["location"]

@@ -8,6 +8,8 @@ export function errorText(code: string) {
   const maximum = code.match(/^password must be at most (\d+) characters$/);
   if (minimum) return t("密码长度至少 {{0}} 个字符", { "0": minimum[1] });
   if (maximum) return t("密码长度不能超过 {{0}} 个字符", { "0": maximum[1] });
+  const message = dictionary[code];
+  if (message) return t(message);
   const policy: Record<string, string> = {
     "password must contain an uppercase letter": t("密码需包含大写字母"),
     "password must contain a lowercase letter": t("密码需包含小写字母"),
@@ -16,9 +18,7 @@ export function errorText(code: string) {
     forbidden: t("你没有管理权限。"),
     service_unavailable: t("服务暂时不可用，请稍后重试。"),
   };
-  return (
-    dictionary[code] || policy[code] || t("操作未完成（{{0}}）", { "0": code })
-  );
+  return policy[code] || t("操作未完成（{{0}}）", { "0": code });
 }
 
 export async function request(
