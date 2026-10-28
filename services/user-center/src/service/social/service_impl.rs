@@ -19,7 +19,6 @@ impl<'a> SocialLoginService<'a> {
         sso_config: &'a crate::config::SsoConfig,
         oauth2_config: &'a crate::config::OAuth2Config,
         jwks: &'a super::JwksCache,
-        notification: &'a crate::config::NotificationConfig,
     ) -> Self {
         Self {
             db,
@@ -28,7 +27,6 @@ impl<'a> SocialLoginService<'a> {
             sso_config,
             oauth2_config,
             jwks,
-            notification,
         }
     }
 

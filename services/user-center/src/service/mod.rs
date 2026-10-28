@@ -5,6 +5,7 @@ pub mod admin;
 pub mod app;
 pub mod client;
 pub mod contact;
+pub mod enrollment;
 pub mod keys;
 pub mod login;
 pub mod logout;

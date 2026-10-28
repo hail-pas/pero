@@ -65,6 +65,7 @@ pub async fn set_status(
     super::admin::lock_policy(&txn).await?;
     if status != UserStatus::Active {
         super::admin::protect_last_super_admin(&txn, id).await?;
+        super::enrollment::invalidate_sponsor(&txn, id).await?;
     }
     let mut active: users::ActiveModel = lock_user(&txn, id).await?.into();
     active.status = Set(status.clone());
@@ -79,69 +80,6 @@ pub async fn set_status(
         )
         .await?;
     }
-    txn.commit().await?;
-    Ok(())
-}
-
-pub struct UserCreate {
-    pub username: String,
-    pub password: String,
-    pub profile: UserUpdate,
-}
-
-pub async fn create(
-    db: &DatabaseConnection,
-    policy: &crate::config::PasswordConfig,
-    input: UserCreate,
-) -> Result<(), ManagementError> {
-    let username = input.username.trim();
-    if username.is_empty() || input.password.is_empty() {
-        return Err(ManagementError::Invalid("username_and_password_required"));
-    }
-    crate::db::helper::user::validate_username(username)
-        .map_err(|_| ManagementError::Invalid("username_chars_invalid"))?;
-    policy
-        .validate_password(&input.password)
-        .map_err(ManagementError::Validation)?;
-    pero_utils::redirect::validate_optional_public_http_url(input.profile.avatar_url.as_deref())
-        .map_err(|_| ManagementError::Invalid("invalid_url"))?;
-    if users::Entity::find()
-        .filter(users::Column::Username.eq(username))
-        .one(db)
-        .await?
-        .is_some()
-    {
-        return Err(ManagementError::Invalid("username_exists"));
-    }
-    let hash = PasswordIdentityService::hash_password(&input.password).await?;
-    let txn = db.begin().await?;
-    let provider = crate::db::helper::identity_provider::find_local_provider(&txn).await?;
-    let now = time::OffsetDateTime::now_utc();
-    let user = users::ActiveModel {
-        id: Set(uuid::Uuid::now_v7()),
-        username: Set(username.to_owned()),
-        email: Set(input.profile.email),
-        phone: Set(input.profile.phone),
-        nickname: Set(input.profile.nickname),
-        avatar_url: Set(input.profile.avatar_url),
-        status: Set(UserStatus::Active),
-        created_at: Set(now),
-        updated_at: Set(now),
-        deleted_at: Set(None),
-        email_verified_at: Set(None),
-        phone_verified_at: Set(None),
-    }
-    .insert(&txn)
-    .await?;
-    PasswordIdentityService::create_hashed(
-        &txn,
-        user.id,
-        provider.id,
-        user.id.to_string(),
-        hash,
-        now,
-    )
-    .await?;
     txn.commit().await?;
     Ok(())
 }

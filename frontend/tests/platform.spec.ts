@@ -307,7 +307,12 @@ test("all remaining auth and recovery views render with their server context", a
 }) => {
   await mock(page);
   const cases: [string, string, string, object][] = [
-    ["/sso/register", "RegisterView", "创建你的账户", {}],
+    [
+      "/sso/register",
+      "EnrollmentView",
+      "注册与应用准入",
+      { mode: "self_service", status: "", app: null, sent: false },
+    ],
     ["/sso/forgot-password", "ForgotPasswordView", "找回密码", {}],
     [
       "/sso/reset-password?token=test",
@@ -571,8 +576,14 @@ test("application type filtering and returning from registration preserve their 
 }) => {
   await mock(page, {
     "/sso/register": {
-      view: "RegisterView",
-      data: { csrf_token: "csrf-test", error: "" },
+      view: "EnrollmentView",
+      data: {
+        csrf_token: "csrf-test",
+        mode: "self_service",
+        status: "",
+        app: null,
+        sent: false,
+      },
     },
     "/sso/login": {
       view: "LoginView",
@@ -1062,4 +1073,64 @@ test("notification operations filter records and confirm safe retries", async ({
     .getByRole("button", { name: "确认", exact: true })
     .click();
   expect((await sent).postData()).toContain("csrf_token=csrf-test");
+});
+
+test("admission pages preserve application policy and explicit account closure confirmation", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/dashboard/registration": {
+      view: "EnrollmentAdminView",
+      data: {
+        layout,
+        csrf_token: "csrf-test",
+        policy: {
+          id: "app-1",
+          app_id: "app-1",
+          mode: "self_service",
+          domains: ["example.com"],
+          approval_required: true,
+          emergency_stop: false,
+          version: 2,
+        },
+        inherited: false,
+        rows: [],
+      },
+    },
+    "/account/applications": {
+      view: "AdmissionView",
+      data: {
+        layout,
+        csrf_token: "csrf-test",
+        username: "lin",
+        rows: [{ id: "app-1", name: "内部应用", status: "active" }],
+      },
+    },
+  });
+  await page.goto("/dashboard/registration?app=app-1");
+  await expect(page.getByLabel("允许的邮箱域名")).toHaveValue("example.com");
+  const saved = page.waitForRequest(
+    (r) =>
+      r.method() === "POST" &&
+      new URL(r.url()).pathname === "/dashboard/registration",
+  );
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  const values = new URLSearchParams((await saved).postData()!);
+  expect(values.get("app")).toBe("app-1");
+  expect(values.get("version")).toBe("2");
+  await page.goto("/account/applications");
+  await page.getByLabel("输入当前用户名确认").fill("lin");
+  await page.getByRole("button", { name: "注销账户", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByText("确认删除个人资料并撤销全部访问资格？"),
+  ).toBeVisible();
+  const close = page.waitForRequest(
+    (r) =>
+      r.method() === "POST" && new URL(r.url()).pathname === "/account/close",
+  );
+  await dialog.getByRole("button", { name: "确认", exact: true }).click();
+  expect(
+    new URLSearchParams((await close).postData()!).get("confirmation"),
+  ).toBe("lin");
 });

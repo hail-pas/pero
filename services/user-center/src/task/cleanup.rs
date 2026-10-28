@@ -63,5 +63,6 @@ async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
         "notifications",
         crate::db::helper::cleanup::clean_notifications
     );
+    do_clean!("enrollments", crate::db::helper::cleanup::clean_enrollments);
     Ok(())
 }

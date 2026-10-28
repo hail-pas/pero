@@ -79,6 +79,9 @@ pub async fn update_role(
     } else {
         sec::execute(&txn,"INSERT INTO admin_roles(user_id,role) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET role=EXCLUDED.role",vec![user.id.into(),role.into()]).await?;
     }
+    if role != "super_admin" {
+        super::enrollment::invalidate_sponsor(&txn, user.id).await?;
+    }
     super::session::SessionService::revoke_all_login_state_for_user_in_db(
         &txn,
         user.id,

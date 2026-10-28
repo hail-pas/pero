@@ -58,7 +58,8 @@ pub async fn gate(
             && (path.starts_with("/dashboard/")
                 || matches!(
                     path,
-                    "/account/profile/change-email"
+                    "/account/close"
+                        | "/account/profile/change-email"
                         | "/account/profile/change-phone"
                         | "/account/profile/verify-contact"
                         | "/account/change-password"

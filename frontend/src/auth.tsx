@@ -35,32 +35,29 @@ export function Auth({
   const [identifierType, setIdentifierType] = useState("username");
   const [actionFailure, setActionFailure] = useState("");
   const login = view === "LoginView" || view === "AccountLoginView",
-    register = view === "RegisterView",
     forgot = view === "ForgotPasswordView",
     reset = view === "ResetPasswordView";
   const done = view === "EndSessionView",
     error = ["ErrorView", "ForbiddenView"].includes(view);
   let title = login
     ? t("欢迎回来")
-    : register
-      ? t("创建你的账户")
-      : forgot
-        ? t("找回密码")
-        : reset
-          ? t("设置新密码")
-          : view === "ConsentView"
-            ? t("授权应用访问")
-            : view === "SocialLinkView"
-              ? t("关联已有账户")
-              : view === "ConfirmLogoutView"
-                ? t("确认退出登录")
-                : view === "AdminLoginView"
-                  ? t("登录应用")
-                  : done
-                    ? t("你已安全退出")
-                    : t("暂时无法访问");
+    : forgot
+      ? t("找回密码")
+      : reset
+        ? t("设置新密码")
+        : view === "ConsentView"
+          ? t("授权应用访问")
+          : view === "SocialLinkView"
+            ? t("关联已有账户")
+            : view === "ConfirmLogoutView"
+              ? t("确认退出登录")
+              : view === "AdminLoginView"
+                ? t("登录应用")
+                : done
+                  ? t("你已安全退出")
+                  : t("暂时无法访问");
   let content: React.ReactNode;
-  if (login || register || forgot || reset) {
+  if (login || forgot || reset) {
     let fields: Field[] = login
       ? [
           {
@@ -81,41 +78,28 @@ export function Auth({
             autoComplete: "current-password",
           },
         ]
-      : register
+      : forgot
         ? [
-            { name: "username", label: t("用户名"), required: true },
-            { name: "nickname", label: t("昵称") },
-            { name: "email", label: t("邮箱"), type: "email" },
-            { name: "phone", label: t("手机号") },
             {
-              name: "password",
-              label: t("密码"),
-              type: "password",
+              name: "identifier",
+              label: t("邮箱或完整手机号"),
               required: true,
             },
           ]
-        : forgot
-          ? [
-              {
-                name: "identifier",
-                label: t("邮箱或完整手机号"),
-                required: true,
-              },
-            ]
-          : [
-              {
-                name: "new_password",
-                label: t("新密码"),
-                type: "password",
-                required: true,
-              },
-              {
-                name: "confirm_password",
-                label: t("确认新密码"),
-                type: "password",
-                required: true,
-              },
-            ];
+        : [
+            {
+              name: "new_password",
+              label: t("新密码"),
+              type: "password",
+              required: true,
+            },
+            {
+              name: "confirm_password",
+              label: t("确认新密码"),
+              type: "password",
+              required: true,
+            },
+          ];
     content = (
       <>
         {data.error && (
@@ -165,13 +149,7 @@ export function Auth({
             });
           }}
           label={
-            login
-              ? t("登录")
-              : register
-                ? t("创建账户")
-                : forgot
-                  ? t("发送恢复通知")
-                  : t("保存新密码")
+            login ? t("登录") : forgot ? t("发送恢复通知") : t("保存新密码")
           }
         />
         <Stack direction="row" sx={{ justifyContent: "space-between", mt: 3 }}>

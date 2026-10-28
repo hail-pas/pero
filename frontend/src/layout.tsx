@@ -91,6 +91,7 @@ export function Layout({
         ],
         ["/dashboard/providers", t("身份提供方"), <FingerprintRounded />],
         ["/dashboard/events", t("登录记录"), <HistoryRounded />],
+        ["/dashboard/registration", t("注册与邀请"), <PersonRounded />],
         ["/dashboard/notifications", t("通知投递"), <HistoryRounded />],
         ["/dashboard/audit", t("操作审计"), <FactCheckRounded />],
       ] as const)
@@ -111,6 +112,7 @@ export function Layout({
         ],
         ["/account/sessions", t("登录设备"), <DevicesRounded />],
         ["/account/activity", t("登录记录"), <HistoryRounded />],
+        ["/account/applications", t("应用准入与注销"), <AppsRounded />],
         ["/account/authorizations", t("已授权应用"), <AppsRounded />],
         ["/account/identities", t("关联账号"), <LinkRounded />],
       ] as const);

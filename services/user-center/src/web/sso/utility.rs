@@ -1,8 +1,6 @@
 use axum::extract::State;
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
-use serde::Deserialize;
-use serde::de::Deserializer;
 
 use crate::service::provider;
 use crate::state::app::AppState;
@@ -65,12 +63,4 @@ pub(crate) async fn find_enabled_social_providers(
             name: provider.name,
         })
         .collect())
-}
-
-pub(crate) fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt = Option::<String>::deserialize(deserializer)?;
-    Ok(pero_utils::string::normalize_optional_string(opt))
 }

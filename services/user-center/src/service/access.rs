@@ -1,13 +1,11 @@
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QuerySelect, Set, TransactionTrait, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QuerySelect, Set, TransactionTrait, sea_query::Expr,
 };
 use uuid::Uuid;
 
 use super::ManagementError;
-use crate::db::entity::{
-    apps as apps_entity, authorization_requests as ar, user_app_access as uaa, users,
-};
+use crate::db::entity::{apps as apps_entity, user_app_access as uaa, users};
 use crate::db::enums::CommonStatus;
 
 async fn lock_app_for_access_change(
@@ -81,44 +79,6 @@ pub async fn revoke_app(
     )
     .await?;
     txn.commit().await?;
-    Ok(())
-}
-
-pub async fn insert_auto_access(
-    txn: &DatabaseTransaction,
-    user_id: Uuid,
-    auth_request_id: Option<Uuid>,
-    now: time::OffsetDateTime,
-) -> Result<(), sea_orm::DbErr> {
-    let Some(auth_req_id) = auth_request_id else {
-        return Ok(());
-    };
-    let Some(auth_req) = ar::Entity::find_by_id(auth_req_id).one(txn).await? else {
-        return Ok(());
-    };
-    let Some(app) = apps_entity::Entity::find_by_id(auth_req.app_id)
-        .one(txn)
-        .await?
-    else {
-        return Ok(());
-    };
-    if !app.auto_access {
-        return Ok(());
-    }
-
-    let access = uaa::ActiveModel {
-        user_id: Set(user_id),
-        app_id: Set(app.id),
-        status: Set(CommonStatus::Active),
-        created_at: Set(now),
-        updated_at: Set(now),
-        ..Default::default()
-    };
-    if let Err(e) = access.insert(txn).await
-        && !crate::db::error::is_unique_violation(&e)
-    {
-        return Err(e);
-    }
     Ok(())
 }
 

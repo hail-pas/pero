@@ -82,6 +82,7 @@ pub async fn new_form(
 pub async fn create(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: AdminContext,
     axum::Form(form): axum::Form<UserFormData>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
@@ -89,19 +90,11 @@ pub async fn create(
     }
 
     util::management_response(
-        crate::service::user::create(
-            &state.db,
-            &state.config.password,
-            crate::service::user::UserCreate {
-                username: form.username,
-                password: form.password,
-                profile: crate::service::user::UserUpdate {
-                    email: util::empty_or_opt(&form.email),
-                    phone: util::empty_or_opt(&form.phone),
-                    nickname: util::empty_or_opt(&form.nickname),
-                    avatar_url: util::empty_or_opt(&form.avatar_url),
-                },
-            },
+        crate::service::enrollment::start(
+            &state,
+            &form.email,
+            None,
+            Some((&admin.session, false, "")),
         )
         .await,
     )
@@ -221,7 +214,6 @@ pub async fn edit_form(
             phone: user.phone.unwrap_or_default(),
             nickname: user.nickname.unwrap_or_default(),
             avatar_url: user.avatar_url.unwrap_or_default(),
-            password: String::new(),
         },
         error: String::new(),
     };

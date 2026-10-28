@@ -306,33 +306,6 @@ async fn formatted_identifiers_keep_their_database_identity() {
         .unwrap();
     assert_eq!(tokens.len(), 4);
     assert!(tokens.iter().all(|token| token.user_id == fixture.user));
-    let account = AccountService::new(&state);
-    let registration = |username: &str| crate::service::account::RegisterUserParams {
-        username: username.into(),
-        email: None,
-        phone: None,
-        nickname: None,
-        password: "OriginalPass123!".into(),
-        auth_request_id: None,
-    };
-    assert!(
-        account
-            .register_user(registration(" trimmed_registration "))
-            .await
-            .is_ok()
-    );
-    let registered =
-        crate::db::helper::user::find_by_identifier(&state.db, "username", "trimmed_registration")
-            .await
-            .unwrap()
-            .unwrap();
-    assert_eq!(registered.username, "trimmed_registration");
-    assert!(matches!(
-        account
-            .register_user(registration("  trimmed_registration  "))
-            .await,
-        Err(crate::service::account::RegisterUserError::UsernameTaken)
-    ));
     fixture.cleanup().await;
 }
 
@@ -2663,7 +2636,6 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         ("description", "".into()),
         ("homepage_url", "".into()),
         ("logo_url", "".into()),
-        ("auto_access", "false".into()),
     ];
     assert_eq!(
         request(&app, &cookies, "/dashboard/apps/new", Some(fields.clone()))
@@ -2794,6 +2766,310 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
             .unwrap()
             .is_none(),
         "revoked session proof cannot restore consent"
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn enrollment_policy_proof_and_membership_lifecycle() {
+    use crate::db::entity::{user_app_access, users};
+    use crate::service::enrollment;
+    let fixture = SecurityFixture::new().await;
+    let state = &fixture.state;
+    let db = &state.db;
+    let app = fixture.app;
+    // Explicit app policy permits enrollment while the platform stays invite-only.
+    sql(db,"INSERT INTO registration_policies(id,app_id,mode,approval_required) VALUES($1,$1,'self_service',false)",vec![app.into()]).await;
+    assert_eq!(
+        enrollment::policy(db, None).await.unwrap().mode,
+        "invite_only"
+    );
+    assert_eq!(
+        enrollment::policy(db, Some(app)).await.unwrap().mode,
+        "self_service"
+    );
+    let raw = pero_utils::crypto::generate_token();
+    let id = Uuid::now_v7();
+    sql(db,"INSERT INTO enrollments(id,app_id,email,token_hash,expires_at) VALUES($1,$2,'new@example.com',$3,now()+interval '1 hour')",vec![id.into(),app.into(),pero_utils::crypto::sha256_hex(&raw).into()]).await;
+    assert!(
+        enrollment::finalize(state, &raw, "new_user", "ValidPass123!", None, None)
+            .await
+            .is_err()
+    );
+    assert!(
+        crate::db::helper::user::find_by_identifier(db, "email", "new@example.com")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    enrollment::verify(state, &raw).await.unwrap();
+    enrollment::finalize(state, &raw, "new_user", "ValidPass123!", None, None)
+        .await
+        .unwrap();
+    let user = crate::db::helper::user::find_by_identifier(db, "email", "new@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(user.email_verified_at.is_some());
+    assert!(
+        user_app_access::Entity::find_by_id((user.id, app))
+            .one(db)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        enrollment::finalize(state, &raw, "other", "ValidPass123!", None, None)
+            .await
+            .is_err()
+    );
+    let (cookie, _) = state
+        .session_service()
+        .create(user.id, None, None, None, None)
+        .await
+        .unwrap();
+    let session = state
+        .session_service()
+        .validate(&cookie)
+        .await
+        .unwrap()
+        .unwrap();
+    crate::service::account_security::leave_app(state, &session, app)
+        .await
+        .unwrap();
+    assert_eq!(
+        user_app_access::Entity::find_by_id((user.id, app))
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        crate::db::enums::CommonStatus::Disabled
+    );
+    assert!(
+        crate::service::account_security::close_account(state, &session, "wrong")
+            .await
+            .is_err()
+    );
+    crate::service::account_security::close_account(state, &session, "new_user")
+        .await
+        .unwrap();
+    let deleted = users::Entity::find_by_id(user.id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(deleted.deleted_at.is_some() && deleted.email.is_none());
+    assert!(
+        state
+            .session_service()
+            .validate(&cookie)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn enrollment_approval_and_emergency_stop() {
+    use crate::service::enrollment;
+    let fixture = SecurityFixture::new().await;
+    let state = &fixture.state;
+    let db = &state.db;
+    sql(
+        db,
+        "UPDATE registration_policies SET mode='self_service'",
+        vec![],
+    )
+    .await;
+    let raw = pero_utils::crypto::generate_token();
+    let id = Uuid::now_v7();
+    sql(db,"INSERT INTO enrollments(id,email,token_hash,expires_at) VALUES($1,'pending@example.com',$2,now()+interval '1 hour')",vec![id.into(),pero_utils::crypto::sha256_hex(&raw).into()]).await;
+    enrollment::verify(state, &raw).await.unwrap();
+    assert_eq!(
+        enrollment::lookup(db, &raw).await.unwrap().status,
+        "pending_approval"
+    );
+    assert!(
+        enrollment::finalize(state, &raw, "pending_user", "ValidPass123!", None, None)
+            .await
+            .is_err()
+    );
+    sql(
+        db,
+        "UPDATE registration_policies SET emergency_stop=true",
+        vec![],
+    )
+    .await;
+    assert!(enrollment::verify(state, &raw).await.is_err());
+    sql(
+        db,
+        "UPDATE enrollments SET expires_at=now()-interval '1 second' WHERE id=$1",
+        vec![id.into()],
+    )
+    .await;
+    assert!(enrollment::lookup(db, &raw).await.is_err());
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL and local Redis database 15"]
+async fn enrollment_invitation_delivery_rotation_and_acceptance() {
+    use crate::service::enrollment;
+    use sea_orm::FromQueryResult;
+    let fixture = SecurityFixture::new().await;
+    let mut state = fixture.state.clone();
+    let mut config = (*state.config).clone();
+    config.redis.url = "redis://127.0.0.1:6379/15".parse().unwrap();
+    config.notification.endpoint = "https://notify.example.test".into();
+    state.cache =
+        std::sync::Arc::new(pero_cache_redis::RedisCacheStore::from_config(&config.redis).unwrap());
+    state.config = std::sync::Arc::new(config);
+    let db = &state.db;
+    let (raw, session_id) = state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    sql(
+        db,
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+        vec![fixture.user.into()],
+    )
+    .await;
+    sql(db,"UPDATE sso_sessions SET reauthenticated_at=now(),mfa_required=true,mfa_verified_at=now() WHERE id=$1",vec![session_id.into()]).await;
+    let actor = state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let address = format!("invite-{}@example.com", Uuid::now_v7().simple());
+    enrollment::start(
+        &state,
+        &address,
+        Some(fixture.app),
+        Some((&actor, false, "Team invitation")),
+    )
+    .await
+    .unwrap();
+    let rows = enrollment::Enrollment::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT * FROM enrollments WHERE email=$1",
+        [address.clone().into()],
+    ))
+    .all(db)
+    .await
+    .unwrap();
+    let id = rows[0].id;
+    async fn emailed_token(db: &sea_orm::DatabaseConnection, id: Uuid) -> String {
+        let row=db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT pgp_sym_decrypt(payload_enc,current_setting('app.encrypt_key')) AS payload FROM notification_outbox WHERE enrollment_id=$1 AND user_id IS NULL",[id.into()])).await.unwrap().unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_str(&row.try_get::<String>("", "payload").unwrap()).unwrap();
+        url::Url::parse(payload["link"].as_str().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(k, _)| k == "token")
+            .unwrap()
+            .1
+            .into_owned()
+    }
+    let first = emailed_token(db, id).await;
+    sql(
+        db,
+        "UPDATE enrollments SET last_sent_at=now()-interval '2 minutes' WHERE id=$1",
+        vec![id.into()],
+    )
+    .await;
+    enrollment::manage(&state, &actor, id, "resend", "")
+        .await
+        .unwrap();
+    let second = emailed_token(db, id).await;
+    assert_ne!(first, second);
+    assert!(enrollment::lookup(db, &first).await.is_err());
+    enrollment::verify(&state, &second).await.unwrap();
+    enrollment::finalize(&state, &second, "invited_user", "ValidPass123!", None, None)
+        .await
+        .unwrap();
+    let user = crate::db::helper::user::find_by_identifier(db, "email", &address)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        crate::service::access::active_app_access(db, user.id, fixture.app)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        crate::service::security::role(db, user.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn enrollment_social_completion_requires_browser_proof() {
+    use crate::service::enrollment::{self, SocialProof};
+    let fixture = SecurityFixture::new().await;
+    let state = &fixture.state;
+    let db = &state.db;
+    let provider = Uuid::now_v7();
+    let request = Uuid::now_v7();
+    let raw = pero_utils::crypto::generate_token();
+    sql(
+        db,
+        "UPDATE registration_policies SET mode='self_service',approval_required=false",
+        vec![],
+    )
+    .await;
+    sql(db,"INSERT INTO identity_providers(id,code,name,kind,settings) VALUES($1,'external','External','oauth2','{\"allow_registration\":true}')",vec![provider.into()]).await;
+    sql(db,"INSERT INTO enrollments(id,email,token_hash,status,verified_at,provider_id,subject,expires_at) VALUES($1,'social@example.com',$2,'ready',now(),$3,'original-subject',now()+interval '1 hour')",vec![request.into(),pero_utils::crypto::sha256_hex(&raw).into(),provider.into()]).await;
+    // Possessing the email link cannot authenticate another browser's upstream identity.
+    assert!(
+        enrollment::finalize(state, &raw, "social_user", "", None, None)
+            .await
+            .is_err()
+    );
+    let mut proof = SocialProof {
+        provider,
+        subject: "other-subject".into(),
+        proved_at: time::OffsetDateTime::now_utc().unix_timestamp(),
+        app: None,
+    };
+    assert!(
+        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
+            .await
+            .is_err()
+    );
+    proof.subject = "original-subject".into();
+    proof.proved_at -= 601;
+    assert!(
+        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
+            .await
+            .is_err()
+    );
+    assert!(
+        crate::db::helper::user::find_by_identifier(db, "email", "social@example.com")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    proof.proved_at = time::OffsetDateTime::now_utc().unix_timestamp();
+    enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
+        .await
+        .unwrap();
+    assert!(
+        crate::db::helper::user::find_by_identifier(db, "email", "social@example.com")
+            .await
+            .unwrap()
+            .is_some()
     );
     fixture.cleanup().await;
 }

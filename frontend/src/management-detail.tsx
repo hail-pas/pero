@@ -73,6 +73,14 @@ export function ManagementDetail({
           </Button>
         }
       />
+      {isApp && !system && (
+        <Button
+          component={RouterLink}
+          to={`/dashboard/registration?app=${row.id}`}
+        >
+          {t("注册策略与邀请")}
+        </Button>
+      )}
       <Panel title={t("基本信息")} action={<Status value={status} />}>
         <Box
           sx={{

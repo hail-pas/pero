@@ -104,6 +104,17 @@
   "reauth_required": "请先重新验证身份，再重试操作。",
   "mfa_required": "管理员必须保留双重验证。",
   "last_super_admin": "不能移除最后一个有效超级管理员。",
-  "notification_disabled": "通知网关未配置，投递已暂停。",
-  "notification_not_retryable": "通知已失效、正在投递或已排队，请刷新列表。"
+  "notification_disabled": "通知网关尚未配置，暂时无法发送邮件。",
+  "notification_not_retryable": "通知已失效、正在投递或已排队，请刷新列表。",
+  "enrollment_unavailable": "注册申请或邀请已失效，请重新发起。",
+  "registration_closed": "此入口暂未开放注册，请联系管理员。",
+  "invalid_email": "请输入有效的邮箱。",
+  "email_domain_not_allowed": "此邮箱域名不符合准入要求。",
+  "approval_required": "申请需要管理员审批。",
+  "existing_account_login_required": "此邮箱已有账户，请先登录该账户再继续。",
+  "social_reauthentication_required": "请重新使用原第三方身份登录，再返回完成注册。",
+  "app_access_disabled": "应用访问资格已被撤销，请联系管理员。",
+  "policy_conflict": "策略已被其他操作更新，请刷新后重试。",
+  "remove_admin_role_first": "请先由其他超级管理员移除你的管理员身份。",
+  "confirmation_mismatch": "确认用户名不匹配。"
 }

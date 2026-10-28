@@ -15,7 +15,6 @@ pub struct AppUpdate {
     pub description: Option<String>,
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
-    pub auto_access: bool,
 }
 
 impl AppUpdate {
@@ -35,7 +34,6 @@ impl AppUpdate {
         active.description = Set(self.description);
         active.homepage_url = Set(self.homepage_url);
         active.logo_url = Set(self.logo_url);
-        active.auto_access = Set(self.auto_access);
         active.updated_at = Set(time::OffsetDateTime::now_utc());
     }
 }
@@ -98,6 +96,7 @@ pub async fn update(
 ) -> Result<(), ManagementError> {
     input.validate()?;
     let txn = db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
     let mut active: apps::ActiveModel = editable(&txn, id).await?.into();
     input.apply(&mut active);
     active.update(&txn).await?;
@@ -107,6 +106,7 @@ pub async fn update(
 
 pub async fn toggle_status(db: &DatabaseConnection, id: uuid::Uuid) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
     let app = editable(&txn, id).await?;
     let status = match app.status {
         CommonStatus::Active => CommonStatus::Disabled,
@@ -117,6 +117,8 @@ pub async fn toggle_status(db: &DatabaseConnection, id: uuid::Uuid) -> Result<()
     active.updated_at = Set(time::OffsetDateTime::now_utc());
     active.update(&txn).await?;
     if status == CommonStatus::Disabled {
+        super::security::execute(&txn,"DELETE FROM notification_outbox WHERE enrollment_id IN (SELECT id FROM enrollments WHERE app_id=$1 AND status IN ('pending_verification','pending_approval','ready'))",vec![id.into()]).await?;
+        super::security::execute(&txn,"UPDATE enrollments SET status='revoked' WHERE app_id=$1 AND status IN ('pending_verification','pending_approval','ready')",vec![id.into()]).await?;
         super::session::SessionService::revoke_app_grants(&txn, id, None, "app_disabled").await?;
     }
     txn.commit().await?;

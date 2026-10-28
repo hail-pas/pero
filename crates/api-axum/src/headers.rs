@@ -22,8 +22,14 @@ pub static DEFAULT_SECURITY_HEADERS: &[(&str, &str)] = &[
 ];
 
 pub async fn security_headers(req: Request<Body>, next: Next) -> Response {
+    let enrollment = req.uri().path() == "/sso/register";
     let mut response = next.run(req).await;
     apply_security_headers(&mut response, DEFAULT_SECURITY_HEADERS);
+    if enrollment {
+        response
+            .headers_mut()
+            .insert("referrer-policy", HeaderValue::from_static("no-referrer"));
+    }
     response
 }
 

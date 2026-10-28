@@ -64,8 +64,6 @@ pub struct AppFormData {
     pub description: String,
     pub homepage_url: String,
     pub logo_url: String,
-    #[serde(default)]
-    pub auto_access: bool,
 }
 
 // === App Detail ===
@@ -183,13 +181,15 @@ pub struct UserFormView {
 pub struct UserFormData {
     #[serde(default)]
     pub csrf_token: String,
+    #[serde(default)]
     pub username: String,
     pub email: String,
-    pub phone: String,
-    pub nickname: String,
-    pub avatar_url: String,
     #[serde(default)]
-    pub password: String,
+    pub phone: String,
+    #[serde(default)]
+    pub nickname: String,
+    #[serde(default)]
+    pub avatar_url: String,
 }
 
 // === User Detail ===
@@ -294,6 +294,8 @@ pub struct ProviderFormData {
     pub settings: String,
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub allow_registration: bool,
 }
 
 // === Provider Detail ===
@@ -425,7 +427,6 @@ pub struct AppSummary {
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
     pub status: String,
-    pub auto_access: bool,
     pub system: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
@@ -442,7 +443,6 @@ impl From<apps::Model> for AppSummary {
             homepage_url: model.homepage_url,
             logo_url: model.logo_url,
             status: model.status.to_string(),
-            auto_access: model.auto_access,
             system: model.system,
             created_at: model.created_at,
         }

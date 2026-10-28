@@ -1,3 +1,4 @@
+import { Enrollment, EnrollmentAdmin, Admission } from "./enrollment";
 import { Notifications } from "./notifications";
 import { SecurityCenter, AdminRoles } from "./security-center";
 import { Alert } from "@mui/material";
@@ -29,6 +30,12 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "EnrollmentView":
+      return <Enrollment data={data} mutate={mutate} />;
+    case "EnrollmentAdminView":
+      return <EnrollmentAdmin data={data} {...actions} />;
+    case "AdmissionView":
+      return <Admission data={data} {...actions} />;
     case "NotificationListView":
       return <Notifications data={data} {...actions} />;
     case "SecurityView":
@@ -47,7 +54,6 @@ export function PageContent({
       return <AdminHome data={data} />;
     case "LoginView":
     case "AccountLoginView":
-    case "RegisterView":
     case "ForgotPasswordView":
     case "ResetPasswordView":
     case "ConsentView":

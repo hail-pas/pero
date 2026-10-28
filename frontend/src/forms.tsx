@@ -224,7 +224,6 @@ export const appFields: Field[] = [
   },
   text("homepage_url", "应用主页"),
   text("logo_url", "Logo URL"),
-  { name: "auto_access", label: "允许用户自动访问", type: "checkbox" },
   { ...text("description", "应用说明"), multiline: true },
 ];
 export const providerFields: Field[] = [
@@ -258,6 +257,11 @@ export const providerFields: Field[] = [
     ...text("scopes", "权限范围"),
     default: "openid,profile,email",
     hint: "使用英文逗号分隔",
+  },
+  {
+    name: "allow_registration",
+    label: "允许此身份源参与注册",
+    type: "checkbox",
   },
   { ...text("settings", "扩展配置 JSON"), multiline: true, default: "{}" },
   {

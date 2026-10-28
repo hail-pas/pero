@@ -76,7 +76,18 @@ impl UserInfo {
 pub fn management_response(result: Result<(), crate::service::ManagementError>) -> Response {
     match result {
         Ok(()) => json_ok(),
-        Err(crate::service::ManagementError::Invalid(code)) => json_error(code),
+        Err(crate::service::ManagementError::Invalid(code)) => {
+            let status = match code {
+                "registration_closed" | "email_domain_not_allowed" | "forbidden" => {
+                    axum::http::StatusCode::FORBIDDEN
+                }
+                "rate_limited" => axum::http::StatusCode::TOO_MANY_REQUESTS,
+                "policy_conflict" => axum::http::StatusCode::CONFLICT,
+                "notification_disabled" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                _ => axum::http::StatusCode::BAD_REQUEST,
+            };
+            (status, json_error(code)).into_response()
+        }
         Err(crate::service::ManagementError::Validation(message)) => json_error(&message),
         Err(error) => dependency_error(error),
     }

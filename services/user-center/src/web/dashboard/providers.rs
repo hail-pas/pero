@@ -184,6 +184,11 @@ pub async fn edit_form(
                 }
                 serde_json::to_string_pretty(&s).unwrap_or_default()
             },
+            allow_registration: provider
+                .settings
+                .get("allow_registration")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             enabled: provider.enabled,
         },
         error: String::new(),
@@ -246,7 +251,12 @@ fn provider_input(
         client_id: util::empty_or_opt(&form.client_id),
         client_secret: form.client_secret.trim().to_owned(),
         scopes: util::parse_comma_list(&form.scopes),
-        settings: merge_icon_into_settings(parse_settings_json(&form.settings)?, &form.icon),
+        settings: {
+            let mut settings =
+                merge_icon_into_settings(parse_settings_json(&form.settings)?, &form.icon);
+            settings["allow_registration"] = form.allow_registration.into();
+            settings
+        },
         enabled: form.enabled,
     })
 }
@@ -255,7 +265,12 @@ fn parse_settings_json(s: &str) -> Result<serde_json::Value, String> {
     if s.trim().is_empty() {
         return Ok(serde_json::json!({}));
     }
-    serde_json::from_str(s).map_err(|_| "invalid_settings_json".to_owned())
+    let settings: serde_json::Value =
+        serde_json::from_str(s).map_err(|_| "invalid_settings_json".to_owned())?;
+    if !settings.is_object() {
+        return Err("invalid_settings_json".to_owned());
+    }
+    Ok(settings)
 }
 
 fn merge_icon_into_settings(mut settings: serde_json::Value, icon: &str) -> serde_json::Value {
@@ -271,4 +286,14 @@ fn merge_icon_into_settings(mut settings: serde_json::Value, icon: &str) -> serd
         }
     }
     settings
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn provider_settings_require_a_json_object() {
+        assert!(super::parse_settings_json("[]").is_err());
+        assert!(super::parse_settings_json("null").is_err());
+        assert!(super::parse_settings_json("{}").is_ok());
+    }
 }

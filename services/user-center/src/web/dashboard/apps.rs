@@ -168,7 +168,6 @@ pub async fn edit_form(
             description: app.description.unwrap_or_default(),
             homepage_url: app.homepage_url.unwrap_or_default(),
             logo_url: app.logo_url.unwrap_or_default(),
-            auto_access: app.auto_access,
         },
         error: String::new(),
     };
@@ -198,7 +197,6 @@ fn app_input(form: &AppFormData) -> Result<crate::service::app::AppUpdate, &'sta
         description: util::empty_or_opt(&form.description),
         homepage_url: util::empty_or_opt(&form.homepage_url),
         logo_url: util::empty_or_opt(&form.logo_url),
-        auto_access: form.auto_access,
     })
 }
 

@@ -4,7 +4,6 @@ mod jwks;
 mod link;
 mod oauth2_adapter;
 mod oidc;
-mod registration;
 pub use jwks::JwksCache;
 mod service_impl;
 mod wechat_adapter;
@@ -28,7 +27,6 @@ pub struct SocialLoginService<'a> {
     http_client: &'a HttpClientHandle,
     jwks: &'a JwksCache,
     sso_config: &'a crate::config::SsoConfig,
-    notification: &'a crate::config::NotificationConfig,
     oauth2_config: &'a crate::config::OAuth2Config,
 }
 

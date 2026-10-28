@@ -132,3 +132,9 @@ pub async fn clean_notifications(db: &DatabaseConnection) -> Result<u64, sea_orm
     }
     Ok(total)
 }
+
+pub async fn clean_enrollments(db: &sea_orm::DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    db.execute_unprepared("UPDATE enrollments SET status='expired' WHERE expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')").await?;
+    Ok(db.execute_raw(Statement::from_string(DbBackend::Postgres,"DELETE FROM enrollments WHERE id IN (SELECT id FROM enrollments WHERE expires_at<now()-interval '30 days' ORDER BY expires_at LIMIT 500)".to_owned())).await?.rows_affected())
+}

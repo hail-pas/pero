@@ -18,7 +18,6 @@ export interface AppSummary {
   homepage_url: string | null;
   logo_url: string | null;
   status: string;
-  auto_access: boolean;
   system: boolean;
   created_at: DateValue;
 }
@@ -199,7 +198,38 @@ export interface ViewDataMap {
   LoginView: LoginPage;
   AccountLoginView: LoginPage & { redirect: string };
   AdminLoginView: { authorize_url: string; error: string };
-  RegisterView: CsrfPage & { error: string };
+  EnrollmentView: CsrfPage & {
+    mode: string;
+    app: string | null;
+    email: string;
+    app_name: string;
+    status: string;
+    social: boolean;
+    sent: boolean;
+  };
+  EnrollmentAdminView: AccountPage & {
+    policy: {
+      id: string;
+      app_id: string | null;
+      mode: string;
+      domains: string[];
+      approval_required: boolean;
+      emergency_stop: boolean;
+      version: number;
+    };
+    inherited: boolean;
+    rows: {
+      id: string;
+      email: string;
+      invitation: boolean;
+      status: string;
+      reason: string;
+    }[];
+  };
+  AdmissionView: AccountPage & {
+    username: string;
+    rows: { id: string; name: string; status: string | null }[];
+  };
   ForgotPasswordView: CsrfPage & { error: string; success: boolean };
   ResetPasswordView: CsrfPage & {
     token: string;
@@ -291,7 +321,6 @@ export type ViewEnvelope<V extends ViewName = ViewName> = {
 export type AuthView =
   | "LoginView"
   | "AccountLoginView"
-  | "RegisterView"
   | "ForgotPasswordView"
   | "ResetPasswordView"
   | "ConsentView"

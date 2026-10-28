@@ -1,43 +1,10 @@
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
-};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use uuid::Uuid;
 
 use crate::db::entity::users;
 use crate::db::enums::{IdentityKind, UserStatus};
-use crate::service::access::insert_auto_access;
 use crate::service::password::PasswordIdentityService;
 use crate::state::app::AppState;
-
-pub struct RegisterUserParams {
-    pub username: String,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub nickname: Option<String>,
-    pub password: String,
-    pub auth_request_id: Option<Uuid>,
-}
-
-pub enum RegisterUserError {
-    InvalidUsername(String),
-    InvalidPassword(String),
-    UsernameTaken,
-    EmailTaken,
-    PhoneTaken,
-    Internal,
-}
-
-impl RegisterUserError {
-    pub fn message_key(&self) -> &str {
-        match self {
-            Self::InvalidUsername(msg) | Self::InvalidPassword(msg) => msg.as_str(),
-            Self::UsernameTaken => "username_taken",
-            Self::EmailTaken => "email_taken",
-            Self::PhoneTaken => "phone_taken",
-            Self::Internal => "internal_error",
-        }
-    }
-}
 
 pub enum PasswordResetError {
     MissingToken,
@@ -170,125 +137,6 @@ impl<'a> AccountService<'a> {
         )
         .await?;
         txn.commit().await?;
-        Ok(())
-    }
-
-    pub async fn register_user(
-        &self,
-        mut params: RegisterUserParams,
-    ) -> Result<(), RegisterUserError> {
-        params.username = params.username.trim().to_owned();
-        if let Err(e) = crate::db::helper::user::validate_username(&params.username) {
-            return Err(RegisterUserError::InvalidUsername(e));
-        }
-
-        if params.password.trim().is_empty() {
-            return Err(RegisterUserError::InvalidPassword(
-                "password is required".to_owned(),
-            ));
-        }
-
-        if let Err(e) = self
-            .state
-            .config
-            .password
-            .validate_password(&params.password)
-        {
-            return Err(RegisterUserError::InvalidPassword(e));
-        }
-
-        self.ensure_unique_user_fields(&params).await?;
-
-        let password_hash = PasswordIdentityService::hash_password(&params.password)
-            .await
-            .map_err(|_| RegisterUserError::Internal)?;
-
-        let txn = self.state.db.begin().await.map_err(|e| {
-            tracing::error!("Registration transaction begin error: {e}");
-            RegisterUserError::Internal
-        })?;
-
-        let user_id = Uuid::now_v7();
-        let now = time::OffsetDateTime::now_utc();
-        let user_model = users::ActiveModel {
-            id: Set(user_id),
-            username: Set(params.username.clone()),
-            email: Set(params.email.clone()),
-            email_verified_at: Set(None),
-            phone: Set(params.phone.clone()),
-            phone_verified_at: Set(None),
-            nickname: Set(params.nickname.clone()),
-            avatar_url: Set(None),
-            status: Set(UserStatus::Active),
-            created_at: Set(now),
-            updated_at: Set(now),
-            deleted_at: Set(None),
-        };
-
-        if let Err(e) = user_model.insert(&txn).await {
-            tracing::error!("User insert error: {e}");
-            let _ = txn.rollback().await;
-            return Err(registration_unique_error(&e).unwrap_or(RegisterUserError::Internal));
-        }
-
-        let provider = match crate::db::helper::identity_provider::find_local_provider(&txn).await {
-            Ok(provider) => provider,
-            Err(e) => {
-                tracing::error!("Local provider not found: {e}");
-                let _ = txn.rollback().await;
-                return Err(RegisterUserError::Internal);
-            }
-        };
-
-        if let Err(e) = PasswordIdentityService::create_hashed(
-            &txn,
-            user_id,
-            provider.id,
-            user_id.to_string(),
-            password_hash,
-            now,
-        )
-        .await
-        {
-            tracing::error!("Identity insert error: {e}");
-            let _ = txn.rollback().await;
-            return Err(RegisterUserError::Internal);
-        }
-
-        if let Err(e) = insert_auto_access(&txn, user_id, params.auth_request_id, now).await {
-            tracing::error!("Auto app access insert error: {e}");
-            let _ = txn.rollback().await;
-            return Err(RegisterUserError::Internal);
-        }
-
-        if let Err(e) = txn.commit().await {
-            tracing::error!("Registration transaction commit error: {e}");
-            return Err(RegisterUserError::Internal);
-        }
-
-        Ok(())
-    }
-
-    async fn ensure_unique_user_fields(
-        &self,
-        params: &RegisterUserParams,
-    ) -> Result<(), RegisterUserError> {
-        if user_field_exists(users::Column::Username, &params.username, self.state).await? {
-            return Err(RegisterUserError::UsernameTaken);
-        }
-
-        if let Some(ref email) = params.email
-            && user_field_exists(users::Column::Email, email, self.state).await?
-        {
-            return Err(RegisterUserError::EmailTaken);
-        }
-
-        if let Some(ref phone) = params.phone
-            && user_field_exists(users::Column::Phone, phone, self.state).await?
-        {
-            return Err(RegisterUserError::PhoneTaken);
-        }
-
         Ok(())
     }
 
@@ -452,39 +300,5 @@ impl<'a> AccountService<'a> {
                 Err(PasswordResetError::Internal)
             }
         }
-    }
-}
-
-async fn user_field_exists(
-    column: users::Column,
-    value: &str,
-    state: &AppState,
-) -> Result<bool, RegisterUserError> {
-    users::Entity::find()
-        .filter(column.eq(value))
-        .filter(users::Column::DeletedAt.is_null())
-        .one(&state.db)
-        .await
-        .map(|row| row.is_some())
-        .map_err(|e| {
-            tracing::error!("User uniqueness check DB error: {e}");
-            RegisterUserError::Internal
-        })
-}
-
-fn registration_unique_error(err: &sea_orm::DbErr) -> Option<RegisterUserError> {
-    if !crate::db::error::is_unique_violation(err) {
-        return None;
-    }
-
-    let msg = err.to_string().to_lowercase();
-    if msg.contains("ux_users_username_alive") || msg.contains("users_username") {
-        Some(RegisterUserError::UsernameTaken)
-    } else if msg.contains("ux_users_email_alive") || msg.contains("users_email") {
-        Some(RegisterUserError::EmailTaken)
-    } else if msg.contains("ux_users_phone_alive") || msg.contains("users_phone") {
-        Some(RegisterUserError::PhoneTaken)
-    } else {
-        Some(RegisterUserError::Internal)
     }
 }

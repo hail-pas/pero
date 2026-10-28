@@ -1,106 +1,360 @@
-use axum::extract::State;
-use axum::response::{IntoResponse, Redirect, Response};
-use axum_extra::extract::CookieJar;
-use pero_api_axum::extractor::ClientIp;
-use pero_cache_redis::RateLimitError;
-use validator::Validate;
-
-use crate::service::account::{AccountService, RegisterUserError, RegisterUserParams};
-use crate::state::app::AppState;
-use crate::web::sso::dto::{RegisterForm, RegisterView};
-use crate::web::sso::utility::resolve_auth_request_id;
-
-/// EP-04: GET /sso/register — 渲染注册页面
-pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
-    render_register(jar, &state, "")
+use crate::{service::enrollment, state::app::AppState, web::util};
+use axum::{
+    Form,
+    extract::{Query, State},
+    response::{IntoResponse, Redirect, Response},
+};
+use axum_extra::extract::{CookieJar, cookie::Cookie};
+use enrollment::SocialProof;
+use sea_orm::TransactionTrait;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+const SOCIAL_COOKIE: &str = "pero_enrollment_identity";
+const FLOW_COOKIE: &str = "pero_enrollment";
+#[derive(Default, Deserialize)]
+pub struct Params {
+    pub token: Option<String>,
+    pub app: Option<Uuid>,
+    #[serde(default)]
+    pub sent: bool,
+}
+#[derive(Default, Deserialize)]
+pub struct Input {
+    #[serde(default)]
+    pub csrf_token: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    pub app: Option<Uuid>,
+}
+#[derive(Serialize)]
+struct View {
+    csrf_token: String,
+    mode: String,
+    app: Option<Uuid>,
+    email: String,
+    app_name: String,
+    status: String,
+    social: bool,
+    sent: bool,
+}
+pub fn flow_token(jar: &CookieJar) -> Option<&str> {
+    jar.get(FLOW_COOKIE).map(|c| c.value())
+}
+fn flow_cookie(state: &AppState, token: String) -> Cookie<'static> {
+    Cookie::build((FLOW_COOKIE, token))
+        .path("/sso")
+        .http_only(true)
+        .secure(state.config.sso.cookie_secure)
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(time::Duration::days(7))
+        .build()
+}
+fn social_proof(state: &AppState, jar: &CookieJar) -> Option<SocialProof> {
+    jar.get(SOCIAL_COOKIE).and_then(|c| {
+        pero_utils::crypto::decode_signed_json(
+            c.value(),
+            state
+                .config
+                .sso
+                .cookie_signing_secret
+                .expose_secret()
+                .as_bytes(),
+        )
+        .ok()
+    })
 }
 
-/// EP-05: POST /sso/register
-///
-/// 完整流程：
-/// 1. IP 限流
-/// 2. 表单校验（username 3-64, password 8-128, email 格式）
-/// 3. 密码策略校验
-/// 4. username 唯一性检查
-/// 5. email 唯一性检查（如有）
-/// 6. phone 唯一性检查（如有）
-/// 7. hash password
-/// 8. 事务：INSERT users + INSERT identities
-/// 9. 302 /sso/login?registered=1
-pub async fn post(
+pub async fn get(
     State(state): State<AppState>,
-    ClientIp(ip): ClientIp,
     jar: CookieJar,
-    axum::Form(mut form): axum::Form<RegisterForm>,
+    Query(query): Query<Params>,
 ) -> Response {
-    {
-        use pero_cache_redis::enforce_rate_limit;
-        use pero_cache_redis::rate_limit_key::rl_register_ip;
-
-        let ip_str = ip.map(|v| v.to_string()).unwrap_or_else(|| {
-            pero_config::blocks::ServerConfig::unknown_ip_placeholder().to_owned()
-        });
-        let Ok(key) = rl_register_ip.key(&ip_str) else {
-            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-        };
-        match enforce_rate_limit(&state.cache, &key, 5).await {
-            Ok(()) => {}
-            Err(RateLimitError::Denied { .. }) => {
-                return render_register(jar, &state, "rate_limited");
-            }
-            Err(RateLimitError::Redis(e)) => {
-                tracing::error!(error = %e, "rate_limit_check redis error");
-                return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-            }
+    if let Some(token) = query.token {
+        if let Err(e) = enrollment::lookup(&state.db, &token).await {
+            return util::management_response(Err(e));
         }
+        return (
+            jar.add(flow_cookie(&state, token)),
+            Redirect::to("/sso/register"),
+        )
+            .into_response();
     }
-
-    let auth_request_id = match resolve_auth_request_id(&state, &jar).await {
-        Ok(id) => id,
-        Err(error) => {
-            tracing::error!(%error, "Pending authorization lookup failed");
-            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    let app = if query.app.is_some() {
+        query.app
+    } else {
+        match super::utility::resolve_auth_request_id(&state, &jar).await {
+            Ok(Some(id)) => {
+                use sea_orm::EntityTrait;
+                match crate::db::entity::authorization_requests::Entity::find_by_id(id)
+                    .one(&state.db)
+                    .await
+                {
+                    Ok(Some(r))
+                        if r.expires_at > time::OffsetDateTime::now_utc()
+                            && r.completed_at.is_none() =>
+                    {
+                        Some(r.app_id)
+                    }
+                    Ok(_) => None,
+                    Err(e) => return util::dependency_error(e),
+                }
+            }
+            Ok(None) => None,
+            Err(e) => return util::dependency_error(e),
         }
     };
-
-    if !state.web_security().verify_csrf(&jar, &form.csrf_token) {
-        return render_register(jar, &state, "invalid_csrf");
+    render(&state, jar, app, query.sent).await
+}
+async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool) -> Response {
+    let row = if let Some(token) = flow_token(&jar) {
+        match enrollment::lookup(&state.db, token).await {
+            Ok(r) => Some(r),
+            Err(crate::service::ManagementError::Invalid(_)) => None,
+            Err(e) => return util::management_response(Err(e)),
+        }
+    } else {
+        None
+    };
+    let app = row.as_ref().map(|r| r.app_id).unwrap_or(app);
+    let p = match enrollment::policy(&state.db, app).await {
+        Ok(p) => p,
+        Err(e) => return util::management_response(Err(e)),
+    };
+    let app_name = if let Some(id) = app {
+        use sea_orm::EntityTrait;
+        match crate::db::entity::apps::Entity::find_by_id(id)
+            .one(&state.db)
+            .await
+        {
+            Ok(Some(app)) => app.name,
+            Ok(None) => String::new(),
+            Err(e) => return util::dependency_error(e),
+        }
+    } else {
+        String::new()
+    };
+    let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
+    util::view_response(
+        "EnrollmentView",
+        View {
+            csrf_token,
+            app,
+            mode: if p.emergency_stop {
+                "closed".into()
+            } else {
+                p.mode
+            },
+            app_name,
+            email: row.as_ref().map(|r| r.email.clone()).unwrap_or_default(),
+            status: row.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
+            social: row.as_ref().is_some_and(|r| r.provider_id.is_some()),
+            sent,
+        },
+        jar,
+    )
+}
+pub async fn post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    pero_api_axum::extractor::ClientIp(ip): pero_api_axum::extractor::ClientIp,
+    Form(input): Form<Input>,
+) -> Response {
+    if let Some(e) = util::verify_csrf_or_json_error(&jar, &input.csrf_token, &state) {
+        return e;
     }
-
-    form.normalize_optional_fields();
-
-    if let Err(errors) = Validate::validate(&form) {
-        let msg = errors.to_string();
-        return render_register(jar, &state, &msg);
-    }
-
-    if let Err(e) = AccountService::new(&state)
-        .register_user(RegisterUserParams {
-            username: form.username,
-            email: form.email,
-            phone: form.phone,
-            nickname: form.nickname,
-            password: form.password,
-            auth_request_id,
-        })
-        .await
-    {
+    let ip = ip
+        .map(|i| i.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    let key = match pero_cache_redis::rate_limit_key::rl_register_ip.key(&ip) {
+        Ok(k) => k,
+        Err(e) => return util::dependency_error(e),
+    };
+    if let Err(e) = pero_cache_redis::enforce_rate_limit(&state.cache, &key, 10).await {
         return match e {
-            RegisterUserError::Internal => {
-                crate::web::util::dependency_error("Registration failed")
-            }
-            error => render_register(jar, &state, error.message_key()),
+            pero_cache_redis::RateLimitError::Denied { .. } => (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                pero_api_axum::json_error("rate_limited"),
+            )
+                .into_response(),
+            _ => util::dependency_error(e),
         };
     }
-
-    Redirect::to("/sso/login?registered=1").into_response()
+    let result = match input.action.as_str() {
+        "verify" => match flow_token(&jar) {
+            Some(token) => enrollment::verify(&state, token).await,
+            None => Err(crate::service::ManagementError::Invalid(
+                "enrollment_unavailable",
+            )),
+        },
+        "finalize" => {
+            let session = match crate::web::session::extract_session(&state, &jar).await {
+                Ok(s) => s,
+                Err(e) => return e.into_response(),
+            };
+            let proof = social_proof(&state, &jar);
+            match flow_token(&jar) {
+                Some(token) => {
+                    enrollment::finalize(
+                        &state,
+                        token,
+                        &input.username,
+                        &input.password,
+                        session.as_ref(),
+                        proof.as_ref(),
+                    )
+                    .await
+                }
+                None => Err(crate::service::ManagementError::Invalid(
+                    "enrollment_unavailable",
+                )),
+            }
+        }
+        "reset" => {
+            return (
+                jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
+                    .remove(Cookie::build(SOCIAL_COOKIE).path("/sso").build()),
+                Redirect::to("/sso/register"),
+            )
+                .into_response();
+        }
+        "" => {
+            let proof = social_proof(&state, &jar);
+            if let Some(proof) = proof {
+                if !proof.is_fresh() {
+                    return util::management_response(Err(
+                        crate::service::ManagementError::Invalid(
+                            "social_reauthentication_required",
+                        ),
+                    ));
+                }
+                let address = match enrollment::email(&input.email) {
+                    Ok(v) => v,
+                    Err(e) => return util::management_response(Err(e)),
+                };
+                enrollment::start_social(
+                    &state,
+                    &address,
+                    proof.app,
+                    proof.provider,
+                    &proof.subject,
+                )
+                .await
+            } else {
+                enrollment::start(&state, &input.email, input.app, None).await
+            }
+        }
+        _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
+    };
+    match result {
+        Err(e) => util::management_response(Err(e)),
+        Ok(()) if input.action == "finalize" => (
+            jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
+                .remove(Cookie::build(SOCIAL_COOKIE).path("/sso").build()),
+            Redirect::to("/sso/login?registered=1"),
+        )
+            .into_response(),
+        Ok(()) => render(&state, jar, input.app, input.action.is_empty()).await,
+    }
 }
 
-fn render_register(jar: CookieJar, state: &AppState, error: &str) -> Response {
-    state
-        .web_security()
-        .view_with_csrf(jar, "RegisterView", |csrf_token| RegisterView {
-            error: error.to_owned(),
-            csrf_token,
-        })
+pub async fn social(
+    state: &AppState,
+    jar: CookieJar,
+    provider: Uuid,
+    info: crate::service::social::SocialUserInfo,
+    app: Option<Uuid>,
+) -> Response {
+    if let Err(e) = enrollment::allow_social(&state.db, provider).await {
+        return util::management_response(Err(e));
+    }
+    let proof = SocialProof {
+        provider,
+        subject: info.sub.clone(),
+        proved_at: time::OffsetDateTime::now_utc().unix_timestamp(),
+        app,
+    };
+    let value = match pero_utils::crypto::encode_signed_json(
+        &proof,
+        state
+            .config
+            .sso
+            .cookie_signing_secret
+            .expose_secret()
+            .as_bytes(),
+    ) {
+        Ok(v) => v,
+        Err(e) => return util::dependency_error(e),
+    };
+    let cookie = Cookie::build((SOCIAL_COOKIE, value))
+        .path("/sso")
+        .http_only(true)
+        .secure(state.config.sso.cookie_secure)
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(time::Duration::minutes(10))
+        .build();
+    let jar = jar.add(cookie);
+    let jar = if let Some(token) = flow_token(&jar) {
+        match enrollment::lookup(&state.db, token).await {
+            Ok(_) => jar,
+            Err(crate::service::ManagementError::Invalid(_)) => {
+                jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
+            }
+            Err(e) => return util::management_response(Err(e)),
+        }
+    } else {
+        jar
+    };
+    if let Some(token) = flow_token(&jar) {
+        let result = async {
+            let txn = state.db.begin().await?;
+            crate::service::admin::lock_policy(&txn).await?;
+            let row = enrollment::lookup(&txn, token).await?;
+            if row.provider_id.is_some()
+                && (row.provider_id != Some(provider) || row.subject.as_deref() != Some(&info.sub))
+            {
+                return Err(crate::service::ManagementError::Invalid(
+                    "enrollment_unavailable",
+                ));
+            }
+            if let Some(address) = info.email.as_deref()
+                && enrollment::email(address)? != row.email
+            {
+                return Err(crate::service::ManagementError::Invalid("invalid_email"));
+            }
+            crate::service::security::execute(
+                &txn,
+                "UPDATE enrollments SET provider_id=$2,subject=$3 WHERE id=$1",
+                vec![row.id.into(), provider.into(), info.sub.into()],
+            )
+            .await?;
+            txn.commit().await?;
+            Ok(())
+        }
+        .await;
+        return match result {
+            Ok(()) => (jar, Redirect::to("/sso/register")).into_response(),
+            Err(e) => util::management_response(Err(e)),
+        };
+    }
+    if let Some(address) = info.email.as_deref() {
+        let result = async {
+            let address = enrollment::email(address)?;
+            enrollment::start_social(state, &address, app, provider, &info.sub).await
+        }
+        .await;
+        return match result {
+            Ok(()) => (jar, Redirect::to("/sso/register?sent=true")).into_response(),
+            Err(e) => util::management_response(Err(e)),
+        };
+    }
+    let target = app
+        .map(|a| format!("/sso/register?app={a}"))
+        .unwrap_or_else(|| "/sso/register".into());
+    (jar, Redirect::to(&target)).into_response()
 }

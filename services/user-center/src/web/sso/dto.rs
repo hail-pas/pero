@@ -1,7 +1,4 @@
-use pero_utils::string::normalize_optional_string;
 use serde::Deserialize;
-
-use crate::web::sso::utility::empty_string_as_none;
 
 /// 社交登录 Provider 信息（传递给模板）
 #[derive(Debug, Clone, serde::Serialize)]
@@ -29,37 +26,6 @@ pub struct LoginForm {
     pub password: String,
     #[serde(default)]
     pub redirect: String,
-}
-
-/// 注册页模板
-#[derive(Debug, serde::Serialize)]
-pub struct RegisterView {
-    pub error: String,
-    pub csrf_token: String,
-}
-
-/// EP-05: POST /sso/register 表单
-#[derive(Debug, Deserialize, validator::Validate, serde::Serialize)]
-pub struct RegisterForm {
-    #[serde(default)]
-    pub csrf_token: String,
-    #[validate(length(min = 3, max = 64))]
-    pub username: String,
-    #[serde(default, deserialize_with = "empty_string_as_none")]
-    #[validate(email)]
-    pub email: Option<String>,
-    pub password: String,
-    pub nickname: Option<String>,
-    #[serde(default, deserialize_with = "empty_string_as_none")]
-    pub phone: Option<String>,
-}
-
-impl RegisterForm {
-    pub fn normalize_optional_fields(&mut self) {
-        self.email = normalize_optional_string(self.email.take());
-        self.nickname = normalize_optional_string(self.nickname.take());
-        self.phone = normalize_optional_string(self.phone.take());
-    }
 }
 
 /// 忘记密码页模板

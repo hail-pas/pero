@@ -3,6 +3,7 @@ pub mod apps;
 pub mod audit;
 pub mod clients;
 pub mod dto;
+pub mod enrollment;
 pub mod guard;
 pub mod keys;
 pub mod notifications;
@@ -19,6 +20,12 @@ use guard::require_admin_middleware;
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
+        .route(
+            "/dashboard/registration",
+            get(enrollment::get).post(enrollment::save),
+        )
+        .route("/dashboard/invitations", post(enrollment::invite))
+        .route("/dashboard/enrollments/{id}", post(enrollment::manage))
         .route("/dashboard/admins", get(admins::list).post(admins::update))
         .route("/dashboard/audit", get(audit::list))
         .route("/dashboard/notifications", get(notifications::list))

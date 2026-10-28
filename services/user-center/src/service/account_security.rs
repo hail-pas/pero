@@ -132,7 +132,7 @@ pub async fn unlink_identity(
     Ok(())
 }
 
-async fn lock_account_session<C: ConnectionTrait>(
+pub(crate) async fn lock_account_session<C: ConnectionTrait>(
     db: &C,
     session: &crate::state::session::SsoSession,
     config: &crate::config::SsoConfig,
@@ -162,6 +162,112 @@ pub async fn revoke_account_sessions(
     let txn = db.begin().await?;
     lock_account_session(&txn, session, config).await?;
     revoke_sessions(&txn, session.user_id, selection, "user_revoked").await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Remove membership, consent and issued credentials together; keep the shared account.
+pub async fn leave_app(
+    state: &crate::state::app::AppState,
+    session: &crate::state::session::SsoSession,
+    app_id: Uuid,
+) -> Result<(), ManagementError> {
+    let txn = state.db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    let app = apps::Entity::find_by_id(app_id)
+        .lock_shared()
+        .one(&txn)
+        .await?
+        .ok_or(ManagementError::Invalid("not_found"))?;
+    if app.system {
+        return Err(ManagementError::Invalid("system_app_protected"));
+    }
+    user_app_access::Entity::find_by_id((session.user_id, app_id))
+        .lock_exclusive()
+        .one(&txn)
+        .await?;
+    lock_account_session(&txn, session, &state.config.sso).await?;
+    user_app_access::Entity::update_many()
+        .col_expr(
+            user_app_access::Column::Status,
+            Expr::value(crate::db::enums::CommonStatus::Disabled),
+        )
+        .filter(user_app_access::Column::UserId.eq(session.user_id))
+        .filter(user_app_access::Column::AppId.eq(app_id))
+        .exec(&txn)
+        .await?;
+    SessionService::revoke_app_grants(&txn, app_id, Some(session.user_id), "membership_withdrawn")
+        .await?;
+    super::security::execute(&txn,"DELETE FROM user_consents WHERE user_id=$1 AND client_id IN (SELECT id FROM oauth_clients WHERE app_id=$2)",vec![session.user_id.into(),app_id.into()]).await?;
+    super::security::execute(&txn,"INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,'membership_withdrawn',$2,'success',200 FROM users WHERE id=$1",vec![session.user_id.into(),app_id.to_string().into()]).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Require recent authentication and remove identifying data while retaining audit references.
+pub async fn close_account(
+    state: &crate::state::app::AppState,
+    session: &crate::state::session::SsoSession,
+    confirmation: &str,
+) -> Result<(), ManagementError> {
+    let txn = state.db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    let access = user_app_access::Entity::find()
+        .filter(user_app_access::Column::UserId.eq(session.user_id))
+        .all(&txn)
+        .await?;
+    let mut app_ids = access.iter().map(|a| a.app_id).collect::<Vec<_>>();
+    app_ids.sort();
+    for id in app_ids {
+        apps::Entity::find_by_id(id).lock_shared().one(&txn).await?;
+        user_app_access::Entity::find_by_id((session.user_id, id))
+            .lock_exclusive()
+            .one(&txn)
+            .await?;
+    }
+    lock_account_session(&txn, session, &state.config.sso).await?;
+    if !super::security::recent(&txn, session.id, state.config.sso.session_idle_ttl_seconds).await?
+    {
+        return Err(ManagementError::Invalid("reauth_required"));
+    }
+    if super::security::role(&txn, session.user_id)
+        .await?
+        .is_some()
+    {
+        return Err(ManagementError::Invalid("remove_admin_role_first"));
+    }
+    let user = crate::db::entity::users::Entity::find_by_id(session.user_id)
+        .one(&txn)
+        .await?
+        .ok_or(ManagementError::Invalid("not_found"))?;
+    if confirmation != user.username {
+        return Err(ManagementError::Invalid("confirmation_mismatch"));
+    }
+    SessionService::revoke_all_login_state_for_user_in_db(&txn, user.id, "account_closed").await?;
+    super::contact::invalidate_contact_credentials(&txn, user.id, None).await?;
+    super::security::execute(&txn,"DELETE FROM notification_outbox WHERE user_id=$1 OR enrollment_id IN (SELECT id FROM enrollments WHERE email=$2)",vec![user.id.into(),user.email.clone().into()]).await?;
+    super::security::execute(&txn,"UPDATE enrollments SET status='revoked' WHERE email=$1 AND status IN ('pending_verification','pending_approval','ready')",vec![user.email.clone().into()]).await?;
+    super::security::execute(&txn,"UPDATE user_app_access SET status='disabled',token_version=token_version+1,updated_at=now() WHERE user_id=$1",vec![user.id.into()]).await?;
+    super::security::execute(
+        &txn,
+        "DELETE FROM user_consents WHERE user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
+    super::security::execute(
+        &txn,
+        "DELETE FROM identities WHERE user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
+    super::security::execute(
+        &txn,
+        "DELETE FROM user_mfa WHERE user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
+    super::security::execute(&txn,"INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) VALUES($1,$2,'account_closed','/account/close','success',200)",vec![user.id.into(),user.username.clone().into()]).await?;
+    super::security::execute(&txn,"UPDATE users SET status='disabled',deleted_at=now(),updated_at=now(),username=$2,email=NULL,email_verified_at=NULL,phone=NULL,phone_verified_at=NULL,nickname=NULL,avatar_url=NULL WHERE id=$1",vec![user.id.into(),format!("deleted_{}",user.id.simple()).into()]).await?;
     txn.commit().await?;
     Ok(())
 }

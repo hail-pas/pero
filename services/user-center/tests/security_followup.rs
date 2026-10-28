@@ -650,15 +650,12 @@ async fn authorization_and_recovery_regressions() {
     let (jar, csrf_token) = state.web_security().ensure_csrf(CookieJar::new());
     let response = user_center::web::sso::register::post(
         State(state.clone()),
-        pero_api_axum::extractor::ClientIp(Some("192.0.2.91/32".parse().unwrap())),
         jar,
-        Form(user_center::web::sso::dto::RegisterForm {
+        pero_api_axum::extractor::ClientIp(Some("192.0.2.91/32".parse().unwrap())),
+        Form(user_center::web::sso::register::Input {
             csrf_token,
-            username: "dependency_probe".into(),
-            password: "ValidPassword123!".into(),
-            email: None,
-            phone: None,
-            nickname: None,
+            email: "dependency@example.com".into(),
+            ..Default::default()
         }),
     )
     .await;

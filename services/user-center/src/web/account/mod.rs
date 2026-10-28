@@ -1,3 +1,4 @@
+pub mod admission;
 pub mod change_password;
 pub mod contact;
 pub mod dto;
@@ -14,6 +15,9 @@ use crate::state::app::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/account/applications", get(admission::get))
+        .route("/account/applications/{id}", post(admission::app))
+        .route("/account/close", post(admission::close))
         .route("/account/security", get(mfa::get).post(mfa::post))
         .route("/account/reauth/{provider}", post(mfa::oidc))
         .route("/account/reauth", get(mfa::get).post(mfa::post))

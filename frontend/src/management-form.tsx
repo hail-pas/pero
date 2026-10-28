@@ -24,19 +24,16 @@ export function ManagementForm({
     kind === "apps"
       ? appFields
       : kind === "users"
-        ? [
-            ...userFields,
-            ...(data.mode === "create"
-              ? [
-                  {
-                    name: "password",
-                    label: t("初始密码"),
-                    type: "password",
-                    required: true,
-                  },
-                ]
-              : []),
-          ]
+        ? data.mode === "create"
+          ? [
+              {
+                name: "email",
+                label: t("邀请邮箱"),
+                type: "email",
+                required: true,
+              },
+            ]
+          : userFields
         : providerFields;
   const immutableFields = new Set(["username", "code"]);
   if (kind === "providers") {

@@ -276,32 +276,25 @@ pub async fn callback(
             info,
             auth_request_id,
         } => {
-            let (user, identity_id) = match svc
-                .register_user(&cb_state.provider, info, auth_request_id)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!("Social registration: {e}");
-                    return Redirect::to("/sso/error?code=registration_failed").into_response();
+            let app = if let Some(id) = auth_request_id {
+                use sea_orm::EntityTrait;
+                match crate::db::entity::authorization_requests::Entity::find_by_id(id)
+                    .one(&state.db)
+                    .await
+                {
+                    Ok(Some(r))
+                        if r.expires_at > time::OffsetDateTime::now_utc()
+                            && r.completed_at.is_none() =>
+                    {
+                        Some(r.app_id)
+                    }
+                    Err(e) => return crate::web::util::dependency_error(e),
+                    _ => None,
                 }
+            } else {
+                None
             };
-            finish_social_login(
-                &state,
-                jar,
-                user,
-                identity_id,
-                cb_state.provider.provider.id,
-                &provider_code,
-                &SocialLoginContext {
-                    redirect: cb_state.social_value.redirect,
-                    auth_request_id,
-                    ip,
-                    authenticated_at,
-                    user_agent: crate::web::util::user_agent(&headers),
-                },
-            )
-            .await
+            super::register::social(&state, jar, cb_state.provider.provider.id, info, app).await
         }
     }
 }

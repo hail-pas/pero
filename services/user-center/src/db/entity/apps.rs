@@ -22,7 +22,6 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub logo_url: Option<String>,
     pub status: CommonStatus,
-    pub auto_access: bool,
     pub system: bool,
     pub created_at: TimeDateTimeWithTimeZone,
     pub updated_at: TimeDateTimeWithTimeZone,
