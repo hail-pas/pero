@@ -344,6 +344,8 @@ pub struct ClientSummary {
     pub access_token_ttl_seconds: i32,
     pub refresh_token_ttl_seconds: i32,
     pub id_token_ttl_seconds: i32,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub previous_secret_expires_at: Option<time::OffsetDateTime>,
     pub status: String,
 }
 
@@ -362,6 +364,7 @@ impl From<oauth_clients::Model> for ClientSummary {
             access_token_ttl_seconds: model.access_token_ttl_seconds,
             refresh_token_ttl_seconds: model.refresh_token_ttl_seconds,
             id_token_ttl_seconds: model.id_token_ttl_seconds,
+            previous_secret_expires_at: model.previous_secret_expires_at,
             status: model.status.to_string(),
         }
     }

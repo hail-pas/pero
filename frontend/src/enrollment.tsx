@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Alert, Button, Stack, Typography } from "@mui/material";
-import { Link as RouterLink } from "react-router-dom";
+import { Alert, Button, Stack, Typography, Pagination } from "@mui/material";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { FieldsForm } from "./forms";
 import { Heading, Panel, type Actions } from "./shared";
-import type { ViewDataMap } from "./contracts";
+import { date } from "./api";
+import type { ProgressList, ViewDataMap } from "./contracts";
 import { t } from "./i18n";
 
 function admissionStatus(status: string) {
@@ -40,11 +41,29 @@ export function Enrollment({
             : t("验证邮箱并完成账户注册。")
         }
       />
-      <Button component={RouterLink} to="/sso/login">
+      <Button component={RouterLink} to="/sso/login" sx={{ mb: 2 }}>
         {t("返回登录")}
       </Button>
       <Panel title={t("注册进度")}>
-        {data.mode === "closed" ? (
+        {["completed", "rejected", "revoked", "expired"].includes(
+          data.status,
+        ) ? (
+          <Stack spacing={2}>
+            <Alert severity={data.status === "completed" ? "success" : "info"}>
+              {admissionStatus(data.status)}
+            </Alert>
+            {data.reason && <Typography>{data.reason}</Typography>}
+            <Button
+              onClick={() =>
+                mutate("/sso/register", { action: "reset" }).catch((e) =>
+                  setFailure(e.message),
+                )
+              }
+            >
+              {t("退出本次注册流程")}
+            </Button>
+          </Stack>
+        ) : data.mode === "closed" ? (
           <Alert severity="info">{t("注册已关闭")}</Alert>
         ) : data.status ? (
           <Stack spacing={3}>
@@ -153,6 +172,7 @@ export function EnrollmentAdmin({
   data,
   mutate,
   ask,
+  editor,
 }: { data: ViewDataMap["EnrollmentAdminView"] } & Actions) {
   const p = data.policy;
   return (
@@ -238,64 +258,7 @@ export function EnrollmentAdmin({
           label={t("发送邀请")}
         />
       </Panel>
-      <Panel title={t("最近申请与邀请")}>
-        <Stack spacing={2}>
-          {data.rows.length === 0 && <Typography>{t("暂无记录")}</Typography>}
-          {data.rows.map((r) => (
-            <Stack
-              key={r.id}
-              spacing={1}
-              sx={{ borderBottom: 1, borderColor: "divider", pb: 2 }}
-            >
-              <Typography>
-                {r.email} · {r.invitation ? t("邀请") : t("申请")} ·{" "}
-                {admissionStatus(r.status)}
-              </Typography>
-              <Typography variant="caption">{r.reason}</Typography>
-              <Stack direction="row" spacing={1}>
-                {r.status === "pending_approval" && (
-                  <>
-                    {["approve", "reject"].map((action) => (
-                      <Button
-                        key={action}
-                        onClick={() =>
-                          ask(
-                            t(action === "approve" ? "批准申请" : "拒绝申请"),
-                            `/dashboard/enrollments/${r.id}`,
-                            { action },
-                          )
-                        }
-                      >
-                        {t(action === "approve" ? "批准" : "拒绝")}
-                      </Button>
-                    ))}
-                  </>
-                )}
-                {["pending_verification", "pending_approval", "ready"].includes(
-                  r.status,
-                ) && (
-                  <>
-                    {["resend", "revoke"].map((action) => (
-                      <Button
-                        key={action}
-                        onClick={() =>
-                          ask(
-                            t(action === "resend" ? "重发邮件" : "撤销流程"),
-                            `/dashboard/enrollments/${r.id}`,
-                            { action },
-                          )
-                        }
-                      >
-                        {t(action === "resend" ? "重发" : "撤销")}
-                      </Button>
-                    ))}
-                  </>
-                )}
-              </Stack>
-            </Stack>
-          ))}
-        </Stack>
-      </Panel>
+      <Progress data={data} admin actions={{ mutate, ask, editor }} />
     </>
   );
 }
@@ -303,6 +266,7 @@ export function Admission({
   data,
   mutate,
   ask,
+  editor,
 }: { data: ViewDataMap["AdmissionView"] } & Actions) {
   const [failure, setFailure] = useState("");
   return (
@@ -314,13 +278,19 @@ export function Admission({
           "退出应用会撤销该应用访问资格；注销账户会移除个人资料并退出所有会话。",
         )}
       />
+      {data.progress && (
+        <Progress data={data.progress} actions={{ mutate, ask, editor }} />
+      )}
       <Panel title={t("应用访问资格")}>
         <Stack spacing={2}>
           {data.rows.map((r) => (
             <Stack
-              direction="row"
+              direction={{ xs: "column", sm: "row" }}
               spacing={2}
-              sx={{ alignItems: "center" }}
+              sx={{
+                alignItems: { xs: "stretch", sm: "center" },
+                overflowWrap: "anywhere",
+              }}
               key={r.id}
             >
               <Typography sx={{ flex: 1 }}>
@@ -381,6 +351,292 @@ export function Admission({
           }}
           label={t("注销账户")}
         />
+      </Panel>
+    </>
+  );
+}
+
+function Progress({
+  data,
+  admin = false,
+  actions,
+}: {
+  data: ProgressList;
+  admin?: boolean;
+  actions: Actions;
+}) {
+  const [params, setParams] = useSearchParams();
+  const [failure, setFailure] = useState("");
+  const update = (values: Record<string, unknown>) => {
+    const next = new URLSearchParams(params);
+    next.delete("page");
+    Object.entries(values).forEach(([k, v]) =>
+      typeof v === "boolean" || v ? next.set(k, String(v)) : next.delete(k),
+    );
+    setParams(next);
+    return Promise.resolve();
+  };
+  return (
+    <Panel title={admin ? t("最近申请与邀请") : t("我的申请与邀请")}>
+      {failure && <Alert severity="error">{failure}</Alert>}
+      {admin && (
+        <Typography sx={{ mb: 2 }}>
+          {t("待审批 {{0}} 项", { "0": data.pending_count || 0 })}
+        </Typography>
+      )}
+      <FieldsForm
+        key={params.toString()}
+        fields={[
+          { name: "q", label: t("搜索邮箱或应用") },
+          {
+            name: "status",
+            label: t("状态"),
+            options: [
+              ["", t("全部")],
+              ...[
+                "pending_verification",
+                "pending_approval",
+                "ready",
+                "completed",
+                "rejected",
+                "revoked",
+                "expired",
+              ].map((s) => [s, admissionStatus(s)] as [string, string]),
+            ],
+          },
+          ...(admin
+            ? [{ name: "all_apps", label: t("跨应用查询"), type: "checkbox" }]
+            : []),
+        ]}
+        initial={{
+          q: params.get("q") || "",
+          status: params.get("status") || "",
+          all_apps: params.has("all_apps")
+            ? params.get("all_apps") === "true"
+            : !params.has("app"),
+        }}
+        submit={update}
+        label={t("查询")}
+      />
+      <Stack spacing={2} sx={{ mt: 3 }}>
+        {data.rows.length === 0 && <Typography>{t("暂无记录")}</Typography>}
+        {data.rows.map((r) => (
+          <Stack
+            key={r.id}
+            spacing={1}
+            sx={{
+              borderBottom: 1,
+              borderColor: "divider",
+              pb: 2,
+              overflowWrap: "anywhere",
+            }}
+          >
+            <Typography>
+              {r.email} · {r.app_name || t("平台账户")} ·{" "}
+              {r.invitation ? t("邀请") : t("申请")} ·{" "}
+              {admissionStatus(r.status)}
+            </Typography>
+            <Typography variant="caption">
+              {date(r.created_at)} · {t("到期时间")}：{date(r.expires_at)}
+            </Typography>
+            {r.reason && <Typography variant="body2">{r.reason}</Typography>}
+            <Stack
+              direction="row"
+              sx={{ flexWrap: "wrap", alignItems: "center", gap: 1 }}
+            >
+              {admin && r.status === "pending_approval" && (
+                <>
+                  <Button
+                    onClick={() =>
+                      actions.ask(
+                        t("批准申请"),
+                        `/dashboard/enrollments/${r.id}`,
+                        { action: "approve" },
+                      )
+                    }
+                  >
+                    {t("批准")}
+                  </Button>
+                  <Button
+                    color="warning"
+                    onClick={() =>
+                      actions.editor(
+                        t("拒绝原因"),
+                        `/dashboard/enrollments/${r.id}`,
+                        [
+                          {
+                            name: "reason",
+                            label: t("拒绝原因"),
+                            multiline: true,
+                          },
+                        ],
+                        {},
+                        { action: "reject" },
+                      )
+                    }
+                  >
+                    {t("拒绝")}
+                  </Button>
+                </>
+              )}
+              {["pending_verification", "pending_approval", "ready"].includes(
+                r.status,
+              ) && (
+                <>
+                  {!admin && (
+                    <Button
+                      onClick={() =>
+                        actions
+                          .mutate(`/account/enrollments/${r.id}`, {
+                            action: "continue",
+                          })
+                          .catch((e) => setFailure(e.message))
+                      }
+                    >
+                      {t("继续办理")}
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() =>
+                      actions.ask(
+                        t("重发邮件"),
+                        `${admin ? "/dashboard" : "/account"}/enrollments/${r.id}`,
+                        { action: "resend" },
+                      )
+                    }
+                  >
+                    {t("重发")}
+                  </Button>
+                  <Button
+                    color="warning"
+                    onClick={() =>
+                      actions.ask(
+                        admin ? t("撤销流程") : t("撤回申请"),
+                        `${admin ? "/dashboard" : "/account"}/enrollments/${r.id}`,
+                        { action: admin ? "revoke" : "withdraw" },
+                      )
+                    }
+                  >
+                    {admin ? t("撤销") : t("撤回")}
+                  </Button>
+                </>
+              )}
+            </Stack>
+          </Stack>
+        ))}
+        <Pagination
+          page={data.page || 1}
+          count={Math.max(1, data.total_pages || 1)}
+          onChange={(_, page) => {
+            const next = new URLSearchParams(params);
+            next.set("page", String(page));
+            setParams(next);
+          }}
+        />
+      </Stack>
+    </Panel>
+  );
+}
+export function AppMembers({
+  data,
+  mutate,
+  ask,
+}: { data: ViewDataMap["AppMembersView"] } & Actions) {
+  const [params, setParams] = useSearchParams();
+  const endpoint = `/dashboard/apps/${data.app_id}/members`;
+  return (
+    <>
+      <Heading
+        title={t("应用成员")}
+        description={data.app_name}
+        back={`/dashboard/apps/${data.app_id}`}
+      />
+      <Panel title={t("查询成员")}>
+        <FieldsForm
+          fields={[
+            { name: "q", label: t("用户名或昵称") },
+            {
+              name: "status",
+              label: t("状态"),
+              options: [
+                ["", t("全部")],
+                ["active", t("已启用")],
+                ["disabled", t("已停用")],
+              ],
+            },
+          ]}
+          initial={{
+            q: params.get("q") || "",
+            status: params.get("status") || "",
+          }}
+          submit={(v) => {
+            const next = new URLSearchParams();
+            Object.entries(v).forEach(([k, v]) => v && next.set(k, String(v)));
+            setParams(next);
+            return Promise.resolve();
+          }}
+          label={t("查询")}
+        />
+      </Panel>
+      {!data.system && (
+        <Panel title={t("添加成员")}>
+          <FieldsForm
+            fields={[
+              { name: "username", label: t("完整用户名"), required: true },
+            ]}
+            submit={(v) => mutate(endpoint, { ...v, action: "grant" })}
+            label={t("授予访问资格")}
+          />
+        </Panel>
+      )}
+      <Panel title={t("应用成员")}>
+        <Stack spacing={2}>
+          {!data.rows.length && <Typography>{t("暂无记录")}</Typography>}
+          {data.rows.map((r) => (
+            <Stack
+              key={r.user_id}
+              direction={{ xs: "column", sm: "row" }}
+              spacing={2}
+              sx={{
+                alignItems: { xs: "stretch", sm: "center" },
+                overflowWrap: "anywhere",
+              }}
+            >
+              <Typography sx={{ flex: 1 }}>
+                {r.nickname || r.username} · {r.username} ·{" "}
+                {admissionStatus(r.status)}
+              </Typography>
+              {!data.system && (
+                <Button
+                  onClick={() =>
+                    ask(
+                      r.status === "active"
+                        ? t("撤销应用访问")
+                        : t("授予访问资格"),
+                      endpoint,
+                      {
+                        action: r.status === "active" ? "revoke" : "grant",
+                        user_id: r.user_id,
+                        username: r.username,
+                      },
+                    )
+                  }
+                >
+                  {r.status === "active" ? t("撤销") : t("启用")}
+                </Button>
+              )}
+            </Stack>
+          ))}
+          <Pagination
+            page={data.page}
+            count={Math.max(1, data.total_pages)}
+            onChange={(_, page) => {
+              const next = new URLSearchParams(params);
+              next.set("page", String(page));
+              setParams(next);
+            }}
+          />
+        </Stack>
       </Panel>
     </>
   );

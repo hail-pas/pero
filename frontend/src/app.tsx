@@ -4,11 +4,21 @@ import {
   Button,
   Card,
   CardContent,
-  Skeleton,
-  Stack,
+  Box,
+  LinearProgress,
+  Snackbar,
 } from "@mui/material";
-import { useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  redirect,
+  redirectDocument,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+  useNavigation,
+  useRevalidator,
+  type LoaderFunctionArgs,
+} from "react-router-dom";
 import { errorText, request, type ViewEnvelope, type Values } from "./api";
 import type { Field } from "./forms";
 import { ActionDialog, type ActionModal } from "./action-dialog";
@@ -16,21 +26,92 @@ import { t, useLocale } from "./i18n";
 import { Layout } from "./layout";
 import { PageContent } from "./page-content";
 
-export function App() {
-  const location = useLocation();
-  return <Page key={location.pathname + location.search} />;
+function documentNavigation(url: URL) {
+  return (
+    url.origin !== window.location.origin ||
+    url.pathname.startsWith("/oauth2") ||
+    (url.pathname.includes("/social/") && !url.pathname.endsWith("/link"))
+  );
 }
 
-function Page() {
+// The router commits a location only after the server has resolved access and
+// redirects. Existing content and its layout stay mounted while this runs.
+export async function pageLoader({ request: navigation }: LoaderFunctionArgs) {
+  try {
+    const url = new URL(navigation.url);
+    const result = await request(
+      url.pathname + url.search,
+      undefined,
+      navigation.signal,
+    );
+    if (!result.view && result.redirect) {
+      const target = new URL(result.redirect, window.location.origin);
+      return documentNavigation(target)
+        ? redirectDocument(target.href)
+        : redirect(target.pathname + target.search);
+    }
+    if (!result.view) throw new Error(errorText("invalid_response"));
+    return { payload: result, failure: "" };
+  } catch (error) {
+    if (navigation.signal.aborted) throw error;
+    return { payload: undefined, failure: (error as Error).message };
+  }
+}
+
+export function InitialLoading() {
+  return (
+    <Box
+      sx={{
+        position: "fixed",
+        inset: "0 0 auto",
+        height: 3,
+        zIndex: (theme) => theme.zIndex.modal + 1,
+      }}
+    >
+      <LinearProgress aria-label={t("正在加载")} />
+    </Box>
+  );
+}
+
+export function App() {
   const { locale } = useLocale();
   const location = useLocation(),
     navigate = useNavigate();
-  const [payload, setPayload] = useState<ViewEnvelope>(),
-    [loading, setLoading] = useState(true),
-    [failure, setFailure] = useState(""),
-    [notice, setNotice] = useState(""),
-    [modal, setModal] = useState<ActionModal | null>(null),
-    [revision, setRevision] = useState(0);
+  const loaded = useLoaderData<typeof pageLoader>();
+  const navigation = useNavigation();
+  const revalidator = useRevalidator();
+  const [updated, setUpdated] = useState<{
+    source: typeof loaded;
+    payload: ViewEnvelope;
+  }>();
+  const payload = updated?.source === loaded ? updated.payload : loaded.payload;
+  const failure = loaded.failure;
+  const routeKey = location.pathname + location.search;
+  const [noticeState, setNoticeState] = useState({ routeKey, text: "" });
+  const notice = noticeState.routeKey === routeKey ? noticeState.text : "";
+  const setNotice = (text: string) => setNoticeState({ routeKey, text });
+  const [modalState, setModalState] = useState<{
+    routeKey: string;
+    value: ActionModal | null;
+  }>();
+  const modal = modalState?.routeKey === routeKey ? modalState.value : null;
+  const setModal = (value: ActionModal | null) =>
+    setModalState({ routeKey, value });
+  const [showProgress, setShowProgress] = useState(false);
+  const busy = navigation.state !== "idle" || revalidator.state !== "idle";
+  useEffect(() => {
+    if (!busy) {
+      setShowProgress(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowProgress(true), 180);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
+  const activeRoute = useRef(routeKey);
+  activeRoute.current = routeKey;
+  const setPayload = (next: ViewEnvelope) =>
+    setUpdated({ source: loaded, payload: next });
+  const refresh = () => revalidator.revalidate();
   const csrfToken =
     payload?.data && "csrf_token" in payload.data
       ? payload.data.csrf_token
@@ -41,34 +122,11 @@ function Page() {
   const follow = useCallback(
     (target: string) => {
       const url = new URL(target, window.location.origin);
-      if (
-        url.origin !== window.location.origin ||
-        url.pathname.startsWith("/oauth2") ||
-        (url.pathname.includes("/social/") && !url.pathname.endsWith("/link"))
-      )
-        window.location.assign(url.href);
-      else navigate(url.pathname + url.search, { replace: true });
+      if (documentNavigation(url)) window.location.assign(url.href);
+      else return navigate(url.pathname + url.search, { replace: true });
     },
     [navigate],
   );
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    setFailure("");
-    request(path + location.search, undefined, controller.signal)
-      .then((result) => {
-        if (!result.view && result.redirect) follow(result.redirect);
-        else if (result.view) setPayload(result);
-        else throw new Error(errorText("invalid_response"));
-      })
-      .catch((e) => {
-        if (e.name !== "AbortError") setFailure(e.message);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [path, location.search, revision, follow]);
   useEffect(() => {
     document.title = t("Pero · {{0}}", {
       "0": t(
@@ -85,15 +143,22 @@ function Page() {
     values: Values = {},
     after?: () => void,
   ) {
+    const sourceRoute = routeKey;
     const result = await request(endpoint, {
       ...values,
       csrf_token: csrfToken,
     });
+    if (activeRoute.current !== sourceRoute) return;
     if (!result.view && result.redirect) {
-      follow(result.redirect);
+      await follow(result.redirect);
       return;
     }
-    if (!result.view && result.data && "secret" in result.data && result.data.secret) {
+    if (
+      !result.view &&
+      result.data &&
+      "secret" in result.data &&
+      result.data.secret
+    ) {
       setModal({
         kind: "secret",
         title: t("请保存客户端密钥"),
@@ -111,7 +176,7 @@ function Page() {
     setModal(null);
     setNotice(t("操作已完成"));
     if (after) after();
-    else setRevision((n) => n + 1);
+    else await refresh();
   }
   function ask(
     title: string,
@@ -132,22 +197,14 @@ function Page() {
   }
   const actions = { mutate, ask, editor };
   let content: React.ReactNode;
-  if (loading)
-    content = (
-      <Stack spacing={3}>
-        <Skeleton width="35%" height={50} />
-        <Skeleton variant="rounded" height={150} />
-        <Skeleton variant="rounded" height={300} />
-      </Stack>
-    );
-  else if (failure)
+  if (failure)
     content = (
       <Card>
         <CardContent>
           <Alert severity="error">{t(failure)}</Alert>
           <Button
             sx={{ mt: 2 }}
-            onClick={() => setRevision((n) => n + 1)}
+            onClick={refresh}
             startIcon={<RefreshRounded />}
           >
             {t("重新加载")}
@@ -156,12 +213,26 @@ function Page() {
       </Card>
     );
   else if (payload)
-    content = <PageContent page={payload} actions={actions} follow={follow} />;
+    content = (
+      <PageContent
+        key={routeKey + payload.view}
+        page={payload}
+        actions={actions}
+        follow={follow}
+      />
+    );
+  content = (
+    <Box inert={navigation.state !== "idle"} aria-busy={busy}>
+      {content}
+    </Box>
+  );
   const managed =
     path.startsWith("/dashboard") ||
+    payload?.view === "SecurityView" ||
     (path.startsWith("/account") && !path.endsWith("/login"));
   return (
     <>
+      {showProgress && <InitialLoading />}
       {managed ? (
         <Layout
           layout={layout}
@@ -174,16 +245,20 @@ function Page() {
             )
           }
         >
-          {notice && (
-            <Alert sx={{ mb: 3 }} onClose={() => setNotice("")}>
-              {t(notice)}
-            </Alert>
-          )}
           {content}
         </Layout>
       ) : (
         <>{content}</>
       )}
+      <Snackbar
+        open={!!notice}
+        autoHideDuration={4000}
+        onClose={() => setNotice("")}
+      >
+        <Alert severity="success" onClose={() => setNotice("")}>
+          {t(notice)}
+        </Alert>
+      </Snackbar>
       {modal && (
         <ActionDialog
           key={modal.kind + modal.title}
@@ -191,7 +266,7 @@ function Page() {
           mutate={mutate}
           onClose={() => {
             setModal(null);
-            if (modal.kind === "secret") setRevision((n) => n + 1);
+            if (modal.kind === "secret") refresh();
           }}
         />
       )}

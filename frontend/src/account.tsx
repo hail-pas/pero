@@ -76,6 +76,7 @@ export function Profile({
           <Avatar
             src={u.avatar_url}
             sx={{
+              flexShrink: 0,
               width: 84,
               height: 84,
               bgcolor: "primary.lighter",
@@ -87,11 +88,10 @@ export function Profile({
           >
             {(u.nickname || u.username).slice(0, 1)}
           </Avatar>
-          <Box>
+          <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
             <Typography variant="h4">{u.nickname || u.username}</Typography>
             <Typography sx={{ color: "text.secondary", mt: 1, fontSize: 14 }}>
-              @{u.username} {t("· 加入于")}
-              {date(u.created_at).slice(0, 10)}
+              @{u.username} {t("· 加入于")} {date(u.created_at).slice(0, 10)}
             </Typography>
           </Box>
         </Stack>
@@ -99,12 +99,15 @@ export function Profile({
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "1.1fr 1fr" },
+          gridTemplateColumns: {
+            xs: "minmax(0, 1fr)",
+            md: "minmax(0, 1.1fr) minmax(0, 1fr)",
+          },
           gap: 3,
           alignItems: "start",
         }}
       >
-        <Box>
+        <Box sx={{ "& > :last-child": { mb: 0 } }}>
           <Panel title={t("基本资料")}>
             <FieldsForm
               fields={userFields.filter((f) =>
@@ -163,7 +166,7 @@ export function Profile({
             </Stack>
           </Panel>
         </Box>
-        <Box>
+        <Box sx={{ "& > :last-child": { mb: 0 } }}>
           <Panel title={t("联系方式")}>
             {(["email", "phone"] as const).map((channel, i) => {
               const nonce = u[`pending_${channel}_nonce`],
@@ -179,9 +182,10 @@ export function Profile({
                     sx={{
                       justifyContent: "space-between",
                       alignItems: "center",
+                      gap: 2,
                     }}
                   >
-                    <Box>
+                    <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
                       <Typography variant="subtitle2">{label}</Typography>
                       <Typography
                         color="text.secondary"

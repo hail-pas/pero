@@ -35,7 +35,7 @@ pub async fn require_auth(
     }
 }
 
-/// Only verified identity claims, confirmed by the issuer's online session check,
+/// Only verified identity claims, confirmed by the issuer's online introspection check,
 /// may establish a user.
 pub async fn authenticated_user(
     state: &AppState,
@@ -70,7 +70,7 @@ pub async fn authenticated_user(
         Err(error) if error.kind() == pero_error::ErrorKind::Unauthorized => return Ok(None),
         Err(error) => return Err(error),
     };
-    // UserInfo validates the presented AT's grant, so first bind it to this RP
+    // Introspection validates the presented AT's grant, so first bind it to this RP
     // and the identity's session. A matching subject alone is insufficient.
     if access.sub != claims.sub
         || claims.sid.as_deref().is_none_or(str::is_empty)
@@ -84,37 +84,47 @@ pub async fn authenticated_user(
     {
         return Ok(None);
     }
-    let url =
-        pero_utils::oauth::url::issuer_endpoint(&state.config.oauth2.issuer, "api/oauth2/userinfo");
+    let url = pero_utils::oauth::url::issuer_endpoint(
+        &state.config.oauth2.issuer,
+        "api/oauth2/introspect",
+    );
     let response = state
         .http
-        .get(url)
-        .bearer_auth(access_token.value())
+        .post(url)
+        .form(&[
+            ("token", access_token.value()),
+            ("client_id", state.config.oauth2.client_id.as_str()),
+            (
+                "client_secret",
+                state.config.oauth2.client_secret.expose_secret(),
+            ),
+        ])
         .send()
         .await
         .map_err(|_| {
             pero_error::AppError::dependency_failure(
-                "userinfo_unavailable",
+                "introspection_unavailable",
                 "Identity service unavailable",
             )
         })?;
-    if matches!(response.status().as_u16(), 401 | 403) {
-        return Ok(None);
-    }
     if !response.status().is_success() {
         return Err(pero_error::AppError::dependency_failure(
-            "userinfo_unavailable",
+            "introspection_unavailable",
             "Identity service unavailable",
         ));
     }
     #[derive(serde::Deserialize)]
     struct Subject {
-        sub: String,
+        active: bool,
+        sub: Option<String>,
     }
     let subject: Subject = crate::oauth2::bounded_json(response).await.map_err(|_| {
-        pero_error::AppError::dependency_failure("userinfo_invalid", "Invalid identity response")
+        pero_error::AppError::dependency_failure(
+            "introspection_invalid",
+            "Invalid identity response",
+        )
     })?;
-    if subject.sub != claims.sub {
+    if !subject.active || subject.sub.as_deref() != Some(claims.sub.as_str()) {
         return Ok(None);
     }
     Ok(Some(CurrentUser {

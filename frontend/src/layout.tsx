@@ -1,16 +1,23 @@
 import {
-  AppsRounded,
-  DevicesRounded,
-  HistoryRounded,
-  LinkRounded,
-  FactCheckRounded,
-  DashboardRounded,
-  FingerprintRounded,
-  HomeRounded,
+  AdminPanelSettingsOutlined,
+  AssignmentOutlined,
+  GridViewOutlined,
+  NotificationsOutlined,
+  PeopleOutlined,
+  PersonAddAltOutlined,
+  VerifiedUserOutlined,
+  DevicesOutlined,
+  HistoryOutlined,
+  LinkOutlined,
+  FactCheckOutlined,
+  DashboardOutlined,
+  FingerprintOutlined,
+  HomeOutlined,
   KeyboardArrowDownRounded,
-  LogoutRounded,
+  LogoutOutlined,
   MenuRounded,
-  PersonRounded,
+  PersonOutlined,
+  ShieldOutlined,
 } from "@mui/icons-material";
 import {
   Avatar,
@@ -32,7 +39,6 @@ import {
 import { useState } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import type { UserLayout } from "./contracts";
-import { SvgColor } from "./components/svg-color";
 import { t, useLocale } from "./i18n";
 import { LanguageSwitcher } from "./language-switcher";
 export function Brand() {
@@ -48,9 +54,9 @@ export function Brand() {
     >
       <Box
         component="img"
-        src={`${import.meta.env.BASE_URL}resources/icons/logo.png`}
+        src={`${import.meta.env.BASE_URL}resources/icons/logo.svg`}
         alt=""
-        sx={{ width: 30, height: 30, borderRadius: 1 }}
+        sx={{ width: 30, height: 30 }}
       />
       <Typography variant="h5">
         pero
@@ -80,41 +86,23 @@ export function Layout({
   const admin = pathname.startsWith("/dashboard");
   const links = admin
     ? ([
-        ["/dashboard/admins", t("管理员"), <PersonRounded />],
-        ["/dashboard/apps", t("应用管理"), <AppsRounded />],
-        [
-          "/dashboard/users",
-          t("用户管理"),
-          <SvgColor
-            src={`${import.meta.env.BASE_URL}resources/icons/navbar/ic-user.svg`}
-          />,
-        ],
-        ["/dashboard/providers", t("身份提供方"), <FingerprintRounded />],
-        ["/dashboard/events", t("登录记录"), <HistoryRounded />],
-        ["/dashboard/registration", t("注册与邀请"), <PersonRounded />],
-        ["/dashboard/notifications", t("通知投递"), <HistoryRounded />],
-        ["/dashboard/audit", t("操作审计"), <FactCheckRounded />],
+        ["/dashboard/admins", t("管理员"), <AdminPanelSettingsOutlined />],
+        ["/dashboard/apps", t("应用管理"), <GridViewOutlined />],
+        ["/dashboard/users", t("用户管理"), <PeopleOutlined />],
+        ["/dashboard/providers", t("身份提供方"), <FingerprintOutlined />],
+        ["/dashboard/events", t("登录记录"), <HistoryOutlined />],
+        ["/dashboard/registration", t("注册与邀请"), <PersonAddAltOutlined />],
+        ["/dashboard/notifications", t("通知投递"), <NotificationsOutlined />],
+        ["/dashboard/audit", t("操作审计"), <FactCheckOutlined />],
       ] as const)
     : ([
-        [
-          "/account/profile",
-          t("个人资料"),
-          <SvgColor
-            src={`${import.meta.env.BASE_URL}resources/icons/navbar/ic-user.svg`}
-          />,
-        ],
-        [
-          "/account/security",
-          t("账户安全"),
-          <SvgColor
-            src={`${import.meta.env.BASE_URL}resources/icons/navbar/ic-lock.svg`}
-          />,
-        ],
-        ["/account/sessions", t("登录设备"), <DevicesRounded />],
-        ["/account/activity", t("登录记录"), <HistoryRounded />],
-        ["/account/applications", t("应用准入与注销"), <AppsRounded />],
-        ["/account/authorizations", t("已授权应用"), <AppsRounded />],
-        ["/account/identities", t("关联账号"), <LinkRounded />],
+        ["/account/profile", t("个人资料"), <PersonOutlined />],
+        ["/account/security", t("账户安全"), <ShieldOutlined />],
+        ["/account/sessions", t("登录设备"), <DevicesOutlined />],
+        ["/account/activity", t("登录记录"), <HistoryOutlined />],
+        ["/account/applications", t("应用准入与注销"), <AssignmentOutlined />],
+        ["/account/authorizations", t("已授权应用"), <VerifiedUserOutlined />],
+        ["/account/identities", t("关联账号"), <LinkOutlined />],
       ] as const);
   const name = layout?.user_name || t("我的账户");
   const nav = (
@@ -231,7 +219,7 @@ export function Layout({
         <Button
           component={RouterLink}
           to={admin ? "/account/profile" : "/dashboard/apps"}
-          startIcon={admin ? <PersonRounded /> : <DashboardRounded />}
+          startIcon={admin ? <PersonOutlined /> : <DashboardOutlined />}
         >
           {admin ? t("返回个人中心") : t("管理控制台")}
         </Button>
@@ -239,19 +227,19 @@ export function Layout({
       <Button
         component={RouterLink}
         to="/"
-        startIcon={<HomeRounded />}
+        startIcon={<HomeOutlined />}
         color="inherit"
       >
         {t("返回首页")}
       </Button>
       <Divider sx={{ my: 1 }} />
-      <Button onClick={onLogout} startIcon={<LogoutRounded />} color="inherit">
+      <Button onClick={onLogout} startIcon={<LogoutOutlined />} color="inherit">
         {t("退出登录")}
       </Button>
     </Stack>
   );
   return (
-    <Box sx={{ display: "flex", minHeight: "100vh" }}>
+    <Box sx={{ display: "flex", minHeight: "100dvh" }}>
       <Box component="nav" sx={{ width: { lg: 280 }, flexShrink: 0 }}>
         <Drawer
           variant="permanent"
@@ -273,7 +261,9 @@ export function Layout({
           {nav}
         </Drawer>
       </Box>
-      <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Box
+        sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}
+      >
         <Stack
           component="header"
           direction="row"
@@ -282,6 +272,7 @@ export function Layout({
             justifyContent: "space-between",
             alignItems: "center",
             height: 76,
+            flexShrink: 0,
             px: { xs: 2, md: 5 },
             bgcolor: "rgba(249,250,251,.9)",
             backdropFilter: "blur(8px)",
@@ -343,12 +334,19 @@ export function Layout({
               </MenuItem>
               <MenuItem
                 component={RouterLink}
-                to="/account/change-password"
+                to="/account/security"
                 onClick={() => setAccountAnchor(null)}
               >
                 {t("账户安全")}
               </MenuItem>
               <Divider />
+              <MenuItem
+                component={RouterLink}
+                to="/sso/select-account"
+                onClick={() => setAccountAnchor(null)}
+              >
+                {t("切换账号")}
+              </MenuItem>
               <MenuItem
                 onClick={() => {
                   setAccountAnchor(null);
@@ -364,7 +362,7 @@ export function Layout({
         <Container
           component="main"
           maxWidth="xl"
-          sx={{ py: { xs: 3, md: 4 }, px: { xs: 2, md: 5 } }}
+          sx={{ flex: 1, py: { xs: 3, md: 4 }, px: { xs: 2, md: 5 } }}
         >
           {children}
         </Container>
@@ -372,7 +370,7 @@ export function Layout({
           component="footer"
           variant="caption"
           color="text.disabled"
-          sx={{ display: "block", px: 5, py: 4 }}
+          sx={{ display: "block", flexShrink: 0, px: { xs: 2, md: 5 }, py: 4 }}
         >
           © {new Date().getFullYear()} {t("Pero · 统一身份认证平台")}
         </Typography>

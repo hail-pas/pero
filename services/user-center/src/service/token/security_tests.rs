@@ -731,7 +731,7 @@ async fn recovery_and_contact_expiry() {
     let notification_count = || async {
         db.query_one_raw(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT count(*) AS count FROM notification_outbox".to_owned(),
+            "SELECT count(*) AS count FROM notification_outbox WHERE kind IN ('reset_password','verify_contact')".to_owned(),
         ))
         .await
         .unwrap()
@@ -824,6 +824,8 @@ async fn recovery_and_contact_expiry() {
             .is_none()
     );
     assert_eq!(notification_count().await, 0);
+    let alerts=db.query_one_raw(Statement::from_string(DbBackend::Postgres,"SELECT count(*) AS count FROM notification_outbox WHERE kind='password_reset_completed'".to_owned())).await.unwrap().unwrap();
+    assert_eq!(alerts.try_get::<i64>("", "count").unwrap(), 1);
     crate::service::recovery::request(&state, "+15551234567")
         .await
         .unwrap();

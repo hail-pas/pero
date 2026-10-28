@@ -14,6 +14,11 @@ use crate::state::app::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route(
+            "/sso/select-account",
+            get(crate::web::oauth2::select_account::get)
+                .post(crate::web::oauth2::select_account::post),
+        )
         .route("/sso/login", get(login::get).post(login::post))
         .route("/sso/register", get(register::get).post(register::post))
         .route(

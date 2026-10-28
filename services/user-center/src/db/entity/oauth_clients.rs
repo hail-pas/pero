@@ -16,6 +16,9 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     #[serde(skip_serializing)]
     pub secret_hash: Option<String>,
+    #[serde(skip_serializing)]
+    pub previous_secret_hash: Option<String>,
+    pub previous_secret_expires_at: Option<TimeDateTimeWithTimeZone>,
     #[sea_orm(column_type = "Text", nullable)]
     pub name: Option<String>,
     pub r#type: OauthClientType,

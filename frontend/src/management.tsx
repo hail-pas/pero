@@ -288,11 +288,11 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
         </TableContainer>
         {!rows.length && <Empty />}
         <Stack
-          direction="row"
-
+          direction={{ xs: "column", sm: "row" }}
           sx={{
             justifyContent: "space-between",
             alignItems: "center",
+            gap: 2,
             p: 3,
             borderTop: "1px solid #f4f6f8",
           }}

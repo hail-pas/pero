@@ -47,13 +47,23 @@ impl TokenService<'_> {
             OauthClientType::Confidential => {
                 let secret = form.client_secret.as_deref().unwrap_or("");
                 let hash = client.secret_hash.clone().unwrap_or_default();
-                if hash.is_empty()
-                    || !pero_utils::crypto::verify_secret_async(secret, &hash)
+                let verify = |hash: String| async move {
+                    pero_utils::crypto::verify_secret_async(secret, &hash)
                         .await
                         .map_err(|_| {
                             TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable)
-                        })?
+                        })
+                };
+                let mut valid = !hash.is_empty() && verify(hash).await?;
+                if !valid
+                    && client
+                        .previous_secret_expires_at
+                        .is_some_and(|at| at > time::OffsetDateTime::now_utc())
+                    && let Some(previous) = client.previous_secret_hash.clone()
                 {
+                    valid = verify(previous).await?;
+                }
+                if !valid {
                     return Err(TokenEndpointResult::unauthorized("Invalid client secret"));
                 }
             }

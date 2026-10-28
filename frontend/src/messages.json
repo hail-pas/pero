@@ -116,5 +116,6 @@
   "app_access_disabled": "应用访问资格已被撤销，请联系管理员。",
   "policy_conflict": "策略已被其他操作更新，请刷新后重试。",
   "remove_admin_role_first": "请先由其他超级管理员移除你的管理员身份。",
-  "confirmation_mismatch": "确认用户名不匹配。"
+  "confirmation_mismatch": "确认用户名不匹配。",
+  "secret_rotation_pending": "请先停用旧密钥，再发起下一次轮换"
 }

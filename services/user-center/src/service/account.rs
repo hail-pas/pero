@@ -136,6 +136,7 @@ impl<'a> AccountService<'a> {
             "password_change",
         )
         .await?;
+        super::security::notify(&txn, &user, "password_changed").await?;
         txn.commit().await?;
         Ok(())
     }
@@ -265,6 +266,9 @@ impl<'a> AccountService<'a> {
             return Err(PasswordResetError::Internal);
         }
 
+        super::security::notify(&txn, &user, "password_reset_completed")
+            .await
+            .map_err(|_| PasswordResetError::Internal)?;
         if let Err(e) = txn.commit().await {
             tracing::error!("Reset password transaction commit error: {e}");
             return Err(PasswordResetError::Internal);

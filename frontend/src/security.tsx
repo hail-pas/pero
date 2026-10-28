@@ -19,7 +19,8 @@ import {
   useLocation,
   useSearchParams,
 } from "react-router-dom";
-import type { ViewEnvelope } from "./contracts";
+import { FieldsForm } from "./forms";
+import type { ViewDataMap, ViewEnvelope } from "./contracts";
 import { date, errorText } from "./api";
 import { Heading, Panel, type Actions } from "./shared";
 import { t, useLocale } from "./i18n";
@@ -67,7 +68,7 @@ export function Security({
         title={titles[view]}
         action={
           view === "SessionListView" && (
-            <Stack direction="row" spacing={1}>
+            <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
               <Button
                 onClick={() =>
                   ask(
@@ -97,6 +98,66 @@ export function Security({
           )
         }
       />
+      {(view === "ActivityListView" || view === "AuditListView") && (
+        <Panel title={t("检索条件")}>
+          <FieldsForm
+            key={params.toString()}
+            fields={[
+              {
+                name: "q",
+                label:
+                  view === "AuditListView" ? t("操作者用户名") : t("用户名"),
+              },
+              { name: "ip", label: t("IP 地址") },
+              { name: "from", label: t("开始时间"), type: "datetime-local" },
+              { name: "to", label: t("结束时间"), type: "datetime-local" },
+              ...(view === "AuditListView"
+                ? [
+                    { name: "action", label: t("操作路由") },
+                    { name: "target", label: t("操作目标") },
+                    { name: "request_id", label: t("请求编号") },
+                  ]
+                : [{ name: "provider_id", label: t("身份源 ID") }]),
+            ]}
+            initial={Object.fromEntries(
+              [
+                "q",
+                "ip",
+                "from",
+                "to",
+                "action",
+                "target",
+                "request_id",
+                "provider_id",
+              ].map((k) => [
+                k,
+                ["from", "to"].includes(k) && params.get(k)
+                  ? new Date(params.get(k)!)
+                      .toLocaleString("sv-SE")
+                      .replace(" ", "T")
+                      .slice(0, 16)
+                  : params.get(k) || "",
+              ]),
+            )}
+            submit={async (values) => {
+              const next = new URLSearchParams(params);
+              next.delete("page");
+              Object.entries(values).forEach(([k, v]) => {
+                if (v)
+                  next.set(
+                    k,
+                    ["from", "to"].includes(k)
+                      ? new Date(String(v)).toISOString()
+                      : String(v),
+                  );
+                else next.delete(k);
+              });
+              setParams(next);
+            }}
+            label={t("查询")}
+          />
+        </Panel>
+      )}
       {view === "SessionListView" && (
         <>
           <Alert severity="info" sx={{ mb: 3 }}>
@@ -402,9 +463,19 @@ export function Security({
                       </TableCell>
                       <TableCell>{event.actor_username}</TableCell>
                       <TableCell
-                        sx={{ overflowWrap: "anywhere", minWidth: 240 }}
+                        sx={{
+                          whiteSpace: "normal",
+                          overflowWrap: "anywhere",
+                          minWidth: 240,
+                          maxWidth: 360,
+                        }}
                       >
-                        {event.target}
+                        <Button
+                          component={RouterLink}
+                          to={`/dashboard/audit/${event.id}`}
+                        >
+                          {event.target}
+                        </Button>
                       </TableCell>
                       <TableCell>
                         {eventNames[event.outcome] || event.outcome}{" "}
@@ -434,6 +505,82 @@ export function Security({
           />
         </Stack>
       )}
+    </>
+  );
+}
+
+export function AuditDetail({
+  data,
+}: {
+  data: ViewDataMap["AuditDetailView"];
+}) {
+  const e = data.event;
+  return (
+    <>
+      <Heading title={t("审计详情")} back="/dashboard/audit" />
+      <Panel title={t("操作记录")}>
+        <Stack spacing={1}>
+          {[
+            [t("时间"), date(e.created_at)],
+            [t("操作者"), `${e.actor_username} (${e.actor_id})`],
+            [t("操作路由"), e.action],
+            [t("操作目标"), e.target],
+            [t("处理结果"), `${e.outcome} · ${e.http_status ?? "—"}`],
+            [t("IP 地址"), e.ip],
+            [t("设备"), e.user_agent],
+            [t("请求编号"), e.request_id],
+          ].map(([label, value]) => (
+            <Typography key={label} sx={{ overflowWrap: "anywhere" }}>
+              {label}：{value || "—"}
+            </Typography>
+          ))}
+        </Stack>
+      </Panel>
+      <Panel title={t("配置变更")}>
+        <Typography variant="body2" sx={{ mb: 2 }}>
+          {t("仅展示允许记录的配置字段，不包含密码、密钥和联系方式。")}
+        </Typography>
+        {!Object.keys(e.details).length ? (
+          <Typography>{t("暂无字段变更记录")}</Typography>
+        ) : (
+          <Box sx={{ overflowX: "auto" }}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  {[t("字段"), t("变更前"), t("变更后")].map((v) => (
+                    <TableCell key={v}>{v}</TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {Object.entries(e.details).map(([key, v]) => (
+                  <TableRow key={key}>
+                    <TableCell>{key}</TableCell>
+                    <TableCell
+                      sx={{
+                        whiteSpace: "normal",
+                        overflowWrap: "anywhere",
+                        maxWidth: 360,
+                      }}
+                    >
+                      {JSON.stringify(v.before)}
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        whiteSpace: "normal",
+                        overflowWrap: "anywhere",
+                        maxWidth: 360,
+                      }}
+                    >
+                      {JSON.stringify(v.after)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Box>
+        )}
+      </Panel>
     </>
   );
 }

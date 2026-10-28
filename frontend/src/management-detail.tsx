@@ -74,18 +74,29 @@ export function ManagementDetail({
         }
       />
       {isApp && !system && (
-        <Button
-          component={RouterLink}
-          to={`/dashboard/registration?app=${row.id}`}
-        >
-          {t("注册策略与邀请")}
-        </Button>
+        <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+          <Button
+            component={RouterLink}
+            to={`/dashboard/registration?app=${row.id}`}
+          >
+            {t("注册策略与邀请")}
+          </Button>
+          <Button
+            component={RouterLink}
+            to={`/dashboard/apps/${row.id}/members`}
+          >
+            {t("应用成员")}
+          </Button>
+        </Stack>
       )}
       <Panel title={t("基本信息")} action={<Status value={status} />}>
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+            gridTemplateColumns: {
+              xs: "minmax(0, 1fr)",
+              md: "repeat(2, minmax(0, 1fr))",
+            },
             gap: 3,
           }}
         >
@@ -137,7 +148,7 @@ export function ManagementDetail({
                 direction="row"
                 sx={{ justifyContent: "space-between", gap: 2 }}
               >
-                <Box>
+                <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
                   <Typography variant="subtitle1">
                     {client.name || client.identifier}
                   </Typography>
@@ -163,7 +174,10 @@ export function ManagementDetail({
                 {t("回调地址：")}
                 {client.redirect_uris?.join(" · ") || "—"}
               </Typography>
-              <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
+              <Stack
+                direction="row"
+                sx={{ flexWrap: "wrap", alignItems: "center", gap: 1 }}
+              >
                 <Button
                   size="small"
                   onClick={() =>
@@ -196,6 +210,49 @@ export function ManagementDetail({
                   size="small"
                   disabled={lower(client.type) === "public"}
                   onClick={() =>
+                    editor(
+                      t("平滑轮换密钥"),
+                      `/dashboard/clients/${client.id}/rotate-secret`,
+                      [
+                        {
+                          name: "grace_seconds",
+                          label: t("旧密钥保留时间"),
+                          options: [
+                            ["3600", t("1 小时")],
+                            ["86400", t("24 小时")],
+                            ["604800", t("7 天")],
+                          ],
+                        },
+                      ],
+                      { grace_seconds: "86400" },
+                    )
+                  }
+                >
+                  {t("平滑轮换密钥")}
+                </Button>
+                {client.previous_secret_expires_at && (
+                  <>
+                    <Typography variant="caption">
+                      {t("旧密钥到期")}：
+                      {date(client.previous_secret_expires_at)}
+                    </Typography>
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        ask(
+                          t("立即停用旧密钥"),
+                          `/dashboard/clients/${client.id}/retire-secret`,
+                        )
+                      }
+                    >
+                      {t("停用旧密钥")}
+                    </Button>
+                  </>
+                )}
+                <Button
+                  size="small"
+                  disabled={lower(client.type) === "public"}
+                  onClick={() =>
                     ask(
                       t("重置客户端密钥"),
                       `/dashboard/clients/${client.id}/reset-secret`,
@@ -204,7 +261,7 @@ export function ManagementDetail({
                     )
                   }
                 >
-                  {t("重置密钥")}
+                  {t("紧急重置密钥")}
                 </Button>
                 <Button
                   size="small"

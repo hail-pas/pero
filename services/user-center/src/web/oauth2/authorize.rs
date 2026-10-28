@@ -65,12 +65,6 @@ impl AuthorizeQuery {
         }
         if let Some(prompt) = &self.prompt {
             let values: Vec<_> = prompt.split_whitespace().collect();
-            if values.contains(&"select_account") {
-                return Err(self.redirect_err(
-                    "invalid_request",
-                    Some("prompt=select_account is not supported"),
-                ));
-            }
             if values.is_empty()
                 || values
                     .iter()
@@ -278,6 +272,10 @@ pub async fn authorize(
         })
         .await?;
 
+    if crate::service::oauth::has_prompt(params.prompt.as_deref(), "select_account") {
+        return super::select_account::redirect(&state, jar, auth_request.id).await;
+    }
+
     // prompt=login: 忽略当前 session，强制重新登录
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "login") {
         return pending_redirect(&state, &jar, auth_request.id).await;
@@ -354,7 +352,7 @@ pub async fn resume(
 /// - 有 session + prompt=consent → 强制跳转 /sso/consent（不检查已有 consent）
 /// - 有 session + 已 consent → 生成 authorization code → 302 redirect_uri?code=xxx
 /// - 有 session + 未 consent → 设 pero_auth_req cookie → 302 /sso/consent
-async fn resolve_authorization(
+pub(crate) async fn resolve_authorization(
     state: &AppState,
     jar: &CookieJar,
     auth_request: &authorization_requests::Model,

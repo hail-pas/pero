@@ -29,7 +29,7 @@ export DATABASE_URL=postgres://pero:CHANGE_ME@127.0.0.1:5432/pero
 ./scripts/migrate.sh
 make bootstrap
 
-# 4. 构建前端（同时复制到两个 Rust 服务的静态资源目录）
+# 4. 构建前端（两个 Rust 服务直接读取 frontend/dist）
 npm install --global pnpm@11.25.0 # 或使用 corepack
 bash scripts/build-frontend.sh
 
@@ -39,6 +39,8 @@ bash scripts/build-frontend.sh
 cp services/admin/config/local.toml.example services/admin/config/local.toml
 (cd services/admin && cargo run --bin admin -- --config-dir config)
 ```
+
+UI 源码与公共资源只维护在 `frontend/`，本地配置示例让两个服务直接读取 `../../frontend/dist`（相对于各服务工作目录）；`make dev` 自动设置绝对路径。`services/` 下不保存 UI 文件或软链接。独立部署包仍包含构建产物，并使用部署目录中的 `ui/static`。
 
 ## 初始化与配置
 
@@ -102,7 +104,7 @@ pnpm --dir frontend audit
 
 `sso.session_touch_interval_seconds` 默认 `0`，保持每次请求刷新 idle 时间；可显式设置不超过 `30` 秒且不超过 idle TTL 的 `1%`，减少高频请求的数据库写入。代价是空闲到期时间最多提前该间隔，每次请求仍查询数据库撤销状态。清理任务每轮每类最多 20 批、每批 500 条，积压会在后续轮次继续处理。
 
-刷新令牌支持可选 `scope` 子集；未传时保持原授权范围，扩大范围返回 `invalid_scope`，不会消耗令牌。新的刷新令牌保留原授权范围，降权仅作用于此次 access token。尚无账户选择界面，`prompt=select_account` 明确返回 `invalid_request`。数据库/Redis 临时故障不会当作用户凭证失效；UserInfo 返回 503 时 admin 保留登录 Cookie。
+刷新令牌支持可选 `scope` 子集；未传时保持原授权范围，扩大范围返回 `invalid_scope`，不会消耗令牌。新的刷新令牌保留原授权范围，降权仅作用于此次 access token。`prompt=select_account` 提供当前账号与切换登录选择。数据库/Redis 临时故障不会当作用户凭证失效；在线校验返回 503 时 admin 保留登录 Cookie。
 
 部署包可直接执行 `DATABASE_URL=... bash ./migrate.sh`，也可通过参数或 `MIGRATIONS_DIR` 指定目录。checksum 不一致会报错回滚。
 
@@ -177,3 +179,35 @@ MIT OR Apache-2.0
 `/account/applications` 提供应用加入申请、退出应用及注销账户。退出应用撤销该应用资格、consent 和令牌；注销账户需五分钟内的近期认证、准确输入用户名确认，移除个人资料和认证凭据并撤销全部会话。管理员必须先移除管理员身份。普通退出登录仍使用原流程。历史审计与已完成申请按各自保留期限清理；注销不自动删除业务应用中的数据。
 
 数据模型及流程说明见 [注册与邀请设计](docs/registration-invitation-design.md)。
+
+## 审批、申请进度与应用成员
+
+`/dashboard/registration` 的申请工作台支持分页、邮箱/应用名称搜索和状态筛选，默认优先显示待审批项；平台入口默认汇总全部应用，应用入口默认限定本应用，可用 `all_apps=true/false` 切换查询范围，待审批计数遵循当前应用及搜索范围。应用详情保留独立准入策略入口。拒绝时可填写原因，工作台支持批准、拒绝、重发及撤销。
+
+`/account/applications` 增加“我的申请与邀请”，显示状态、原因和有效期，支持继续办理、重发邮件及撤回。只展示已完成归属于当前用户，或发给当前已验证邮箱的记录；联系方式尚未验证时不展示发给该地址的邀请。继续办理沿用现有注册页及确认流程，通过 HttpOnly Cookie 传递新令牌；列表不返回令牌。尚未创建账户的申请人可从邮件链接查看本次申请进度及拒绝原因；终态链接只读，不能继续接受邀请或创建账户。继续办理和重发都会轮换旧链接，保持原到期时间；重发至少间隔一分钟。
+
+`/dashboard/apps/{id}/members` 支持按用户名/昵称、访问状态分页查询，并按完整用户名授予资格、撤销或恢复成员资格。沿用现有 CSRF、近期认证、超级管理员门禁和审计；撤销会推进用户应用令牌版本并撤销相关授权凭据。系统应用不通过此入口修改成员。
+
+## 业务应用在线校验与令牌撤销
+
+新增 `POST /api/oauth2/introspect` 和 `POST /api/oauth2/revoke`，Discovery 同步公布地址。接口使用表单参数 `token`、`client_id`、`client_secret`，`token_type_hint` 可选；沿用 `client_secret_post` 认证。Introspection 仅允许 confidential 客户端查询自己的令牌，支持 access token 和 refresh token，无效、不属于本客户端或已撤销时只返回 `{"active":false}`。依赖不可用返回 503，不能当作令牌无效。状态响应禁止缓存；协议管理接口与 Token 签发使用独立的来源配额。
+
+Revocation 接受本客户端的 access token 或 refresh token；采用应用授权级撤销，使该用户在目标应用的既有令牌及未使用授权码失效，保留应用访问资格、SSO 会话和其他应用授权。未知、已撤销或其他客户端的令牌统一返回 200。旧刷新令牌的主动撤销不会触发刷新重放导致的 SSO 全局退出。
+
+业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie；本项目 admin 示例已采用每次请求在线 introspection。仅在登录时离线验签无法获得即时撤销效果。
+
+协议依据：[RFC 7662](https://www.rfc-editor.org/rfc/rfc7662)、[RFC 7009](https://www.rfc-editor.org/rfc/rfc7009)。
+
+## 日志检索、审计详情与凭据轮换
+
+登录记录新增用户名、IP、身份源及 RFC3339 时间范围筛选；用户端查询始终限定当前用户。审计新增操作者、操作路由、目标、请求编号、IP、时间范围检索；`/dashboard/audit/{id}` 展示完整元数据及允许记录的配置字段差异。应用、客户端、用户和审批状态的前后快照只选择明确允许的字段，不采集请求正文、密码、密钥哈希、令牌或联系方式。
+
+客户端详情提供“平滑轮换密钥”：新密钥仅在成功响应中显示一次，原密钥在所选的 1 小时、24 小时或 7 天窗口内继续可用；使用新密钥完成部署后可“停用旧密钥”。每个客户端最多保留一把旧密钥，重叠期结束或提前停用后才能再次轮换。轮换和停用旧密钥不撤销用户授权；“紧急重置密钥”及编辑密钥仍立即替换凭据并使既有授权失效。过期旧密钥不再参与认证，由现有后台清理任务分批删除哈希。
+
+## 账号选择与安全提醒
+
+`prompt=select_account` 进入账号选择页，可继续使用当前账号或重新登录其他账号，保留原 OAuth state、nonce、PKCE、scope 和回调。选择操作绑定授权请求和当时的会话，并要求 CSRF；不会把授权请求 ID 当成登录凭据。个人菜单也提供“切换账号”。切换时撤销当前浏览器的 SSO 会话及关联刷新令牌，不影响其他设备。
+
+通知 outbox 新增安全消息 kind：`new_login`、`password_changed`、`password_reset_completed`、`admin_password_reset`、`contact_changed`、`identity_linked`、`identity_unlinked`。通知网关需识别这些 kind。登录提醒仅在完成主认证且无需 MFA，或 MFA 验证成功后生成；再认证不重复发送登录提醒。联系方式变更通知发送到原已验证渠道及本次验证的新渠道；管理员修改联系方式只通知原已验证渠道。所有提醒与对应变更同事务入队，复用已有投递、重试、脱敏及保留策略，不包含密码、验证码、密钥或恢复码。
+
+上述变更新增 `006_management_workflows.sql`、`007_client_secret_rotation.sql`，启动新版前执行 `scripts/migrate.sh`。

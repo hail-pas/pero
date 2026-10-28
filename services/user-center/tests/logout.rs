@@ -46,7 +46,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
     let cfg:user_center::config::AppConfig=serde_json::from_value(serde_json::json!({
         "database":{"url":fixture.url,"encrypt_key":"test-only-key","min_connections":1,"max_connections":8},
         "redis":{"url":std::env::var("PERO_TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:1".into()),"connect_timeout_secs":1,"command_timeout_secs":1},
-        "frontend":{"static_dir":concat!(env!("CARGO_MANIFEST_DIR"),"/ui/static")},
+        "frontend":{"static_dir":concat!(env!("CARGO_MANIFEST_DIR"),"/../../frontend/dist")},
         "sso":{"cookie_signing_secret":"test-only-cookie-secret-long-enough"},
         "oidc":{"issuer":"https://issuer.test"},"password_reset":{"signing_key":"test-only-reset-secret-long-enough"}
     })).unwrap();

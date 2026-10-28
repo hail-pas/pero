@@ -40,13 +40,14 @@ struct View {
     email: String,
     app_name: String,
     status: String,
+    reason: String,
     social: bool,
     sent: bool,
 }
 pub fn flow_token(jar: &CookieJar) -> Option<&str> {
     jar.get(FLOW_COOKIE).map(|c| c.value())
 }
-fn flow_cookie(state: &AppState, token: String) -> Cookie<'static> {
+pub(crate) fn flow_cookie(state: &AppState, token: String) -> Cookie<'static> {
     Cookie::build((FLOW_COOKIE, token))
         .path("/sso")
         .http_only(true)
@@ -76,7 +77,7 @@ pub async fn get(
     Query(query): Query<Params>,
 ) -> Response {
     if let Some(token) = query.token {
-        if let Err(e) = enrollment::lookup(&state.db, &token).await {
+        if let Err(e) = enrollment::progress_by_token(&state.db, &token).await {
             return util::management_response(Err(e));
         }
         return (
@@ -113,7 +114,7 @@ pub async fn get(
 }
 async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool) -> Response {
     let row = if let Some(token) = flow_token(&jar) {
-        match enrollment::lookup(&state.db, token).await {
+        match enrollment::progress_by_token(&state.db, token).await {
             Ok(r) => Some(r),
             Err(crate::service::ManagementError::Invalid(_)) => None,
             Err(e) => return util::management_response(Err(e)),
@@ -122,7 +123,13 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
         None
     };
     let app = row.as_ref().map(|r| r.app_id).unwrap_or(app);
-    let p = match enrollment::policy(&state.db, app).await {
+    let terminal = row.as_ref().is_some_and(|r| {
+        matches!(
+            r.status.as_str(),
+            "completed" | "rejected" | "revoked" | "expired"
+        )
+    });
+    let p = match enrollment::policy(&state.db, if terminal { None } else { app }).await {
         Ok(p) => p,
         Err(e) => return util::management_response(Err(e)),
     };
@@ -153,6 +160,7 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
             app_name,
             email: row.as_ref().map(|r| r.email.clone()).unwrap_or_default(),
             status: row.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
+            reason: row.as_ref().map(|r| r.reason.clone()).unwrap_or_default(),
             social: row.as_ref().is_some_and(|r| r.provider_id.is_some()),
             sent,
         },

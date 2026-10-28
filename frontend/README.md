@@ -15,7 +15,9 @@ Start Rust separately. Requests go to `http://127.0.0.1:8080`; override with `PE
 
 ## Production
 
-Run `bash scripts/build-frontend.sh` from the repository root. It builds `dist/` and copies the same output into both services. Rust serves the build at `/static/`; set `[frontend].static_dir` to that directory in deployment configuration. Docker performs this build automatically. Build output and `node_modules` are ignored by Git.
+Run `bash scripts/build-frontend.sh` from the repository root. It builds only `frontend/dist/`. Both services' `local.toml.example` files point `[frontend].static_dir` directly to `../../frontend/dist` (relative to the service working directory). `make dev` sets the absolute build path automatically. No UI directories or symbolic links are needed under `services/`. Edit UI source and public assets only in `frontend/`; build output and `node_modules` are ignored by Git.
+
+Rust serves the build at `/static/` using `[frontend].static_dir`. Standalone release defaults retain `ui/static/`; release packages copy actual files there directly from `frontend/dist/`. Docker builds and copies the same output into its runtime image.
 
 ## Code
 

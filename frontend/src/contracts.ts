@@ -42,6 +42,7 @@ export interface ProviderSummary {
   created_at: DateValue;
 }
 export interface ClientSummary {
+  previous_secret_expires_at: string | null;
   id: string;
   identifier: string;
   name: string | null;
@@ -99,6 +100,23 @@ interface FormPage extends AccountPage {
 }
 export interface RowsPage<T> extends ListPage {
   rows: T[];
+}
+export interface ProgressRow {
+  id: string;
+  app_id: string | null;
+  app_name: string | null;
+  email: string;
+  invitation: boolean;
+  status: string;
+  reason: string;
+  created_at: string;
+  expires_at: string;
+}
+export interface ProgressList {
+  rows: ProgressRow[];
+  page: number;
+  total_pages: number;
+  pending_count: number;
 }
 export interface ViewDataMap {
   SecurityView: {
@@ -158,10 +176,15 @@ export interface ViewDataMap {
     has_password: boolean;
     error: string;
   };
+  AuditDetailView: AccountPage & {
+    event: ViewDataMap["AuditListView"]["rows"][number];
+  };
   AuditListView: RowsPage<{
     id: string;
     actor_id: string;
     actor_username: string;
+    user_agent: string | null;
+    details: Record<string, { before: unknown; after: unknown }>;
     action: string;
     target: string;
     outcome: string;
@@ -195,6 +218,11 @@ export interface ViewDataMap {
     password_url: string;
     issuer: string;
   };
+  SelectAccountView: CsrfPage & {
+    token: string;
+    username: string;
+    redirect: string;
+  };
   LoginView: LoginPage;
   AccountLoginView: LoginPage & { redirect: string };
   AdminLoginView: { authorize_url: string; error: string };
@@ -204,30 +232,26 @@ export interface ViewDataMap {
     email: string;
     app_name: string;
     status: string;
+    reason: string;
     social: boolean;
     sent: boolean;
   };
-  EnrollmentAdminView: AccountPage & {
-    policy: {
-      id: string;
-      app_id: string | null;
-      mode: string;
-      domains: string[];
-      approval_required: boolean;
-      emergency_stop: boolean;
-      version: number;
+  EnrollmentAdminView: AccountPage &
+    ProgressList & {
+      policy: {
+        id: string;
+        app_id: string | null;
+        mode: string;
+        domains: string[];
+        approval_required: boolean;
+        emergency_stop: boolean;
+        version: number;
+      };
+      inherited: boolean;
     };
-    inherited: boolean;
-    rows: {
-      id: string;
-      email: string;
-      invitation: boolean;
-      status: string;
-      reason: string;
-    }[];
-  };
   AdmissionView: AccountPage & {
     username: string;
+    progress: ProgressList;
     rows: { id: string; name: string; status: string | null }[];
   };
   ForgotPasswordView: CsrfPage & { error: string; success: boolean };
@@ -285,6 +309,12 @@ export interface ViewDataMap {
   AppFormView: FormPage & { app_id: string };
   UserFormView: FormPage & { user_id: string };
   ProviderFormView: FormPage & { provider_id: string };
+  AppMembersView: RowsPage<{
+    user_id: string;
+    username: string;
+    nickname: string | null;
+    status: string;
+  }> & { app_id: string; app_name: string; system: boolean };
   AppDetailView: AccountPage & {
     app: AppSummary;
     clients: ClientSummary[];
@@ -319,6 +349,7 @@ export type ViewEnvelope<V extends ViewName = ViewName> = {
   [K in V]: { view: K; data: ViewDataMap[K] };
 }[V];
 export type AuthView =
+  | "SelectAccountView"
   | "LoginView"
   | "AccountLoginView"
   | "ForgotPasswordView"

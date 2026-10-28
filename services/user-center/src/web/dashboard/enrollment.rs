@@ -10,13 +10,8 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::Deserialize;
 use uuid::Uuid;
-#[derive(Default, Deserialize)]
-pub struct Scope {
-    app: Option<Uuid>,
-}
 #[derive(Deserialize)]
 pub struct PolicyForm {
     csrf_token: String,
@@ -36,20 +31,21 @@ pub async fn get(
     State(state): State<AppState>,
     jar: CookieJar,
     admin: AdminContext,
-    Query(scope): Query<Scope>,
+    Query(scope): Query<svc::ListQuery>,
 ) -> Response {
     let page = AdminPage::new(&state, jar, admin);
-    let result=async {
-        let mut policy=svc::policy(&state.db,scope.app).await?;
-        let inherited=scope.app.is_some() && policy.app_id.is_none();
-        policy.app_id=scope.app;
-        let rows=svc::Enrollment::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT * FROM enrollments WHERE app_id IS NOT DISTINCT FROM $1 ORDER BY created_at DESC LIMIT 100",[scope.app.into()])).all(&state.db).await?;
-        Ok::<_,ManagementError>((policy,inherited,rows))
-    }.await;
+    let result = async {
+        let mut policy = svc::policy(&state.db, scope.app).await?;
+        let inherited = scope.app.is_some() && policy.app_id.is_none();
+        policy.app_id = scope.app;
+        let list = svc::list(&state.db, &scope, None).await?;
+        Ok::<_, ManagementError>((policy, inherited, list))
+    }
+    .await;
     match result {
-        Ok((policy, inherited, rows)) => util::view_response(
+        Ok((policy, inherited, list)) => util::view_response(
             "EnrollmentAdminView",
-            serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"policy":policy,"inherited":inherited,"rows":rows}),
+            serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"policy":policy,"inherited":inherited,"rows":list.rows,"page":list.page,"total_pages":list.total_pages,"pending_count":list.pending_count}),
             page.jar,
         ),
         Err(e) => util::management_response(Err(e)),

@@ -43,12 +43,13 @@ async fn post(
 }
 
 #[tokio::test]
-#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL and PERO_TEST_REDIS_URL"]
 async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
     let fixture = database::DatabaseFixture::new().await;
     let config: AppConfig = serde_json::from_value(serde_json::json!({
         "database":{"url":fixture.url,"encrypt_key":"test-only-key","min_connections":1},
-        "redis":{"url":"redis://127.0.0.1:1"},
+        "redis":{"url":std::env::var("PERO_TEST_REDIS_URL").unwrap()},
+        "notification":{"endpoint":"https://notifications.example.test"},
         "sso":{"cookie_signing_secret":"test-only-signing-secret-long-enough"},
         "password_reset":{"signing_key":"test-only-reset-secret-long-enough"}
     }))
@@ -175,7 +176,7 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
                 ("csrf_token", &csrf),
                 ("username", "created_user"),
                 ("password", "OriginalPass123!"),
-                ("email", ""),
+                ("email", "created_user@example.test"),
                 ("phone", ""),
                 ("nickname", ""),
                 ("avatar_url", "")

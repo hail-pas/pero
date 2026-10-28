@@ -128,6 +128,11 @@ pub async fn unlink_identity(
         "identity_unlinked",
     )
     .await?;
+    let user = crate::db::entity::users::Entity::find_by_id(user_id)
+        .one(&txn)
+        .await?
+        .ok_or(ManagementError::Invalid("not_found"))?;
+    super::security::notify(&txn, &user, "identity_unlinked").await?;
     txn.commit().await?;
     Ok(())
 }

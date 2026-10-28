@@ -42,6 +42,15 @@ export function Notifications({
     mfa_enabled: t("启用双重验证"),
     mfa_changed: t("更换双重验证"),
     mfa_recovery: t("双重验证恢复"),
+    new_login: t("登录成功提醒"),
+    password_changed: t("密码已变更"),
+    password_reset_completed: t("密码恢复已完成"),
+    admin_password_reset: t("管理员重置密码"),
+    contact_changed: t("联系方式已变更"),
+    identity_linked: t("第三方身份已绑定"),
+    identity_unlinked: t("第三方身份已解绑"),
+    enrollment: t("注册与邀请"),
+    enrollment_rejected: t("申请已拒绝"),
   };
   return (
     <>
@@ -76,7 +85,10 @@ export function Notifications({
       <Panel
         title={t("投递记录")}
         action={
-          <Stack direction="row" spacing={2}>
+          <Stack
+            direction="row"
+            sx={{ alignItems: "center", flexWrap: "wrap", gap: 2 }}
+          >
             <Button onClick={() => window.location.reload()}>
               {t("刷新")}
             </Button>

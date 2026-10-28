@@ -60,28 +60,43 @@ impl<'a> TokenService<'a> {
         Self { state }
     }
 
-    pub async fn token(&self, form: &TokenRequest, source: &str) -> TokenEndpointResult {
+    pub async fn authenticate_endpoint(
+        &self,
+        form: &TokenRequest,
+        source: &str,
+        limit: u64,
+    ) -> Result<crate::db::entity::oauth_clients::Model, TokenEndpointResult> {
         // Unauthenticated traffic must not consume another client's shared quota.
-        let client_rate_limit_key = format!("source:{}", pero_utils::crypto::sha256_hex(source));
+        let client_rate_limit_key =
+            format!("source:{limit}:{}", pero_utils::crypto::sha256_hex(source));
         let Ok(key) = rl_token.key(&client_rate_limit_key) else {
-            return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+            return Err(TokenEndpointResult::error(
+                OAuth2ErrorCode::TemporarilyUnavailable,
+            ));
         };
-        match enforce_rate_limit(&self.state.cache, &key, 60).await {
+        match enforce_rate_limit(&self.state.cache, &key, limit).await {
             Ok(()) => {}
             Err(RateLimitError::Denied { .. }) => {
-                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+                return Err(TokenEndpointResult::error(
+                    OAuth2ErrorCode::TemporarilyUnavailable,
+                ));
             }
             Err(RateLimitError::Redis(e)) => {
                 tracing::error!(error = %e, "rate_limit_check redis error");
-                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+                return Err(TokenEndpointResult::error(
+                    OAuth2ErrorCode::TemporarilyUnavailable,
+                ));
             }
         }
 
-        let client = match self.authenticate_client(form).await {
-            Ok(c) => c,
-            Err(r) => return r,
-        };
+        self.authenticate_client(form).await
+    }
 
+    pub async fn token(&self, form: &TokenRequest, source: &str) -> TokenEndpointResult {
+        let client = match self.authenticate_endpoint(form, source, 60).await {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
         match form.grant_type.as_str() {
             "authorization_code" => self.handle_authorization_code(form, &client).await,
             "refresh_token" => self.handle_refresh_token(form, &client).await,

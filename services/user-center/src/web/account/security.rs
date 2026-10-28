@@ -4,7 +4,9 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QueryTrait,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -68,6 +70,14 @@ pub struct ListQuery {
     pub user_id: Option<Uuid>,
     #[serde(default)]
     pub error: String,
+    #[serde(default)]
+    pub q: String,
+    pub ip: Option<ipnetwork::IpNetwork>,
+    pub provider_id: Option<Uuid>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub from: Option<time::OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub to: Option<time::OffsetDateTime>,
 }
 
 #[derive(Serialize)]
@@ -258,7 +268,34 @@ async fn activity_page(
     query: ListQuery,
 ) -> Response {
     let page = query.page.unwrap_or(1).max(1);
+    if query.from.zip(query.to).is_some_and(|(from, to)| from > to) {
+        return pero_api_axum::json_error("invalid_request");
+    }
     let mut select = login_events::Entity::find();
+    if let Some(ip) = query.ip {
+        select = select.filter(login_events::Column::Ip.eq(ip));
+    }
+    if let Some(id) = query.provider_id {
+        select = select.filter(login_events::Column::ProviderId.eq(id));
+    }
+    if let Some(from) = query.from {
+        select = select.filter(login_events::Column::CreatedAt.gte(from));
+    }
+    if let Some(to) = query.to {
+        select = select.filter(login_events::Column::CreatedAt.lte(to));
+    }
+    if !query.q.is_empty() {
+        use sea_orm::QuerySelect;
+        select = select.filter(
+            login_events::Column::UserId.in_subquery(
+                users::Entity::find()
+                    .select_only()
+                    .column(users::Column::Id)
+                    .filter(users::Column::Username.contains(&query.q))
+                    .into_query(),
+            ),
+        );
+    }
     if let Some(id) = user_id {
         select = select.filter(login_events::Column::UserId.eq(id));
     }

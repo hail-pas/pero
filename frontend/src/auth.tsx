@@ -39,25 +39,60 @@ export function Auth({
     reset = view === "ResetPasswordView";
   const done = view === "EndSessionView",
     error = ["ErrorView", "ForbiddenView"].includes(view);
-  let title = login
-    ? t("欢迎回来")
-    : forgot
-      ? t("找回密码")
-      : reset
-        ? t("设置新密码")
-        : view === "ConsentView"
-          ? t("授权应用访问")
-          : view === "SocialLinkView"
-            ? t("关联已有账户")
-            : view === "ConfirmLogoutView"
-              ? t("确认退出登录")
-              : view === "AdminLoginView"
-                ? t("登录应用")
-                : done
-                  ? t("你已安全退出")
-                  : t("暂时无法访问");
+  let title =
+    view === "SelectAccountView"
+      ? t("选择账号")
+      : login
+        ? t("欢迎回来")
+        : forgot
+          ? t("找回密码")
+          : reset
+            ? t("设置新密码")
+            : view === "ConsentView"
+              ? t("授权应用访问")
+              : view === "SocialLinkView"
+                ? t("关联已有账户")
+                : view === "ConfirmLogoutView"
+                  ? t("确认退出登录")
+                  : view === "AdminLoginView"
+                    ? t("登录应用")
+                    : done
+                      ? t("你已安全退出")
+                      : t("暂时无法访问");
   let content: React.ReactNode;
-  if (login || forgot || reset) {
+  if (view === "SelectAccountView") {
+    content = (
+      <Stack spacing={2}>
+        <Typography>{t("请选择继续使用当前账号，或登录其他账号。")}</Typography>
+        {data.username && (
+          <Button
+            variant="contained"
+            onClick={() =>
+              mutate(location.pathname, {
+                action: "current",
+                token: data.token,
+                redirect: data.redirect,
+              }).catch((e) => setActionFailure(e.message))
+            }
+          >
+            {t("继续使用 {{0}}", { "0": data.username })}
+          </Button>
+        )}
+        <Button
+          variant="outlined"
+          onClick={() =>
+            mutate(location.pathname, {
+              action: "other",
+              token: data.token,
+              redirect: data.redirect,
+            }).catch((e) => setActionFailure(e.message))
+          }
+        >
+          {t("登录其他账号")}
+        </Button>
+      </Stack>
+    );
+  } else if (login || forgot || reset) {
     let fields: Field[] = login
       ? [
           {
@@ -432,15 +467,17 @@ export function Auth({
           </Alert>
         )}
         {content}
-        <Button
-          component={RouterLink}
-          to="/"
-          size="small"
-          color="inherit"
-          sx={{ alignSelf: "center", mt: 5 }}
-        >
-          {t("返回首页")}
-        </Button>
+        {!done && (
+          <Button
+            component={RouterLink}
+            to="/"
+            size="small"
+            color="inherit"
+            sx={{ alignSelf: "center", mt: 5 }}
+          >
+            {t("返回首页")}
+          </Button>
+        )}
         <Box component="footer" sx={{ mt: 3, textAlign: "center" }}>
           <FilingLink />
         </Box>

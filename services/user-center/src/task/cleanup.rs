@@ -64,5 +64,9 @@ async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
         crate::db::helper::cleanup::clean_notifications
     );
     do_clean!("enrollments", crate::db::helper::cleanup::clean_enrollments);
+    do_clean!(
+        "client_secrets",
+        crate::db::helper::cleanup::clean_expired_client_secrets
+    );
     Ok(())
 }

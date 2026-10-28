@@ -47,6 +47,7 @@ pub async fn update(
     active.update(&txn).await?;
     if changed {
         super::contact::invalidate_contact_credentials(&txn, id, None).await?;
+        super::security::notify(&txn, &user, "contact_changed").await?;
     }
     txn.commit().await?;
     Ok(())
@@ -114,6 +115,7 @@ pub async fn reset_password(
         "admin_password_reset",
     )
     .await?;
+    super::security::notify(&txn, &user, "admin_password_reset").await?;
     txn.commit().await?;
     Ok(())
 }

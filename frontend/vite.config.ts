@@ -52,6 +52,7 @@ export default defineConfig(({ command }) => ({
                 "/dashboard/admins",
                 "/dashboard/registration",
                 "/account/applications",
+                "/sso/select-account",
                 "/account/login",
                 "/account/profile",
                 "/account/sessions",
@@ -71,6 +72,8 @@ export default defineConfig(({ command }) => ({
                 "/sso/error",
                 "/sso/social/link",
               ].includes(pathname) ||
+              /^\/dashboard\/apps\/[^/]+\/members$/.test(pathname) ||
+              /^\/dashboard\/audit\/[^/]+$/.test(pathname) ||
               /^\/dashboard(?:\/(?:apps|users|providers)(?:\/[^/]+(?:\/edit)?)?)?$/.test(
                 pathname,
               );

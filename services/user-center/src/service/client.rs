@@ -157,6 +157,10 @@ pub async fn update(
         || current.redirect_uris != input.redirect_uris
         || current.require_pkce != (input.require_pkce || public);
     let mut active: oauth_clients::ActiveModel = current.clone().into();
+    if public || !input.secret.is_empty() {
+        active.previous_secret_hash = Set(None);
+        active.previous_secret_expires_at = Set(None);
+    }
     if public {
         active.secret_hash = Set(None);
     } else if !input.secret.is_empty() {
@@ -190,6 +194,8 @@ pub async fn reset_secret(
     let secret = pero_utils::crypto::generate_token();
     let mut active: oauth_clients::ActiveModel = current.clone().into();
     active.secret_hash = Set(Some(pero_utils::crypto::hash_secret_async(&secret).await?));
+    active.previous_secret_hash = Set(None);
+    active.previous_secret_expires_at = Set(None);
     active.updated_at = Set(time::OffsetDateTime::now_utc());
     save_security_change(db, &current, active, Some("client_secret_reset")).await?;
     Ok(secret)
@@ -204,5 +210,46 @@ pub async fn toggle_status(db: &DatabaseConnection, id: uuid::Uuid) -> Result<()
     });
     active.updated_at = Set(time::OffsetDateTime::now_utc());
     save_security_change(db, &current, active, Some("client_status_changed")).await?;
+    Ok(())
+}
+
+/// Two credential slots allow a bounded deployment overlap without revoking user grants.
+pub async fn rotate_secret(
+    db: &DatabaseConnection,
+    id: uuid::Uuid,
+    grace_seconds: i64,
+) -> Result<String, ManagementError> {
+    if !(60..=604800).contains(&grace_seconds) {
+        return Err(ManagementError::Invalid("invalid_request"));
+    }
+    let current = find(db, id).await?;
+    if current.r#type != OauthClientType::Confidential {
+        return Err(ManagementError::Invalid("invalid_client_type"));
+    }
+    if current
+        .previous_secret_expires_at
+        .is_some_and(|at| at > time::OffsetDateTime::now_utc())
+    {
+        return Err(ManagementError::Invalid("secret_rotation_pending"));
+    }
+    let secret = pero_utils::crypto::generate_token();
+    let hash = pero_utils::crypto::hash_secret_async(&secret).await?;
+    let mut active: oauth_clients::ActiveModel = current.clone().into();
+    active.previous_secret_hash = Set(current.secret_hash.clone());
+    active.previous_secret_expires_at = Set(Some(
+        time::OffsetDateTime::now_utc() + time::Duration::seconds(grace_seconds),
+    ));
+    active.secret_hash = Set(Some(hash));
+    active.updated_at = Set(time::OffsetDateTime::now_utc());
+    save_security_change(db, &current, active, None).await?;
+    Ok(secret)
+}
+pub async fn retire_secret(db: &DatabaseConnection, id: uuid::Uuid) -> Result<(), ManagementError> {
+    let current = find(db, id).await?;
+    let mut active: oauth_clients::ActiveModel = current.clone().into();
+    active.previous_secret_hash = Set(None);
+    active.previous_secret_expires_at = Set(None);
+    active.updated_at = Set(time::OffsetDateTime::now_utc());
+    save_security_change(db, &current, active, None).await?;
     Ok(())
 }

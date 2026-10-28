@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="background" x2="1" y2="1">
+      <stop stop-color="#155dff"/>
+      <stop offset="1" stop-color="#713bff"/>
+    </linearGradient>
+    <linearGradient id="fold" x2="0" y2="1">
+      <stop stop-color="#a293ff"/>
+      <stop offset="1" stop-color="#fff"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="6.5" fill="url(#background)"/>
+  <path fill="#fff" fill-rule="evenodd" d="M9.6 9.5a2 2 0 0 1 2-2h5.6a6.2 6.2 0 0 1 0 12.4h-2.6V24a1.8 1.8 0 0 1-1.8 1.8h-1.4A1.8 1.8 0 0 1 9.6 24Zm8.6 4.3a2.3 2.3 0 1 0-4.6 0 2.3 2.3 0 0 0 4.6 0Z"/>
+  <path fill="url(#fold)" d="M14.6 19.9V24a1.8 1.8 0 0 1-1.8 1.8h-1.4A1.8 1.8 0 0 1 9.6 24v-.3a5.1 5.1 0 0 1 5-3.8Z"/>
+</svg>

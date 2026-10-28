@@ -7,6 +7,9 @@ body,
   min-height: 100%;
   margin: 0;
 }
+html {
+  scrollbar-gutter: stable;
+}
 body {
   background: #f9fafb;
 }

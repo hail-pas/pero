@@ -2,7 +2,7 @@ use super::{dto::AccountLayout, security::AccountContext};
 use crate::{state::app::AppState, web::util};
 use axum::{
     Form,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
@@ -19,14 +19,25 @@ pub async fn get(
     State(state): State<AppState>,
     jar: CookieJar,
     account: AccountContext,
+    Query(query): Query<crate::service::enrollment::ListQuery>,
 ) -> Response {
     let rows=AppRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.name,u.status::text AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name",[account.user.id.into()])).all(&state.db).await;
     match rows {
         Ok(rows) => {
+            let progress = match crate::service::enrollment::list(
+                &state.db,
+                &query,
+                Some(&account.user),
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => return util::management_response(Err(e)),
+            };
             let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
             util::view_response(
                 "AdmissionView",
-                serde_json::json!({"layout":AccountLayout::from_user(&state.db,&account.user).await,"csrf_token":csrf_token,"rows":rows,"username":account.user.username}),
+                serde_json::json!({"layout":AccountLayout::from_user(&state.db,&account.user).await,"csrf_token":csrf_token,"rows":rows,"username":account.user.username,"progress":progress}),
                 jar,
             )
         }
@@ -84,6 +95,27 @@ pub async fn close(
             )
                 .into_response()
         }
+        Err(e) => util::management_response(Err(e)),
+    }
+}
+
+pub async fn progress_action(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    account: AccountContext,
+    Path(id): Path<Uuid>,
+    Form(f): Form<Action>,
+) -> Response {
+    if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
+        return e;
+    }
+    match crate::service::enrollment::owner_action(&state, &account.session, id, &f.action).await {
+        Ok(Some(token)) => (
+            jar.add(crate::web::sso::register::flow_cookie(&state, token)),
+            Redirect::to("/sso/register"),
+        )
+            .into_response(),
+        Ok(None) => pero_api_axum::json_ok(),
         Err(e) => util::management_response(Err(e)),
     }
 }

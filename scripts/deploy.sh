@@ -93,10 +93,8 @@ if [ "${BOOTSTRAP}" = true ]; then
     cp "target/${TARGET}/release/bootstrap" "${DEPLOY_DIR}/"
 fi
 
-if [ -d "${SERVICE_DIR}/ui/static" ]; then
-    mkdir -p "${DEPLOY_DIR}/ui"
-    cp -r "${SERVICE_DIR}/ui/static" "${DEPLOY_DIR}/ui/"
-fi
+mkdir -p "${DEPLOY_DIR}/ui/static"
+cp -R frontend/dist/. "${DEPLOY_DIR}/ui/static/"
 
 if [ -d "${SERVICE_DIR}/migrations" ]; then
     mkdir -p "${DEPLOY_DIR}/migrations"

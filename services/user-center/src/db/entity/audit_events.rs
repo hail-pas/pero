@@ -15,6 +15,7 @@ pub struct Model {
     pub request_id: Option<String>,
     pub outcome: String,
     pub http_status: Option<i32>,
+    pub details: Json,
     pub created_at: TimeDateTimeWithTimeZone,
 }
 

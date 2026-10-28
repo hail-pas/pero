@@ -15,4 +15,5 @@ bash "$PROJECT_ROOT/scripts/build-frontend.sh"
 cd "$PROJECT_ROOT/services/user-center"
 # Bind only to loopback for local review.
 export PERO__SERVER__HOST=127.0.0.1
+export PERO__FRONTEND__STATIC_DIR="$PROJECT_ROOT/frontend/dist"
 exec cargo run --locked --bin user-center -- --config-dir "$CONFIG_DIR"

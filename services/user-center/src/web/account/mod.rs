@@ -16,6 +16,10 @@ use crate::state::app::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/account/applications", get(admission::get))
+        .route(
+            "/account/enrollments/{id}",
+            post(admission::progress_action),
+        )
         .route("/account/applications/{id}", post(admission::app))
         .route("/account/close", post(admission::close))
         .route("/account/security", get(mfa::get).post(mfa::post))

@@ -73,13 +73,21 @@ async fn signed_identity_requires_the_same_client_session_and_live_grant() {
             }),
         )
         .route(
-            "/api/oauth2/userinfo",
-            get(move || {
+            "/api/oauth2/introspect",
+            axum::routing::post(move || {
                 let status = result_status.load(Ordering::SeqCst);
                 async move {
                     (
-                        StatusCode::from_u16(status).unwrap(),
-                        axum::Json(serde_json::json!({"sub":"user"})),
+                        if status == 401 {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::from_u16(status).unwrap()
+                        },
+                        axum::Json(if status == 401 {
+                            serde_json::json!({"active":false})
+                        } else {
+                            serde_json::json!({"active":true,"sub":"user"})
+                        }),
                     )
                 }
             }),

@@ -291,7 +291,7 @@ async fn authorization_and_recovery_regressions() {
         selection.headers()["location"]
             .to_str()
             .unwrap()
-            .contains("error=invalid_request")
+            .starts_with("/sso/select-account?token=")
     );
     assert!(
         pero_utils::oauth::jwt::verify_id_token(&old_at, &issuer, "admin-client", PUBLIC).is_err()
@@ -383,7 +383,7 @@ async fn authorization_and_recovery_regressions() {
     let queued = db
         .query_one_raw(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT count(*) AS n FROM notification_outbox".to_owned(),
+            "SELECT count(*) AS n FROM notification_outbox WHERE kind IN ('reset_password','verify_contact')".to_owned(),
         ))
         .await
         .unwrap()

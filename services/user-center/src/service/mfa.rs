@@ -126,6 +126,7 @@ pub async fn change(
                 vec![s.id.into()],
             )
             .await?;
+            sec::notify(&txn, &user, "new_login").await?;
         }
         "recover" => {
             if !pending

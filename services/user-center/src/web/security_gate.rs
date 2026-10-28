@@ -28,9 +28,11 @@ pub async fn gate(
         ) || path.starts_with("/account/reauth/");
         // Re-running primary authentication must remain possible after an
         // expired MFA challenge, including accounts with only an upstream IdP.
-        let primary_login = matches!(path, "/sso/login" | "/account/login")
-            || path.starts_with("/sso/social/")
-                && matches!(path.rsplit('/').next(), Some("login" | "callback"));
+        let primary_login = matches!(
+            path,
+            "/sso/login" | "/account/login" | "/sso/select-account"
+        ) || path.starts_with("/sso/social/")
+            && matches!(path.rsplit('/').next(), Some("login" | "callback"));
         // Authorize validates the client and handles prompt=none itself. Its
         // full-session extractor already rejects incomplete MFA and recovery.
         let authorize = path == "/oauth2/authorize";

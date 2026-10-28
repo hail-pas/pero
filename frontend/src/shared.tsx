@@ -45,11 +45,14 @@ export function Heading({
         </Button>
       )}
       <Stack
-        direction="row"
-
-        sx={{ alignItems: "center", justifyContent: "space-between", gap: 2 }}
+        direction={{ xs: "column", sm: "row" }}
+        sx={{
+          alignItems: { xs: "flex-start", sm: "center" },
+          justifyContent: "space-between",
+          gap: 2,
+        }}
       >
-        <Box>
+        <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
           <Typography variant="h4" sx={{ mb: 0.75, letterSpacing: "-.025em" }}>
             {title}
           </Typography>
@@ -76,19 +79,22 @@ export function Panel({
     <Card sx={{ mb: 3 }}>
       <Stack
         direction="row"
-
         sx={{
           justifyContent: "space-between",
           alignItems: "center",
+          flexWrap: "wrap",
+          gap: 2,
           px: 3,
           pt: 3,
           pb: 2,
         }}
       >
-        <Typography variant="h6">{title}</Typography>
+        <Typography variant="h6" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
+          {title}
+        </Typography>
         {action}
       </Stack>
-      <CardContent sx={{ pt: 1 }}>{children}</CardContent>
+      <CardContent sx={{ px: 3, pt: 1, pb: 3 }}>{children}</CardContent>
     </Card>
   );
 }

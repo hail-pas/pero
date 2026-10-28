@@ -92,3 +92,34 @@ pub async fn toggle_status(
     }
     util::management_response(client::toggle_status(&state.db, id).await)
 }
+
+#[derive(serde::Deserialize)]
+pub struct Rotation {
+    csrf_token: String,
+    grace_seconds: i64,
+}
+pub async fn rotate_secret(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<uuid::Uuid>,
+    axum::Form(form): axum::Form<Rotation>,
+) -> Response {
+    if let Some(e) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
+        return e;
+    }
+    match client::rotate_secret(&state.db, id, form.grace_seconds).await {
+        Ok(secret) => json_ok_with_sensitive(serde_json::json!({"secret":secret})),
+        Err(e) => util::management_response(Err(e)),
+    }
+}
+pub async fn retire_secret(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<uuid::Uuid>,
+    axum::Form(form): axum::Form<CsrfOnly>,
+) -> Response {
+    if let Some(e) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
+        return e;
+    }
+    util::management_response(client::retire_secret(&state.db, id).await)
+}

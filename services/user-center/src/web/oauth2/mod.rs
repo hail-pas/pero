@@ -1,5 +1,6 @@
 pub mod authorize;
 pub mod end_session;
+pub mod select_account;
 
 use axum::routing::get;
 

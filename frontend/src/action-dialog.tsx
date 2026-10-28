@@ -77,6 +77,8 @@ export function ActionDialog({
             <FieldsForm
               fields={modal.fields}
               initial={modal.initial}
+              onBusyChange={setBusy}
+              onCancel={onClose}
               submit={(values) =>
                 mutate(modal.endpoint, { ...modal.values, ...values })
               }
@@ -84,31 +86,33 @@ export function ActionDialog({
           </Box>
         ) : null}
       </DialogContent>
-      <DialogActions>
-        <Button disabled={busy} onClick={onClose}>
-          {modal.kind === "secret" ? t("已保存，关闭") : t("取消")}
-        </Button>
-        {modal.kind === "confirm" && (
-          <Button
-            variant="contained"
-            color="inherit"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError("");
-              try {
-                await mutate(modal.endpoint, modal.values);
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {busy ? t("正在处理…") : t("确认")}
+      {modal.kind !== "editor" && (
+        <DialogActions>
+          <Button disabled={busy} onClick={onClose}>
+            {modal.kind === "secret" ? t("已保存，关闭") : t("取消")}
           </Button>
-        )}
-      </DialogActions>
+          {modal.kind === "confirm" && (
+            <Button
+              variant="contained"
+              color="inherit"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  await mutate(modal.endpoint, modal.values);
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? t("正在处理…") : t("确认")}
+            </Button>
+          )}
+        </DialogActions>
+      )}
     </Dialog>
   );
 }

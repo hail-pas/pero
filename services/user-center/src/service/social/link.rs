@@ -235,6 +235,9 @@ impl SocialLoginService<'_> {
             }
         })?;
 
+        crate::service::security::notify(&txn, &user, "identity_linked")
+            .await
+            .map_err(|e| SocialLinkError::Internal(e.to_string()))?;
         txn.commit()
             .await
             .map_err(|e| SocialLinkError::Internal(e.to_string()))?;

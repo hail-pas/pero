@@ -15,6 +15,10 @@ fn shipped_configuration_remains_readable() {
     }
     let config: AppConfig = toml::Value::Table(defaults).try_into().unwrap();
     assert_eq!(config.server.port, 8080);
+    assert_eq!(
+        config.frontend.static_dir,
+        std::path::Path::new("../../frontend/dist")
+    );
     assert_eq!(config.sso.session_touch_interval_seconds, 0);
     assert_eq!(config.sso.base_url, "http://localhost:8080");
     assert!(!config.sso.cookie_secure);

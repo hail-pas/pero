@@ -408,7 +408,7 @@ impl<'a> ContactVerificationService<'a> {
             ContactChangeType::Email => user.email.as_deref() != Some(new_value.as_str()),
             ContactChangeType::Phone => user.phone.as_deref() != Some(new_value.as_str()),
         };
-        let mut user_active: users::ActiveModel = user.into();
+        let mut user_active: users::ActiveModel = user.clone().into();
         user_active.updated_at = Set(now);
         match change_type {
             ContactChangeType::Email => {
@@ -430,11 +430,28 @@ impl<'a> ContactVerificationService<'a> {
         }
 
         if contact_changed {
+            super::security::notify(&txn, &user, "contact_changed")
+                .await
+                .map_err(|_| ContactError::ServiceUnavailable)?;
             invalidate_contact_credentials(&txn, user_id, Some(req_id))
                 .await
                 .map_err(|_| ContactError::ServiceUnavailable)?;
         }
 
+        if contact_changed {
+            let mut recipient = users::Entity::find_by_id(user_id)
+                .one(&txn)
+                .await
+                .map_err(|_| ContactError::ServiceUnavailable)?
+                .ok_or(ContactError::ServiceUnavailable)?;
+            match change_type {
+                ContactChangeType::Email => recipient.phone_verified_at = None,
+                ContactChangeType::Phone => recipient.email_verified_at = None,
+            }
+            super::security::notify(&txn, &recipient, "contact_changed")
+                .await
+                .map_err(|_| ContactError::ServiceUnavailable)?;
+        }
         let verified_req = ccr::ActiveModel {
             id: Set(req_id),
             status: Set(ContactChangeStatus::Verified),

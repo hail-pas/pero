@@ -138,3 +138,16 @@ pub async fn clean_enrollments(db: &sea_orm::DatabaseConnection) -> Result<u64, 
     db.execute_unprepared("UPDATE enrollments SET status='expired' WHERE expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')").await?;
     Ok(db.execute_raw(Statement::from_string(DbBackend::Postgres,"DELETE FROM enrollments WHERE id IN (SELECT id FROM enrollments WHERE expires_at<now()-interval '30 days' ORDER BY expires_at LIMIT 500)".to_owned())).await?.rows_affected())
 }
+
+pub async fn clean_expired_client_secrets(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    let mut total = 0;
+    for _ in 0..MAX_BATCHES {
+        let count=db.execute_raw(Statement::from_string(DbBackend::Postgres,"UPDATE oauth_clients SET previous_secret_hash=NULL,previous_secret_expires_at=NULL WHERE id IN (SELECT id FROM oauth_clients WHERE previous_secret_expires_at<=now() LIMIT 500)".to_owned())).await?.rows_affected();
+        total += count;
+        if count < BATCH_SIZE {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(total)
+}

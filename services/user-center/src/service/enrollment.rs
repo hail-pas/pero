@@ -57,15 +57,20 @@ pub struct Enrollment {
     #[serde(skip)]
     pub token_hash: String,
     pub status: String,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub verified_at: Option<OffsetDateTime>,
     pub approved_by: Option<Uuid>,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub approved_at: Option<OffsetDateTime>,
     pub provider_id: Option<Uuid>,
     #[serde(skip)]
     pub subject: Option<String>,
     pub completed_user_id: Option<Uuid>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub last_sent_at: OffsetDateTime,
 }
 fn invalid() -> Error {
@@ -197,6 +202,32 @@ pub async fn lookup<C: ConnectionTrait>(db: &C, token: &str) -> Result<Enrollmen
         return Err(invalid());
     }
     Enrollment::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT * FROM enrollments WHERE token_hash=$1 AND expires_at>now() AND status IN ('pending_verification','pending_approval','ready')",[pero_utils::crypto::sha256_hex(token).into()])).one(db).await?.ok_or_else(invalid)
+}
+/// Read-only progress remains available after a decision; mutations still use lookup().
+pub async fn progress_by_token<C: ConnectionTrait>(
+    db: &C,
+    token: &str,
+) -> Result<Enrollment, Error> {
+    if token.len() != 43 {
+        return Err(invalid());
+    }
+    let mut row = Enrollment::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT * FROM enrollments WHERE token_hash=$1",
+        [pero_utils::crypto::sha256_hex(token).into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(invalid)?;
+    if row.expires_at <= OffsetDateTime::now_utc()
+        && matches!(
+            row.status.as_str(),
+            "pending_verification" | "pending_approval" | "ready"
+        )
+    {
+        row.status = "expired".into();
+    }
+    Ok(row)
 }
 async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, Error> {
     let p = policy(db, row.app_id).await?;
@@ -335,10 +366,11 @@ pub async fn manage(
             if action == "approve" {
                 send(&txn, state, id, &row.email, &token, row.expires_at).await?;
             } else {
-                let link = pero_utils::oauth::url::issuer_endpoint(
+                let mut link = pero_utils::oauth::url::issuer_endpoint(
                     &state.config.sso.base_url,
-                    "sso/login",
+                    "sso/register",
                 );
+                pero_utils::encode::append_query_param(&mut link, "token", &token);
                 super::notify::enqueue_enrollment(
                     &txn,
                     id,
@@ -646,4 +678,146 @@ mod tests {
         p.emergency_stop = true;
         assert!(eligible(&p, "a@example.com", true, false).is_err());
     }
+}
+
+/// The same filtered query drives the approval desk and the owner's progress list.
+#[derive(Default, Deserialize)]
+pub struct ListQuery {
+    pub page: Option<u64>,
+    #[serde(default)]
+    pub q: String,
+    #[serde(default)]
+    pub status: String,
+    pub app: Option<Uuid>,
+    #[serde(default)]
+    pub all_apps: Option<bool>,
+}
+#[derive(Serialize, FromQueryResult)]
+pub struct ProgressRow {
+    pub id: Uuid,
+    pub app_id: Option<Uuid>,
+    pub app_name: Option<String>,
+    pub email: String,
+    pub invitation: bool,
+    pub status: String,
+    pub reason: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
+}
+#[derive(Serialize)]
+pub struct ProgressList {
+    pub rows: Vec<ProgressRow>,
+    pub page: u64,
+    pub total_pages: u64,
+    pub pending_count: i64,
+}
+pub async fn list(
+    db: &sea_orm::DatabaseConnection,
+    query: &ListQuery,
+    owner: Option<&users::Model>,
+) -> Result<ProgressList, Error> {
+    if !query.status.is_empty()
+        && !matches!(
+            query.status.as_str(),
+            "pending_verification"
+                | "pending_approval"
+                | "ready"
+                | "completed"
+                | "rejected"
+                | "revoked"
+                | "expired"
+        )
+    {
+        return Err(Error::Invalid("invalid_request"));
+    }
+    let page = query.page.unwrap_or(1).clamp(1, 1_000_000);
+    let address = owner
+        .filter(|u| u.email_verified_at.is_some())
+        .and_then(|u| u.email.clone());
+    let owner_id = owner.map(|u| u.id);
+    let filter = "FROM (SELECT e.*, a.name AS app_name, CASE WHEN e.expires_at<=now() AND e.status IN ('pending_verification','pending_approval','ready') THEN 'expired' ELSE e.status END AS effective_status FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id) e WHERE ($1 OR app_id IS NOT DISTINCT FROM $2) AND ($3::uuid IS NULL OR completed_user_id=$3 OR email=$4::citext) AND ($5='' OR strpos(lower(email::text),lower($5))>0 OR strpos(lower(COALESCE(app_name,'')),lower($5))>0)";
+    let mut values: Vec<sea_orm::Value> = vec![
+        (owner.is_some() || query.all_apps.unwrap_or(query.app.is_none())).into(),
+        query.app.into(),
+        owner_id.into(),
+        address.into(),
+        query.q.trim().into(),
+    ];
+    #[derive(FromQueryResult)]
+    struct Counts {
+        total: i64,
+        pending: i64,
+    }
+    let counts=Counts::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT count(*) FILTER (WHERE $6='' OR effective_status=$6) AS total, count(*) FILTER (WHERE effective_status='pending_approval') AS pending {filter}"), {
+        let mut v=values.clone(); v.push(query.status.clone().into()); v
+    })).one(db).await?.ok_or_else(invalid)?;
+    values.extend([
+        query.status.clone().into(),
+        (crate::config::DASHBOARD_PAGE_SIZE as i64).into(),
+        (((page - 1) * crate::config::DASHBOARD_PAGE_SIZE) as i64).into(),
+    ]);
+    let rows=ProgressRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT id,app_id,app_name,email::text,invitation,effective_status AS status,reason,created_at,expires_at {filter} AND ($6='' OR effective_status=$6) ORDER BY (effective_status='pending_approval') DESC,created_at DESC,id DESC LIMIT $7 OFFSET $8"),values)).all(db).await?;
+    Ok(ProgressList {
+        rows,
+        page,
+        total_pages: (counts.total as u64).div_ceil(crate::config::DASHBOARD_PAGE_SIZE),
+        pending_count: counts.pending,
+    })
+}
+
+/// Never disclose or resume an invitation using an unverified account address.
+pub async fn owner_action(
+    state: &AppState,
+    actor: &SsoSession,
+    id: Uuid,
+    action: &str,
+) -> Result<Option<String>, Error> {
+    let txn = state.db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    super::account_security::lock_account_session(&txn, actor, &state.config.sso).await?;
+    let user = users::Entity::find_by_id(actor.user_id)
+        .one(&txn)
+        .await?
+        .ok_or_else(invalid)?;
+    let row=Enrollment::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT * FROM enrollments WHERE id=$1 AND email=$2::citext AND expires_at>now() AND status IN ('pending_verification','pending_approval','ready')",[id.into(),user.email.clone().filter(|_| user.email_verified_at.is_some()).into()])).one(&txn).await?.ok_or_else(invalid)?;
+    let token = match action {
+        "withdraw" => {
+            execute(
+                &txn,
+                "UPDATE enrollments SET status='revoked' WHERE id=$1",
+                vec![id.into()],
+            )
+            .await?;
+            cancel_notifications(&txn, id).await?;
+            None
+        }
+        "continue" | "resend" => {
+            check(&txn, &row).await?;
+            if action == "resend"
+                && row.last_sent_at > OffsetDateTime::now_utc() - time::Duration::seconds(60)
+            {
+                return Err(Error::Invalid("rate_limited"));
+            }
+            let token = pero_utils::crypto::generate_token();
+            execute(
+                &txn,
+                "UPDATE enrollments SET token_hash=$2,last_sent_at=now() WHERE id=$1",
+                vec![id.into(), pero_utils::crypto::sha256_hex(&token).into()],
+            )
+            .await?;
+            cancel_notifications(&txn, id).await?;
+            if action == "resend" {
+                send(&txn, state, id, &row.email, &token, row.expires_at).await?;
+                None
+            } else {
+                Some(token)
+            }
+        }
+        _ => return Err(Error::Invalid("invalid_request")),
+    };
+    audit(&txn, &user, &format!("enrollment_{action}"), id).await?;
+    txn.commit().await?;
+    Ok(token)
 }

@@ -6,6 +6,7 @@ pub mod dto;
 pub mod enrollment;
 pub mod guard;
 pub mod keys;
+pub mod members;
 pub mod notifications;
 pub mod providers;
 pub mod users;
@@ -28,6 +29,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/dashboard/enrollments/{id}", post(enrollment::manage))
         .route("/dashboard/admins", get(admins::list).post(admins::update))
         .route("/dashboard/audit", get(audit::list))
+        .route("/dashboard/audit/{id}", get(audit::detail))
         .route("/dashboard/notifications", get(notifications::list))
         .route(
             "/dashboard/notifications/{id}/retry",
@@ -48,12 +50,24 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/dashboard/apps/{id}", get(apps::detail))
         .route(
+            "/dashboard/apps/{id}/members",
+            get(members::list).post(members::change),
+        )
+        .route(
             "/dashboard/apps/{id}/edit",
             get(apps::edit_form).post(apps::update),
         )
         .route("/dashboard/apps/{id}/toggle", post(apps::toggle_status))
         .route("/dashboard/clients/new", post(clients::create))
         .route("/dashboard/clients/{id}/edit", post(clients::update))
+        .route(
+            "/dashboard/clients/{id}/rotate-secret",
+            post(clients::rotate_secret),
+        )
+        .route(
+            "/dashboard/clients/{id}/retire-secret",
+            post(clients::retire_secret),
+        )
         .route(
             "/dashboard/clients/{id}/reset-secret",
             post(clients::reset_secret),

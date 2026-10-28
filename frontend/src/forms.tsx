@@ -33,6 +33,9 @@ export function FieldsForm({
   label = t("保存更改"),
   footer,
   fullWidthSubmit = false,
+  onBusyChange,
+  submitSize = "large",
+  onCancel,
 }: {
   fields: Field[];
   initial?: Values;
@@ -40,6 +43,9 @@ export function FieldsForm({
   label?: string;
   footer?: React.ReactNode;
   fullWidthSubmit?: boolean;
+  onBusyChange?: (busy: boolean) => void;
+  submitSize?: "small" | "medium" | "large";
+  onCancel?: () => void;
 }) {
   useLocale();
   const [values, setValues] = useState<Values>(() =>
@@ -61,7 +67,9 @@ export function FieldsForm({
     [visible, setVisible] = useState<Record<string, boolean>>({});
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
+    onBusyChange?.(true);
     setError("");
     try {
       await submit(values);
@@ -69,6 +77,7 @@ export function FieldsForm({
       setError((e as Error).message);
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
     }
   }
   return (
@@ -79,115 +88,136 @@ export function FieldsForm({
             {t(error)}
           </Alert>
         )}
+        {fields.length > 0 && (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "minmax(0, 1fr)",
+                sm:
+                  fields.length > 5
+                    ? "repeat(2, minmax(0, 1fr))"
+                    : "minmax(0, 1fr)",
+              },
+              gap: 2.5,
+            }}
+          >
+            {fields.map((f) =>
+              f.type === "checkbox" ? (
+                <FormControlLabel
+                  key={f.name}
+                  control={
+                    <Checkbox
+                      name={f.name}
+                      disabled={busy || f.disabled}
+                      checked={Boolean(values[f.name])}
+                      onChange={(e) =>
+                        setValues({ ...values, [f.name]: e.target.checked })
+                      }
+                    />
+                  }
+                  label={t(f.label)}
+                />
+              ) : (
+                <TextField
+                  key={f.name}
+                  name={f.name}
+                  label={t(f.label)}
+                  value={values[f.name] ?? ""}
+                  required={f.required}
+                  disabled={busy || f.disabled}
+                  fullWidth
+                  select={!!f.options}
+                  type={
+                    f.type === "password" && visible[f.name]
+                      ? "text"
+                      : f.type || "text"
+                  }
+                  multiline={f.multiline}
+                  minRows={f.multiline ? 3 : undefined}
+                  helperText={t(f.hint)}
+                  autoComplete={
+                    f.autoComplete ??
+                    (f.type === "password"
+                      ? f.name === "old_password"
+                        ? "current-password"
+                        : "new-password"
+                      : f.name === "identifier"
+                        ? "username"
+                        : undefined)
+                  }
+                  onChange={(e) =>
+                    setValues({ ...values, [f.name]: e.target.value })
+                  }
+                  sx={{ gridColumn: f.multiline ? "1 / -1" : undefined }}
+                  slotProps={
+                    f.type === "password"
+                      ? {
+                          input: {
+                            endAdornment: (
+                              <InputAdornment position="end">
+                                <IconButton
+                                  aria-label={
+                                    visible[f.name]
+                                      ? t("隐藏密码")
+                                      : t("显示密码")
+                                  }
+                                  onClick={() =>
+                                    setVisible({
+                                      ...visible,
+                                      [f.name]: !visible[f.name],
+                                    })
+                                  }
+                                  edge="end"
+                                >
+                                  <>
+                                    {visible[f.name] ? (
+                                      <VisibilityOff />
+                                    ) : (
+                                      <Visibility />
+                                    )}
+                                  </>
+                                </IconButton>
+                              </InputAdornment>
+                            ),
+                          },
+                        }
+                      : f.type === "datetime-local" || f.type === "date"
+                        ? { inputLabel: { shrink: true } }
+                        : undefined
+                  }
+                >
+                  {f.options?.map(([value, title]) => (
+                    <MenuItem key={value} value={value}>
+                      {t(title)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              ),
+            )}
+          </Box>
+        )}
+        {footer}
         <Box
           sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: fields.length > 5 ? "1fr 1fr" : "1fr",
-            },
-            gap: 2.5,
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 1,
           }}
         >
-          {fields.map((f) =>
-            f.type === "checkbox" ? (
-              <FormControlLabel
-                key={f.name}
-                control={
-                  <Checkbox
-                    checked={Boolean(values[f.name])}
-                    onChange={(e) =>
-                      setValues({ ...values, [f.name]: e.target.checked })
-                    }
-                  />
-                }
-                label={t(f.label)}
-              />
-            ) : (
-              <TextField
-                key={f.name}
-                name={f.name}
-                label={t(f.label)}
-                value={values[f.name] ?? ""}
-                required={f.required}
-                disabled={busy || f.disabled}
-                fullWidth
-                select={!!f.options}
-                type={
-                  f.type === "password" && visible[f.name]
-                    ? "text"
-                    : f.type || "text"
-                }
-                multiline={f.multiline}
-                minRows={f.multiline ? 3 : undefined}
-                helperText={t(f.hint)}
-                autoComplete={
-                  f.autoComplete ??
-                  (f.type === "password"
-                    ? f.name === "old_password"
-                      ? "current-password"
-                      : "new-password"
-                    : f.name === "identifier"
-                      ? "username"
-                      : undefined)
-                }
-                onChange={(e) =>
-                  setValues({ ...values, [f.name]: e.target.value })
-                }
-                sx={{ gridColumn: f.multiline ? "1 / -1" : undefined }}
-                slotProps={
-                  f.type === "password"
-                    ? {
-                        input: {
-                          endAdornment: (
-                            <InputAdornment position="end">
-                              <IconButton
-                                aria-label={
-                                  visible[f.name]
-                                    ? t("隐藏密码")
-                                    : t("显示密码")
-                                }
-                                onClick={() =>
-                                  setVisible({
-                                    ...visible,
-                                    [f.name]: !visible[f.name],
-                                  })
-                                }
-                                edge="end"
-                              >
-                                <>
-                                  {visible[f.name] ? (
-                                    <VisibilityOff />
-                                  ) : (
-                                    <Visibility />
-                                  )}
-                                </>
-                              </IconButton>
-                            </InputAdornment>
-                          ),
-                        },
-                      }
-                    : undefined
-                }
-              >
-                {f.options?.map(([value, title]) => (
-                  <MenuItem key={value} value={value}>
-                    {t(title)}
-                  </MenuItem>
-                ))}
-              </TextField>
-            ),
+          {onCancel && (
+            <Button disabled={busy} size={submitSize} onClick={onCancel}>
+              {t("取消")}
+            </Button>
           )}
-        </Box>
-        {footer}
-        <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
           <Button
             type="submit"
             fullWidth={fullWidthSubmit}
             variant="contained"
             color="inherit"
             disabled={busy}
-            size="large"
+            size={submitSize}
           >
             {busy ? t("正在提交…") : t(label)}
           </Button>

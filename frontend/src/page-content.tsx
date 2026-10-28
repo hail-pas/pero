@@ -1,10 +1,15 @@
-import { Enrollment, EnrollmentAdmin, Admission } from "./enrollment";
+import {
+  Enrollment,
+  EnrollmentAdmin,
+  Admission,
+  AppMembers,
+} from "./enrollment";
 import { Notifications } from "./notifications";
 import { SecurityCenter, AdminRoles } from "./security-center";
 import { Alert } from "@mui/material";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { ViewEnvelope } from "./contracts";
-import { Security } from "./security";
+import { Security, AuditDetail } from "./security";
 import { Profile } from "./account";
 import { Auth } from "./auth";
 import { FieldsForm } from "./forms";
@@ -34,6 +39,8 @@ export function PageContent({
       return <Enrollment data={data} mutate={mutate} />;
     case "EnrollmentAdminView":
       return <EnrollmentAdmin data={data} {...actions} />;
+    case "AppMembersView":
+      return <AppMembers data={data} {...actions} />;
     case "AdmissionView":
       return <Admission data={data} {...actions} />;
     case "NotificationListView":
@@ -42,6 +49,8 @@ export function PageContent({
       return <SecurityCenter data={data} mutate={mutate} />;
     case "AdminRolesView":
       return <AdminRoles data={data} mutate={mutate} />;
+    case "AuditDetailView":
+      return <AuditDetail data={data} />;
     case "SessionListView":
     case "ActivityListView":
     case "AuthorizationListView":
@@ -52,6 +61,7 @@ export function PageContent({
       return <Home />;
     case "AdminHomeView":
       return <AdminHome data={data} />;
+    case "SelectAccountView":
     case "LoginView":
     case "AccountLoginView":
     case "ForgotPasswordView":

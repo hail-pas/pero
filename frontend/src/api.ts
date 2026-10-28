@@ -44,6 +44,13 @@ export async function request(
     response.status === 503 ? "service_unavailable" : String(response.status);
   if (!response.headers.get("content-type")?.includes("application/json"))
     throw new Error(errorText(response.ok ? "invalid_response" : statusError));
+  // fetch follows HTTP redirects. Resolve the final URL before rendering its
+  // view, otherwise the content and the router location disagree.
+  if (response.redirected && response.ok) {
+    const destination = new URL(response.url);
+    const source = new URL(path, window.location.origin);
+    if (destination.href !== source.href) return { redirect: destination.href };
+  }
   const result: Envelope = await response.json();
   if (!result || typeof result !== "object" || Array.isArray(result))
     throw new Error(errorText("invalid_response"));

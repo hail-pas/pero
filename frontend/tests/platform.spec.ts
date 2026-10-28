@@ -94,6 +94,10 @@ test("home and all main navigation routes render without runtime errors", async 
   page.on("pageerror", (e) => errors.push(e.message));
   await mock(page);
   await page.goto("/");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    "href",
+    /resources\/icons\/logo\.svg$/,
+  );
   await expect(
     page.getByRole("heading", { name: /User Center/ }),
   ).toBeVisible();
@@ -188,6 +192,14 @@ test("password mismatch is blocked before mutation", async ({ page }) => {
 });
 test("contact change submits csrf and closes the dialog", async ({ page }) => {
   await mock(page);
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/account/profile/change-email", async (route) => {
+    await pending;
+    await route.fulfill({ json: { code: 0 } });
+  });
   await page.goto("/account/profile");
   await page.getByRole("button", { name: "更换邮箱" }).click();
   await page.getByLabel("新邮箱").fill("new@example.com");
@@ -207,6 +219,12 @@ test("contact change submits csrf and closes the dialog", async ({ page }) => {
   expect(new URLSearchParams(req.postData()!).get("value")).toBe(
     "new@example.com",
   );
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "取消" }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  finish();
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
 test("client creation displays generated secret once", async ({ page }) => {
@@ -313,6 +331,7 @@ test("all remaining auth and recovery views render with their server context", a
       "注册与应用准入",
       { mode: "self_service", status: "", app: null, sent: false },
     ],
+    ["/sso/error?flow=ended", "EndSessionView", "你已安全退出", {}],
     ["/sso/forgot-password", "ForgotPasswordView", "找回密码", {}],
     [
       "/sso/reset-password?token=test",
@@ -367,6 +386,11 @@ test("all remaining auth and recovery views render with their server context", a
     await expect(
       page.getByRole("heading", { name: title, exact: true }),
     ).toBeVisible();
+    if (view === "EndSessionView") {
+      const home = page.getByRole("link", { name: "返回首页", exact: true });
+      await expect(home).toHaveCount(1);
+      await expect(home).toHaveClass(/MuiButton-contained/);
+    }
     if (view === "ConsentView") {
       const submitted = page.waitForRequest(
         (r) =>
@@ -593,6 +617,7 @@ test("application type filtering and returning from registration preserve their 
   await page.goto("/dashboard/apps?page=2&status=active");
   await page.getByRole("combobox", { name: "类型", exact: true }).click();
   await page.getByRole("option", { name: "SPA", exact: true }).click();
+  await expect(page).toHaveURL(/app_type=spa/);
   const params = new URL(page.url()).searchParams;
   expect(params.get("app_type")).toBe("spa");
   expect(params.get("status")).toBe("active");
@@ -1133,4 +1158,197 @@ test("admission pages preserve application policy and explicit account closure c
   expect(
     new URLSearchParams((await close).postData()!).get("confirmation"),
   ).toBe("lin");
+});
+
+test("security notices, cards and footer actions keep their spacing and alignment", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/account/security": {
+      view: "SecurityView",
+      data: {
+        layout,
+        csrf_token: "csrf-test",
+        enabled: false,
+        required: true,
+        pending: true,
+        recovery: false,
+        codes: [],
+        secret: "",
+        qr: "",
+        redirect: "/account/profile",
+        error: "",
+      },
+    },
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/account/security");
+    const notice = page.getByRole("alert");
+    const card = page.locator("main .MuiCard-root");
+    const setup = page.getByRole("button", { name: "开始设置", exact: true });
+    await expect(setup).toBeVisible();
+    const n = (await notice.boundingBox())!;
+    const c = (await card.boundingBox())!;
+    expect(c.y - n.y - n.height).toBeGreaterThanOrEqual(20);
+    expect(c.height).toBeLessThan(200);
+    const footer = (await page.locator("footer").boundingBox())!;
+    expect(Math.abs(footer.y + footer.height - 900)).toBeLessThan(1);
+    await page.screenshot({
+      path: `test-results/security-spacing-${width}.png`,
+      fullPage: true,
+    });
+    const logout = (await page
+      .getByRole("main")
+      .getByRole("button", { name: "退出登录", exact: true })
+      .boundingBox())!;
+    const login = (await page
+      .getByRole("link", { name: "重新登录", exact: true })
+      .boundingBox())!;
+    expect(
+      Math.abs(logout.y + logout.height / 2 - login.y - login.height / 2),
+    ).toBeLessThan(1);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.goto("/account/profile");
+    await expect(
+      page.getByRole("heading", { name: "个人资料", exact: true }),
+    ).toBeVisible();
+    const main = (await page.getByRole("main").boundingBox())!;
+    const longFooter = (await page.locator("footer").boundingBox())!;
+    expect(longFooter.y).toBeGreaterThanOrEqual(main.y + main.height - 1);
+    await page.locator("footer").scrollIntoViewIfNeeded();
+    await expect(page.locator("footer")).toBeVisible();
+  }
+});
+
+test("HTTP login and MFA redirects commit the final route without an intermediate profile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const security = {
+    view: "SecurityView",
+    data: {
+      layout,
+      csrf_token: "csrf-test",
+      enabled: false,
+      required: true,
+      pending: true,
+      recovery: false,
+      has_password: true,
+      secret: "",
+      qr: "",
+      codes: [],
+      redirect: "/account/profile",
+      error: "",
+      providers: [],
+    },
+  };
+  await mock(page, { "/sso/mfa": security });
+  await page.route("**/account/login", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 303, headers: { Location: "/sso/mfa" } })
+      : route.fallback(),
+  );
+  await page.goto("/account/login");
+  await page.locator('[name="identifier"]').fill("lin");
+  await page.locator('[name="password"]').fill("Password123!");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page).toHaveURL(/\/sso\/mfa$/);
+  await expect(
+    page.getByRole("heading", { name: "设置验证器", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "返回个人中心", exact: true }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    let interrupted = false;
+    new MutationObserver(() => {
+      if (
+        document.querySelector("main") !== main ||
+        document.querySelector(".MuiSkeleton-root")
+      )
+        interrupted = true;
+    }).observe(document.getElementById("root")!, {
+      childList: true,
+      subtree: true,
+    });
+    Object.assign(window, { navigationInterrupted: () => interrupted });
+  });
+  await page.route("**/account/profile", (route) =>
+    route.fulfill({
+      status: 303,
+      headers: { Location: "/sso/mfa?redirect=%2Faccount%2Fprofile" },
+    }),
+  );
+  await page.locator('a[href="/account/profile"]').first().click();
+  await expect(page).toHaveURL(/\/sso\/mfa\?redirect=/);
+  await expect(
+    page.getByRole("heading", { name: "设置验证器", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => Reflect.get(window, "navigationInterrupted")()),
+  ).toBe(false);
+});
+
+test("slow navigation and refresh preserve the current page and mounted workspace", async ({
+  page,
+}) => {
+  await mock(page);
+  await page.goto("/account/profile");
+  const heading = page.getByRole("heading", { name: "个人资料", exact: true });
+  await expect(heading).toBeVisible();
+  await page.evaluate(() =>
+    Object.assign(window, { originalMain: document.querySelector("main") }),
+  );
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/account/security", async (route) => {
+    await pending;
+    await route.fallback();
+  });
+  await page.locator('a[href="/account/security"]').first().click();
+  await expect(
+    page.getByRole("progressbar", { name: "正在加载", exact: true }),
+  ).toBeVisible();
+  await expect(heading).toBeVisible();
+  await expect(page.locator(".MuiSkeleton-root")).toHaveCount(0);
+  release();
+  await expect(page).toHaveURL(/\/account\/security$/);
+  await expect(
+    page.getByRole("heading", { name: "设置验证器", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        document.querySelector("main") === Reflect.get(window, "originalMain"),
+    ),
+  ).toBe(true);
+  await page.locator('a[href="/account/profile"]').first().click();
+  await expect(heading).toBeVisible();
+  let finishRefresh!: () => void;
+  const refreshing = new Promise<void>((resolve) => {
+    finishRefresh = resolve;
+  });
+  await page.route("**/account/profile", async (route) => {
+    if (route.request().method() === "GET") await refreshing;
+    await route.fallback();
+  });
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await expect(
+    page.getByRole("progressbar", { name: "正在加载", exact: true }),
+  ).toBeVisible();
+  await expect(heading).toBeVisible();
+  await expect(page.locator(".MuiSkeleton-root")).toHaveCount(0);
+  finishRefresh();
+  await expect(
+    page.getByRole("button", { name: "保存更改", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("progressbar", { name: "正在加载", exact: true }),
+  ).toHaveCount(0);
 });
