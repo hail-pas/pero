@@ -184,6 +184,7 @@ docker compose up -d --no-build --force-recreate
 docker compose ps
 docker compose logs --tail=100 pero
 curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/ready
 ```
 
 替换为生产配置中的域名，验证外部访问：
@@ -198,7 +199,7 @@ curl -fsS "$AUTH_URL/static/index.html" -o /dev/null
 
 浏览器打开生产域名 `/dashboard`，使用 bootstrap.toml 中的管理员账号密码登录，验证用户/应用管理、退出重登和静态资源。该密码不是 PostgreSQL 密码。清空数据后可用无痕窗口避开旧会话，并重新注册业务 OAuth client、登记回调地址、更新接入方凭证。
 
-`/health` 只检查进程存活，不能代替真实登录验收。代理应将 `/static` 转发到 8080；如果直接托管静态资源，必须同步当前镜像的构建产物，不能继续指向历史资源目录。
+`/health`（兼容 `/api/health`）只检查进程存活；`/ready`（兼容 `/api/ready`）通过应用连接池并发检查数据库和 Redis，单项最多等待 2 秒。全部成功返回 200，否则返回 503，只输出依赖布尔状态。Compose healthcheck 使用 `/ready`；Kubernetes liveness 应使用 `/health`，readiness 使用 `/ready`。
 
 ## 8. 更新与维护
 

@@ -51,8 +51,9 @@ pub async fn serve_page(req: Request<Body>, next: Next, directory: PathBuf) -> R
 pub async fn serve(req: Request<Body>, next: Next, directory: PathBuf) -> Response {
     let json = accepts(&req, "application/json");
     let navigation = is_navigation(&req);
-    let is_protocol =
-        req.uri().path().starts_with("/api/") || req.uri().path().starts_with("/.well-known/");
+    let is_protocol = req.uri().path().starts_with("/api/")
+        || req.uri().path().starts_with("/.well-known/")
+        || req.uri().path() == "/ready";
     let is_asset = req.uri().path().starts_with("/static/assets/");
     let mut response = next.run(req).await;
     if json && response.status().is_redirection() {

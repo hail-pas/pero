@@ -176,6 +176,18 @@ impl RedisCacheStore {
             .map_err(|err| self.redis_err(err, operation))
     }
 
+    /// Check connectivity using the same pool and timeouts as application traffic.
+    pub async fn ping(&self) -> CacheResult<()> {
+        let response: String = self.query(redis::cmd("PING"), "PING").await?;
+        if response != "PONG" {
+            return Err(AppError::internal(
+                "redis_ping_failed",
+                "Unexpected Redis PING response",
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn get_bytes(&self, key: &str) -> CacheResult<Option<Vec<u8>>> {
         pero_validate_core::not_blank(key, "key")?;
 

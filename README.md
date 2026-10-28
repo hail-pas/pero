@@ -42,6 +42,8 @@ cp services/admin/config/local.toml.example services/admin/config/local.toml
 
 ## 初始化与配置
 
+已有本地数据库、Redis、密钥及 `services/user-center/config/local.toml` 配置并完成迁移和 bootstrap 后，可在仓库根目录执行 `make dev`。命令构建前端并启动 user-center，默认通过 `http://127.0.0.1:8080` 查看，按 Ctrl+C 停止；数据库和 Redis 使用本地配置中的地址。此命令只监听本机回环地址，不重复初始化数据。
+
 Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机通过 `scripts/build-docker-image.sh` 构建 Linux amd64 镜像并导出，服务器加载后在 `/root/projects/pero/runtime` 启动，无需服务器编译或本机 Rust/Zig。现有 `/root/projects/pero/source` 可保留；`scripts/package-production-config.sh` 仅在需要迁移配置时使用，私有包不提交 Git。
 
 `001_init.sql` 用于空数据库初始化，后续变更通过增量 SQL 迁移。`scripts/migrate.sh` 按文件顺序在事务内应用迁移并记录 checksum，重复执行会校验并跳过已应用的 SQL。本次新增 `002_audit_events.sql`，已有部署需先运行迁移，再启动新版服务。标准 `scripts/deploy.sh` 部署包包含配置默认值、示例、初始化 SQL 和迁移脚本；不包含真实配置或私钥。目标环境需独立提供密钥。

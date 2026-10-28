@@ -30,6 +30,7 @@ pub fn build(state: AppState) -> Router {
         .nest("/api", api::routes())
         .merge(web::routes(state.clone()))
         .route("/health", get(api::health::health))
+        .route("/ready", get(api::health::ready))
         .nest_service("/static", ServeDir::new(static_dir.clone()))
         .fallback(web::not_found)
         .layer(axum::middleware::from_fn(move |req, next| {
