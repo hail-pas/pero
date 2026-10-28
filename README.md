@@ -96,7 +96,7 @@ python3 scripts/check-osv.py # Python 3.11+
 pnpm --dir frontend audit
 ```
 
-依赖审计保留完整报告；当前没有接受中的告警，见 `.github/security/advisory-policy.json`。未评估告警、撤包或接受期到期均令 CI 失败，不使用全局 ignore。前端主题源码保留 Minimal MIT 许可，构建锁定依赖版本。
+依赖审计保留完整报告；已核实的误报按公告、包名和确切版本记录于 `.github/security/advisory-policy.json`，检查时仍输出记录。当前仅跟踪 `block-buffer 0.10.4` 的 `GHSA-qwgh-2vcv-g2f7` 误报：维护者确认受影响范围为 `>=0.11.0,<0.12.1`，聚合数据库范围过宽。未评估告警、撤包或接受期到期均令 CI 失败，不使用全局 ignore；OSV 返回未完成的分页结果也会令检查失败。前端主题源码保留 Minimal MIT 许可，构建锁定依赖版本。
 
 `sso.session_touch_interval_seconds` 默认 `0`，保持每次请求刷新 idle 时间；可显式设置不超过 `30` 秒且不超过 idle TTL 的 `1%`，减少高频请求的数据库写入。代价是空闲到期时间最多提前该间隔，每次请求仍查询数据库撤销状态。清理任务每轮每类最多 20 批、每批 500 条，积压会在后续轮次继续处理。
 

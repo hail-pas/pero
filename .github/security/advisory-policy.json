@@ -1,2 +1,13 @@
 {
+  "expires": "2026-11-28",
+  "accepted": [
+    {
+      "id": "GHSA-qwgh-2vcv-g2f7",
+      "package": "block-buffer",
+      "version": "0.10.4",
+      "kind": "osv_false_positive",
+      "reason": "The maintainer advisory limits affected versions to >=0.11.0,<0.12.1. Version 0.10.4 stores pos separately from the block buffer and does not have the vulnerable inline cursor. The aggregated advisory incorrectly matches all versions below 0.12.1.",
+      "source": "https://github.com/RustCrypto/utils/security/advisories/GHSA-qwgh-2vcv-g2f7"
+    }
+  ]
 }
