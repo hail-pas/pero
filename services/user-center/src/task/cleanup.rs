@@ -59,5 +59,9 @@ async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     );
     do_clean!("password_reset_tokens", clean_expired_password_reset_tokens);
 
+    do_clean!(
+        "notifications",
+        crate::db::helper::cleanup::clean_notifications
+    );
     Ok(())
 }

@@ -30,6 +30,13 @@ pub enum ContactChannel {
 }
 
 impl ContactChannel {
+    pub fn mask(self, value: &str) -> String {
+        match self {
+            Self::Email => mask_email(value),
+            Self::Phone => mask_phone(value),
+        }
+    }
+
     pub fn change_type(self) -> ContactChangeType {
         match self {
             Self::Email => ContactChangeType::Email,
@@ -579,4 +586,33 @@ pub(crate) async fn expire_reservations<C: sea_orm::ConnectionTrait>(
         .exec(db)
         .await?;
     Ok(())
+}
+
+fn mask_email(email: &str) -> String {
+    let Some(at_pos) = email.find('@') else {
+        return "***".to_owned();
+    };
+    let local = &email[..at_pos];
+    let domain = &email[at_pos..];
+    let first = local.chars().next().unwrap_or('*');
+    format!("{first}******{domain}")
+}
+
+fn mask_phone(phone: &str) -> String {
+    let chars: Vec<char> = phone.chars().collect();
+    if chars.len() >= 7 {
+        let n = chars.len();
+        format!(
+            "{}{}{}****{}{}{}{}",
+            chars[0],
+            chars[1],
+            chars[2],
+            chars[n - 4],
+            chars[n - 3],
+            chars[n - 2],
+            chars[n - 1]
+        )
+    } else {
+        "***".to_owned()
+    }
 }

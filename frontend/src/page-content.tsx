@@ -1,3 +1,4 @@
+import { Notifications } from "./notifications";
 import { SecurityCenter, AdminRoles } from "./security-center";
 import { Alert } from "@mui/material";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -28,6 +29,8 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "NotificationListView":
+      return <Notifications data={data} {...actions} />;
     case "SecurityView":
       return <SecurityCenter data={data} mutate={mutate} />;
     case "AdminRolesView":

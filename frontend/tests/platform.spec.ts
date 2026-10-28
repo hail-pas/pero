@@ -1002,3 +1002,64 @@ test("MFA challenge offers recovery without exposing enrollment secrets", async 
     page.getByRole("button", { name: "保存更改", exact: true }),
   ).toHaveCount(0);
 });
+
+test("notification operations filter records and confirm safe retries", async ({
+  page,
+}) => {
+  const row = {
+    id: "delivery-1",
+    kind: "verify_contact",
+    channel: "email",
+    recipient: "***est",
+    status: "retrying",
+    attempts: 3,
+    last_error: "http_error",
+    http_status: 503,
+    created_at: "2026-10-28T00:00:00Z",
+    updated_at: "2026-10-28T00:01:00Z",
+    can_retry: true,
+  };
+  await mock(page, {
+    "/dashboard/notifications": {
+      view: "NotificationListView",
+      data: {
+        layout,
+        csrf_token: "csrf-test",
+        enabled: true,
+        summary: { pending: 1, overdue: 0, failing: 1 },
+        rows: [
+          row,
+          { ...row, id: "delivery-2", status: "delivered", can_retry: false },
+        ],
+        page: 1,
+        total_pages: 2,
+      },
+    },
+  });
+  await page.goto("/dashboard/notifications?page=2");
+  await expect(
+    page.getByRole("heading", { name: "通知投递", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("网关拒绝请求 503").first()).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "立即重试", exact: true }).nth(1),
+  ).toBeDisabled();
+  await page.getByRole("combobox", { name: "投递状态" }).click();
+  await page.getByRole("option", { name: "重试中", exact: true }).click();
+  await expect(page).toHaveURL(/status=retrying/);
+  expect(new URL(page.url()).searchParams.has("page")).toBeFalsy();
+  await page
+    .getByRole("button", { name: "立即重试", exact: true })
+    .first()
+    .click();
+  const sent = page.waitForRequest(
+    (req) =>
+      req.method() === "POST" &&
+      req.url().endsWith("/dashboard/notifications/delivery-1/retry"),
+  );
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "确认", exact: true })
+    .click();
+  expect((await sent).postData()).toContain("csrf_token=csrf-test");
+});

@@ -1092,12 +1092,59 @@ async fn notification_retries_and_leases() {
     assert_eq!(row.try_get::<i32>("", "attempts").unwrap(), 1);
     let ciphertext = row.try_get::<Vec<u8>>("", "payload_enc").unwrap();
     assert!(!ciphertext.windows(6).any(|value| value == b"123456"));
-    sql(
-        &db,
-        "UPDATE notification_outbox SET next_attempt_at=now()",
-        vec![],
+    let record = db.query_one_raw(Statement::from_string(DbBackend::Postgres,
+        "SELECT id,status,attempts,last_error,http_status,recipient FROM notification_deliveries".to_owned())).await.unwrap().unwrap();
+    let delivery_id: Uuid = record.try_get("", "id").unwrap();
+    assert_eq!(record.try_get::<String>("", "status").unwrap(), "retrying");
+    assert_eq!(
+        record.try_get::<String>("", "last_error").unwrap(),
+        "http_error"
+    );
+    assert_eq!(record.try_get::<i32>("", "http_status").unwrap(), 503);
+    assert_eq!(
+        record.try_get::<String>("", "recipient").unwrap(),
+        "f******@example.test"
+    );
+    let response = crate::web::dashboard::notifications::list(
+        axum::extract::State(delivery_state.clone()),
+        axum_extra::extract::CookieJar::new(),
+        crate::web::dashboard::guard::AdminContext {
+            session: crate::state::session::SsoSession {
+                id: Uuid::now_v7(),
+                user_id: user,
+                identity_id: None,
+                created_at: time::OffsetDateTime::now_utc(),
+                authenticated_at: time::OffsetDateTime::now_utc(),
+            },
+            user: crate::db::entity::users::Entity::find_by_id(user)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap(),
+        },
+        axum::extract::Query(
+            serde_json::from_value(serde_json::json!({"status":"retrying"})).unwrap(),
+        ),
     )
     .await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(page["view"], "NotificationListView");
+    assert_eq!(page["data"]["summary"]["pending"], 1);
+    assert_eq!(page["data"]["rows"][0]["can_retry"], true);
+    assert!(page["data"]["rows"][0].get("payload_enc").is_none());
+    assert!(!String::from_utf8_lossy(&body).contains("123456"));
+    crate::service::notify::retry(&delivery_state, delivery_id)
+        .await
+        .unwrap();
+    assert!(
+        crate::service::notify::retry(&delivery_state, delivery_id)
+            .await
+            .is_err()
+    );
     assert!(
         crate::service::notify::deliver_one(&delivery_state)
             .await
@@ -1112,6 +1159,61 @@ async fn notification_retries_and_leases() {
         let requests = attempts.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0], requests[1]);
+    }
+    let record = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status,attempts FROM notification_deliveries WHERE id=$1",
+            [delivery_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.try_get::<String>("", "status").unwrap(), "delivered");
+    assert_eq!(record.try_get::<i32>("", "attempts").unwrap(), 2);
+    assert!(
+        crate::service::notify::retry(&delivery_state, delivery_id)
+            .await
+            .is_err()
+    );
+    // Credential invalidation preserves only cancelled metadata; expiry does the same.
+    for expired in [false, true] {
+        crate::service::notify::enqueue(
+            &db,
+            user,
+            &crate::service::notify::Notification {
+                channel: "email",
+                kind: "verify_contact",
+                to: "private@example.test",
+                code: Some("654321"),
+                link: "https://secret.test",
+            },
+            time::OffsetDateTime::now_utc()
+                + if expired {
+                    time::Duration::seconds(-1)
+                } else {
+                    time::Duration::minutes(1)
+                },
+        )
+        .await
+        .unwrap();
+        sql(&db, "DELETE FROM notification_outbox", vec![]).await;
+        let status = if expired { "expired" } else { "cancelled" };
+        let record = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM notification_deliveries WHERE status=$1",
+                [status.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let id: Uuid = record.try_get("", "id").unwrap();
+        assert!(
+            crate::service::notify::retry(&delivery_state, id)
+                .await
+                .is_err()
+        );
     }
     // A stalled delivery must not block another message in the same batch.
     attempts.lock().unwrap().clear();

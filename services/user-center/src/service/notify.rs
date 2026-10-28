@@ -24,10 +24,29 @@ pub async fn enqueue<C: ConnectionTrait>(
 ) -> Result<(), DbErr> {
     let payload = serde_json::to_string(message)
         .map_err(|_| DbErr::Custom("notification serialization failed".into()))?;
-    // The same database encryption key protects provider secrets and queued credentials.
+    // Insert queue and redacted metadata atomically, including callers without a transaction.
     db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "INSERT INTO notification_outbox (id, payload_enc, expires_at, user_id, kind) VALUES ($1, pgp_sym_encrypt($2, current_setting('app.encrypt_key')), $3, $4, $5)",
-        [Uuid::now_v7().into(), payload.into(), expires_at.into(), user_id.into(), message.kind.into()])).await?;
+        "WITH queued AS (INSERT INTO notification_outbox (id, payload_enc, expires_at, user_id, kind) VALUES ($1, pgp_sym_encrypt($2, current_setting('app.encrypt_key')), $3, $4, $5) RETURNING id) INSERT INTO notification_deliveries (id,user_id,kind,channel,recipient) SELECT id,$4,$5,$6,$7 FROM queued",
+        [Uuid::now_v7().into(), payload.into(), expires_at.into(), user_id.into(), message.kind.into(), message.channel.into(), match message.channel {
+            "email" => super::contact::ContactChannel::Email.mask(message.to),
+            "phone" => super::contact::ContactChannel::Phone.mask(message.to),
+            _ => "***".into(),
+        }.into()])).await?;
+    Ok(())
+}
+
+pub async fn retry(state: &AppState, id: Uuid) -> Result<(), super::ManagementError> {
+    if state.config.notification.endpoint.is_empty() {
+        return Err(super::ManagementError::Invalid("notification_disabled"));
+    }
+    let updated = state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE notification_outbox SET next_attempt_at=now() WHERE id=$1 AND attempts>0 AND expires_at>now() AND next_attempt_at>now() AND (leased_until IS NULL OR leased_until<=now())",
+        [id.into()])).await?.rows_affected();
+    if updated == 0 {
+        return Err(super::ManagementError::Invalid(
+            "notification_not_retryable",
+        ));
+    }
     Ok(())
 }
 
@@ -81,7 +100,7 @@ pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
     let lease_id = Uuid::now_v7();
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "UPDATE notification_outbox SET lease_id = $2, leased_until = now() + interval '120 seconds' WHERE id = $1",
+        "WITH claimed AS (UPDATE notification_outbox SET lease_id = $2, leased_until = now() + interval '120 seconds', attempts = attempts + 1 WHERE id = $1 RETURNING id,attempts) UPDATE notification_deliveries d SET attempts=c.attempts,updated_at=now() FROM claimed c WHERE d.id=c.id",
         [delivery.id.into(), lease_id.into()],
     )).await?;
     txn.commit().await?;
@@ -103,41 +122,101 @@ pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
     // Bound delivery below the lease duration even if the configured HTTP timeout is longer.
     let started = std::time::Instant::now();
     let result = tokio::time::timeout(std::time::Duration::from_secs(60), request).await;
-    match result {
+    // Store only a controlled error category and HTTP status, never gateway response content.
+    let (error, status) = match result {
         Ok(Ok(response)) if response.status.is_success() => {
-            let deleted = state
-                .db
-                .execute_raw(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "DELETE FROM notification_outbox WHERE id = $1 AND lease_id = $2",
-                    [delivery.id.into(), lease_id.into()],
-                ))
-                .await?
-                .rows_affected();
-            tracing::debug!(delivery_id = %delivery.id, elapsed_ms = started.elapsed().as_millis() as u64, lease_lost = deleted == 0, "Notification delivered");
+            (None, Some(i32::from(response.status.as_u16())))
         }
-        _ => {
-            // Do not log gateway bodies, URLs or credential-bearing payloads.
-            tracing::warn!(delivery_id = %delivery.id, "Notification delivery failed; retry scheduled");
-            let updated = state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-                "UPDATE notification_outbox SET attempts = attempts + 1, next_attempt_at = now() + interval '30 seconds' * LEAST(attempts + 1, 10), lease_id = NULL, leased_until = NULL WHERE id = $1 AND lease_id = $2", [delivery.id.into(), lease_id.into()])).await?.rows_affected();
-            tracing::debug!(delivery_id = %delivery.id, elapsed_ms = started.elapsed().as_millis() as u64, lease_lost = updated == 0, "Notification retry recorded");
+        Ok(Ok(response)) => (
+            Some("http_error"),
+            Some(i32::from(response.status.as_u16())),
+        ),
+        Ok(Err(error)) => {
+            let status = error
+                .extensions()
+                .get("upstream_status")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|v| i32::try_from(v).ok());
+            if status.is_some() {
+                (Some("http_error"), status)
+            } else if error.kind() == pero_error::ErrorKind::Timeout {
+                (Some("timeout"), None)
+            } else {
+                (Some("transport_error"), None)
+            }
+        }
+        Err(_) => (Some("timeout"), None),
+    };
+    let txn = state.db.begin().await?;
+    // Lock the leased message before changing metadata; cancellation and stale workers cannot revive it.
+    let owned = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM notification_outbox WHERE id=$1 AND lease_id=$2 FOR UPDATE",
+            [delivery.id.into(), lease_id.into()],
+        ))
+        .await?
+        .is_some();
+    if owned {
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE notification_deliveries SET status=$2,last_error=$3,http_status=$4,updated_at=now() WHERE id=$1",
+            [delivery.id.into(),if error.is_none() { "delivered" } else { "retrying" }.into(),error.map(str::to_owned).into(),status.into()])).await?;
+        if error.is_none() {
+            txn.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM notification_outbox WHERE id=$1",
+                [delivery.id.into()],
+            ))
+            .await?;
+        } else {
+            txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+                "UPDATE notification_outbox SET next_attempt_at=now()+interval '30 seconds'*LEAST(attempts,10),lease_id=NULL,leased_until=NULL WHERE id=$1",
+                [delivery.id.into()])).await?;
+            tracing::warn!(delivery_id = %delivery.id, error, http_status = status, "Notification delivery failed; retry scheduled");
         }
     }
+    txn.commit().await?;
+    tracing::debug!(delivery_id = %delivery.id, elapsed_ms = started.elapsed().as_millis() as u64, lease_lost = !owned, "Notification attempt completed");
     Ok(true)
+}
+
+async fn warn_backlog(db: &sea_orm::DatabaseConnection) -> Result<(), DbErr> {
+    if let Some(row) = db.query_one_raw(Statement::from_string(DbBackend::Postgres,
+        "SELECT count(*) AS pending,count(*) FILTER (WHERE (attempts>=3 AND leased_until IS NULL) OR next_attempt_at<now()-interval '5 minutes') AS unhealthy FROM notification_outbox WHERE expires_at>now()".to_owned())).await? {
+        let unhealthy: i64 = row.try_get("", "unhealthy")?;
+        let pending: i64 = row.try_get("", "pending")?;
+        if unhealthy > 0 {
+            tracing::warn!(pending, unhealthy, "Notification backlog requires attention");
+        }
+    }
+    Ok(())
 }
 
 pub fn start_delivery_task(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tick.tick().await;
-            if state.config.notification.endpoint.is_empty() {
-                continue;
+        let delivery = async {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                if !state.config.notification.endpoint.is_empty() {
+                    deliver_batch(&state).await;
+                }
             }
-            deliver_batch(&state).await;
-        }
+        };
+        // Check independently of slow gateway requests and the hourly cleanup task.
+        // Keep monitoring when delivery is disabled so queued security notices remain visible.
+        let monitor = async {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                if let Err(error) = warn_backlog(&state.db).await {
+                    tracing::error!(%error, "Notification backlog check failed");
+                }
+            }
+        };
+        tokio::join!(delivery, monitor);
     })
 }
 

@@ -115,3 +115,20 @@ pub async fn clean_expired_password_reset_tokens(
     )
     .await
 }
+
+/// Keep credential expiry independent of gateway availability; retain only 30 days of terminal metadata.
+pub async fn clean_notifications(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    let mut total = 0;
+    for _ in 0..MAX_BATCHES {
+        let expired = db.execute_raw(Statement::from_string(DbBackend::Postgres,
+            "DELETE FROM notification_outbox WHERE id IN (SELECT id FROM notification_outbox WHERE expires_at<=now() ORDER BY expires_at FOR UPDATE SKIP LOCKED LIMIT 500)".to_owned())).await?.rows_affected();
+        let archived = db.execute_raw(Statement::from_string(DbBackend::Postgres,
+            "DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE updated_at<now()-interval '30 days' AND status IN ('delivered','expired','cancelled') ORDER BY updated_at LIMIT 500)".to_owned())).await?.rows_affected();
+        total += expired + archived;
+        if expired < BATCH_SIZE && archived < BATCH_SIZE {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(total)
+}

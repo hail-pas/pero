@@ -41,7 +41,9 @@ impl DatabaseFixture {
             "\n",
             include_str!("../../migrations/002_audit_events.sql"),
             "\n",
-            include_str!("../../migrations/003_mfa_admin_roles.sql")
+            include_str!("../../migrations/003_mfa_admin_roles.sql"),
+            "\n",
+            include_str!("../../migrations/004_notification_deliveries.sql")
         ))
         .await
         .unwrap();

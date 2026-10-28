@@ -103,5 +103,7 @@
   "mfa_already_enabled": "验证器已启用。",
   "reauth_required": "请先重新验证身份，再重试操作。",
   "mfa_required": "管理员必须保留双重验证。",
-  "last_super_admin": "不能移除最后一个有效超级管理员。"
+  "last_super_admin": "不能移除最后一个有效超级管理员。",
+  "notification_disabled": "通知网关未配置，投递已暂停。",
+  "notification_not_retryable": "通知已失效、正在投递或已排队，请刷新列表。"
 }

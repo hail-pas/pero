@@ -171,6 +171,22 @@ export interface ViewDataMap {
     request_id: string | null;
     created_at: string;
   }>;
+  NotificationListView: RowsPage<{
+    id: string;
+    kind: string;
+    channel: string;
+    recipient: string;
+    status: string;
+    attempts: number;
+    last_error: string | null;
+    http_status: number | null;
+    created_at: string;
+    updated_at: string;
+    can_retry: boolean;
+  }> & {
+    enabled: boolean;
+    summary: { pending: number; overdue: number; failing: number };
+  };
   HomeView: null;
   AdminHomeView: CsrfPage & {
     username: string;

@@ -58,6 +58,7 @@ export default defineConfig(({ command }) => ({
                 "/account/identities",
                 "/dashboard/events",
                 "/dashboard/audit",
+                "/dashboard/notifications",
                 "/account/change-password",
                 "/account/profile/verify-contact",
                 "/sso/login",

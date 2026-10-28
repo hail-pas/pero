@@ -5,6 +5,7 @@ pub mod clients;
 pub mod dto;
 pub mod guard;
 pub mod keys;
+pub mod notifications;
 pub mod providers;
 pub mod users;
 
@@ -20,6 +21,11 @@ pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/dashboard/admins", get(admins::list).post(admins::update))
         .route("/dashboard/audit", get(audit::list))
+        .route("/dashboard/notifications", get(notifications::list))
+        .route(
+            "/dashboard/notifications/{id}/retry",
+            post(notifications::retry),
+        )
         .route(
             "/dashboard/events",
             get(crate::web::account::security::admin_activity),

@@ -134,8 +134,8 @@ pub async fn verify_contact_get(
     };
 
     let masked_value = match req.change_type {
-        ContactChangeType::Email => mask_email(&req.new_value),
-        ContactChangeType::Phone => mask_phone(&req.new_value),
+        ContactChangeType::Email => ContactChannel::Email.mask(&req.new_value),
+        ContactChangeType::Phone => ContactChannel::Phone.mask(&req.new_value),
     };
 
     let change_type_label = match req.change_type {
@@ -326,34 +326,5 @@ fn contact_error_response(e: &ContactError) -> Response {
         }
         ContactError::Internal(error) => crate::web::util::dependency_error(error),
         _ => json_ok_with_error(contact_error_to_json(e)),
-    }
-}
-
-fn mask_email(email: &str) -> String {
-    let Some(at_pos) = email.find('@') else {
-        return "***".to_owned();
-    };
-    let local = &email[..at_pos];
-    let domain = &email[at_pos..];
-    let first = local.chars().next().unwrap_or('*');
-    format!("{first}******{domain}")
-}
-
-fn mask_phone(phone: &str) -> String {
-    let chars: Vec<char> = phone.chars().collect();
-    if chars.len() >= 7 {
-        let n = chars.len();
-        format!(
-            "{}{}{}****{}{}{}{}",
-            chars[0],
-            chars[1],
-            chars[2],
-            chars[n - 4],
-            chars[n - 3],
-            chars[n - 2],
-            chars[n - 1]
-        )
-    } else {
-        "***".to_owned()
     }
 }

@@ -91,6 +91,7 @@ export function Layout({
         ],
         ["/dashboard/providers", t("身份提供方"), <FingerprintRounded />],
         ["/dashboard/events", t("登录记录"), <HistoryRounded />],
+        ["/dashboard/notifications", t("通知投递"), <HistoryRounded />],
         ["/dashboard/audit", t("操作审计"), <FactCheckRounded />],
       ] as const)
     : ([
