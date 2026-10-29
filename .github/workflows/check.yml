@@ -27,7 +27,7 @@ jobs:
       DATABASE_URL: postgres://pero_test:test-only-password@127.0.0.1:5432/pero_security_test
       PERO_TEST_DATABASE_URL: postgres://pero_test:test-only-password@127.0.0.1:5432/pero_security_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy
       - run: rustup default 1.95.0
       - uses: actions/setup-node@v4
@@ -52,7 +52,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup toolchain install 1.95.0 --profile minimal && rustup default 1.95.0
       - run: python3 scripts/check-osv.py
       - run: cargo install cargo-audit --locked
@@ -74,7 +74,7 @@ jobs:
   linux-musl:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup toolchain install 1.95.0 --profile minimal --target x86_64-unknown-linux-musl
       - run: rustup default 1.95.0
       - run: sudo apt-get update && sudo apt-get install -y musl-tools cmake clang
