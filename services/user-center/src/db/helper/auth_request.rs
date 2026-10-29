@@ -6,6 +6,7 @@ use crate::db::entity::authorization_requests;
 use crate::db::enums::CodeChallengeMethod;
 
 pub struct CreateParams {
+    pub diagnostic_session_id: Option<Uuid>,
     pub client_id: Uuid,
     pub app_id: Uuid,
     pub redirect_uri: String,
@@ -27,6 +28,7 @@ pub async fn create(
     let now = OffsetDateTime::now_utc();
     let model = authorization_requests::ActiveModel {
         id: Set(Uuid::now_v7()),
+        diagnostic_session_id: Set(params.diagnostic_session_id),
         client_id: Set(params.client_id),
         app_id: Set(params.app_id),
         redirect_uri: Set(params.redirect_uri),

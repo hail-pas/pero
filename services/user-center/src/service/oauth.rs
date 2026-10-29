@@ -118,6 +118,7 @@ impl<'a> OAuthService<'a> {
         auth_request::create(
             self.db,
             auth_request::CreateParams {
+                diagnostic_session_id: None,
                 client_id: params.client_id,
                 app_id: params.app_id,
                 redirect_uri: params.redirect_uri,
@@ -253,6 +254,13 @@ impl<'a> OAuthService<'a> {
                 ))
             })?;
 
+        if auth_request
+            .diagnostic_session_id
+            .is_some_and(|id| id != session.id)
+        {
+            return Err(OAuthError::AccessDenied);
+        }
+
         let now = OffsetDateTime::now_utc();
         if auth_request.completed_at.is_some() || auth_request.expires_at < now {
             return Err(OAuthError::Internal(AppError::bad_request(
@@ -292,7 +300,7 @@ impl<'a> OAuthService<'a> {
         .await
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
 
-        if grant_consent {
+        if grant_consent && auth_request.diagnostic_session_id.is_none() {
             user_consents::Entity::insert(user_consents::ActiveModel {
                 user_id: Set(session.user_id),
                 client_id: Set(auth_request.client_id),
@@ -334,8 +342,9 @@ impl<'a> OAuthService<'a> {
     pub async fn deny_authorization_request(
         &self,
         auth_request_id: Uuid,
-        user_id: Uuid,
+        session: &SsoSession,
     ) -> Result<(), OAuthError> {
+        let user_id = session.user_id;
         let result: Result<(), sea_orm::DbErr> = async {
             let txn = self.db.begin().await?;
             let now = OffsetDateTime::now_utc();
@@ -358,9 +367,19 @@ impl<'a> OAuthService<'a> {
                     "Authorization request is no longer valid".into(),
                 ));
             };
-            user_consents::Entity::delete_by_id((user_id, request.client_id))
-                .exec(&txn)
-                .await?;
+            if request
+                .diagnostic_session_id
+                .is_some_and(|id| id != session.id)
+            {
+                return Err(sea_orm::DbErr::RecordNotFound(
+                    "Diagnostic session mismatch".into(),
+                ));
+            }
+            if request.diagnostic_session_id.is_none() {
+                user_consents::Entity::delete_by_id((user_id, request.client_id))
+                    .exec(&txn)
+                    .await?;
+            }
             txn.commit().await
         }
         .await;

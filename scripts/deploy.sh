@@ -47,6 +47,7 @@ DEPLOY_DIR="deploy/${SERVICE}"
 ARCHIVE_NAME="${SERVICE}-${TARGET}.tar.gz"
 
 BINS=("--bin" "${SERVICE}")
+if [[ "$SERVICE" == user-center ]]; then BINS+=("--bin" "migrate"); fi
 if [ "${BOOTSTRAP}" = true ]; then
     BINS+=("--bin" "bootstrap")
 fi
@@ -96,10 +97,9 @@ fi
 mkdir -p "${DEPLOY_DIR}/ui/static"
 cp -R frontend/dist/. "${DEPLOY_DIR}/ui/static/"
 
-if [ -d "${SERVICE_DIR}/migrations" ]; then
-    mkdir -p "${DEPLOY_DIR}/migrations"
-    cp "${SERVICE_DIR}/migrations/"*.sql "${DEPLOY_DIR}/migrations/"
+if [[ "$SERVICE" == user-center ]]; then
     cp scripts/migrate.sh "${DEPLOY_DIR}/migrate.sh"
+    cp "target/${TARGET}/release/migrate" "${DEPLOY_DIR}/migrate"
 fi
 
 # Ship public defaults/examples only; operators generate private keys on the destination.

@@ -1,8 +1,11 @@
+import { providerPresets } from "./provider-presets";
+import { can } from "./permissions";
 import { useLocation, useNavigate } from "react-router-dom";
 import { FieldsForm, appFields, providerFields, userFields } from "./forms";
 import type { ViewEnvelope, FormView } from "./contracts";
 import { Heading, Panel, names, type Actions } from "./shared";
 import { t, useLocale } from "./i18n";
+import { errorText } from "./api";
 
 export function ManagementForm({
   page,
@@ -33,9 +36,13 @@ export function ManagementForm({
                 required: true,
               },
             ]
-          : userFields
+          : userFields.filter((f) =>
+              ["email", "phone"].includes(f.name)
+                ? can(data.layout, "users.contact.update")
+                : f.name !== "username" && can(data.layout, "users.update"),
+            )
         : providerFields;
-  const immutableFields = new Set(["username", "code"]);
+  const immutableFields = new Set(["code"]);
   if (kind === "providers") {
     immutableFields.add("kind");
     for (const name of ["issuer", "client_id", "userinfo_endpoint"]) {
@@ -59,12 +66,18 @@ export function ManagementForm({
       <Panel title={t("基本信息")}>
         <FieldsForm
           key={path}
+          presets={
+            kind === "providers" && data.mode === "create"
+              ? providerPresets
+              : undefined
+          }
           fields={fields.map((field) =>
             data.mode === "edit" && immutableFields.has(field.name)
               ? { ...field, disabled: true }
               : field,
           )}
           initial={data.form}
+          serverError={data.error ? errorText(data.error) : ""}
           submit={(values) =>
             mutate(path, values, () => navigate(`/dashboard/${kind}`))
           }

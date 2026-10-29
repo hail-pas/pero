@@ -1,3 +1,4 @@
+import { can, isSuper } from "./permissions";
 import {
   AdminPanelSettingsOutlined,
   AssignmentOutlined,
@@ -35,8 +36,9 @@ import {
   MenuItem,
   Stack,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import type { UserLayout } from "./contracts";
 import { t, useLocale } from "./i18n";
@@ -82,7 +84,13 @@ export function Layout({
     null,
   );
   const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
-  const { pathname } = useLocation();
+  const { pathname, key: locationKey } = useLocation();
+  const desktop = useMediaQuery((theme) => theme.breakpoints.up("lg"));
+  useEffect(() => {
+    setOpen(false);
+    setWorkspaceAnchor(null);
+    setAccountAnchor(null);
+  }, [locationKey, desktop]);
   const admin = pathname.startsWith("/dashboard");
   const links = admin
     ? ([
@@ -100,10 +108,28 @@ export function Layout({
         ["/account/security", t("账户安全"), <ShieldOutlined />],
         ["/account/sessions", t("登录设备"), <DevicesOutlined />],
         ["/account/activity", t("登录记录"), <HistoryOutlined />],
-        ["/account/applications", t("应用准入与注销"), <AssignmentOutlined />],
+        ["/account/applications", t("我的应用"), <AssignmentOutlined />],
         ["/account/authorizations", t("已授权应用"), <VerifiedUserOutlined />],
         ["/account/identities", t("关联账号"), <LinkOutlined />],
       ] as const);
+  const visibleLinks = admin
+    ? links.filter(([path]) => {
+        if (!layout?.can_access_dashboard) return false;
+        if (isSuper(layout)) return true;
+        if (path === "/dashboard/apps")
+          return Object.values(layout.admin_access?.app_grants || {}).some(
+            (p) => p.includes("apps.read"),
+          );
+        const permissions: Record<string, string> = {
+          "/dashboard/users": "users.read",
+          "/dashboard/providers": "providers.read",
+          "/dashboard/events": "events.read",
+          "/dashboard/notifications": "notifications.read",
+          "/dashboard/audit": "audit.read",
+        };
+        return can(layout, permissions[path]);
+      })
+    : links;
   const name = layout?.user_name || t("我的账户");
   const nav = (
     <Stack sx={{ height: "100%", p: 2.5, overflowY: "auto" }}>
@@ -165,10 +191,10 @@ export function Layout({
         >
           {t("个人工作空间")}
         </MenuItem>
-        {(admin || layout?.is_admin) && (
+        {layout?.can_access_dashboard && (
           <MenuItem
             component={RouterLink}
-            to="/dashboard/apps"
+            to="/dashboard"
             selected={admin}
             onClick={() => {
               setWorkspaceAnchor(null);
@@ -187,7 +213,7 @@ export function Layout({
         {admin ? t("工作空间") : t("我的账户")}
       </Typography>
       <List>
-        {links.map(([to, label, icon]) => (
+        {visibleLinks.map(([to, label, icon]) => (
           <ListItemButton
             key={to}
             component={RouterLink}
@@ -215,10 +241,10 @@ export function Layout({
         ))}
       </List>
       <Box sx={{ flex: 1 }} />
-      {(admin || layout?.is_admin) && (
+      {layout?.can_access_dashboard && (
         <Button
           component={RouterLink}
-          to={admin ? "/account/profile" : "/dashboard/apps"}
+          to={admin ? "/account/profile" : "/dashboard"}
           startIcon={admin ? <PersonOutlined /> : <DashboardOutlined />}
         >
           {admin ? t("返回个人中心") : t("管理控制台")}
@@ -242,21 +268,15 @@ export function Layout({
     <Box sx={{ display: "flex", minHeight: "100dvh" }}>
       <Box component="nav" sx={{ width: { lg: 280 }, flexShrink: 0 }}>
         <Drawer
-          variant="permanent"
+          variant={desktop ? "permanent" : "temporary"}
+          open={open}
+          onClose={() => setOpen(false)}
           sx={{
-            display: { xs: "none", lg: "block" },
             "& .MuiDrawer-paper": {
               width: 280,
               borderRight: "1px solid rgba(145,158,171,.12)",
             },
           }}
-        >
-          {nav}
-        </Drawer>
-        <Drawer
-          open={open}
-          onClose={() => setOpen(false)}
-          sx={{ "& .MuiDrawer-paper": { width: 280 } }}
         >
           {nav}
         </Drawer>

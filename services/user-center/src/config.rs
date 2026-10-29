@@ -252,24 +252,84 @@ impl Validatable for PasswordResetConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NotificationConfig {
+    pub smtp: Option<SmtpConfig>,
+    pub sms: Option<SmsConfig>,
     pub endpoint: String,
     pub bearer_token: SecretString,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SmtpConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: SecretString,
+    pub from: String,
+    /// "tls" (implicit TLS) or "starttls". Plaintext is intentionally unsupported.
+    pub security: String,
+}
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SmsConfig {
+    pub account_sid: String,
+    pub auth_token: SecretString,
+    pub from: String,
+}
+impl NotificationConfig {
+    pub fn available(&self, channel: &str) -> bool {
+        match channel {
+            "email" if self.smtp.is_some() => {
+                self.smtp.as_ref().is_some_and(|c| c.transport().is_ok())
+            }
+            "phone" if self.sms.is_some() => self.sms.as_ref().is_some_and(|c| {
+                c.account_sid.starts_with("AC")
+                    && c.account_sid.len() == 34
+                    && c.account_sid[2..].bytes().all(|b| b.is_ascii_hexdigit())
+                    && !c.auth_token.is_empty()
+                    && !c.from.is_empty()
+            }),
+            "email" | "phone" => !self.endpoint.is_empty() && !self.bearer_token.is_empty(),
+            _ => false,
+        }
+    }
+}
+impl SmtpConfig {
+    pub fn transport(
+        &self,
+    ) -> Result<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>, &'static str> {
+        use lettre::{
+            AsyncSmtpTransport, Tokio1Executor, transport::smtp::authentication::Credentials,
+        };
+        if self.host.is_empty()
+            || self.port == 0
+            || self.from.parse::<lettre::message::Mailbox>().is_err()
+        {
+            return Err("smtp_not_configured");
+        }
+        let builder = match self.security.as_str() {
+            "tls" => AsyncSmtpTransport::<Tokio1Executor>::relay(&self.host),
+            "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.host),
+            _ => return Err("smtp_invalid_security"),
+        }
+        .map_err(|_| "smtp_invalid_configuration")?;
+        let mut builder = builder
+            .port(self.port)
+            .timeout(Some(std::time::Duration::from_secs(30)));
+        if !self.username.is_empty() {
+            if self.password.is_empty() {
+                return Err("smtp_missing_password");
+            }
+            builder = builder.credentials(Credentials::new(
+                self.username.clone(),
+                self.password.expose_secret().to_owned(),
+            ));
+        }
+        Ok(builder.build())
+    }
+}
 impl Validatable for NotificationConfig {
     fn validate(&self) -> ValidationResult {
-        if !self.endpoint.is_empty() {
-            pero_validate_core::ensure(
-                pero_utils::redirect::validate_provider_endpoint_uri(&self.endpoint).is_ok(),
-                "notification.endpoint",
-                "invalid",
-                "Notification gateway must use a public HTTPS endpoint",
-            )?;
-            pero_validate_core::not_blank(
-                self.bearer_token.expose_secret(),
-                "notification.bearer_token",
-            )?;
-        }
         Ok(())
     }
 }
@@ -329,5 +389,30 @@ impl Validatable for AppConfig {
         self.http_config.validate()?;
         self.notification.validate()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+    #[test]
+    fn optional_notification_configuration_is_checked_at_send_time() {
+        let config = NotificationConfig::default();
+        assert!(config.validate().is_ok());
+        assert!(!config.available("email"));
+        assert!(!config.available("phone"));
+        let mut config = config;
+        config.smtp = Some(SmtpConfig::default());
+        assert!(config.validate().is_ok());
+        assert!(!config.available("email"));
+        config.smtp = Some(SmtpConfig {
+            host: "smtp.example.test".into(),
+            port: 587,
+            from: "Pero <notify@example.test>".into(),
+            security: "starttls".into(),
+            ..Default::default()
+        });
+        assert!(config.available("email"));
+        assert!(!config.available("phone"));
     }
 }

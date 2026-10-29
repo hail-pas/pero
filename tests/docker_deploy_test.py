@@ -93,6 +93,7 @@ class DockerDeployTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1, path)
         for path in ('deploy/pero/config/production.toml', 'deploy/pero/prd/user-center',
                      'deploy/pero-config.tar.gz', 'deploy/pero-config.tar.gz.sha256',
+                     'deploy/pero-image.env',
                      'local/deploy/pero/config/keys/private.pem'):
             result = subprocess.run(['git', 'check-ignore', '-q', path], cwd=self.root)
             self.assertEqual(result.returncode, 0, path)
@@ -122,6 +123,14 @@ elif args[:2]==['image','save']:
         docker.chmod(0o755)
         self.env = {**os.environ, 'PATH': str(self.root / 'bin') + os.pathsep + os.environ['PATH'],
                     'FAKE_DOCKER_LOG': str(self.calls)}
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.test', 'commit', '-q',
+                        '--allow-empty', '-m', 'Build fixture'], check=True)
+        revision = subprocess.check_output(['git', '-C', str(self.root), 'rev-parse', '--short=12', 'HEAD'], text=True).strip()
+        self.image_tag = 'git-' + revision
+        self.image = 'pero-user-center:' + self.image_tag
+        self.image_env = self.root / 'deploy/pero-image.env'
         self.archive = self.root / 'deploy/pero-user-center-linux-amd64.tar.gz'
 
     def build(self):
@@ -135,8 +144,11 @@ elif args[:2]==['image','save']:
         build = next(args for args in calls if args[:2] == ['buildx', 'build'])
         self.assertEqual(build[build.index('--platform') + 1], 'linux/amd64')
         self.assertIn('--load', build)
+        self.assertEqual(build[build.index('-t') + 1], self.image)
+        self.assertEqual(self.image_env.read_text(), 'PERO_IMAGE_TAG=' + self.image_tag + '\n')
         save = next(args for args in calls if args[:2] == ['image', 'save'])
         self.assertEqual(save[save.index('--platform') + 1], 'linux/amd64')
+        self.assertEqual(save[-1], self.image)
         self.assertEqual(gzip.decompress(self.archive.read_bytes()), b'fixture docker save archive')
         self.assertEqual(Path(str(self.archive) + '.sha256').read_text().split(),
                          [hashlib.sha256(self.archive.read_bytes()).hexdigest(), self.archive.name])
@@ -146,17 +158,23 @@ elif args[:2]==['image','save']:
         self.env['FAKE_PLATFORM'] = 'linux/arm64'
         self.assertNotEqual(self.build().returncode, 0)
         self.assertFalse(self.archive.exists())
-        self.assertNotIn(['image', 'save', 'pero-user-center:local'],
-                         [json.loads(line) for line in self.calls.read_text().splitlines()])
+        self.assertFalse(self.image_env.exists())
+        self.assertFalse(any(args[:2] == ['image', 'save']
+                             for args in map(json.loads, self.calls.read_text().splitlines())))
 
     def test_failed_export_preserves_previous_package(self):
         self.assertEqual(self.build().returncode, 0)
         previous = self.archive.read_bytes()
         checksum = Path(str(self.archive) + '.sha256').read_bytes()
+        previous_env = self.image_env.read_bytes()
+        subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.test', 'commit', '-q',
+                        '--allow-empty', '-m', 'Next build'], check=True)
         self.env['FAKE_SAVE_FAIL'] = '1'
         self.assertNotEqual(self.build().returncode, 0)
         self.assertEqual(self.archive.read_bytes(), previous)
         self.assertEqual(Path(str(self.archive) + '.sha256').read_bytes(), checksum)
+        self.assertEqual(self.image_env.read_bytes(), previous_env)
         self.assertEqual(list((self.root / 'deploy').glob('.pero-image.*')), [])
 
 
@@ -180,33 +198,22 @@ class InitializeTest(unittest.TestCase):
              patch.object(self.module.subprocess, 'run', runner):
             self.module.main()
 
-    def test_uri_is_explicit_and_initialization_order(self):
+    def test_bootstrap_owns_migration_and_provisioning(self):
         from unittest.mock import Mock
-        runner = Mock(return_value=subprocess.CompletedProcess([], 0, stdout='180003\n'))
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0))
         self.initialize(runner)
-        calls = runner.call_args_list
-        self.assertEqual(calls[0].args[0][:3], ['psql', '--dbname', self.url])
-        self.assertEqual(calls[0].kwargs['env']['PGCONNECT_TIMEOUT'], '10')
-        self.assertEqual(calls[1].args[0], ['bash', 'prd/migrate.sh'])
-        self.assertEqual(calls[2].args[0][0], 'prd/bootstrap')
+        runner.assert_called_once()
+        self.assertEqual(runner.call_args.args[0],
+                         ['prd/bootstrap', '--config-dir', 'config', '--keys-dir', 'config/keys'])
+        self.assertEqual(runner.call_args.kwargs['env']['PERO_RUN_MODE'], 'production')
+        self.assertTrue(runner.call_args.kwargs['check'])
 
-    def test_connection_error_is_actionable_and_password_redacted(self):
+    def test_bootstrap_failure_stops_initialization(self):
         from unittest.mock import Mock
-        runner = Mock(return_value=subprocess.CompletedProcess([], 2, stdout='',
-                      stderr=f'connection refused: {self.url}; password p@ss; encoded p%40ss'))
-        with self.assertRaises(SystemExit) as error:
+        runner = Mock(side_effect=subprocess.CalledProcessError(1, ['prd/bootstrap']))
+        with self.assertRaises(subprocess.CalledProcessError):
             self.initialize(runner)
-        self.assertIn('connection refused', str(error.exception))
-        for secret in (self.url, 'p@ss', 'p%40ss'):
-            self.assertNotIn(secret, str(error.exception))
-        self.assertEqual(runner.call_count, 1)
-
-    def test_old_postgresql_is_rejected_before_migration(self):
-        from unittest.mock import Mock
-        runner = Mock(return_value=subprocess.CompletedProcess([], 0, stdout='170005\n'))
-        with self.assertRaises(SystemExit):
-            self.initialize(runner)
-        self.assertEqual(runner.call_count, 1)
+        runner.assert_called_once()
 
 
 if __name__ == '__main__':

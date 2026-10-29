@@ -27,14 +27,16 @@ export function Notifications({
   const statuses: Record<string, string> = {
     queued: t("待投递"),
     retrying: t("重试中"),
-    delivered: t("网关已接收"),
+    delivered: t("发送服务已接收"),
     expired: t("已过期"),
     cancelled: t("已取消"),
   };
   const errors: Record<string, string> = {
-    http_error: t("网关拒绝请求"),
-    transport_error: t("网关连接失败"),
-    timeout: t("网关请求超时"),
+    smtp_delivery_failed: t("SMTP 投递失败"),
+    notification_disabled: t("发送渠道未配置"),
+    http_error: t("发送服务拒绝请求"),
+    transport_error: t("发送服务连接失败"),
+    timeout: t("发送请求超时"),
   };
   const kinds: Record<string, string> = {
     verify_contact: t("联系方式验证"),
@@ -57,12 +59,12 @@ export function Notifications({
       <Heading
         title={t("通知投递")}
         description={t(
-          "查看近 30 天的投递记录；网关接收不代表收件人已收到。记录不含验证码、链接或完整收件地址。",
+          "查看近 30 天的投递记录；发送服务接收不代表收件人已收到。记录不含验证码、链接或完整收件地址。",
         )}
       />
       {!data.enabled && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          {t("通知网关未配置，投递已暂停。")}
+          {t("邮件和短信服务未配置或配置无效，发送请求将返回 503。")}
         </Alert>
       )}
       <Alert
@@ -190,6 +192,101 @@ export function Notifications({
           </Table>
         </Box>
         {!data.rows.length && <Alert severity="info">{t("暂无记录。")}</Alert>}
+      </Panel>
+      <Panel title={t("应用注销通知（最近 100 条）")}>
+        <Box sx={{ overflowX: "auto" }}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                {[
+                  t("时间"),
+                  t("客户端"),
+                  t("投递状态"),
+                  t("尝试次数"),
+                  t("最近结果"),
+                  t("操作"),
+                ].map((label) => (
+                  <TableCell key={label}>{label}</TableCell>
+                ))}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {data.logout_rows?.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell>{date(row.created_at)}</TableCell>
+                  <TableCell>{row.identifier}</TableCell>
+                  <TableCell>{statuses[row.status] || row.status}</TableCell>
+                  <TableCell>{row.attempts}</TableCell>
+                  <TableCell>{row.last_error || "—"}</TableCell>
+                  <TableCell>
+                    <Button
+                      disabled={!row.can_retry}
+                      onClick={() =>
+                        ask(
+                          t("立即重试"),
+                          `/dashboard/logout-deliveries/${row.id}/retry`,
+                        )
+                      }
+                    >
+                      {t("立即重试")}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Box>
+      </Panel>
+      <Panel title={t("账户同步通知（最近 100 条）")}>
+        <Box sx={{ overflowX: "auto" }}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                {[
+                  t("时间"),
+                  t("客户端"),
+                  t("用户 ID"),
+                  t("通知类型"),
+                  t("投递状态"),
+                  t("尝试次数"),
+                  t("最近结果"),
+                  t("操作"),
+                ].map((label) => (
+                  <TableCell key={label}>{label}</TableCell>
+                ))}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {data.sync_rows?.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell>{date(row.created_at)}</TableCell>
+                  <TableCell>{row.identifier}</TableCell>
+                  <TableCell>{row.user_id}</TableCell>
+                  <TableCell>
+                    {row.kind}
+                    <Box color="text.secondary">{row.id}</Box>
+                  </TableCell>
+                  <TableCell>{statuses[row.status] || row.status}</TableCell>
+                  <TableCell>{row.attempts}</TableCell>
+                  <TableCell>{row.last_error || "—"}</TableCell>
+                  <TableCell>
+                    <Button
+                      disabled={!row.can_retry}
+                      onClick={() =>
+                        ask(
+                          t("立即重试"),
+                          `/dashboard/account-sync-deliveries/${row.id}/retry`,
+                        )
+                      }
+                    >
+                      {t("立即重试")}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Box>
       </Panel>
       {data.total_pages > 1 && (
         <Stack sx={{ mt: 3, alignItems: "flex-end" }}>

@@ -22,7 +22,7 @@
     "react-router-dom": "^7.4.1"
   },
   "devDependencies": {
-    "@babel/parser": "^8.0.7",
+    "@babel/parser": "^8.0.8",
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.19.2",
     "@types/react": "^19.1.0",

@@ -38,7 +38,10 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
         Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
 
-    let layout = super::dto::AccountLayout::from_user(&state.db, &user).await;
+    let layout = match super::dto::AccountLayout::from_user(&state.db, &user).await {
+        Ok(layout) => layout,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
     let tpl = ChangePasswordView {

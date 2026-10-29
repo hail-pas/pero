@@ -1,4 +1,4 @@
-//! Durable delivery via an authenticated HTTPS notification gateway.
+//! Durable notification delivery through SMTP, SMS, or an optional HTTP gateway.
 use pero_http_client_core::HttpClientExt;
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
@@ -55,11 +55,30 @@ async fn enqueue_owned<C: ConnectionTrait>(
     Ok(())
 }
 
-pub async fn retry(state: &AppState, id: Uuid) -> Result<(), super::ManagementError> {
-    if state.config.notification.endpoint.is_empty() {
+pub async fn retry(
+    state: &AppState,
+    actor: &super::permissions::Actor,
+    id: Uuid,
+) -> Result<(), super::ManagementError> {
+    let txn = state.db.begin().await?;
+    super::permissions::authorize(&txn, actor)
+        .await?
+        .require_global(super::permissions::Permission::NotificationsRetry)?;
+    let row = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT channel FROM notification_deliveries WHERE id=$1",
+            [id.into()],
+        ))
+        .await?
+        .ok_or(super::ManagementError::Invalid(
+            "notification_not_retryable",
+        ))?;
+    let channel: String = row.try_get("", "channel")?;
+    if !state.config.notification.available(&channel) {
         return Err(super::ManagementError::Invalid("notification_disabled"));
     }
-    let updated = state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+    let updated = txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "UPDATE notification_outbox SET next_attempt_at=now() WHERE id=$1 AND attempts>0 AND expires_at>now() AND next_attempt_at>now() AND (leased_until IS NULL OR leased_until<=now())",
         [id.into()])).await?.rows_affected();
     if updated == 0 {
@@ -67,6 +86,7 @@ pub async fn retry(state: &AppState, id: Uuid) -> Result<(), super::ManagementEr
             "notification_not_retryable",
         ));
     }
+    txn.commit().await?;
     Ok(())
 }
 
@@ -124,47 +144,15 @@ pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
         [delivery.id.into(), lease_id.into()],
     )).await?;
     txn.commit().await?;
-    let config = &state.config.notification;
-    let request = state
-        .http_client
-        .post(&config.endpoint)
-        .bearer_auth(config.bearer_token.expose_secret())
-        .header(
-            http::header::CONTENT_TYPE,
-            http::HeaderValue::from_static("application/json"),
-        )
-        .header(
-            http::HeaderName::from_static("idempotency-key"),
-            http::HeaderValue::from_str(&delivery.id.to_string()).expect("UUID header"),
-        )
-        .body(delivery.payload.into_bytes())
-        .send();
-    // Bound delivery below the lease duration even if the configured HTTP timeout is longer.
     let started = std::time::Instant::now();
-    let result = tokio::time::timeout(std::time::Duration::from_secs(60), request).await;
-    // Store only a controlled error category and HTTP status, never gateway response content.
-    let (error, status) = match result {
-        Ok(Ok(response)) if response.status.is_success() => {
-            (None, Some(i32::from(response.status.as_u16())))
-        }
-        Ok(Ok(response)) => (
-            Some("http_error"),
-            Some(i32::from(response.status.as_u16())),
-        ),
-        Ok(Err(error)) => {
-            let status = error
-                .extensions()
-                .get("upstream_status")
-                .and_then(serde_json::Value::as_u64)
-                .and_then(|v| i32::try_from(v).ok());
-            if status.is_some() {
-                (Some("http_error"), status)
-            } else if error.kind() == pero_error::ErrorKind::Timeout {
-                (Some("timeout"), None)
-            } else {
-                (Some("transport_error"), None)
-            }
-        }
+    let (error, status) = match tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        send(state, delivery.id, &delivery.payload),
+    )
+    .await
+    {
+        Ok(Ok(status)) => (None, status),
+        Ok(Err((error, status))) => (Some(error), status),
         Err(_) => (Some("timeout"), None),
     };
     let txn = state.db.begin().await?;
@@ -219,9 +207,7 @@ pub fn start_delivery_task(state: AppState) -> tokio::task::JoinHandle<()> {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                if !state.config.notification.endpoint.is_empty() {
-                    deliver_batch(&state).await;
-                }
+                deliver_batch(&state).await;
             }
         };
         // Check independently of slow gateway requests and the hourly cleanup task.
@@ -231,6 +217,9 @@ pub fn start_delivery_task(state: AppState) -> tokio::task::JoinHandle<()> {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
+                if let Err(error) = super::keys::maintain(&state.db).await {
+                    tracing::error!(%error,"Signing-key maintenance failed");
+                }
                 if let Err(error) = warn_backlog(&state.db).await {
                     tracing::error!(%error, "Notification backlog check failed");
                 }
@@ -264,4 +253,121 @@ pub(crate) async fn deliver_batch(state: &AppState) {
             tracing::error!(%error, "Notification worker stopped unexpectedly");
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+struct Payload {
+    channel: String,
+    kind: String,
+    to: String,
+    code: Option<String>,
+    link: String,
+}
+async fn send(
+    state: &AppState,
+    id: Uuid,
+    payload: &str,
+) -> Result<Option<i32>, (&'static str, Option<i32>)> {
+    use base64::Engine;
+    use lettre::AsyncTransport;
+    let message: Payload = serde_json::from_str(payload).map_err(|_| ("invalid_payload", None))?;
+    let config = &state.config.notification;
+    let body = format!(
+        "Pero: {}\n{}\n{}\nIf you did not request this, review your account security.",
+        message.kind,
+        message.code.as_deref().unwrap_or(""),
+        message.link
+    );
+    if message.channel == "email"
+        && let Some(smtp) = &config.smtp
+    {
+        let transport = smtp.transport().map_err(|e| (e, None))?;
+        let mail = lettre::Message::builder()
+            .from(smtp.from.parse().map_err(|_| ("smtp_invalid_from", None))?)
+            .to(message
+                .to
+                .parse()
+                .map_err(|_| ("invalid_recipient", None))?)
+            .message_id(Some(format!("<{id}@pero.invalid>")))
+            .subject(format!("Pero · {}", message.kind))
+            .body(body)
+            .map_err(|_| ("invalid_message", None))?;
+        transport
+            .send(mail)
+            .await
+            .map_err(|_| ("smtp_delivery_failed", None))?;
+        return Ok(None);
+    }
+    if message.channel == "phone"
+        && let Some(sms) = &config.sms
+    {
+        if !config.available("phone") {
+            return Err(("sms_not_configured", None));
+        }
+        let endpoint = format!(
+            "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",
+            sms.account_sid
+        );
+        let auth = base64::engine::general_purpose::STANDARD.encode(format!(
+            "{}:{}",
+            sms.account_sid,
+            sms.auth_token.expose_secret()
+        ));
+        let response = state
+            .http_client
+            .post(&endpoint)
+            .no_retry()
+            .header(
+                http::header::AUTHORIZATION,
+                http::HeaderValue::from_str(&format!("Basic {auth}"))
+                    .map_err(|_| ("sms_invalid_configuration", None))?,
+            )
+            .form(&[
+                ("To", message.to.as_str()),
+                ("From", sms.from.as_str()),
+                ("Body", body.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(http_error)?;
+        return Ok(Some(i32::from(response.status.as_u16())));
+    }
+    if !config.available(&message.channel) {
+        return Err(("notification_disabled", None));
+    }
+    let response = state
+        .http_client
+        .post(&config.endpoint)
+        .no_retry()
+        .bearer_auth(config.bearer_token.expose_secret())
+        .header(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        )
+        .header(
+            http::HeaderName::from_static("idempotency-key"),
+            http::HeaderValue::from_str(&id.to_string()).expect("UUID header"),
+        )
+        .body(payload.as_bytes().to_vec())
+        .send()
+        .await
+        .map_err(http_error)?;
+    Ok(Some(i32::from(response.status.as_u16())))
+}
+fn http_error(error: pero_error::AppError) -> (&'static str, Option<i32>) {
+    let status = error
+        .extensions()
+        .get("upstream_status")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|v| i32::try_from(v).ok());
+    (
+        if status.is_some() {
+            "http_error"
+        } else if error.kind() == pero_error::ErrorKind::Timeout {
+            "timeout"
+        } else {
+            "transport_error"
+        },
+        status,
+    )
 }

@@ -1,5 +1,6 @@
+use crate::service::permissions::Permission as P;
 use axum::extract::{Path, Query, State};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use axum_extra::extract::cookie::CookieJar;
 use sea_orm::EntityTrait;
 use serde::Deserialize;
@@ -27,6 +28,7 @@ pub async fn list(
     Query(query): Query<ListQuery>,
     admin: AdminContext,
 ) -> Response {
+    let access = admin.access.clone();
     let AdminPage {
         layout,
         csrf_token,
@@ -38,16 +40,26 @@ pub async fn list(
     let q = query.q.unwrap_or_default();
     let status_filter = query.status.unwrap_or_default();
 
-    let (users_list, total_pages) =
-        match crate::db::helper::admin::list_users(&state.db, page_num, &q, &status_filter).await {
-            Ok(data) => data,
-            Err(error) => return util::dependency_error(error),
-        };
+    let (users_list, total_pages) = match crate::db::helper::admin::list_users(
+        &state.db,
+        page_num,
+        &q,
+        &status_filter,
+        &access,
+    )
+    .await
+    {
+        Ok(data) => data,
+        Err(error) => return util::dependency_error(error),
+    };
 
     let tpl = super::dto::UserListView {
         layout,
         csrf_token,
-        users: users_list.into_iter().map(Into::into).collect(),
+        users: users_list
+            .into_iter()
+            .map(|u| super::dto::UserSummary::from_authorized(u, &access))
+            .collect(),
         page: page_num,
         total_pages,
         q,
@@ -83,7 +95,7 @@ pub async fn create(
     State(state): State<AppState>,
     jar: CookieJar,
     admin: AdminContext,
-    axum::Form(form): axum::Form<UserFormData>,
+    axum::Form(form): axum::Form<CreateUserInput>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
@@ -106,6 +118,7 @@ pub async fn detail(
     Path(id): Path<uuid::Uuid>,
     admin: AdminContext,
 ) -> Response {
+    let access = admin.access.clone();
     let AdminPage {
         layout,
         csrf_token,
@@ -115,23 +128,29 @@ pub async fn detail(
     let user = match crate::db::helper::admin::find_user_by_id(&state.db, id).await {
         Ok(Some(u)) if u.deleted_at.is_none() => u,
         Err(error) => return util::dependency_error(error),
-        _ => return Redirect::to("/dashboard/users").into_response(),
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
     };
 
-    let identity_rows =
+    let identity_rows = if !access.super_admin {
+        Vec::new()
+    } else {
         match crate::db::helper::admin::list_user_identities(&state.db, user.id).await {
             Ok(data) => data,
             Err(error) => return util::dependency_error(error),
-        };
-
-    let providers: std::collections::HashMap<uuid::Uuid, (String, String)> =
-        match crate::db::entity::identity_providers::Entity::find()
-            .all(&state.db)
-            .await
-        {
-            Ok(data) => data,
-            Err(error) => return util::dependency_error(error),
         }
+    };
+    let providers: std::collections::HashMap<uuid::Uuid, (String, String)> =
+        (if !access.super_admin {
+            Vec::new()
+        } else {
+            match crate::db::entity::identity_providers::Entity::find()
+                .all(&state.db)
+                .await
+            {
+                Ok(data) => data,
+                Err(error) => return util::dependency_error(error),
+            }
+        })
         .into_iter()
         .map(|p| (p.id, (p.name, p.code)))
         .collect();
@@ -153,10 +172,11 @@ pub async fn detail(
         })
         .collect();
 
-    let access_rows = match crate::db::helper::admin::list_user_access(&state.db, user.id).await {
-        Ok(data) => data,
-        Err(error) => return util::dependency_error(error),
-    };
+    let access_rows =
+        match crate::db::helper::admin::list_user_access(&state.db, user.id, &access).await {
+            Ok(data) => data,
+            Err(error) => return util::dependency_error(error),
+        };
     let access_list = access_rows
         .into_iter()
         .map(|(a, app)| UserAccessRow {
@@ -167,15 +187,16 @@ pub async fn detail(
         })
         .collect();
 
-    let all_apps = match crate::db::helper::admin::list_all_apps_brief(&state.db).await {
-        Ok(data) => data,
-        Err(error) => return util::dependency_error(error),
-    };
+    let all_apps =
+        match crate::db::helper::admin::list_all_apps_brief(&state.db, Some(&access)).await {
+            Ok(data) => data,
+            Err(error) => return util::dependency_error(error),
+        };
 
     let tpl = UserDetailView {
         layout,
         csrf_token,
-        user: user.into(),
+        user: super::dto::UserSummary::from_authorized(user, &access),
         identities,
         access_list,
         all_apps,
@@ -190,6 +211,7 @@ pub async fn edit_form(
     Path(id): Path<uuid::Uuid>,
     admin: AdminContext,
 ) -> Response {
+    let access = admin.access.clone();
     let AdminPage {
         layout,
         csrf_token,
@@ -199,7 +221,7 @@ pub async fn edit_form(
     let user = match crate::db::helper::admin::find_user_by_id(&state.db, id).await {
         Ok(Some(u)) if u.deleted_at.is_none() => u,
         Err(error) => return util::dependency_error(error),
-        _ => return Redirect::to("/dashboard/users").into_response(),
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
     };
 
     let tpl = UserFormView {
@@ -210,8 +232,16 @@ pub async fn edit_form(
         form: UserFormData {
             csrf_token: String::new(),
             username: user.username.clone(),
-            email: user.email.unwrap_or_default(),
-            phone: user.phone.unwrap_or_default(),
+            email: if access.can_global(P::UsersSensitiveRead) {
+                user.email.unwrap_or_default()
+            } else {
+                String::new()
+            },
+            phone: if access.can_global(P::UsersSensitiveRead) {
+                user.phone.unwrap_or_default()
+            } else {
+                String::new()
+            },
             nickname: user.nickname.unwrap_or_default(),
             avatar_url: user.avatar_url.unwrap_or_default(),
         },
@@ -223,8 +253,9 @@ pub async fn edit_form(
 pub async fn update(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
-    axum::Form(form): axum::Form<UserFormData>,
+    axum::Form(form): axum::Form<UserEditInput>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
@@ -232,12 +263,13 @@ pub async fn update(
     util::management_response(
         crate::service::user::update(
             &state.db,
+            &admin.actor(&state),
             id,
             crate::service::user::UserUpdate {
-                email: util::empty_or_opt(&form.email),
-                phone: util::empty_or_opt(&form.phone),
-                nickname: util::empty_or_opt(&form.nickname),
-                avatar_url: util::empty_or_opt(&form.avatar_url),
+                email: form.email.as_deref().map(util::empty_or_opt),
+                phone: form.phone.as_deref().map(util::empty_or_opt),
+                nickname: form.nickname.as_deref().map(util::empty_or_opt),
+                avatar_url: form.avatar_url.as_deref().map(util::empty_or_opt),
             },
         )
         .await,
@@ -258,7 +290,7 @@ pub async fn set_status(
         Ok(value) => value,
         Err(_) => return json_error("invalid_status"),
     };
-    match crate::service::user::set_status(&state.db, id, admin.session.user_id, status).await {
+    match crate::service::user::set_status(&state.db, &admin.actor(&state), id, status).await {
         Ok(()) => json_ok(),
         Err(error) => util::management_response(Err(error)),
     }
@@ -267,6 +299,7 @@ pub async fn set_status(
 pub async fn reset_password(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<ResetPasswordForm>,
 ) -> Response {
@@ -277,6 +310,7 @@ pub async fn reset_password(
     util::management_response(
         crate::service::user::reset_password(
             &state.db,
+            &admin.actor(&state),
             &state.config.password,
             id,
             &form.new_password,
@@ -288,6 +322,7 @@ pub async fn reset_password(
 pub async fn grant_app(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<GrantAppForm>,
 ) -> Response {
@@ -298,12 +333,15 @@ pub async fn grant_app(
         Ok(id) => id,
         Err(_) => return json_error("invalid_app_id"),
     };
-    util::management_response(crate::service::access::grant_app(&state.db, id, app_id).await)
+    util::management_response(
+        crate::service::access::grant_app(&state.db, &admin.actor(&state), id, app_id).await,
+    )
 }
 
 pub async fn revoke_app(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<RevokeAppForm>,
 ) -> Response {
@@ -314,5 +352,24 @@ pub async fn revoke_app(
         Ok(id) => id,
         Err(_) => return json_error("invalid_app_id"),
     };
-    util::management_response(crate::service::access::revoke_app(&state.db, id, app_id).await)
+    util::management_response(
+        crate::service::access::revoke_app(&state.db, &admin.actor(&state), id, app_id).await,
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserEditInput {
+    csrf_token: String,
+    email: Option<String>,
+    phone: Option<String>,
+    nickname: Option<String>,
+    avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateUserInput {
+    csrf_token: String,
+    email: String,
 }

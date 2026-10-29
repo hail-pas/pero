@@ -20,7 +20,21 @@ cookie_signing_secret = "" # Set at least 32 random bytes
 [password_reset]
 signing_key = "" # Set a different secret of at least 32 random bytes
 
-# Optional authenticated notification gateway; absent means notification features are unavailable.
+# Optional HTTP gateway, only used for channels without direct SMTP/SMS configuration.
 # [notification]
 # endpoint = "https://notifications.example.com/send"
 # bearer_token = "REPLACE_WITH_NOTIFICATION_GATEWAY_SECRET"
+
+# Optional direct delivery channels. Missing/invalid settings do not block startup;
+# requests requiring an unavailable channel return 503. See docs/application-portal-and-delivery.md.
+# [notification.smtp]
+# host = "smtp.example.com"
+# port = 587
+# security = "starttls" # or "tls" with port 465
+# username = "notify@example.com"
+# password = "REPLACE_WITH_SMTP_PASSWORD"
+# from = "Pero <notify@example.com>"
+# [notification.sms]
+# account_sid = "AC_REPLACE_WITH_32_HEX_DIGITS"
+# auth_token = "REPLACE_WITH_TWILIO_TOKEN"
+# from = "+12025550123"

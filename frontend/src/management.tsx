@@ -1,3 +1,4 @@
+import { can, isSuper } from "./permissions";
 import {
   AddRounded,
   MoreVertRounded,
@@ -64,7 +65,7 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
           label: app.type,
           status: app.status,
           created_at: app.created_at,
-          editable: !app.system,
+          editable: !app.system && can(data.layout, "apps.manage", app.id),
         }))
       : view === "UserListView"
         ? data.users.map((user) => ({
@@ -78,7 +79,9 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
             phone: user.phone,
             status: user.status,
             created_at: user.created_at,
-            editable: true,
+            editable:
+              can(data.layout, "users.update") ||
+              can(data.layout, "users.contact.update"),
           }))
         : data.providers.map((provider) => ({
             id: provider.id,
@@ -88,7 +91,7 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
             label: provider.kind,
             status: provider.enabled,
             created_at: provider.created_at,
-            editable: lower(provider.kind) !== "local",
+            editable: isSuper(data.layout) && lower(provider.kind) !== "local",
           }));
   const params = new URLSearchParams(location.search);
   const [query, setQuery] = useState(params.get("q") || "");
@@ -111,15 +114,19 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
               : t("配置外部登录渠道与签名密钥。")
         }
         action={
-          <Button
-            component={RouterLink}
-            to={`${location.pathname}/new`}
-            variant="contained"
-            color="inherit"
-            startIcon={<AddRounded />}
-          >
-            {t("新建{{0}}", { "0": t(names[kind]) })}
-          </Button>
+          (kind === "users"
+            ? can(data.layout, "users.create")
+            : isSuper(data.layout)) && (
+            <Button
+              component={RouterLink}
+              to={`${location.pathname}/new`}
+              variant="contained"
+              color="inherit"
+              startIcon={<AddRounded />}
+            >
+              {t("新建{{0}}", { "0": t(names[kind]) })}
+            </Button>
+          )
         }
       />
       <Card>

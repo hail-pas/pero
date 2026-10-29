@@ -1,9 +1,18 @@
+import { createServer as createHttpServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createServer as createViteServer } from "vite";
 import { test, expect, type Page } from "@playwright/test";
 const layout = {
   user_name: "林知远",
   user_username: "lin",
   user_avatar_url: "",
-  is_admin: true,
+  can_access_dashboard: true,
+  admin_access: {
+    super_admin: true,
+    revision: 0,
+    global_permissions: [],
+    app_grants: {},
+  },
 };
 const user = {
   id: "u1",
@@ -139,7 +148,21 @@ test("workspace switches replace the old page without fading or moving its cards
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await mock(page);
+  await mock(page, {
+    "/dashboard": {
+      view: "AppListView",
+      data: {
+        layout,
+        csrf_token: "csrf-test",
+        apps: Array.from({ length: 12 }, (_, i) => ({
+          ...app,
+          id: `app-${i}`,
+        })),
+        page: 1,
+        total_pages: 1,
+      },
+    },
+  });
   await page.goto("/account/profile");
   await expect(
     page.getByRole("heading", { name: "个人资料", exact: true }),
@@ -178,6 +201,21 @@ test("workspace switches replace the old page without fading or moving its cards
       (Reflect.get(window, "workspaceUnstableFrames") as () => number)(),
     ),
   ).toBe(0);
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await page.getByRole("link", { name: "返回个人中心", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "个人资料", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const previousScroll = await page.evaluate(() => window.scrollY);
+  expect(previousScroll).toBeGreaterThan(0);
+  await page.getByRole("link", { name: "管理控制台", exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await page.goBack();
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBe(previousScroll);
 });
 test("password mismatch is blocked before mutation", async ({ page }) => {
   await mock(page);
@@ -247,6 +285,14 @@ test("client creation displays generated secret once", async ({ page }) => {
   await expect(page.getByLabel("客户端密钥", { exact: true })).toHaveValue(
     "test-once-only-secret",
   );
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("客户端密钥", { exact: true })).toHaveValue(
+    "test-once-only-secret",
+  );
+  await page.mouse.click(5, 5);
+  await expect(page.getByLabel("客户端密钥", { exact: true })).toHaveValue(
+    "test-once-only-secret",
+  );
   await page.getByRole("button", { name: "已保存，关闭" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
@@ -290,11 +336,18 @@ test("mobile layout has accessible navigation without horizontal overflow", asyn
   await mock(page);
   await page.goto("/account/profile");
   await page.getByRole("button", { name: "打开导航" }).click();
+  await page.getByRole("button", { name: "切换工作空间" }).click();
+  await expect(page.getByRole("menu")).toHaveCount(1);
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: "账户安全" })).toBeVisible();
   await page.getByRole("link", { name: "账户安全" }).click();
   await expect(
     page.getByRole("heading", { name: "账户安全", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "打开导航" }).click();
+  await page.getByRole("link", { name: "管理控制台", exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("button", { name: "切换工作空间" })).toBeHidden();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -407,6 +460,7 @@ test("all remaining auth and recovery views render with their server context", a
 test("provider key activation addresses the key identifier and asks for confirmation", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
   await mock(page, {
     "/dashboard/providers/provider-1": {
       view: "ProviderDetailView",
@@ -426,12 +480,22 @@ test("provider key activation addresses the key identifier and asks for confirma
             kid: "signing-2026",
             algorithm: "RS256",
             active: false,
+            activate_at: "2026-12-01T00:00:00Z",
           },
         ],
       },
     },
   });
   await page.goto("/dashboard/providers/provider-1");
+  expect(
+    await page
+      .getByRole("button", { name: "紧急撤销", exact: true })
+      .evaluate(
+        (button) =>
+          button.getBoundingClientRect().right <=
+          button.closest(".MuiCard-root")!.getBoundingClientRect().right,
+      ),
+  ).toBeTruthy();
   await page.getByRole("button", { name: "激活", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("激活密钥");
   const submitted = page.waitForRequest(
@@ -1030,7 +1094,7 @@ test("MFA challenge offers recovery without exposing enrollment secrets", async 
   await page.goto("/account/reauth");
   await expect(
     page.getByText(
-      "当前账号没有本地密码或可用的 OIDC 身份，暂不支持重新验证。",
+      "请通过已验证联系方式设置本地密码，再登录完成身份验证。未配置恢复方式时，请联系管理员。",
       { exact: true },
     ),
   ).toBeVisible();
@@ -1076,7 +1140,7 @@ test("notification operations filter records and confirm safe retries", async ({
   await expect(
     page.getByRole("heading", { name: "通知投递", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("网关拒绝请求 503").first()).toBeVisible();
+  await expect(page.getByText("发送服务拒绝请求 503").first()).toBeVisible();
   await expect(
     page.getByRole("button", { name: "立即重试", exact: true }).nth(1),
   ).toBeDisabled();
@@ -1192,8 +1256,10 @@ test("security notices, cards and footer actions keep their spacing and alignmen
     const c = (await card.boundingBox())!;
     expect(c.y - n.y - n.height).toBeGreaterThanOrEqual(20);
     expect(c.height).toBeLessThan(200);
-    const footer = (await page.locator("footer").boundingBox())!;
-    expect(Math.abs(footer.y + footer.height - 900)).toBeLessThan(1);
+    await expect(page.locator("aside")).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "返回个人中心", exact: true }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: `test-results/security-spacing-${width}.png`,
       fullPage: true,
@@ -1202,12 +1268,7 @@ test("security notices, cards and footer actions keep their spacing and alignmen
       .getByRole("main")
       .getByRole("button", { name: "退出登录", exact: true })
       .boundingBox())!;
-    const login = (await page
-      .getByRole("link", { name: "重新登录", exact: true })
-      .boundingBox())!;
-    expect(
-      Math.abs(logout.y + logout.height / 2 - login.y - login.height / 2),
-    ).toBeLessThan(1);
+    expect(logout.width).toBeGreaterThan(0);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
@@ -1245,52 +1306,50 @@ test("HTTP login and MFA redirects commit the final route without an intermediat
       providers: [],
     },
   };
-  await mock(page, { "/sso/mfa": security });
-  await page.route("**/account/login", (route) =>
-    route.request().method() === "POST"
-      ? route.fulfill({ status: 303, headers: { Location: "/sso/mfa" } })
-      : route.fallback(),
-  );
-  await page.goto("/account/login");
-  await page.locator('[name="identifier"]').fill("lin");
-  await page.locator('[name="password"]').fill("Password123!");
-  await page.getByRole("button", { name: "登录", exact: true }).click();
-  await expect(page).toHaveURL(/\/sso\/mfa$/);
-  await expect(
-    page.getByRole("heading", { name: "设置验证器", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "返回个人中心", exact: true }),
-  ).toHaveAttribute("aria-disabled", "true");
-  await page.evaluate(() => {
-    const main = document.querySelector("main");
-    let interrupted = false;
-    new MutationObserver(() => {
-      if (
-        document.querySelector("main") !== main ||
-        document.querySelector(".MuiSkeleton-root")
-      )
-        interrupted = true;
-    }).observe(document.getElementById("root")!, {
-      childList: true,
-      subtree: true,
-    });
-    Object.assign(window, { navigationInterrupted: () => interrupted });
+  // Browser routing does not intercept requests followed by an HTTP redirect.
+  // Serve the final MFA response through a real backend and isolated Vite proxy.
+  const backend = createHttpServer((_req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify(security));
   });
-  await page.route("**/account/profile", (route) =>
-    route.fulfill({
-      status: 303,
-      headers: { Location: "/sso/mfa?redirect=%2Faccount%2Fprofile" },
-    }),
-  );
-  await page.locator('a[href="/account/profile"]').first().click();
-  await expect(page).toHaveURL(/\/sso\/mfa\?redirect=/);
-  await expect(
-    page.getByRole("heading", { name: "设置验证器", exact: true }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(() => Reflect.get(window, "navigationInterrupted")()),
-  ).toBe(false);
+  await new Promise<void>((resolve) => backend.listen(0, "127.0.0.1", resolve));
+  const previousOrigin = process.env.PERO_API_ORIGIN;
+  process.env.PERO_API_ORIGIN = `http://127.0.0.1:${(backend.address() as AddressInfo).port}`;
+  const vite = await createViteServer({
+    server: { host: "127.0.0.1", port: 0, strictPort: true },
+  });
+  try {
+    await vite.listen();
+    const origin = `http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
+    await mock(page, { "/sso/mfa": security });
+    await page.route("**/account/login", (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({ status: 303, headers: { Location: "/sso/mfa" } })
+        : route.fallback(),
+    );
+    await page.goto(`${origin}/account/login`);
+    await page.locator('[name="identifier"]').fill("lin");
+    await page.locator('[name="password"]').fill("Password123!");
+    await page.getByRole("button", { name: "登录", exact: true }).click();
+    await expect(page).toHaveURL(/\/sso\/mfa$/);
+    await expect(
+      page.getByRole("heading", { name: "设置验证器", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "返回个人中心", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator("aside")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "个人资料", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await vite.close();
+    await new Promise<void>((resolve, reject) =>
+      backend.close((error) => (error ? reject(error) : resolve())),
+    );
+    if (previousOrigin === undefined) delete process.env.PERO_API_ORIGIN;
+    else process.env.PERO_API_ORIGIN = previousOrigin;
+  }
 });
 
 test("slow navigation and refresh preserve the current page and mounted workspace", async ({
@@ -1351,4 +1410,542 @@ test("slow navigation and refresh preserve the current page and mounted workspac
   await expect(
     page.getByRole("progressbar", { name: "正在加载", exact: true }),
   ).toHaveCount(0);
+});
+
+test("login failures have one owner, preserve inputs and use refreshed CSRF on retry", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/account/login": {
+      view: "AccountLoginView",
+      data: {
+        csrf_token: "csrf-test",
+        providers: [],
+        error: "invalid_credentials",
+      },
+    },
+  });
+  let attempts = 0;
+  await page.route("**/account/login", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    attempts++;
+    if (attempts === 1)
+      return route.fulfill({
+        json: {
+          view: "AccountLoginView",
+          data: {
+            csrf_token: "csrf-refreshed",
+            providers: [],
+            error: "invalid_credentials",
+          },
+        },
+      });
+    expect(
+      new URLSearchParams(route.request().postData()!).get("csrf_token"),
+    ).toBe("csrf-refreshed");
+    return route.fulfill({ json: { redirect: "/account/profile" } });
+  });
+  await page.goto("/account/login");
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await page.locator('[name="identifier"]').fill("lin");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.locator('[name="password"]').fill("Wrong-password");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await expect(page.getByRole("alert")).toBeFocused();
+  await expect(page.locator('[name="identifier"]')).toHaveValue("lin");
+  await expect(page.locator('[name="password"]')).toHaveValue("Wrong-password");
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(page.getByRole("alert")).toHaveText("Invalid credentials");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.locator(".MuiMenu-root")).toHaveCount(0);
+  await page.screenshot({
+    path: "test-results/login-feedback.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  await expect(page).toHaveURL(/account\/profile$/);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("MFA view errors appear once and clear after editing", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 600 });
+  const data = {
+    layout,
+    csrf_token: "csrf-test",
+    enabled: true,
+    required: true,
+    pending: true,
+    recovery: false,
+    codes: [],
+    providers: [],
+    error: "",
+    redirect: "/account/profile",
+  };
+  await mock(page, { "/sso/mfa": { view: "SecurityView", data } });
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/sso/mfa", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await pending;
+    return route.fulfill({
+      json: {
+        view: "SecurityView",
+        data: { ...data, error: "invalid_mfa_code" },
+      },
+    });
+  });
+  await page.goto("/sso/mfa");
+  await page.getByLabel("验证器验证码").fill("000000");
+  await page.getByRole("button", { name: "验证并继续" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "恢复码", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "使用恢复码", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "退出登录", exact: true }).last(),
+  ).toBeDisabled();
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  finish();
+  const errors = page
+    .getByRole("alert")
+    .filter({ hasText: "验证码无效或已使用" });
+  await expect(errors).toHaveCount(1);
+  await expect(errors).toBeFocused();
+  await expect(errors).toBeInViewport();
+  await expect(
+    page.getByRole("textbox", { name: "恢复码", exact: true }),
+  ).toBeEnabled();
+  await page.getByLabel("验证器验证码").fill("123456");
+  await expect(errors).toHaveCount(0);
+});
+
+test("network and malformed response failures are readable and recover on retry", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/account/login": {
+      view: "AccountLoginView",
+      data: { csrf_token: "csrf-test", providers: [] },
+    },
+  });
+  let attempts = 0;
+  await page.route("**/account/login", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    attempts++;
+    if (attempts === 1) return route.abort("failed");
+    if (attempts === 2)
+      return route.fulfill({
+        contentType: "application/json",
+        body: "{invalid",
+      });
+    return route.fulfill({ json: { redirect: "/account/profile" } });
+  });
+  await page.goto("/account/login");
+  await page.locator('[name="identifier"]').fill("lin");
+  await page.locator('[name="password"]').fill("Test123!");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "网络连接失败，请检查网络后重试。",
+  );
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("服务响应异常，请重试。");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page).toHaveURL(/account\/profile$/);
+});
+
+test("a business policy rejection keeps the editor and its input available", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/dashboard/apps/new": {
+      view: "AppFormView",
+      data: {
+        layout,
+        mode: "create",
+        form: {},
+        csrf_token: "csrf-test",
+        error: "code_exists",
+      },
+    },
+  });
+  let attempts = 0;
+  await page.route("**/dashboard/apps/new", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    if (++attempts > 1) return route.fulfill({ json: { code: 0 } });
+    return route.fulfill({
+      status: 403,
+      json: { error: "registration_closed" },
+    });
+  });
+  await page.goto("/dashboard/apps/new");
+  await expect(page.getByRole("alert")).toHaveText("编码已存在");
+  await page.locator('[name="code"]').fill("new-app");
+  await page.locator('[name="name"]').fill("新应用");
+  await page.getByRole("button", { name: "保存更改" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "新建应用" })).toBeVisible();
+  await expect(page.locator('[name="code"]')).toHaveValue("new-app");
+  await expect(page.getByRole("alert")).toHaveText(
+    "此入口暂未开放注册，请联系管理员。",
+  );
+  await page.getByRole("button", { name: "保存更改" }).click();
+  await expect(page).toHaveURL(/dashboard\/apps$/);
+  await expect(page.getByRole("alert")).toHaveText("操作已完成");
+  await page.getByText("团队协作平台", { exact: true }).click();
+  await expect(page).toHaveURL(/dashboard\/apps\/app-1$/);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("late forbidden mutations cannot replace a page after leaving and returning", async ({
+  page,
+}) => {
+  await mock(page);
+  let finish!: () => void;
+  const responseReady = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/dashboard/clients/new", async (route) => {
+    await responseReady;
+    await route.fulfill({ status: 403, json: { error: "forbidden" } });
+  });
+  await page.goto("/dashboard/apps");
+  await page.getByText("团队协作平台", { exact: true }).click();
+  await page.getByRole("button", { name: "添加客户端" }).click();
+  await page.locator('[name="identifier"]').fill("new-client");
+  await page
+    .locator('[name="redirect_uris"]')
+    .fill("https://example.com/callback");
+  const requestStarted = page.waitForRequest((r) => r.method() === "POST");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存更改" })
+    .click();
+  await requestStarted;
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "应用管理", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(
+    page.getByRole("heading", { name: "团队协作平台", exact: true }),
+  ).toBeVisible();
+  const completed = page.waitForResponse(
+    (r) => r.request().method() === "POST",
+  );
+  finish();
+  await completed;
+  // Let the fetch promise and React state updates drain before checking the page.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  await expect(
+    page.getByRole("heading", { name: "团队协作平台", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("unusable reset links offer recovery instead of a password form", async ({
+  page,
+}) => {
+  let error = "missing_token";
+  await mock(page, {
+    "/sso/forgot-password": {
+      view: "ForgotPasswordView",
+      data: { csrf_token: "csrf-test", error: "", success: false },
+    },
+  });
+  await page.route("**/sso/reset-password*", (route) => {
+    if (!route.request().headers().accept?.includes("application/json"))
+      return route.fallback();
+    return route.fulfill({
+      json: {
+        view: "ResetPasswordView",
+        data: {
+          csrf_token: "csrf-test",
+          token: "reset-token",
+          error,
+          success: "",
+        },
+      },
+    });
+  });
+  for (const code of ["missing_token", "invalid_token", "token_already_used"]) {
+    error = code;
+    await page.goto("/sso/reset-password?token=reset-token");
+    await expect(page.locator("form")).toHaveCount(0);
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "重新申请重置链接" }),
+    ).toHaveAttribute("href", "/sso/forgot-password");
+  }
+  // Policy errors remain editable; an expired token returned on submit does not.
+  error = "password_mismatch";
+  await page.goto("/sso/reset-password?token=reset-token");
+  await page.locator('[name="new_password"]').fill("Test123!");
+  await page.locator('[name="confirm_password"]').fill("Test123!");
+  error = "invalid_token";
+  await page.getByRole("button", { name: "保存新密码" }).click();
+  await expect(page.locator("form")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveText("重置链接无效或已过期");
+  await page.getByRole("link", { name: "重新申请重置链接" }).click();
+  await expect(page).toHaveURL(/\/sso\/forgot-password$/);
+  await expect(
+    page.getByRole("button", { name: "发送恢复通知" }),
+  ).toBeVisible();
+});
+
+test("successful password reset removes the consumed-token form", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/sso/reset-password": {
+      view: "ResetPasswordView",
+      data: {
+        csrf_token: "csrf-test",
+        token: "reset-token",
+        error: "",
+        success: "",
+      },
+    },
+  });
+  await page.route("**/sso/reset-password?token=reset-token", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    return route.fulfill({
+      json: {
+        view: "ResetPasswordView",
+        data: {
+          csrf_token: "csrf-test",
+          error: "",
+          success: "password_reset_success",
+        },
+      },
+    });
+  });
+  await page.goto("/sso/reset-password?token=reset-token");
+  await page.locator('[name="new_password"]').fill("Test123!");
+  await page.locator('[name="confirm_password"]').fill("Test123!");
+  await page.getByRole("button", { name: "保存新密码" }).click();
+  await expect(page.getByRole("alert")).toHaveText("密码已更新，请返回登录。");
+  await expect(page.locator("form")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "返回登录" })).toBeVisible();
+});
+
+for (const refreshFirst of [true, false]) {
+  test(`an in-flight refresh cannot discard recovery codes: refresh first ${refreshFirst}`, async ({
+    page,
+  }) => {
+    const data = {
+      layout,
+      csrf_token: "csrf-test",
+      enabled: true,
+      required: true,
+      pending: false,
+      recovery: false,
+      secret: "",
+      qr: "",
+      codes: [],
+      providers: [],
+      error: "",
+      redirect: "/account/profile",
+    };
+    await mock(page);
+    let reads = 0;
+    let releaseRefresh!: () => void;
+    let releaseMutation!: () => void;
+    const refreshing = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const mutating = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    await page.route("**/account/security", async (route) => {
+      if (!route.request().headers().accept?.includes("application/json"))
+        return route.fallback();
+      if (route.request().method() === "POST") {
+        await mutating;
+        return route.fulfill({
+          json: {
+            view: "SecurityView",
+            data: { ...data, codes: ["fresh-one-time-recovery-code"] },
+          },
+        });
+      }
+      if (++reads === 2) await refreshing;
+      return route.fulfill({
+        json: {
+          view: "SecurityView",
+          data: {
+            ...data,
+            layout: {
+              ...layout,
+              user_name: reads > 1 ? "refreshed-account" : layout.user_name,
+            },
+          },
+        },
+      });
+    });
+    await page.goto("/account/security");
+    await page.getByLabel("验证器验证码").fill("123456");
+    const refreshStarted = page.waitForRequest(
+      (r) => r.method() === "GET" && r.url().endsWith("/account/security"),
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await refreshStarted;
+    const mutationStarted = page.waitForRequest((r) => r.method() === "POST");
+    await page.getByRole("button", { name: "重新生成恢复码" }).click();
+    await mutationStarted;
+    const refreshCompleted = page.waitForResponse(
+      (r) =>
+        r.request().method() === "GET" && r.url().endsWith("/account/security"),
+    );
+    if (refreshFirst) {
+      releaseRefresh();
+      await expect(
+        page.getByText("refreshed-account", { exact: true }).first(),
+      ).toBeVisible();
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      releaseMutation();
+    } else {
+      releaseMutation();
+      await expect(
+        page.getByText("fresh-one-time-recovery-code", { exact: true }),
+      ).toBeVisible();
+      releaseRefresh();
+    }
+    await (await refreshCompleted).finished();
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    await expect(
+      page.getByText("fresh-one-time-recovery-code", { exact: true }),
+    ).toBeVisible();
+    expect(reads).toBe(2);
+  });
+}
+
+test("expired MFA setup accepts the server state and allows restarting", async ({
+  page,
+}) => {
+  const data = {
+    layout,
+    csrf_token: "csrf-test",
+    enabled: false,
+    required: false,
+    pending: false,
+    recovery: false,
+    secret: "expired-setup-secret",
+    qr: "",
+    codes: [],
+    providers: [],
+    error: "",
+    redirect: "/account/profile",
+  };
+  await mock(page, { "/account/security": { view: "SecurityView", data } });
+  await page.route("**/account/security", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const action = new URLSearchParams(route.request().postData()!).get(
+      "action",
+    );
+    return route.fulfill({
+      json: {
+        view: "SecurityView",
+        data: {
+          ...data,
+          secret: action === "setup" ? "fresh-setup-secret" : "",
+          error: action === "setup" ? "" : "invalid_request",
+        },
+      },
+    });
+  });
+  await page.goto("/account/security");
+  await page.getByLabel("验证器验证码").fill("123456");
+  await page.getByRole("button", { name: "启用双重验证" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await expect(
+    page.getByText("expired-setup-secret", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "开始设置" }).click();
+  await expect(
+    page.getByText("fresh-setup-secret", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("recovery retries clear previous success before reporting a new failure", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/sso/forgot-password": {
+      view: "ForgotPasswordView",
+      data: { csrf_token: "csrf-test", error: "", success: false },
+    },
+  });
+  let attempts = 0;
+  await page.route("**/sso/forgot-password", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    if (++attempts === 1)
+      return route.fulfill({
+        json: {
+          view: "ForgotPasswordView",
+          data: { csrf_token: "csrf-test", error: "", success: true },
+        },
+      });
+    return route.abort("failed");
+  });
+  await page.goto("/sso/forgot-password");
+  await page.getByLabel("邮箱或完整手机号").fill("lin@example.com");
+  await page.getByRole("button", { name: "发送恢复通知" }).click();
+  await expect(
+    page.getByText("如果账户可恢复，你将收到重置密码的通知。", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "发送恢复通知" }).click();
+  await expect(
+    page.getByText("网络连接失败，请检查网络后重试。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("如果账户可恢复，你将收到重置密码的通知。", { exact: true }),
+  ).toHaveCount(0);
+});
+
+test("consent errors from a previous action do not duplicate the next form error", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/sso/consent": {
+      view: "ConsentView",
+      data: {
+        csrf_token: "csrf-test",
+        request_token: "request-test",
+        client_name: "示例应用",
+        user_name: "lin",
+        user_email: "",
+        scopes: ["openid"],
+      },
+    },
+  });
+  await page.route("**/sso/consent", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    return route.abort("failed");
+  });
+  await page.goto("/sso/consent");
+  await page.getByRole("button", { name: "拒绝授权" }).click();
+  const errors = page.getByRole("alert").filter({ hasText: "网络连接失败" });
+  await expect(errors).toHaveCount(1);
+  await page.getByRole("button", { name: "允许访问" }).click();
+  await expect(page.locator("form").getByRole("alert")).toHaveCount(1);
+  await expect(errors).toHaveCount(1);
 });

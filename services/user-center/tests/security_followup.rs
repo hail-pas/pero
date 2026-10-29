@@ -356,15 +356,28 @@ async fn authorization_and_recovery_regressions() {
     .await
     .unwrap();
     let (jar, csrf_token) = state.web_security().ensure_csrf(CookieJar::new());
-    let form = user_center::web::dashboard::dto::UserFormData {
-        csrf_token,
-        username: "review_user".into(),
-        email: "new@example.test".into(),
-        ..Default::default()
+    let form = serde_json::from_value(
+        serde_json::json!({"csrf_token":csrf_token,"email":"new@example.test"}),
+    )
+    .unwrap();
+    let actor = database::management_actor(&db).await;
+    use sea_orm::EntityTrait;
+    let admin = user_center::web::dashboard::guard::AdminContext {
+        user: user_center::db::entity::users::Entity::find_by_id(actor.session.user_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap(),
+        session: actor.session,
+        access: user_center::service::permissions::Access {
+            super_admin: true,
+            ..Default::default()
+        },
     };
     let response = user_center::web::dashboard::users::update(
         State(state.clone()),
         jar,
+        admin,
         Path(user),
         Form(form),
     )
@@ -411,15 +424,23 @@ async fn authorization_and_recovery_regressions() {
         ))
         .await
         .unwrap();
+    let (contact_token, _) = state
+        .session_service()
+        .create(user, None, None, None, None)
+        .await
+        .unwrap();
+    let contact_session = state
+        .session_service()
+        .validate(&contact_token)
+        .await
+        .unwrap()
+        .unwrap();
     let cancel_state = state.clone();
     let cancellation = tokio::spawn(async move {
-        user_center::service::contact::ContactVerificationService::new(
-            &cancel_state.db,
-            &cancel_state.cache,
-        )
-        .cancel_contact(user, "cancel-race")
-        .await
-        .map_err(|_| ())
+        user_center::service::contact::ContactVerificationService::new(&cancel_state)
+            .cancel_contact(&contact_session, "cancel-race")
+            .await
+            .map_err(|_| ())
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -469,7 +490,25 @@ async fn authorization_and_recovery_regressions() {
         url.set_query(None);
         url.query_pairs_mut().append_pair("options", &options);
         config.database.url = serde_json::from_value(serde_json::json!(url.as_str())).unwrap();
-        let (fault_db, fault_guard) = user_center::db::init::init_db(&config).await.unwrap();
+        // Inject faults after startup: startup itself now rejects missing schema/pgcrypto.
+        let mut options = sea_orm::ConnectOptions::new(url.as_str());
+        options.max_connections(1).sqlx_logging(false);
+        let fault_db = sea_orm::Database::connect(options).await.unwrap();
+        sql(
+            &fault_db,
+            "SELECT set_config('app.encrypt_key',$1,false)",
+            vec![
+                config
+                    .database
+                    .extras
+                    .encrypt_key
+                    .expose_secret()
+                    .to_owned()
+                    .into(),
+            ],
+        )
+        .await;
+        let fault_guard = pero_db_seaorm::DatabaseGuard::new(fault_db.clone());
         let cache = pero_cache_redis::RedisCacheStore::from_config(&config.redis).unwrap();
         let http =
             pero_http_client_reqwest::ReqwestHttpClient::from_config(&config.http_config).unwrap();
@@ -642,7 +681,7 @@ async fn authorization_and_recovery_regressions() {
     );
     guard.shutdown().await;
     assert!(matches!(
-        user_center::service::contact::ContactVerificationService::new(&state.db, &state.cache)
+        user_center::service::contact::ContactVerificationService::new(&state)
             .load_active_user(user)
             .await,
         Err(user_center::service::contact::ContactError::ServiceUnavailable)
@@ -651,10 +690,15 @@ async fn authorization_and_recovery_regressions() {
     let response = user_center::web::sso::register::post(
         State(state.clone()),
         jar,
-        pero_api_axum::extractor::ClientIp(Some("192.0.2.91/32".parse().unwrap())),
+        // Per-fixture source and email avoid consuming a previous run's hourly budgets.
+        pero_api_axum::extractor::ClientIp(Some(
+            format!("{}/128", std::net::Ipv6Addr::from(user.as_u128()))
+                .parse()
+                .unwrap(),
+        )),
         Form(user_center::web::sso::register::Input {
             csrf_token,
-            email: "dependency@example.com".into(),
+            email: format!("dependency-{user}@example.com"),
             ..Default::default()
         }),
     )

@@ -76,6 +76,8 @@ async fn main() -> ValidationResult {
     let addr = format!("{}:{}", app_config.server.host, app_config.server.port);
     let state = AppState::new(app_config, db, cache, http_client);
     let delivery_handle = user_center::service::notify::start_delivery_task(state.clone());
+    let sync_handle = user_center::service::account_sync::start(state.clone());
+    let logout_handle = user_center::service::backchannel::start(state.clone());
     let app = router::build(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -83,7 +85,7 @@ async fn main() -> ValidationResult {
         .expect("Failed to bind address");
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server_handle = tokio::spawn(async move {
+    let mut server_handle = tokio::spawn(async move {
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -97,7 +99,13 @@ async fn main() -> ValidationResult {
 
     tracing::info!("Server listening on {}", addr);
 
-    wait_for_signal().await;
+    let server_failed = tokio::select! {
+        _ = wait_for_signal() => false,
+        result = &mut server_handle => {
+            tracing::error!(?result, "HTTP server stopped unexpectedly");
+            true
+        }
+    };
 
     tracing::info!(
         timeout_secs = graceful_timeout.as_secs(),
@@ -105,20 +113,35 @@ async fn main() -> ValidationResult {
     );
     let _ = shutdown_tx.send(());
 
-    match tokio::time::timeout(graceful_timeout, server_handle).await {
-        Ok(Ok(())) => tracing::info!("server shut down gracefully"),
-        Ok(Err(e)) => tracing::error!(error = %e, "server error during shutdown"),
-        Err(_) => tracing::warn!(
-            timeout_secs = graceful_timeout.as_secs(),
-            "graceful shutdown timed out, forcing stop"
-        ),
+    if !server_failed {
+        match tokio::time::timeout(graceful_timeout, server_handle).await {
+            Ok(Ok(())) => tracing::info!("server shut down gracefully"),
+            Ok(Err(e)) => tracing::error!(error = %e, "server error during shutdown"),
+            Err(_) => tracing::warn!(
+                timeout_secs = graceful_timeout.as_secs(),
+                "graceful shutdown timed out, forcing stop"
+            ),
+        }
     }
 
+    sync_handle.abort();
+    logout_handle.abort();
     delivery_handle.abort();
     cleanup_handle.abort();
     tracing::info!("cleanup task stopped");
     db_guard.shutdown().await;
     log_guard.shutdown();
 
+    if server_failed {
+        return Err(pero_validate_core::ValidationError::rule_violation(
+            pero_validate_core::ValidationReport::config().with_issue(
+                pero_validate_core::ValidationIssue::new(
+                    "server",
+                    "serve_failed",
+                    "HTTP server stopped unexpectedly",
+                ),
+            ),
+        ));
+    }
     Ok(())
 }

@@ -3,6 +3,7 @@ pub mod dashboard;
 pub mod error;
 pub mod home;
 pub mod login_flow;
+pub mod navigation;
 pub mod oauth2;
 pub mod open;
 pub mod security;

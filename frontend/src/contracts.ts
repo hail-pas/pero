@@ -1,3 +1,17 @@
+export interface AdminAccess {
+  super_admin: boolean;
+  revision: number;
+  global_permissions: string[];
+  app_grants: Record<string, string[]>;
+}
+export interface PermissionDefinition {
+  code: string;
+  scope: string;
+  name: string;
+  group: string;
+  dependencies: string[];
+  risk: string;
+}
 export type Values = Record<
   string,
   string | boolean | number | null | undefined
@@ -7,7 +21,9 @@ export interface UserLayout {
   user_name: string;
   user_username: string;
   user_avatar_url: string;
-  is_admin?: boolean;
+  can_access_dashboard: boolean;
+  has_visible_apps?: boolean;
+  admin_access?: AdminAccess | null;
 }
 export interface AppSummary {
   id: string;
@@ -49,6 +65,8 @@ export interface ClientSummary {
   type: string;
   redirect_uris: string[];
   post_logout_redirect_uris: string[];
+  backchannel_logout_uri: string | null;
+  account_sync_uri: string | null;
   scopes: string[];
   grant_types: string[];
   require_pkce: boolean;
@@ -58,6 +76,9 @@ export interface ClientSummary {
   status: string;
 }
 export interface KeySummary {
+  expires_at: string | null;
+  safe_revoke_at: string | null;
+  activate_at: string | null;
   id: string;
   kid: string;
   algorithm: string;
@@ -119,6 +140,7 @@ export interface ProgressList {
   pending_count: number;
 }
 export interface ViewDataMap {
+  DashboardEmptyView: AccountPage;
   SecurityView: {
     layout?: UserLayout;
     csrf_token: string;
@@ -127,6 +149,13 @@ export interface ViewDataMap {
     pending: boolean;
     recovery: boolean;
     has_password: boolean;
+    readiness: {
+      password: boolean;
+      oidc: boolean;
+      verified_contact: boolean;
+      password_recovery: boolean;
+      recovery_codes_remaining: number;
+    };
     secret: string;
     qr: string;
     codes: string[];
@@ -134,8 +163,40 @@ export interface ViewDataMap {
     error: string;
     providers: { key: string; name: string }[];
   };
+  UserSecurityView: RowsPage<ViewDataMap["SessionListView"]["rows"][number]> & {
+    user: UserSummary;
+    mfa_enabled: boolean;
+    can_recover: boolean;
+    login_lock: {
+      failed_attempts: number;
+      locked: boolean;
+      retry_after_seconds: number;
+    };
+  };
+  IntegrationView: AccountPage & {
+    app: AppSummary;
+    clients: ClientSummary[];
+    selected_client: string | null;
+    issuer: string;
+    callback_uri: string;
+    checks: { code: string; passed: boolean }[];
+    test: string;
+    test_ready: boolean;
+    test_success: boolean;
+    error: string;
+  };
   AdminRolesView: AccountPage & {
-    rows: { user_id: string; username: string; role: string }[];
+    current_user_id: string;
+    page: number;
+    total_pages: number;
+    rows: {
+      user_id: string;
+      username: string;
+      role: string;
+      grants: Omit<AdminAccess, "super_admin"> | null;
+    }[];
+    catalog: PermissionDefinition[];
+    apps: [string, string, string][];
   };
   SessionListView: RowsPage<{
     id: string;
@@ -206,10 +267,30 @@ export interface ViewDataMap {
     updated_at: string;
     can_retry: boolean;
   }> & {
+    logout_rows: {
+      id: string;
+      identifier: string;
+      attempts: number;
+      last_error: string | null;
+      status: string;
+      can_retry: boolean;
+      created_at: string;
+    }[];
+    sync_rows: {
+      id: string;
+      user_id: string;
+      kind: string;
+      identifier: string;
+      attempts: number;
+      last_error: string | null;
+      status: string;
+      can_retry: boolean;
+      created_at: string;
+    }[];
     enabled: boolean;
     summary: { pending: number; overdue: number; failing: number };
   };
-  HomeView: null;
+  HomeView: { layout: UserLayout | null };
   AdminHomeView: CsrfPage & {
     username: string;
     email: string;
@@ -252,7 +333,15 @@ export interface ViewDataMap {
   AdmissionView: AccountPage & {
     username: string;
     progress: ProgressList;
-    rows: { id: string; name: string; status: string | null }[];
+    rows: {
+      id: string;
+      name: string;
+      code: string;
+      description: string | null;
+      homepage_url: string | null;
+      logo_url: string | null;
+      status: string | null;
+    }[];
   };
   ForgotPasswordView: CsrfPage & { error: string; success: boolean };
   ResetPasswordView: CsrfPage & {
@@ -341,6 +430,7 @@ export interface ViewDataMap {
   ProviderDetailView: AccountPage & {
     provider: ProviderSummary;
     keys: KeySummary[];
+    signing_health: { healthy: boolean; expiring: boolean };
     error: string;
   };
 }
@@ -369,7 +459,7 @@ export type ActionResponse = {
   redirect?: string;
   error?: string;
   code?: number;
-  data?: { secret?: string; nonce?: string };
+  data?: { secret?: string; nonce?: string; purpose?: string };
   view?: never;
 };
 export type Envelope = ViewEnvelope | ActionResponse;

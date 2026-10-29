@@ -7,6 +7,14 @@ use axum::routing::get;
 pub fn routes() -> axum::Router<crate::state::app::AppState> {
     axum::Router::new()
         .route("/oauth2/authorize", get(authorize::authorize))
+        .route(
+            "/oauth2/diagnostic/authorize",
+            get(crate::web::dashboard::integration::authorize),
+        )
+        .route(
+            "/oauth2/diagnostic/callback",
+            get(crate::web::dashboard::integration::callback),
+        )
         .route("/oauth2/authorize/resume", get(authorize::resume))
         .route(
             "/oauth2/session/end",

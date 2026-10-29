@@ -1,3 +1,4 @@
+use crate::service::permissions::{Access, Permission as P};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect, sea_query::Expr,
@@ -34,8 +35,14 @@ pub async fn list_apps(
     q: &str,
     status: &str,
     app_type: &str,
+    access: &Access,
 ) -> Result<(Vec<apps::Model>, u64), DbErr> {
     let mut query = apps::Entity::find().order_by_desc(apps::Column::CreatedAt);
+    if !access.super_admin {
+        query = query
+            .filter(apps::Column::System.eq(false))
+            .filter(apps::Column::Id.is_in(access.app_ids(P::AppsRead)));
+    }
 
     if let Some(s) = non_empty(status)
         && let Ok(v) = CommonStatus::try_from_str(s)
@@ -84,11 +91,17 @@ pub async fn list_users(
     page: u64,
     q: &str,
     status: &str,
+    access: &Access,
 ) -> Result<(Vec<users::Model>, u64), DbErr> {
     let mut query = users::Entity::find()
         .filter(users::Column::DeletedAt.is_null())
         .order_by_desc(users::Column::CreatedAt);
 
+    if !access.super_admin {
+        query = query.filter(Expr::cust(
+            "NOT EXISTS (SELECT 1 FROM admin_roles r WHERE r.user_id=users.id)",
+        ));
+    }
     if let Some(s) = non_empty(status)
         && let Ok(v) = UserStatus::try_from_str(s)
     {
@@ -96,12 +109,13 @@ pub async fn list_users(
     }
     if let Some(search) = non_empty(q) {
         let pattern = format!("%{}%", escape_like(search));
-        query = query.filter(
-            Expr::col(users::Column::Username)
-                .like(&pattern)
+        let mut search = Expr::col(users::Column::Username).like(&pattern);
+        if access.can_global(P::UsersSensitiveRead) {
+            search = search
                 .or(Expr::col(users::Column::Email).like(&pattern))
-                .or(Expr::col(users::Column::Phone).like(&pattern)),
-        );
+                .or(Expr::col(users::Column::Phone).like(&pattern));
+        }
+        query = query.filter(search);
     }
 
     pero_db_seaorm::paginate!(query, db, page, DASHBOARD_PAGE_SIZE)
@@ -128,8 +142,14 @@ pub async fn list_user_identities(
 pub async fn list_user_access(
     db: &DatabaseConnection,
     user_id: Uuid,
+    access: &Access,
 ) -> Result<Vec<(user_app_access::Model, apps::Model)>, DbErr> {
-    let rows = user_app_access::Entity::find()
+    let mut query = user_app_access::Entity::find();
+    if !access.super_admin {
+        query =
+            query.filter(user_app_access::Column::AppId.is_in(access.app_ids(P::AppsMembersRead)));
+    }
+    let rows = query
         .filter(user_app_access::Column::UserId.eq(user_id))
         .find_also_related(apps::Entity)
         .all(db)
@@ -142,12 +162,16 @@ pub async fn list_user_access(
 
 pub async fn list_all_apps_brief(
     db: &DatabaseConnection,
+    access: Option<&Access>,
 ) -> Result<Vec<(Uuid, String, String)>, DbErr> {
-    let all = apps::Entity::find()
-        .filter(apps::Column::Status.eq(CommonStatus::Active))
-        .order_by_asc(apps::Column::Name)
-        .all(db)
-        .await?;
+    let mut query = apps::Entity::find().filter(apps::Column::System.eq(false));
+    if let Some(access) = access.filter(|a| !a.super_admin) {
+        query = query.filter(apps::Column::Id.is_in(access.app_ids(P::AppsMembersManage)));
+    }
+    if access.is_some() {
+        query = query.filter(apps::Column::Status.eq(CommonStatus::Active));
+    }
+    let all = query.order_by_asc(apps::Column::Name).all(db).await?;
     Ok(all.into_iter().map(|a| (a.id, a.code, a.name)).collect())
 }
 

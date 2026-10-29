@@ -41,11 +41,7 @@ pub async fn gate(
             && !primary_login
             && !authorize
         {
-            let target = if s.recovery_pending {
-                "/account/security"
-            } else {
-                "/sso/mfa"
-            };
+            let target = "/sso/mfa";
             let mut url = target.to_string();
             if req.method() == axum::http::Method::GET {
                 pero_utils::encode::append_query_param(

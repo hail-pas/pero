@@ -23,3 +23,17 @@ static_dir = "prd/ui/static"
 
 [log]
 dir = "./logs/prd"
+
+# Optional direct delivery channels. Missing/invalid settings do not block startup;
+# requests requiring an unavailable channel return 503. See docs/application-portal-and-delivery.md.
+# [notification.smtp]
+# host = "smtp.example.com"
+# port = 587
+# security = "starttls" # or "tls" with port 465
+# username = "notify@example.com"
+# password = "REPLACE_WITH_SMTP_PASSWORD"
+# from = "Pero <notify@example.com>"
+# [notification.sms]
+# account_sid = "AC_REPLACE_WITH_32_HEX_DIGITS"
+# auth_token = "REPLACE_WITH_TWILIO_TOKEN"
+# from = "+12025550123"

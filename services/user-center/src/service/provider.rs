@@ -1,4 +1,5 @@
-//! Provider configuration invariants shared by creation, edits and activation.
+use super::permissions::{self, Actor};
+// Provider configuration invariants shared by creation, edits and activation.
 use crate::db::{entity::identity_providers as ip, enums::IdentityProviderKind};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -56,6 +57,7 @@ pub(crate) async fn require_enabled_social<C: ConnectionTrait>(
 pub enum ProviderError {
     Invalid(&'static str),
     Database(sea_orm::DbErr),
+    Management(super::ManagementError),
 }
 impl From<sea_orm::DbErr> for ProviderError {
     fn from(error: sea_orm::DbErr) -> Self {
@@ -178,6 +180,7 @@ pub fn validate_configuration(provider: &ip::Model, has_secret: bool) -> Result<
 
 pub async fn create(
     db: &DatabaseConnection,
+    actor: &Actor,
     code: &str,
     kind: IdentityProviderKind,
     input: ProviderInput,
@@ -207,15 +210,19 @@ pub async fn create(
         ..Default::default()
     };
     let secret = input.apply(&mut active);
-    save(db, active, &secret, true).await
+    save(db, actor, active, &secret, true).await
 }
 
 pub async fn update(
     db: &DatabaseConnection,
+    actor: &Actor,
     id: uuid::Uuid,
     input: ProviderInput,
 ) -> Result<ip::Model, ProviderError> {
     let txn = db.begin().await?;
+    permissions::require_super(&txn, actor)
+        .await
+        .map_err(ProviderError::Management)?;
     let current = ip::Entity::find_by_id(id)
         .lock_exclusive()
         .one(&txn)
@@ -232,11 +239,15 @@ pub async fn update(
 
 async fn save(
     db: &DatabaseConnection,
+    actor: &Actor,
     active: ip::ActiveModel,
     secret: &str,
     insert: bool,
 ) -> Result<ip::Model, ProviderError> {
     let txn = db.begin().await?;
+    permissions::require_super(&txn, actor)
+        .await
+        .map_err(ProviderError::Management)?;
     let result = save_on(&txn, active, secret, insert).await?;
     txn.commit().await?;
     Ok(result)
@@ -265,8 +276,15 @@ async fn save_on(
     Ok(saved)
 }
 
-pub async fn toggle_enabled(db: &DatabaseConnection, id: uuid::Uuid) -> Result<(), ProviderError> {
+pub async fn toggle_enabled(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    id: uuid::Uuid,
+) -> Result<(), ProviderError> {
     let txn = db.begin().await?;
+    permissions::require_super(&txn, actor)
+        .await
+        .map_err(ProviderError::Management)?;
     let mut current = ip::Entity::find_by_id(id)
         .lock_exclusive()
         .one(&txn)

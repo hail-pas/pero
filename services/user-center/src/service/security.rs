@@ -55,10 +55,12 @@ pub struct Factor {
     pub setup_expires_at: OffsetDateTime,
     pub last_step: i64,
     pub recovery_hashes: Vec<String>,
+    pub assisted_recovery_hash: Option<String>,
+    pub assisted_recovery_expires_at: Option<OffsetDateTime>,
 }
 pub async fn factor<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Option<Factor>, DbErr> {
     Factor::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT pgp_sym_decrypt(secret_enc,current_setting('app.encrypt_key')) AS secret, pgp_sym_decrypt(pending_secret_enc,current_setting('app.encrypt_key')) AS pending_secret, setup_session,enabled, setup_expires_at,last_step,recovery_hashes FROM user_mfa WHERE user_id=$1", [user.into()])).one(db).await
+        "SELECT pgp_sym_decrypt(secret_enc,current_setting('app.encrypt_key')) AS secret, pgp_sym_decrypt(pending_secret_enc,current_setting('app.encrypt_key')) AS pending_secret, setup_session,enabled, setup_expires_at,last_step,recovery_hashes,assisted_recovery_hash,assisted_recovery_expires_at FROM user_mfa WHERE user_id=$1", [user.into()])).one(db).await
 }
 pub fn totp(secret: &str, account: &str) -> Result<totp_rs::Totp, ManagementError> {
     let secret = totp_rs::Secret::try_from_base32(secret)
@@ -89,12 +91,15 @@ pub(super) async fn verify<C: ConnectionTrait>(
     }
     if recovery {
         let hash = pero_utils::crypto::sha256_hex(code.trim());
-        if !f.recovery_hashes.contains(&hash) {
+        let assisted = f.assisted_recovery_hash.as_deref() == Some(hash.as_str())
+            && f.assisted_recovery_expires_at
+                .is_some_and(|at| at > OffsetDateTime::now_utc());
+        if !f.recovery_hashes.contains(&hash) && !assisted {
             return Err(ManagementError::Invalid("invalid_mfa_code"));
         }
         execute(
             db,
-            "UPDATE user_mfa SET recovery_hashes=array_remove(recovery_hashes,$2) WHERE user_id=$1",
+            "UPDATE user_mfa SET recovery_hashes=array_remove(recovery_hashes,$2),assisted_recovery_hash=NULL,assisted_recovery_expires_at=NULL WHERE user_id=$1",
             vec![user.into(), hash.into()],
         )
         .await?;
@@ -158,7 +163,7 @@ pub async fn codes<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Vec<String>
         .collect();
     execute(
         db,
-        "UPDATE user_mfa SET recovery_hashes=$2 WHERE user_id=$1",
+        "UPDATE user_mfa SET recovery_hashes=$2,assisted_recovery_hash=NULL,assisted_recovery_expires_at=NULL WHERE user_id=$1",
         vec![user.into(), hashes.into()],
     )
     .await?;

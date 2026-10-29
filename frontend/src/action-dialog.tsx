@@ -9,7 +9,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FieldsForm, type Field } from "./forms";
 import type { Values } from "./contracts";
 import type { Actions } from "./shared";
@@ -29,7 +29,7 @@ export type ActionModal = DialogHeading &
         initial?: Values;
         values?: Values;
       }
-    | { kind: "secret"; secret: string }
+    | { kind: "secret"; secret: string; label?: string }
   );
 export function ActionDialog({
   modal,
@@ -43,11 +43,13 @@ export function ActionDialog({
   useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const submitting = useRef(false);
   return (
     <Dialog
       open
       onClose={() => {
-        if (!busy) onClose();
+        // One-time credentials require the explicit saved/close action.
+        if (!busy && modal.kind !== "secret") onClose();
       }}
       maxWidth={modal.kind === "editor" ? "md" : "sm"}
       fullWidth
@@ -66,7 +68,7 @@ export function ActionDialog({
         )}
         {modal.kind === "secret" ? (
           <TextField
-            label={t("客户端密钥")}
+            label={modal.label || t("客户端密钥")}
             value={modal.secret}
             fullWidth
             multiline
@@ -97,6 +99,8 @@ export function ActionDialog({
               color="inherit"
               disabled={busy}
               onClick={async () => {
+                if (submitting.current) return;
+                submitting.current = true;
                 setBusy(true);
                 setError("");
                 try {
@@ -104,6 +108,7 @@ export function ActionDialog({
                 } catch (e) {
                   setError((e as Error).message);
                 } finally {
+                  submitting.current = false;
                   setBusy(false);
                 }
               }}

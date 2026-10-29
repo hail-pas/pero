@@ -1,4 +1,3 @@
-use crate::protocol::oauth::{OAuth2Error, OAuth2ErrorCode};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 
@@ -77,16 +76,6 @@ impl OidcError {
     pub fn with_state(mut self, state: impl Into<String>) -> Self {
         self.state = Some(state.into());
         self
-    }
-
-    pub fn as_oauth2_error(&self) -> OAuth2Error {
-        OAuth2Error {
-            code: OAuth2ErrorCode::InvalidRequest,
-            description: self.description.clone(),
-            error_uri: self.error_uri.clone(),
-            state: self.state.clone(),
-            status: self.status,
-        }
     }
 
     pub fn response_body(&self) -> OidcErrorResponse {

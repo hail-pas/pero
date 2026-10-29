@@ -177,7 +177,7 @@ pub async fn post(
     if form.action == "deny" {
         match state
             .oauth_service()
-            .deny_authorization_request(ctx.auth_request.id, session.user_id)
+            .deny_authorization_request(ctx.auth_request.id, &session)
             .await
         {
             Ok(()) => {}

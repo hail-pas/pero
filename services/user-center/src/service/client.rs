@@ -1,30 +1,51 @@
-//! Commit client policy changes and grant revocation as one operation.
+use super::permissions::{self, Actor, Permission as P};
+// Commit client policy changes and grant revocation as one operation.
 use super::ManagementError;
 use crate::db::{
     entity::{apps, oauth_clients},
     enums::{CommonStatus, OauthClientType},
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
-    QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
+    TransactionTrait,
 };
 
-pub async fn save_security_change(
+pub(crate) async fn save_security_change(
     db: &DatabaseConnection,
+    actor: &Actor,
+    permission: P,
     expected: &oauth_clients::Model,
     mut active: oauth_clients::ActiveModel,
     revoke_reason: Option<&str>,
-) -> Result<(), DbErr> {
+) -> Result<(), ManagementError> {
+    if active.app_id.as_ref() != &expected.app_id {
+        return Err(ManagementError::Invalid("invalid_request"));
+    }
     let txn = db.begin().await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    permissions::app(&txn, &access, expected.app_id, permission).await?;
+    // Provisioning exposes member profiles without individual consent. Only a super
+    // administrator may enable/redirect it or change its field policy.
+    if !access.super_admin
+        && (active.account_sync_uri.as_ref() != &expected.account_sync_uri
+            || expected.account_sync_uri.is_some() && active.scopes.as_ref() != &expected.scopes)
+    {
+        return Err(ManagementError::Invalid("forbidden"));
+    }
+    if permission == P::ClientsManage
+        && (active.r#type.as_ref() != &expected.r#type
+            || active.secret_hash.as_ref() != &expected.secret_hash)
+    {
+        access.require_app(expected.app_id, P::ClientsSecretRotate)?;
+    }
+
     let current = oauth_clients::Entity::find_by_id(expected.id)
         .lock_exclusive()
         .one(&txn)
         .await?;
     // Hashing runs before this transaction; do not overwrite a concurrent policy edit.
     if current.as_ref() != Some(expected) {
-        return Err(DbErr::Custom(
-            "Client policy changed; reload and retry".into(),
-        ));
+        return Err(ManagementError::Invalid("policy_conflict"));
     }
     if revoke_reason.is_some() {
         active.token_version = Set(expected.token_version + 1);
@@ -33,7 +54,8 @@ pub async fn save_security_change(
     if let Some(reason) = revoke_reason {
         super::session::SessionService::revoke_client_grants(&txn, updated.id, reason).await?;
     }
-    txn.commit().await
+    txn.commit().await?;
+    Ok(())
 }
 
 pub struct ClientInput {
@@ -64,6 +86,9 @@ impl ClientInput {
 
     fn apply(self, active: &mut oauth_clients::ActiveModel) {
         active.require_pkce = Set(self.require_pkce || self.client_type == OauthClientType::Public);
+        if self.client_type == OauthClientType::Public {
+            active.account_sync_uri = Set(None);
+        }
         active.r#type = Set(self.client_type);
         active.name = Set(self.name);
         active.redirect_uris = Set(self.redirect_uris);
@@ -89,20 +114,24 @@ async fn find(
 
 pub async fn create(
     db: &DatabaseConnection,
+    actor: &Actor,
     app_id: uuid::Uuid,
     identifier: &str,
     input: ClientInput,
 ) -> Result<Option<String>, ManagementError> {
+    let txn = db.begin().await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    permissions::app(&txn, &access, app_id, P::ClientsManage).await?;
     input.validate()?;
     if identifier.is_empty() {
         return Err(ManagementError::Invalid("identifier_required"));
     }
-    if apps::Entity::find_by_id(app_id).one(db).await?.is_none() {
+    if apps::Entity::find_by_id(app_id).one(&txn).await?.is_none() {
         return Err(ManagementError::Invalid("invalid_app"));
     }
     if oauth_clients::Entity::find()
         .filter(oauth_clients::Column::Identifier.eq(identifier))
-        .one(db)
+        .one(&txn)
         .await?
         .is_some()
     {
@@ -129,24 +158,29 @@ pub async fn create(
         ..Default::default()
     };
     input.apply(&mut active);
-    active.insert(db).await.map_err(|error| {
+    active.insert(&txn).await.map_err(|error| {
         if crate::db::error::is_unique_violation(&error) {
             ManagementError::Invalid("identifier_exists")
         } else {
             error.into()
         }
     })?;
+    txn.commit().await?;
     Ok(secret)
 }
 
 pub async fn update(
     db: &DatabaseConnection,
+    actor: &Actor,
     id: uuid::Uuid,
     input: ClientInput,
 ) -> Result<(), ManagementError> {
     input.validate()?;
     let current = find(db, id).await?;
     let public = input.client_type == OauthClientType::Public;
+    if public && !input.secret.is_empty() {
+        return Err(ManagementError::Invalid("invalid_request"));
+    }
     if !public && current.secret_hash.is_none() && input.secret.is_empty() {
         return Err(ManagementError::Invalid("secret_required"));
     }
@@ -171,6 +205,8 @@ pub async fn update(
     input.apply(&mut active);
     save_security_change(
         db,
+        actor,
+        P::ClientsManage,
         &current,
         active,
         changed.then_some("client_security_changed"),
@@ -185,6 +221,7 @@ fn same_set(left: &[String], right: &[String]) -> bool {
 
 pub async fn reset_secret(
     db: &DatabaseConnection,
+    actor: &Actor,
     id: uuid::Uuid,
 ) -> Result<String, ManagementError> {
     let current = find(db, id).await?;
@@ -197,11 +234,23 @@ pub async fn reset_secret(
     active.previous_secret_hash = Set(None);
     active.previous_secret_expires_at = Set(None);
     active.updated_at = Set(time::OffsetDateTime::now_utc());
-    save_security_change(db, &current, active, Some("client_secret_reset")).await?;
+    save_security_change(
+        db,
+        actor,
+        P::ClientsSecretRotate,
+        &current,
+        active,
+        Some("client_secret_reset"),
+    )
+    .await?;
     Ok(secret)
 }
 
-pub async fn toggle_status(db: &DatabaseConnection, id: uuid::Uuid) -> Result<(), ManagementError> {
+pub async fn toggle_status(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    id: uuid::Uuid,
+) -> Result<(), ManagementError> {
     let current = find(db, id).await?;
     let mut active: oauth_clients::ActiveModel = current.clone().into();
     active.status = Set(match current.status {
@@ -209,13 +258,22 @@ pub async fn toggle_status(db: &DatabaseConnection, id: uuid::Uuid) -> Result<()
         CommonStatus::Disabled => CommonStatus::Active,
     });
     active.updated_at = Set(time::OffsetDateTime::now_utc());
-    save_security_change(db, &current, active, Some("client_status_changed")).await?;
+    save_security_change(
+        db,
+        actor,
+        P::ClientsManage,
+        &current,
+        active,
+        Some("client_status_changed"),
+    )
+    .await?;
     Ok(())
 }
 
 /// Two credential slots allow a bounded deployment overlap without revoking user grants.
 pub async fn rotate_secret(
     db: &DatabaseConnection,
+    actor: &Actor,
     id: uuid::Uuid,
     grace_seconds: i64,
 ) -> Result<String, ManagementError> {
@@ -241,15 +299,19 @@ pub async fn rotate_secret(
     ));
     active.secret_hash = Set(Some(hash));
     active.updated_at = Set(time::OffsetDateTime::now_utc());
-    save_security_change(db, &current, active, None).await?;
+    save_security_change(db, actor, P::ClientsSecretRotate, &current, active, None).await?;
     Ok(secret)
 }
-pub async fn retire_secret(db: &DatabaseConnection, id: uuid::Uuid) -> Result<(), ManagementError> {
+pub async fn retire_secret(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    id: uuid::Uuid,
+) -> Result<(), ManagementError> {
     let current = find(db, id).await?;
     let mut active: oauth_clients::ActiveModel = current.clone().into();
     active.previous_secret_hash = Set(None);
     active.previous_secret_expires_at = Set(None);
     active.updated_at = Set(time::OffsetDateTime::now_utc());
-    save_security_change(db, &current, active, None).await?;
+    save_security_change(db, actor, P::ClientsSecretRotate, &current, active, None).await?;
     Ok(())
 }

@@ -1,4 +1,5 @@
-//! Signing-key validation and rotation share the provider's transaction lock.
+use super::permissions::{self, Actor};
+// Signing-key validation and rotation share the provider's transaction lock.
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
     QuerySelect, Set, TransactionTrait,
@@ -68,12 +69,14 @@ fn currently_valid(start: Option<OffsetDateTime>, end: Option<OffsetDateTime>) -
 
 pub async fn create(
     db: &DatabaseConnection,
+    actor: &Actor,
     provider_id: Uuid,
     input: KeyInput,
 ) -> Result<(), ManagementError> {
     // Validate before touching active keys, including the signing-only invariant.
     input.validate()?;
     let txn = db.begin().await?;
+    permissions::require_super(&txn, actor).await?;
     lock_provider(&txn, provider_id).await?;
     if input.active {
         deactivate_signing_keys(&txn, provider_id).await?;
@@ -90,6 +93,8 @@ pub async fn create(
         private_key_pem_enc: Set(None),
         certificate_pem: Set(input.certificate_pem),
         active: Set(input.active),
+        last_issued_until: Set(None),
+        activate_at: Set(None),
         not_before: Set(input.not_before),
         expires_at: Set(input.expires_at),
         revoked_at: Set(None),
@@ -107,10 +112,23 @@ pub async fn create(
 
 pub async fn activate(
     db: &DatabaseConnection,
+    actor: &Actor,
     provider_id: Uuid,
     kid: &str,
 ) -> Result<(), ManagementError> {
+    activate_inner(db, Some(actor), provider_id, kid, false).await
+}
+async fn activate_inner(
+    db: &DatabaseConnection,
+    actor: Option<&Actor>,
+    provider_id: Uuid,
+    kid: &str,
+    scheduled: bool,
+) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
+    if let Some(actor) = actor {
+        permissions::require_super(&txn, actor).await?;
+    }
     lock_provider(&txn, provider_id).await?;
     let key = keys::Entity::find()
         .expr_as(
@@ -125,6 +143,14 @@ pub async fn activate(
         .one(&txn)
         .await?
         .ok_or(ManagementError::Invalid("not_found"))?;
+    if scheduled
+        && key
+            .key
+            .activate_at
+            .is_none_or(|at| at > OffsetDateTime::now_utc())
+    {
+        return Ok(());
+    }
     if key.key.revoked_at.is_some() || !currently_valid(key.key.not_before, key.key.expires_at) {
         return Err(ManagementError::Invalid("key_not_currently_valid"));
     }
@@ -142,6 +168,7 @@ pub async fn activate(
     deactivate_signing_keys(&txn, provider_id).await?;
     let mut active: keys::ActiveModel = key.key.into();
     active.active = Set(true);
+    active.activate_at = Set(None);
     active.updated_at = Set(OffsetDateTime::now_utc());
     active.update(&txn).await?;
     txn.commit().await?;
@@ -150,17 +177,49 @@ pub async fn activate(
 
 pub async fn revoke(
     db: &DatabaseConnection,
+    actor: &Actor,
     provider_id: Uuid,
     kid: &str,
 ) -> Result<(), ManagementError> {
+    revoke_inner(db, actor, provider_id, kid, false).await
+}
+pub async fn emergency_revoke(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    provider_id: Uuid,
+    kid: &str,
+) -> Result<(), ManagementError> {
+    revoke_inner(db, actor, provider_id, kid, true).await
+}
+async fn revoke_inner(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    provider_id: Uuid,
+    kid: &str,
+    emergency: bool,
+) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
+    permissions::require_super(&txn, actor).await?;
     lock_provider(&txn, provider_id).await?;
     let key = keys::Entity::find()
         .filter(keys::Column::ProviderId.eq(provider_id))
         .filter(keys::Column::Kid.eq(kid))
+        .lock_exclusive()
         .one(&txn)
         .await?
         .ok_or(ManagementError::Invalid("not_found"))?;
+    if !emergency && key.active {
+        return Err(ManagementError::Invalid("activate_replacement_key_first"));
+    }
+    if !emergency
+        && key
+            .last_issued_until
+            .is_some_and(|until| until > OffsetDateTime::now_utc())
+    {
+        return Err(ManagementError::Invalid(
+            "key_still_needed_for_verification",
+        ));
+    }
     let now = OffsetDateTime::now_utc();
     let mut active: keys::ActiveModel = key.into();
     active.active = Set(false);
@@ -188,13 +247,141 @@ async fn deactivate_signing_keys<C: ConnectionTrait>(
     keys::Entity::update_many()
         .col_expr(keys::Column::Active, sea_orm::sea_query::Expr::value(false))
         .col_expr(
+            keys::Column::ActivateAt,
+            sea_orm::sea_query::Expr::value(None::<OffsetDateTime>),
+        )
+        .col_expr(
             keys::Column::UpdatedAt,
             sea_orm::sea_query::Expr::value(OffsetDateTime::now_utc()),
         )
         .filter(keys::Column::ProviderId.eq(id))
         .filter(keys::Column::Use.eq(KeyUse::Sig))
-        .filter(keys::Column::Active.eq(true))
         .exec(db)
         .await?;
+    Ok(())
+}
+
+/// Run a real key-pair check; report only controlled status, never private material.
+pub async fn health(
+    db: &DatabaseConnection,
+    provider: Uuid,
+) -> Result<serde_json::Value, sea_orm::DbErr> {
+    let rows = keys::Entity::find()
+        .expr_as(
+            crate::db::crypto_expr::pgp_decrypt_expr(sea_orm::sea_query::Expr::col(
+                keys::Column::PrivateKeyPemEnc,
+            )),
+            "private_key_pem",
+        )
+        .filter(keys::Column::ProviderId.eq(provider))
+        .into_model::<crate::db::helper::signing_key::SigningKeyRow>()
+        .all(db)
+        .await?;
+    let healthy = rows.iter().any(|r| {
+        r.key.active
+            && r.key.algorithm == KeyAlgorithm::Rs256
+            && r.key.r#use == KeyUse::Sig
+            && r.key.revoked_at.is_none()
+            && currently_valid(r.key.not_before, r.key.expires_at)
+            && r.private_key_pem.is_some()
+            && pero_utils::oauth::jwk::validate_signing_key(
+                &r.key.public_key_pem,
+                r.private_key_pem.as_deref(),
+            )
+            .is_ok()
+    });
+    let expiring = rows.iter().any(|r| {
+        r.key.active
+            && r.key
+                .expires_at
+                .is_some_and(|at| at <= OffsetDateTime::now_utc() + time::Duration::days(30))
+    });
+    Ok(serde_json::json!({"healthy":healthy,"expiring":expiring}))
+}
+pub async fn schedule(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    provider: Uuid,
+    kid: &str,
+    at: OffsetDateTime,
+) -> Result<(), ManagementError> {
+    let txn = db.begin().await?;
+    permissions::require_super(&txn, actor).await?;
+    lock_provider(&txn, provider).await?;
+    let key = keys::Entity::find()
+        .filter(keys::Column::ProviderId.eq(provider))
+        .filter(keys::Column::Kid.eq(kid))
+        .one(&txn)
+        .await?
+        .ok_or(ManagementError::Invalid("not_found"))?;
+    if at <= OffsetDateTime::now_utc()
+        || key.active
+        || key.revoked_at.is_some()
+        || key.private_key_pem_enc.is_none()
+        || key.not_before.is_some_and(|v| v > at)
+        || key.expires_at.is_some_and(|v| v <= at)
+    {
+        return Err(ManagementError::Invalid("invalid_rotation_plan"));
+    }
+    keys::Entity::update_many()
+        .col_expr(
+            keys::Column::ActivateAt,
+            sea_orm::sea_query::Expr::value(None::<OffsetDateTime>),
+        )
+        .filter(keys::Column::ProviderId.eq(provider))
+        .exec(&txn)
+        .await?;
+    let mut active: keys::ActiveModel = key.into();
+    active.activate_at = Set(Some(at));
+    active.update(&txn).await?;
+    txn.commit().await?;
+    Ok(())
+}
+pub async fn maintain(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
+    let planned = keys::Entity::find()
+        .filter(keys::Column::ActivateAt.lte(OffsetDateTime::now_utc()))
+        .filter(keys::Column::RevokedAt.is_null())
+        .all(db)
+        .await?;
+    for key in planned {
+        if let Err(error) = activate_inner(db, None, key.provider_id, &key.kid, true).await {
+            tracing::error!(kid=%key.kid,%error,"Scheduled signing-key rotation failed");
+        }
+    }
+    let rows = keys::Entity::find()
+        .filter(keys::Column::Active.eq(true))
+        .filter(keys::Column::RevokedAt.is_null())
+        .all(db)
+        .await?;
+    for key in rows {
+        if key
+            .expires_at
+            .is_some_and(|at| at <= OffsetDateTime::now_utc() + time::Duration::days(30))
+        {
+            tracing::warn!(kid=%key.kid,expires_at=?key.expires_at,"Signing key expires soon; prepare replacement");
+        }
+    }
+    Ok(())
+}
+
+pub async fn cancel_schedule(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    provider: Uuid,
+    kid: &str,
+) -> Result<(), ManagementError> {
+    let txn = db.begin().await?;
+    permissions::require_super(&txn, actor).await?;
+    lock_provider(&txn, provider).await?;
+    keys::Entity::update_many()
+        .col_expr(
+            keys::Column::ActivateAt,
+            sea_orm::sea_query::Expr::value(None::<OffsetDateTime>),
+        )
+        .filter(keys::Column::ProviderId.eq(provider))
+        .filter(keys::Column::Kid.eq(kid))
+        .exec(&txn)
+        .await?;
+    txn.commit().await?;
     Ok(())
 }

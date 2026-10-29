@@ -14,6 +14,10 @@ struct AppRow {
     id: Uuid,
     name: String,
     status: Option<String>,
+    code: String,
+    description: Option<String>,
+    homepage_url: Option<String>,
+    logo_url: Option<String>,
 }
 pub async fn get(
     State(state): State<AppState>,
@@ -21,7 +25,7 @@ pub async fn get(
     account: AccountContext,
     Query(query): Query<crate::service::enrollment::ListQuery>,
 ) -> Response {
-    let rows=AppRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.name,u.status::text AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name",[account.user.id.into()])).all(&state.db).await;
+    let rows=AppRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,u.status::text AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name",[account.user.id.into()])).all(&state.db).await;
     match rows {
         Ok(rows) => {
             let progress = match crate::service::enrollment::list(
@@ -35,9 +39,13 @@ pub async fn get(
                 Err(e) => return util::management_response(Err(e)),
             };
             let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
+            let layout = match AccountLayout::from_user(&state.db, &account.user).await {
+                Ok(layout) => layout,
+                Err(error) => return util::dependency_error(error),
+            };
             util::view_response(
                 "AdmissionView",
-                serde_json::json!({"layout":AccountLayout::from_user(&state.db,&account.user).await,"csrf_token":csrf_token,"rows":rows,"username":account.user.username,"progress":progress}),
+                serde_json::json!({"layout":layout,"csrf_token":csrf_token,"rows":rows,"username":account.user.username,"progress":progress}),
                 jar,
             )
         }

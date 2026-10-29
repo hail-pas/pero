@@ -4,6 +4,8 @@ import {
   Admission,
   AppMembers,
 } from "./enrollment";
+import { UserSecurity } from "./user-security";
+import { Integration } from "./integration";
 import { Notifications } from "./notifications";
 import { SecurityCenter, AdminRoles } from "./security-center";
 import { Alert } from "@mui/material";
@@ -35,6 +37,10 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "UserSecurityView":
+      return <UserSecurity data={data} {...actions} />;
+    case "IntegrationView":
+      return <Integration data={data} {...actions} />;
     case "EnrollmentView":
       return <Enrollment data={data} mutate={mutate} />;
     case "EnrollmentAdminView":
@@ -47,8 +53,10 @@ export function PageContent({
       return <Notifications data={data} {...actions} />;
     case "SecurityView":
       return <SecurityCenter data={data} mutate={mutate} />;
+    case "DashboardEmptyView":
+      return <div>{t("尚未分配权限，可返回个人中心。")}</div>;
     case "AdminRolesView":
-      return <AdminRoles data={data} mutate={mutate} />;
+      return <AdminRoles data={data} mutate={mutate} ask={actions.ask} />;
     case "AuditDetailView":
       return <AuditDetail data={data} />;
     case "SessionListView":
@@ -58,7 +66,7 @@ export function PageContent({
     case "AuditListView":
       return <Security page={page} {...actions} />;
     case "HomeView":
-      return <Home />;
+      return <Home data={data} />;
     case "AdminHomeView":
       return <AdminHome data={data} />;
     case "SelectAccountView":

@@ -15,7 +15,7 @@ use sea_orm::DatabaseConnection;
 pub async fn init_db(
     config: &AppConfig,
 ) -> Result<(DatabaseConnection, DatabaseGuard), ValidationError> {
-    config
+    let (db, guard) = config
         .database
         .connect(|opts, extras| {
             opts.sqlx_logging(false);
@@ -39,5 +39,19 @@ pub async fn init_db(
                 })
             });
         })
-        .await
+        .await?;
+    if let Err(error) = super::migrate::migrate(&db).await {
+        tracing::error!(%error, "Database migration/verification failed; startup aborted");
+        guard.shutdown().await;
+        return Err(ValidationError::rule_violation(
+            pero_validate_core::ValidationReport::config().with_issue(
+                pero_validate_core::ValidationIssue::new(
+                    "database.migrations",
+                    "migration_failed",
+                    error.to_string(),
+                ),
+            ),
+        ));
+    }
+    Ok((db, guard))
 }

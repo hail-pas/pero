@@ -334,8 +334,6 @@ impl<'a> SocialLoginService<'a> {
             .bearer_auth(access_token)
             .send()
             .await
-            .map_err(|e| SocialLoginError::UserinfoFailed(format!("emails fetch: {e}")))?
-            .error_for_status()
             .map_err(|e| SocialLoginError::UserinfoFailed(format!("emails fetch: {e}")))?;
         let emails: serde_json::Value = resp
             .json()

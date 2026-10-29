@@ -11,7 +11,6 @@ CREATE EXTENSION IF NOT EXISTS citext;
 --   pgp_sym_encrypt(plaintext, current_setting('app.encrypt_key'))
 --   pgp_sym_decrypt(ciphertext, current_setting('app.encrypt_key'))
 
-
 -- ============================================================
 -- 0. Enum Types
 -- ============================================================
@@ -39,7 +38,6 @@ CREATE TYPE contact_change_type AS ENUM ('email', 'phone');
 CREATE TYPE contact_change_status AS ENUM ('pending', 'verified', 'cancelled', 'expired');
 
 CREATE TYPE login_event_type AS ENUM ('login_success', 'login_failure', 'logout');
-
 
 -- ============================================================
 -- 1. users
@@ -136,7 +134,6 @@ COMMENT ON INDEX ux_users_email_alive IS
 COMMENT ON INDEX ux_users_phone_alive IS
 '未删除用户的 phone 唯一。';
 
-
 -- ============================================================
 -- 2. apps
 -- ============================================================
@@ -153,7 +150,6 @@ CREATE TABLE apps (
     logo_url text NULL,
 
     status common_status NOT NULL DEFAULT 'active',
-    auto_access boolean NOT NULL DEFAULT false,
     system boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
@@ -192,21 +188,21 @@ COMMENT ON COLUMN apps.logo_url IS
 COMMENT ON COLUMN apps.status IS
 '应用状态。disabled 时不允许通过 SSO 登录该应用。';
 
-COMMENT ON COLUMN apps.auto_access IS
-'是否在用户注册或第三方首次登录且来源为该 app 的授权请求时自动授予访问权限。默认 false，避免新用户自动获得应用访问权。';
-
 COMMENT ON COLUMN apps.created_at IS
 '创建时间。';
 
 COMMENT ON COLUMN apps.updated_at IS
 '更新时间，由应用层维护。';
 
-
 -- ============================================================
 -- 3. oauth_clients
 -- ============================================================
 
 CREATE TABLE oauth_clients (
+    backchannel_logout_uri text,
+    account_sync_uri text,
+    previous_secret_expires_at timestamptz,
+    previous_secret_hash text,
     id uuid PRIMARY KEY DEFAULT uuidv7(),
 
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -315,7 +311,6 @@ COMMENT ON COLUMN oauth_clients.id_token_ttl_seconds IS
 COMMENT ON COLUMN oauth_clients.status IS
 'Client 状态。disabled 时拒绝 authorize 和 token 请求。';
 
-
 -- ============================================================
 -- 4. identity_providers
 -- ============================================================
@@ -407,12 +402,13 @@ COMMENT ON COLUMN identity_providers.settings IS
 COMMENT ON COLUMN identity_providers.enabled IS
 '是否启用该 provider。';
 
-
 -- ============================================================
 -- 5. identity_provider_keys
 -- ============================================================
 
 CREATE TABLE identity_provider_keys (
+    activate_at timestamptz,
+    last_issued_until timestamptz,
     id uuid PRIMARY KEY DEFAULT uuidv7(),
 
     provider_id uuid NOT NULL REFERENCES identity_providers(id) ON DELETE CASCADE,
@@ -489,7 +485,6 @@ COMMENT ON COLUMN identity_provider_keys.expires_at IS
 
 COMMENT ON COLUMN identity_provider_keys.revoked_at IS
 '密钥吊销时间。吊销后不应再用于签名或验证。';
-
 
 -- ============================================================
 -- 6. identities
@@ -599,7 +594,6 @@ COMMENT ON INDEX ux_identities_one_password_per_provider IS
 COMMENT ON INDEX ux_identities_one_oauth_per_provider IS
 '同一用户在同一 OAuth provider 下只允许一个当前有效 OAuth 身份。';
 
-
 -- ============================================================
 -- 7. authorization_requests
 -- ============================================================
@@ -693,12 +687,16 @@ COMMENT ON COLUMN authorization_requests.completed_at IS
 COMMENT ON INDEX ix_authorization_requests_cleanup IS
 '用于定时清理过期且未完成的授权请求。';
 
-
 -- ============================================================
 -- 8. sso_sessions
 -- ============================================================
 
 CREATE TABLE sso_sessions (
+    recovery_pending boolean NOT NULL DEFAULT false,
+    reauthenticated_at timestamptz,
+    oidc_reauthenticated_at timestamptz,
+    mfa_verified_at timestamptz,
+    mfa_required boolean NOT NULL DEFAULT false,
     id uuid PRIMARY KEY DEFAULT uuidv7(),
 
     token_hash text NOT NULL,
@@ -774,7 +772,6 @@ COMMENT ON COLUMN sso_sessions.revoke_reason IS
 
 COMMENT ON INDEX ix_sso_sessions_user_active IS
 '查询用户所有有效会话（revoked_at IS NULL）及按撤销状态过滤。';
-
 
 -- ============================================================
 -- 9. authorization_codes
@@ -868,7 +865,6 @@ COMMENT ON COLUMN authorization_codes.expires_at IS
 COMMENT ON COLUMN authorization_codes.consumed_at IS
 '授权码消费时间。非空表示已经换过 token，不能再次使用。';
 
-
 -- ============================================================
 -- 10. refresh_tokens
 -- ============================================================
@@ -957,7 +953,6 @@ COMMENT ON COLUMN refresh_tokens.revoke_reason IS
 COMMENT ON COLUMN refresh_tokens.replaced_by_id IS
 'Refresh Token 轮换后的新 token 记录 ID。应用层必须校验新 token 属于同一 user 和 client。';
 
-
 -- ============================================================
 -- 11. user_consents
 -- ============================================================
@@ -986,7 +981,6 @@ COMMENT ON COLUMN user_consents.scopes IS
 
 COMMENT ON COLUMN user_consents.granted_at IS
 '最近一次同意时间。';
-
 
 -- ============================================================
 -- 12. user_app_access
@@ -1031,7 +1025,6 @@ COMMENT ON COLUMN user_app_access.created_at IS
 
 COMMENT ON COLUMN user_app_access.updated_at IS
 '更新时间，由应用层维护。';
-
 
 -- ============================================================
 -- 13. contact_change_requests
@@ -1133,7 +1126,6 @@ COMMENT ON INDEX ux_contact_change_one_pending_per_type IS
 COMMENT ON INDEX ux_contact_change_value_pending IS
 '同一个新邮箱或新手机号在 pending 状态下全局唯一；已验证值由 users 表的 email/phone 唯一索引约束。';
 
-
 -- ============================================================
 -- 14. password_reset_tokens
 -- ============================================================
@@ -1174,7 +1166,6 @@ COMMENT ON COLUMN password_reset_tokens.token_hash IS
 
 COMMENT ON COLUMN password_reset_tokens.consumed_at IS
 '消费时间。非空表示 token 已使用，不能再次重置密码。';
-
 
 -- ============================================================
 -- 15. login_events
@@ -1237,14 +1228,13 @@ COMMENT ON COLUMN login_events.created_at IS
 '事件发生时间。';
 
 -- 数据初始化
-INSERT INTO apps (id, code, name, type, status, auto_access, system, created_at, updated_at)
+INSERT INTO apps (id, code, name, type, status, system, created_at, updated_at)
 VALUES (
     gen_random_uuid(),
     'user-center',
     '用户中心',
     'web',
     'active',
-    false,
     true,
     now(),
     now()
@@ -1257,7 +1247,7 @@ CREATE TABLE notification_outbox (
     expires_at timestamptz NOT NULL,
     next_attempt_at timestamptz NOT NULL DEFAULT now(),
     attempts integer NOT NULL DEFAULT 0,
-    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id uuid REFERENCES users(id) ON DELETE CASCADE,
     kind text NOT NULL,
     lease_id uuid NULL,
     leased_until timestamptz NULL
@@ -1265,3 +1255,330 @@ CREATE TABLE notification_outbox (
 CREATE INDEX ix_notification_outbox_due ON notification_outbox (next_attempt_at);
 CREATE INDEX ix_notification_outbox_user ON notification_outbox (user_id);
 CREATE INDEX ix_notification_outbox_expiry ON notification_outbox (expires_at);
+
+-- Keep audit metadata independent of mutable/deleted user records. Never store request bodies.
+CREATE TABLE audit_events (
+    details jsonb NOT NULL DEFAULT '{}',
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    actor_id uuid NOT NULL,
+    actor_username text NOT NULL,
+    action text NOT NULL,
+    target text NOT NULL,
+    ip inet,
+    user_agent text,
+    request_id text,
+    outcome text NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'success', 'failure')),
+    http_status integer,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_audit_events_created_at ON audit_events (created_at DESC, id DESC);
+CREATE INDEX ix_audit_events_actor ON audit_events (actor_id, created_at DESC);
+CREATE INDEX ix_login_events_user_created ON login_events (user_id, created_at DESC, id DESC);
+
+CREATE TABLE admin_roles (
+    user_id uuid PRIMARY KEY REFERENCES users(id),
+    role text NOT NULL CHECK (role IN ('super_admin','admin'))
+);
+
+CREATE TABLE user_mfa (
+    assisted_recovery_expires_at timestamptz,
+    assisted_recovery_hash text,
+    user_id uuid PRIMARY KEY REFERENCES users(id),
+    secret_enc bytea NOT NULL,
+    pending_secret_enc bytea,
+    setup_session uuid REFERENCES sso_sessions(id) ON DELETE SET NULL,
+    enabled boolean NOT NULL DEFAULT false,
+    setup_expires_at timestamptz NOT NULL DEFAULT now() + interval '5 minutes',
+    last_step bigint NOT NULL DEFAULT -1,
+    recovery_hashes text[] NOT NULL DEFAULT '{}'
+);
+
+
+-- Operational metadata never contains codes, links, raw recipients or gateway bodies.
+CREATE TABLE notification_deliveries (
+    id uuid PRIMARY KEY,
+    user_id uuid NULL REFERENCES users(id) ON DELETE SET NULL,
+    kind text NOT NULL,
+    channel text NOT NULL,
+    recipient text NOT NULL,
+    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','retrying','delivered','expired','cancelled')),
+    attempts integer NOT NULL DEFAULT 0,
+    last_error text NULL,
+    http_status integer NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_notification_deliveries_created ON notification_deliveries (created_at DESC, id DESC);
+CREATE INDEX ix_notification_deliveries_status ON notification_deliveries (status, created_at DESC);
+CREATE INDEX ix_notification_deliveries_cleanup ON notification_deliveries (updated_at) WHERE status IN ('delivered','expired','cancelled');
+
+
+-- Credential invalidation already deletes queued messages in the same transaction.
+-- Capture cancellation here so every existing invalidation path remains authoritative.
+CREATE FUNCTION notification_outbox_deleted() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE notification_deliveries
+    SET status = CASE WHEN OLD.expires_at <= now() THEN 'expired' ELSE 'cancelled' END,
+        updated_at = now()
+    WHERE id = OLD.id AND status IN ('queued','retrying');
+    RETURN OLD;
+END;
+$$;
+CREATE TRIGGER notification_outbox_deleted AFTER DELETE ON notification_outbox
+FOR EACH ROW EXECUTE FUNCTION notification_outbox_deleted();
+
+-- Platform defaults and explicit per-application overrides share one policy shape.
+CREATE TABLE registration_policies (
+    id uuid PRIMARY KEY,
+    app_id uuid UNIQUE REFERENCES apps(id) ON DELETE CASCADE,
+    mode text NOT NULL CHECK (mode IN ('closed','invite_only','self_service')),
+    domains text[] NOT NULL DEFAULT '{}',
+    approval_required boolean NOT NULL DEFAULT true,
+    emergency_stop boolean NOT NULL DEFAULT false,
+    version bigint NOT NULL DEFAULT 1,
+    CHECK ((app_id IS NULL AND id='00000000-0000-0000-0000-000000000000') OR (app_id IS NOT NULL AND id=app_id))
+);
+INSERT INTO registration_policies(id,mode) VALUES ('00000000-0000-0000-0000-000000000000','invite_only');
+CREATE TABLE enrollments (
+    id uuid PRIMARY KEY,
+    app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
+    email citext NOT NULL,
+    invitation boolean NOT NULL DEFAULT false,
+    invited_by uuid REFERENCES users(id),
+    domain_exception boolean NOT NULL DEFAULT false,
+    reason text NOT NULL DEFAULT '',
+    token_hash text NOT NULL UNIQUE,
+    status text NOT NULL DEFAULT 'pending_verification' CHECK (status IN ('pending_verification','pending_approval','ready','completed','rejected','revoked','expired')),
+    verified_at timestamptz,
+    approved_by uuid REFERENCES users(id),
+    approved_at timestamptz,
+    provider_id uuid REFERENCES identity_providers(id),
+    subject text,
+    completed_user_id uuid REFERENCES users(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    last_sent_at timestamptz NOT NULL DEFAULT now(),
+    CHECK (invitation=(invited_by IS NOT NULL)),
+    CHECK (NOT domain_exception OR invitation),
+    CHECK ((provider_id IS NULL)=(subject IS NULL))
+);
+CREATE INDEX ix_enrollments_pending ON enrollments(status,created_at);
+CREATE UNIQUE INDEX ux_enrollments_invitation ON enrollments(email,COALESCE(app_id,'00000000-0000-0000-0000-000000000000')) WHERE invitation AND status IN ('pending_verification','pending_approval','ready');
+
+ALTER TABLE notification_outbox ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE CASCADE;
+ALTER TABLE notification_deliveries ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE SET NULL;
+ALTER TABLE notification_outbox ADD CHECK (num_nonnulls(user_id,enrollment_id)=1);
+-- Application admission is governed by registration_policies; remove the competing switch.
+
+CREATE INDEX ix_enrollments_email_created ON enrollments(email,created_at DESC,id DESC);
+CREATE INDEX ix_user_app_access_app_created ON user_app_access(app_id,created_at DESC,user_id);
+
+ALTER TABLE oauth_clients ADD CONSTRAINT ck_previous_client_secret CHECK ((previous_secret_hash IS NULL)=(previous_secret_expires_at IS NULL));
+
+ALTER TABLE user_mfa ADD CONSTRAINT assisted_recovery_pair CHECK (
+    (assisted_recovery_hash IS NULL) = (assisted_recovery_expires_at IS NULL)
+);
+
+-- Internal diagnostic identity is server-owned and bound to the initiating session.
+ALTER TABLE authorization_requests ADD COLUMN diagnostic_session_id uuid
+    REFERENCES sso_sessions(id) ON DELETE CASCADE;
+
+CREATE TABLE oidc_rp_sessions (
+    session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
+    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY(session_id, client_id)
+);
+CREATE TABLE backchannel_logout_deliveries (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id uuid NOT NULL,
+    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL,
+    endpoint text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL DEFAULT now() + interval '1 day',
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
+    attempts integer NOT NULL DEFAULT 0,
+    lease_id uuid,
+    leased_until timestamptz,
+    delivered_at timestamptz,
+    last_error text,
+    UNIQUE(session_id, client_id)
+);
+CREATE INDEX ON backchannel_logout_deliveries(next_attempt_at) WHERE delivered_at IS NULL;
+-- Revocation and outbox insertion are atomic for every session-revocation path.
+CREATE FUNCTION enqueue_backchannel_logout() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN
+        INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
+        SELECT r.session_id,r.client_id,r.user_id,c.backchannel_logout_uri
+        FROM oidc_rp_sessions r JOIN oauth_clients c ON c.id=r.client_id
+        WHERE r.session_id=NEW.id AND c.backchannel_logout_uri IS NOT NULL
+        ON CONFLICT(session_id,client_id) DO UPDATE SET
+            endpoint = EXCLUDED.endpoint,
+            id = gen_random_uuid(),
+            created_at = now(),
+            delivered_at = NULL,
+            expires_at = now()+interval '1 day',
+            next_attempt_at = now(),
+            lease_id = NULL,
+            leased_until = NULL,
+            attempts = 0,
+            last_error = NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER session_backchannel_logout AFTER UPDATE OF revoked_at ON sso_sessions
+FOR EACH ROW EXECUTE FUNCTION enqueue_backchannel_logout();
+
+CREATE FUNCTION enqueue_app_logout() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
+    SELECT r.session_id,r.client_id,r.user_id,c.backchannel_logout_uri
+    FROM oidc_rp_sessions r JOIN oauth_clients c ON c.id=r.client_id
+    WHERE r.user_id=NEW.user_id AND c.app_id=NEW.app_id AND c.backchannel_logout_uri IS NOT NULL
+    ON CONFLICT(session_id,client_id) DO UPDATE SET
+        endpoint = EXCLUDED.endpoint,
+        id = gen_random_uuid(),
+        created_at = now(),
+        delivered_at = NULL,
+        expires_at = now()+interval '1 day',
+        next_attempt_at = now(),
+        lease_id = NULL,
+        leased_until = NULL,
+        attempts = 0,
+        last_error = NULL;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER app_backchannel_logout AFTER UPDATE OF token_version,status ON user_app_access
+FOR EACH ROW WHEN (OLD.token_version IS DISTINCT FROM NEW.token_version OR OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION enqueue_app_logout();
+
+CREATE FUNCTION enqueue_client_logout() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
+    SELECT r.session_id,r.client_id,r.user_id,NEW.backchannel_logout_uri
+    FROM oidc_rp_sessions r WHERE r.client_id=NEW.id AND NEW.backchannel_logout_uri IS NOT NULL
+    ON CONFLICT(session_id,client_id) DO UPDATE SET
+        endpoint = EXCLUDED.endpoint,
+        id = gen_random_uuid(),
+        created_at = now(),
+        delivered_at = NULL,
+        expires_at = now()+interval '1 day',
+        next_attempt_at = now(),
+        lease_id = NULL,
+        leased_until = NULL,
+        attempts = 0,
+        last_error = NULL;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER client_backchannel_logout AFTER UPDATE OF token_version ON oauth_clients
+FOR EACH ROW WHEN (OLD.token_version IS DISTINCT FROM NEW.token_version)
+EXECUTE FUNCTION enqueue_client_logout();
+
+CREATE TABLE admin_permission_state (
+    user_id uuid PRIMARY KEY REFERENCES admin_roles(user_id) ON DELETE CASCADE,
+    revision bigint NOT NULL DEFAULT 0,
+    updated_by uuid REFERENCES users(id),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE admin_permissions (
+    user_id uuid NOT NULL REFERENCES admin_permission_state(user_id) ON DELETE CASCADE,
+    permission text NOT NULL,
+    PRIMARY KEY (user_id, permission)
+);
+CREATE TABLE admin_app_permissions (
+    user_id uuid NOT NULL REFERENCES admin_permission_state(user_id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    permission text NOT NULL,
+    PRIMARY KEY (user_id, app_id, permission)
+);
+CREATE INDEX ON admin_app_permissions(app_id, user_id);
+
+
+-- Account synchronization carries identifiers only; applications fetch current state.
+CREATE TABLE account_sync_deliveries (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('sync.requested','account.updated','account.status_changed','account.deleted','membership.granted','membership.revoked')),
+    endpoint text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL DEFAULT now()+interval '1 day',
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
+    attempts integer NOT NULL DEFAULT 0,
+    lease_id uuid,
+    leased_until timestamptz,
+    delivered_at timestamptz,
+    cancelled_at timestamptz,
+    last_error text
+);
+CREATE INDEX ON account_sync_deliveries(next_attempt_at)
+WHERE delivered_at IS NULL AND cancelled_at IS NULL;
+ALTER TABLE oauth_clients ADD CONSTRAINT ck_account_sync_confidential
+CHECK (account_sync_uri IS NULL OR type='confidential');
+
+CREATE FUNCTION enqueue_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE event_kind text;
+BEGIN
+    IF OLD.deleted_at IS NOT NULL THEN RETURN NEW; END IF;
+    event_kind := CASE WHEN NEW.deleted_at IS NOT NULL THEN 'account.deleted'
+                       WHEN OLD.status IS DISTINCT FROM NEW.status THEN 'account.status_changed'
+                       ELSE 'account.updated' END;
+    INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+    SELECT c.id,NEW.id,event_kind,c.account_sync_uri
+    FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
+    WHERE a.user_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER user_account_sync AFTER UPDATE ON users
+FOR EACH ROW WHEN (
+    (OLD.username,OLD.nickname,OLD.avatar_url,OLD.email,OLD.email_verified_at,
+     OLD.phone,OLD.phone_verified_at,OLD.status,OLD.deleted_at) IS DISTINCT FROM
+    (NEW.username,NEW.nickname,NEW.avatar_url,NEW.email,NEW.email_verified_at,
+     NEW.phone,NEW.phone_verified_at,NEW.status,NEW.deleted_at)
+) EXECUTE FUNCTION enqueue_account_sync();
+
+CREATE FUNCTION enqueue_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status THEN RETURN NEW; END IF;
+    INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+    SELECT c.id,NEW.user_id,
+           CASE WHEN NEW.status='active' THEN 'membership.granted' ELSE 'membership.revoked' END,
+           c.account_sync_uri
+    FROM oauth_clients c WHERE c.app_id=NEW.app_id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER membership_account_sync AFTER INSERT OR UPDATE OF status ON user_app_access
+FOR EACH ROW EXECUTE FUNCTION enqueue_membership_sync();
+
+-- Enabling/changing the receiver also initializes existing members; old destinations stop retrying.
+CREATE FUNCTION configure_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='UPDATE' AND (OLD.account_sync_uri,OLD.scopes,OLD.status)
+        IS NOT DISTINCT FROM (NEW.account_sync_uri,NEW.scopes,NEW.status) THEN RETURN NEW; END IF;
+    UPDATE account_sync_deliveries SET cancelled_at=now(),lease_id=NULL,leased_until=NULL
+    WHERE client_id=NEW.id AND delivered_at IS NULL AND cancelled_at IS NULL;
+    IF NEW.account_sync_uri IS NOT NULL THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+        SELECT NEW.id,a.user_id,'sync.requested',NEW.account_sync_uri
+        FROM user_app_access a WHERE a.app_id=NEW.app_id;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER client_account_sync AFTER INSERT OR UPDATE OF account_sync_uri,scopes,status ON oauth_clients
+FOR EACH ROW EXECUTE FUNCTION configure_account_sync();
+
+
+-- Application enablement contributes to the account projection's active flag.
+CREATE FUNCTION enqueue_app_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+    SELECT c.id,a.user_id,'sync.requested',c.account_sync_uri
+    FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
+    WHERE a.app_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER app_account_sync AFTER UPDATE OF status ON apps
+FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
+EXECUTE FUNCTION enqueue_app_account_sync();

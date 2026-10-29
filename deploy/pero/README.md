@@ -10,6 +10,7 @@
 /root/projects/pero/
 ├── source/                 # GitHub 源码，可选保留，不参与镜像加载后的运行
 └── runtime/
+    ├── .env                   # 构建生成的 Git 镜像标签
     ├── compose.yaml
     ├── config/
     │   ├── default.toml
@@ -19,7 +20,7 @@
     └── logs/prd/
 ```
 
-程序、SQL 和 React 静态资源位于镜像内的 `/opt/pero/prd`。Compose 挂载 runtime 下的 config 和 logs，使用 host 网络监听宿主机 8080；原域名映射可继续指向该端口。
+程序、内嵌迁移和 React 静态资源位于镜像内的 `/opt/pero/prd`。Compose 挂载 runtime 下的 config 和 logs，使用 host 网络监听宿主机 8080；原域名映射可继续指向该端口。
 
 本机需要 Docker 引擎及 Buildx，配置打包另需 Python 3.11+。启动 Docker 后检查：
 
@@ -83,16 +84,19 @@ bash scripts/package-production-config.sh
 bash scripts/build-docker-image.sh
 ```
 
-脚本使用 Docker 多阶段构建，锁定 Rust 和前端依赖，固定目标为 linux/amd64。构建镜像包含编译工具，最终运行镜像仅保留程序、SQL、React 构建产物和初始化工具，不包含生产配置。
+脚本使用 Docker 多阶段构建，锁定 Rust 和前端依赖，固定目标为 linux/amd64。构建镜像包含编译工具，最终运行镜像仅保留程序、内嵌迁移、React 构建产物和初始化工具，不包含生产配置。
 
 输出：
 
 ```text
 deploy/pero-user-center-linux-amd64.tar.gz
 deploy/pero-user-center-linux-amd64.tar.gz.sha256
+deploy/pero-image.env
 ```
 
-构建成功后再上传，不使用失败构建遗留的旧包。默认 Rust 编译并行度为 2，可通过 `PERO_BUILD_JOBS=4 bash scripts/build-docker-image.sh` 调整。基础镜像摘要固定在 Dockerfile 中，维护时应核对并更新摘要以获取系统安全更新。
+镜像标签为 `pero-user-center:git-<12位提交号>`，取当前仓库 HEAD。构建使用当前工作区文件，发布前应先提交要发布的改动，让提交号对应实际版本。`pero-image.env` 保存本次镜像标签，部署时安装为运行目录的 `.env`；无需服务器具有 Git 源码。
+
+构建成功后再上传镜像包、校验文件和标签文件，不使用失败构建遗留的旧包。默认 Rust 编译并行度为 2，可通过 `PERO_BUILD_JOBS=4 bash scripts/build-docker-image.sh` 调整。基础镜像摘要固定在 Dockerfile 中，维护时应核对并更新摘要以获取系统安全更新。
 
 ## 4. 上传与加载
 
@@ -101,6 +105,7 @@ deploy/pero-user-center-linux-amd64.tar.gz.sha256
 ```bash
 scp deploy/pero-user-center-linux-amd64.tar.gz \
     deploy/pero-user-center-linux-amd64.tar.gz.sha256 \
+    deploy/pero-image.env \
     deploy/pero-config.tar.gz deploy/pero-config.tar.gz.sha256 \
     root@SERVER:/tmp/
 scp deploy/pero/compose.yaml root@SERVER:/tmp/pero-compose.yaml
@@ -113,10 +118,10 @@ cd /tmp
 sha256sum -c pero-user-center-linux-amd64.tar.gz.sha256
 sha256sum -c pero-config.tar.gz.sha256
 docker load -i /tmp/pero-user-center-linux-amd64.tar.gz
-docker image inspect pero-user-center:local --format '{{.Os}}/{{.Architecture}}'
+cat /tmp/pero-image.env
 ```
 
-镜像名应为 pero-user-center:local，架构为 linux/amd64。Compose 使用 `pull_policy: never` 且没有 build 配置，只运行已加载的镜像。
+加载结果应显示 `pero-user-center:git-<提交号>`，并与 `pero-image.env` 一致，架构为 linux/amd64。Compose 使用 `pull_policy: never` 且没有 build 配置，只运行已加载的镜像。
 
 ## 5. 安装运行文件
 
@@ -126,6 +131,7 @@ docker image inspect pero-user-center:local --format '{{.Os}}/{{.Architecture}}'
 install -d -m 700 /root/projects/pero/runtime
 tar -xzf /tmp/pero-config.tar.gz -C /root/projects/pero/runtime
 install -m 644 /tmp/pero-compose.yaml /root/projects/pero/runtime/compose.yaml
+install -m 644 /tmp/pero-image.env /root/projects/pero/runtime/.env
 cd /root/projects/pero/runtime
 
 chown -R root:10001 config
@@ -133,6 +139,7 @@ find config -type d -exec chmod 750 {} +
 find config -type f -exec chmod 640 {} +
 install -d -o 10001 -g 10001 -m 750 logs logs/prd
 docker compose config --quiet
+docker image inspect "$(docker compose config --images)" --format '{{.Os}}/{{.Architecture}}'
 ss -ltnp 'sport = :8080'
 ```
 
@@ -174,7 +181,7 @@ cd /root/projects/pero/runtime
 docker compose run --rm --no-deps --entrypoint python3 pero initialize.py
 ```
 
-程序检查数据库连接和 PostgreSQL 版本，执行镜像中的最新 migrate.sh，然后创建 Provider、签名 key、管理员密码身份及系统应用访问权限。看到 `Initialization complete` 后继续；失败时先排查错误。管理员创建不幂等，成功后不要重复执行初始化。
+bootstrap 使用与服务启动相同的 Rust 迁移器检查 PostgreSQL 版本、校验历史、自动迁移并验收，然后创建 Provider、签名 key、管理员密码身份及系统应用访问权限。看到 `Initialization complete` 后继续；失败时先排查错误。管理员创建不幂等，成功后不要重复执行初始化。
 
 ## 7. 启动与验收
 
@@ -212,14 +219,18 @@ docker compose restart pero
 docker compose stop pero
 ```
 
-更新代码后，本机重新构建并上传镜像包与校验文件。服务器校验、docker load 后执行：
+更新代码后，本机重新构建并上传镜像包、校验文件及同次生成的 `pero-image.env`。服务器校验、docker load 后执行：
 
 ```bash
 cd /root/projects/pero/runtime
+install -m 644 /tmp/pero-compose.yaml compose.yaml
+install -m 644 /tmp/pero-image.env .env
 docker compose up -d --no-build --force-recreate
 docker compose logs --tail=100 pero
 ```
 
-常规更新保留数据库和生产配置，不重复初始化。配置结构变化时同步调整；Compose 有变化时同步模板。服务器 source 可保留用于同步源码，但运行服务不依赖它，不需要先 git pull，也不执行 docker compose build。
+查看当前镜像可执行 `docker compose config --images`。需要回退时，将 `.env` 中的 `PERO_IMAGE_TAG` 改为服务器已保留的旧提交标签，再重新创建容器；数据库迁移历史必须与目标版本匹配。
+
+常规更新保留数据库和生产配置，不重复初始化。每次启动服务都会自动检查并迁移至镜像内最新版本，验收通过后才监听端口；无需单独运行迁移容器。迁移或验收失败则事务回滚，容器以失败状态退出，通过 `docker compose logs --tail=100 pero` 排查并修正原因后重启。此次合并初始迁移不接受旧 001–011 历史，旧环境应先备份并使用新库初始化、按需导入业务数据，不能直接覆盖迁移记录。配置结构变化时同步调整；Compose 有变化时同步模板。服务器 source 可保留用于同步源码，但运行服务不依赖它，不需要先 git pull，也不执行 docker compose build。
 
 通用 Docker 文件、构建脚本、配置示例和本指南随代码追踪。local/ 下真实配置与私钥，以及 deploy 下的镜像包、配置包、校验文件、缓存和日志均不提交 Git。旧 scripts/deploy.sh 的 Zig 交叉编译入口独立保留，不用于此 Docker 部署。

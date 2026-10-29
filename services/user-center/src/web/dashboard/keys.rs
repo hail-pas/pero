@@ -39,6 +39,7 @@ fn key_input(form: KeyForm) -> Result<KeyInput, ManagementError> {
 pub async fn create(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<KeyForm>,
 ) -> Response {
@@ -49,29 +50,69 @@ pub async fn create(
         Ok(input) => input,
         Err(error) => return util::management_response(Err(error)),
     };
-    util::management_response(keys::create(&state.db, id, input).await)
+    util::management_response(keys::create(&state.db, &admin.actor(&state), id, input).await)
 }
 
 pub async fn activate(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path((id, kid)): Path<(uuid::Uuid, String)>,
     axum::Form(form): axum::Form<CsrfOnly>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    util::management_response(keys::activate(&state.db, id, &kid).await)
+    util::management_response(keys::activate(&state.db, &admin.actor(&state), id, &kid).await)
 }
 
 pub async fn revoke(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path((id, kid)): Path<(uuid::Uuid, String)>,
-    axum::Form(form): axum::Form<CsrfOnly>,
+    axum::Form(form): axum::Form<RevokeForm>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    util::management_response(keys::revoke(&state.db, id, &kid).await)
+    util::management_response(if form.emergency {
+        keys::emergency_revoke(&state.db, &admin.actor(&state), id, &kid).await
+    } else {
+        keys::revoke(&state.db, &admin.actor(&state), id, &kid).await
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub struct ScheduleForm {
+    csrf_token: String,
+    activate_at: String,
+}
+pub async fn schedule(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    admin: super::guard::AdminContext,
+    Path((id, kid)): Path<(uuid::Uuid, String)>,
+    axum::Form(form): axum::Form<ScheduleForm>,
+) -> Response {
+    if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
+        return response;
+    }
+    if form.activate_at.trim().is_empty() {
+        return util::management_response(
+            keys::cancel_schedule(&state.db, &admin.actor(&state), id, &kid).await,
+        );
+    }
+    let at = match parse_datetime(&form.activate_at) {
+        Ok(Some(at)) => at,
+        _ => return util::management_response(Err(ManagementError::Invalid("invalid_key_dates"))),
+    };
+    util::management_response(keys::schedule(&state.db, &admin.actor(&state), id, &kid, at).await)
+}
+
+#[derive(serde::Deserialize)]
+pub struct RevokeForm {
+    csrf_token: String,
+    #[serde(default)]
+    emergency: bool,
 }

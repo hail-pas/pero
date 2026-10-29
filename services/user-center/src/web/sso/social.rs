@@ -182,7 +182,7 @@ pub async fn callback(
             };
         }
         let mut target = if session.mfa_required && session.mfa_verified_at.is_none() {
-            "/account/security"
+            "/sso/mfa"
         } else {
             "/account/reauth"
         }
@@ -258,7 +258,6 @@ pub async fn callback(
                 user,
                 identity_id,
                 cb_state.provider.provider.id,
-                &provider_code,
                 &SocialLoginContext {
                     redirect: cb_state.social_value.redirect,
                     auth_request_id: cb_state.auth_request_id,
@@ -408,7 +407,6 @@ pub async fn link_post(
         user,
         identity_id,
         provider_id,
-        &link.provider_code,
         &SocialLoginContext {
             redirect: link.redirect,
             auth_request_id,
@@ -446,7 +444,6 @@ async fn finish_social_login(
     user: crate::db::entity::users::Model,
     identity_id: Uuid,
     provider_id: Uuid,
-    provider_code: &str,
     ctx: &SocialLoginContext,
 ) -> Response {
     let session_svc = state.session_service();
@@ -468,25 +465,12 @@ async fn finish_social_login(
         }
     };
 
-    let login_svc =
-        LoginService::new(&state.db, &state.cache).with_user_agent(ctx.user_agent.clone());
-    login_svc
-        .record_success(
-            user.id,
-            identity_id,
-            Some(provider_id),
-            ctx.ip,
-            serde_json::json!({"provider": provider_code}),
-        )
-        .await;
-
-    let cookie = state.cookie_factory().build_session_cookie(&token);
     let redirect_target = if ctx.auth_request_id.is_some() {
         "/oauth2/authorize/resume".to_owned()
     } else {
         crate::web::util::safe_redirect(&ctx.redirect)
     };
-    (jar.add(cookie), Redirect::to(&redirect_target)).into_response()
+    crate::web::login_flow::finish_login(state, jar, &token, &redirect_target).await
 }
 
 async fn render_social_link(

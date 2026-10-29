@@ -11,6 +11,7 @@ use crate::db::entity::{contact_change_requests as ccr, users};
 use crate::db::enums::{ContactChangeStatus, ContactChangeType, UserStatus};
 
 pub enum ContactError {
+    Unauthorized,
     UserNotFound,
     SamePendingValue,
     ContactTaken,
@@ -114,11 +115,29 @@ impl ContactChannel {
 pub struct ContactVerificationService<'a> {
     db: &'a DatabaseConnection,
     cache: &'a RedisCacheStore,
+    sso: &'a crate::config::SsoConfig,
 }
 
 impl<'a> ContactVerificationService<'a> {
-    pub fn new(db: &'a DatabaseConnection, cache: &'a RedisCacheStore) -> Self {
-        Self { db, cache }
+    pub fn new(state: &'a crate::state::app::AppState) -> Self {
+        Self {
+            db: &state.db,
+            cache: &state.cache,
+            sso: &state.config.sso,
+        }
+    }
+
+    async fn lock_session(
+        &self,
+        txn: &sea_orm::DatabaseTransaction,
+        session: &crate::state::session::SsoSession,
+    ) -> Result<(), ContactError> {
+        super::account_security::lock_account_session(txn, session, self.sso)
+            .await
+            .map_err(|error| match error {
+                super::ManagementError::Invalid(_) => ContactError::Unauthorized,
+                _ => ContactError::ServiceUnavailable,
+            })
     }
 
     pub async fn load_active_user(&self, user_id: Uuid) -> Result<users::Model, ContactError> {
@@ -176,8 +195,8 @@ impl<'a> ContactVerificationService<'a> {
     }
 
     pub async fn create_contact_request(
-        &mut self,
-        user_id: Uuid,
+        &self,
+        session: &crate::state::session::SsoSession,
         channel: ContactChannel,
         value: String,
         notification_base_url: Option<&str>,
@@ -187,9 +206,8 @@ impl<'a> ContactVerificationService<'a> {
             ContactError::Internal("internal_error".into())
         })?;
 
-        crate::service::password::PasswordIdentityService::lock_user(&txn, user_id)
-            .await
-            .map_err(|_| ContactError::ServiceUnavailable)?;
+        let user_id = session.user_id;
+        self.lock_session(&txn, session).await?;
         expire_reservations(&txn, channel, &value, user_id)
             .await
             .map_err(|_| ContactError::ServiceUnavailable)?;
@@ -301,10 +319,11 @@ impl<'a> ContactVerificationService<'a> {
 
     pub async fn verify_contact(
         &self,
-        user_id: Uuid,
+        session: &crate::state::session::SsoSession,
         nonce: &str,
         code: &str,
     ) -> Result<ContactChangeType, ContactError> {
+        let user_id = session.user_id;
         let req = match ccr::Entity::find()
             .filter(ccr::Column::Nonce.eq(nonce))
             .filter(ccr::Column::Status.eq(ContactChangeStatus::Pending))
@@ -333,11 +352,8 @@ impl<'a> ContactVerificationService<'a> {
             }
         };
 
-        let user = match users::Entity::find_by_id(user_id)
-            .lock_exclusive()
-            .one(&txn)
-            .await
-        {
+        self.lock_session(&txn, session).await?;
+        let user = match users::Entity::find_by_id(user_id).one(&txn).await {
             Ok(Some(user)) if user.status == UserStatus::Active && user.deleted_at.is_none() => {
                 user
             }
@@ -472,14 +488,24 @@ impl<'a> ContactVerificationService<'a> {
         Ok(change_type)
     }
 
-    pub async fn cancel_contact(&self, user_id: Uuid, nonce: &str) -> Result<(), ContactError> {
+    pub async fn cancel_contact(
+        &self,
+        session: &crate::state::session::SsoSession,
+        nonce: &str,
+    ) -> Result<(), ContactError> {
+        let txn = self
+            .db
+            .begin()
+            .await
+            .map_err(|_| ContactError::ServiceUnavailable)?;
+        self.lock_session(&txn, session).await?;
         // Check ownership, nonce and state in the write itself. A concurrent
         // verification or replacement must not be deleted after a stale read.
         let deleted = ccr::Entity::delete_many()
-            .filter(ccr::Column::UserId.eq(user_id))
+            .filter(ccr::Column::UserId.eq(session.user_id))
             .filter(ccr::Column::Nonce.eq(nonce))
             .filter(ccr::Column::Status.eq(ContactChangeStatus::Pending))
-            .exec(self.db)
+            .exec(&txn)
             .await
             .map_err(|error| {
                 tracing::error!(%error, "Cancel contact request failed");
@@ -488,6 +514,9 @@ impl<'a> ContactVerificationService<'a> {
         if deleted.rows_affected == 0 {
             return Err(ContactError::InvalidNonce);
         }
+        txn.commit()
+            .await
+            .map_err(|_| ContactError::ServiceUnavailable)?;
         Ok(())
     }
 

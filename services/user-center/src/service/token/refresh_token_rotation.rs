@@ -31,11 +31,6 @@ impl TokenService<'_> {
 
         let rt_hash = pero_utils::crypto::sha256_hex(&rt_raw);
 
-        let signing = match require_active_signing_key(&self.state.db).await {
-            Ok(k) => k,
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
-        };
-
         let now = time::OffsetDateTime::now_utc();
         let rt_raw_new = pero_utils::crypto::generate_token();
         let rt_hash_new = pero_utils::crypto::sha256_hex(&rt_raw_new);
@@ -204,6 +199,11 @@ impl TokenService<'_> {
             };
         let scopes_str = requested.join(" ");
         let session_id = existing.session_id;
+        let signing = match require_active_signing_key(&txn).await {
+            Ok(k) => k,
+            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        };
+
         let issuer = TokenIssuer::new(self.state, client, &signing);
         let access_token =
             match issuer.issue_access_token(user.id, &scopes_str, session_id, access.token_version)

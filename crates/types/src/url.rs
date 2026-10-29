@@ -206,5 +206,37 @@ fn redact_url(url: &Url) -> String {
         let _ = redacted.set_password(Some(REDACTED_PASSWORD));
     }
 
+    // Connection options may contain passwords or application encryption keys.
+    // Diagnostics need only the server/database address, never the option values.
+    redacted.set_query(None);
+    redacted.set_fragment(None);
     redacted.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_urls_hide_credentials_in_every_supported_location() {
+        for raw in [
+            "postgres://alice:private-password@db.example/pero?sslmode=require",
+            "postgres://alice@db.example/pero?password=private-password",
+            "postgres://alice@db.example/pero?options=-capp.encrypt_key%3Dprivate-password#private-password",
+        ] {
+            let url = PgUrl::parse(raw).unwrap();
+            assert!(!url.redacted().contains("private-password"));
+            assert!(!format!("{url}").contains("private-password"));
+            assert!(!format!("{url:?}").contains("private-password"));
+            assert_eq!(url.expose_secret(), raw);
+        }
+        let redis = RedisUrl::parse("rediss://:private-password@cache.example/0").unwrap();
+        assert!(!redis.redacted().contains("private-password"));
+        assert_eq!(
+            PgUrl::parse("postgres://alice@db.example/pero?password=secret")
+                .unwrap()
+                .redacted(),
+            "postgres://alice@db.example/pero"
+        );
+    }
 }

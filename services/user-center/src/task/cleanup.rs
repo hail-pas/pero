@@ -68,5 +68,17 @@ async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
         "client_secrets",
         crate::db::helper::cleanup::clean_expired_client_secrets
     );
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    db.execute_raw(Statement::from_string(
+        DbBackend::Postgres,
+        "DELETE FROM backchannel_logout_deliveries WHERE created_at<now()-interval '30 days'"
+            .to_owned(),
+    ))
+    .await?;
+    db.execute_raw(Statement::from_string(
+        DbBackend::Postgres,
+        "DELETE FROM account_sync_deliveries WHERE created_at<now()-interval '30 days'".to_owned(),
+    ))
+    .await?;
     Ok(())
 }

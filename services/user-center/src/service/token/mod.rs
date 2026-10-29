@@ -21,6 +21,7 @@ pub struct TokenRequest {
     pub code_verifier: Option<String>,
     pub refresh_token: Option<String>,
     pub scope: Option<String>,
+    #[serde(default)]
     pub client_id: String,
     pub client_secret: Option<String>,
 }

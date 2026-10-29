@@ -24,7 +24,7 @@ import { LanguageSwitcher } from "./language-switcher";
 import { Brand } from "./layout";
 
 import { Heading, Panel } from "./shared";
-export function Home() {
+export function Home({ data }: { data: ViewDataMap["HomeView"] }) {
   useLocale();
   return (
     <>
@@ -38,17 +38,33 @@ export function Home() {
           <Brand />
           <Stack direction="row" spacing={1}>
             <LanguageSwitcher />
-            <Button component={RouterLink} to="/account/login" color="inherit">
-              {t("登录")}
-            </Button>
-            <Button
-              component={RouterLink}
-              to="/sso/register"
-              variant="contained"
-              color="inherit"
-            >
-              {t("注册账户")}
-            </Button>
+            {data.layout ? (
+              <Button
+                component={RouterLink}
+                to="/account/profile"
+                color="inherit"
+              >
+                {t("个人中心")}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  component={RouterLink}
+                  to="/account/login"
+                  color="inherit"
+                >
+                  {t("登录")}
+                </Button>
+                <Button
+                  component={RouterLink}
+                  to="/sso/register"
+                  variant="contained"
+                  color="inherit"
+                >
+                  {t("注册账户")}
+                </Button>
+              </>
+            )}
           </Stack>
         </Stack>
         <Box
@@ -88,7 +104,7 @@ export function Home() {
             <Stack direction="row" spacing={2}>
               <Button
                 component={RouterLink}
-                to="/account/profile"
+                to="/account/applications"
                 variant="contained"
                 size="large"
                 color="inherit"
@@ -96,15 +112,17 @@ export function Home() {
               >
                 {t("开始使用")}
               </Button>
-              <Button
-                component={RouterLink}
-                to="/dashboard/apps"
-                variant="outlined"
-                color="inherit"
-                size="large"
-              >
-                {t("管理控制台")}
-              </Button>
+              {data.layout?.can_access_dashboard && (
+                <Button
+                  component={RouterLink}
+                  to="/dashboard"
+                  variant="outlined"
+                  color="inherit"
+                  size="large"
+                >
+                  {t("管理控制台")}
+                </Button>
+              )}
             </Stack>
             <Typography
               variant="overline"

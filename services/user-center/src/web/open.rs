@@ -7,6 +7,8 @@ use crate::state::app::AppState;
 #[derive(Debug, Serialize)]
 pub struct OpenIdConfiguration {
     pub issuer: String,
+    pub backchannel_logout_supported: bool,
+    pub backchannel_logout_session_supported: bool,
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     pub userinfo_endpoint: String,
@@ -32,12 +34,20 @@ pub async fn openid_configuration(State(state): State<AppState>) -> Response {
 
     let doc = OpenIdConfiguration {
         issuer: issuer.clone(),
+        backchannel_logout_supported: true,
+        backchannel_logout_session_supported: true,
         authorization_endpoint: format!("{base}/oauth2/authorize"),
         token_endpoint: format!("{base}/api/oauth2/token"),
         introspection_endpoint: format!("{base}/api/oauth2/introspect"),
         revocation_endpoint: format!("{base}/api/oauth2/revoke"),
-        introspection_endpoint_auth_methods_supported: vec!["client_secret_post"],
-        revocation_endpoint_auth_methods_supported: vec!["client_secret_post"],
+        introspection_endpoint_auth_methods_supported: vec![
+            "client_secret_basic",
+            "client_secret_post",
+        ],
+        revocation_endpoint_auth_methods_supported: vec![
+            "client_secret_basic",
+            "client_secret_post",
+        ],
         userinfo_endpoint: format!("{base}/api/oauth2/userinfo"),
         jwks_uri: format!("{base}/api/oauth2/jwks"),
         end_session_endpoint: format!("{base}/oauth2/session/end"),
@@ -45,7 +55,11 @@ pub async fn openid_configuration(State(state): State<AppState>) -> Response {
         subject_types_supported: vec!["public"],
         id_token_signing_alg_values_supported: vec!["RS256"],
         scopes_supported: vec!["openid", "profile", "email", "phone"],
-        token_endpoint_auth_methods_supported: vec!["client_secret_post"],
+        token_endpoint_auth_methods_supported: vec![
+            "client_secret_basic",
+            "client_secret_post",
+            "none",
+        ],
         claims_supported: vec![
             "iss",
             "sub",

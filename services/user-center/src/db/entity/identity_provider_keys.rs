@@ -28,6 +28,8 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub certificate_pem: Option<String>,
     pub active: bool,
+    pub last_issued_until: Option<TimeDateTimeWithTimeZone>,
+    pub activate_at: Option<TimeDateTimeWithTimeZone>,
     pub not_before: Option<TimeDateTimeWithTimeZone>,
     pub expires_at: Option<TimeDateTimeWithTimeZone>,
     pub revoked_at: Option<TimeDateTimeWithTimeZone>,

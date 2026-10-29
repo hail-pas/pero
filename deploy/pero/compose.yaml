@@ -1,7 +1,7 @@
 name: pero
 services:
   pero:
-    image: pero-user-center:local
+    image: pero-user-center:${PERO_IMAGE_TAG:?Set PERO_IMAGE_TAG using the generated pero-image.env}
     platform: linux/amd64
     pull_policy: never
     container_name: pero-user-center

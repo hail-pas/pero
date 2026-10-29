@@ -78,6 +78,7 @@ pub async fn new_form(
 pub async fn create(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     axum::Form(form): axum::Form<ProviderFormData>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
@@ -92,7 +93,15 @@ pub async fn create(
         Ok(input) => input,
         Err(error) => return json_error(&error),
     };
-    match crate::service::provider::create(&state.db, form.code.trim(), kind, input).await {
+    match crate::service::provider::create(
+        &state.db,
+        &admin.actor(&state),
+        form.code.trim(),
+        kind,
+        input,
+    )
+    .await
+    {
         Ok(_) => json_ok(),
         Err(error) => provider_error(error),
     }
@@ -113,7 +122,7 @@ pub async fn detail(
     let provider = match crate::db::helper::admin::find_provider_by_id(&state.db, id).await {
         Ok(Some(p)) => p,
         Err(error) => return util::dependency_error(error),
-        _ => return Redirect::to("/dashboard/providers").into_response(),
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
     };
 
     let keys = match crate::db::helper::admin::list_keys_by_provider(&state.db, provider.id).await {
@@ -121,7 +130,12 @@ pub async fn detail(
         Err(error) => return util::dependency_error(error),
     };
 
+    let signing_health = match crate::service::keys::health(&state.db, id).await {
+        Ok(v) => v,
+        Err(e) => return util::dependency_error(e),
+    };
     let tpl = ProviderDetailView {
+        signing_health,
         layout,
         csrf_token,
         provider: provider.into(),
@@ -146,7 +160,7 @@ pub async fn edit_form(
     let provider = match crate::db::helper::admin::find_provider_by_id(&state.db, id).await {
         Ok(Some(p)) => p,
         Err(error) => return util::dependency_error(error),
-        _ => return Redirect::to("/dashboard/providers").into_response(),
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
     };
     if provider.kind == IdentityProviderKind::Local {
         return Redirect::to(&format!("/dashboard/providers/{}", provider.id)).into_response();
@@ -199,6 +213,7 @@ pub async fn edit_form(
 pub async fn update(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<ProviderFormData>,
 ) -> Response {
@@ -209,7 +224,7 @@ pub async fn update(
         Ok(input) => input,
         Err(error) => return json_error(&error),
     };
-    match crate::service::provider::update(&state.db, id, input).await {
+    match crate::service::provider::update(&state.db, &admin.actor(&state), id, input).await {
         Ok(_) => json_ok(),
         Err(error) => provider_error(error),
     }
@@ -218,13 +233,14 @@ pub async fn update(
 pub async fn toggle_enabled(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<CsrfOnly>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    match crate::service::provider::toggle_enabled(&state.db, id).await {
+    match crate::service::provider::toggle_enabled(&state.db, &admin.actor(&state), id).await {
         Ok(()) => json_ok(),
         Err(error) => provider_error(error),
     }
@@ -232,7 +248,12 @@ pub async fn toggle_enabled(
 
 fn provider_error(error: crate::service::provider::ProviderError) -> Response {
     match error {
-        crate::service::provider::ProviderError::Invalid(code) => json_error(code),
+        crate::service::provider::ProviderError::Management(error) => {
+            util::management_response(Err(error))
+        }
+        crate::service::provider::ProviderError::Invalid(code) => {
+            util::management_response(Err(crate::service::ManagementError::Invalid(code)))
+        }
         crate::service::provider::ProviderError::Database(error) => util::dependency_error(error),
     }
 }

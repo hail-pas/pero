@@ -38,24 +38,6 @@ impl ErrorKind {
         }
     }
 
-    pub fn default_title(self) -> &'static str {
-        match self {
-            Self::BadRequest => "Bad Request",
-            Self::Unauthorized => "Unauthorized",
-            Self::Forbidden => "Forbidden",
-            Self::NotFound => "Not Found",
-            Self::Conflict => "Conflict",
-            Self::UnprocessableEntity => "Unprocessable Entity",
-            Self::TooManyRequests => "Too Many Requests",
-            Self::Timeout => "Timeout",
-            Self::UnsupportedMediaType => "Unsupported Media Type",
-            Self::PayloadTooLarge => "Payload Too Large",
-            Self::DependencyFailure => "Dependency Failure",
-            Self::ServiceUnavailable => "Service Unavailable",
-            Self::Internal => "Internal Server Error",
-        }
-    }
-
     pub fn default_numeric_code(self) -> u32 {
         match self {
             Self::BadRequest => 40000,

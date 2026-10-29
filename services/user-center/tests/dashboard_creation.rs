@@ -49,7 +49,7 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
     let config: AppConfig = serde_json::from_value(serde_json::json!({
         "database":{"url":fixture.url,"encrypt_key":"test-only-key","min_connections":1},
         "redis":{"url":std::env::var("PERO_TEST_REDIS_URL").unwrap()},
-        "notification":{"endpoint":"https://notifications.example.test"},
+        "notification":{"endpoint":"https://notifications.example.test","bearer_token":"test-only-notification-token"},
         "sso":{"cookie_signing_secret":"test-only-signing-secret-long-enough"},
         "password_reset":{"signing_key":"test-only-reset-secret-long-enough"}
     }))
@@ -167,20 +167,14 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
         post(&app, &cookies, "/dashboard/apps/new", &app_fields).await["error"],
         "invalid_url"
     );
+    // Redis quotas outlive the isolated SQL schema; keep repeated runs independent.
+    let invited_email = format!("created_{}@example.test", user_id.simple());
     assert_eq!(
         post(
             &app,
             &cookies,
             "/dashboard/users/new",
-            &[
-                ("csrf_token", &csrf),
-                ("username", "created_user"),
-                ("password", "OriginalPass123!"),
-                ("email", "created_user@example.test"),
-                ("phone", ""),
-                ("nickname", ""),
-                ("avatar_url", "")
-            ]
+            &[("csrf_token", &csrf), ("email", invited_email.as_str())]
         )
         .await["code"],
         0

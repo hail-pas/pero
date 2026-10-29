@@ -1,3 +1,5 @@
+pub mod account_sync;
+mod client_auth;
 pub mod health;
 pub mod jwks;
 pub mod providers;
@@ -10,6 +12,7 @@ use axum::routing::{get, post};
 
 pub fn routes() -> Router<crate::state::app::AppState> {
     Router::new()
+        .route("/accounts/sync", post(account_sync::snapshot))
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/oauth2/token", post(token::token))

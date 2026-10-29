@@ -516,11 +516,27 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
     )
     .await
     .unwrap();
-    let (status, _) = b.call(&app, "/dashboard/admins", None).await;
+    sec::execute(
+        &db,
+        "INSERT INTO admin_permission_state(user_id) VALUES($1)",
+        vec![user.into()],
+    )
+    .await
+    .unwrap();
+    let (status, _) = b.call(&app, "/dashboard/apps", None).await;
+    assert_eq!(status, StatusCode::OK);
+    sec::execute(
+        &db,
+        "DELETE FROM admin_roles WHERE user_id=$1",
+        vec![user.into()],
+    )
+    .await
+    .unwrap();
+    let (status, _) = b.call(&app, "/dashboard/apps", None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     sec::execute(
         &db,
-        "UPDATE admin_roles SET role='super_admin' WHERE user_id=$1",
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
         vec![user.into()],
     )
     .await
@@ -534,7 +550,7 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
-    assert_eq!(v["error"], "last_super_admin");
+    assert_eq!(v["error"], "cannot_change_own_admin_role");
     let optional = Uuid::now_v7();
     sec::execute(
         &db,
@@ -598,5 +614,164 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
     drop(state);
     db.close().await.unwrap();
     drop(guard);
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn password_login_challenges_before_redirect_and_activity_is_visible() {
+    use user_center::service::password::PasswordIdentityService;
+    let fixture = database::DatabaseFixture::new().await;
+    let cfg: user_center::config::AppConfig = serde_json::from_value(serde_json::json!({
+        "database":{"url":fixture.url,"encrypt_key":"login-activity-test-key","min_connections":1},
+        "redis":{"url":std::env::var("PERO_TEST_REDIS_URL").unwrap()},
+        "sso":{"cookie_signing_secret":"login-activity-test-signing-secret-long-enough"}
+    }))
+    .unwrap();
+    let (db, guard) = user_center::db::init::init_db(&cfg).await.unwrap();
+    let cache = pero_cache_redis::RedisCacheStore::from_config(&cfg.redis).unwrap();
+    let http = pero_http_client_reqwest::ReqwestHttpClient::from_config(&cfg.http_config).unwrap();
+    let state = AppState::new(cfg, db.clone(), cache, http);
+    let user = Uuid::now_v7();
+    let provider = Uuid::now_v7();
+    sec::execute(
+        &db,
+        "INSERT INTO users(id,username) VALUES($1,'activity-user')",
+        vec![user.into()],
+    )
+    .await
+    .unwrap();
+    sec::execute(
+        &db,
+        "INSERT INTO identity_providers(id,code,name,kind,issuer) VALUES($1,'local','Local','local','http://localhost:8080')",
+        vec![provider.into()],
+    )
+    .await
+    .unwrap();
+    let password = PasswordIdentityService::hash_password("ActivityPass123!")
+        .await
+        .unwrap();
+    PasswordIdentityService::create_hashed(
+        &db,
+        user,
+        provider,
+        user.to_string(),
+        password,
+        time::OffsetDateTime::now_utc(),
+    )
+    .await
+    .unwrap();
+    sec::execute(
+        &db,
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+        vec![user.into()],
+    )
+    .await
+    .unwrap();
+    let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    sec::execute(&db,"INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt($2,current_setting('app.encrypt_key')),true)",vec![user.into(),secret.into()]).await.unwrap();
+    let app = user_center::router::build(state.clone());
+    let mut browser = Browser {
+        cookies: Default::default(),
+        csrf: String::new(),
+    };
+    browser.call(&app, "/account/login", None).await;
+    let (_, login) = browser
+        .call(
+            &app,
+            "/account/login",
+            Some(&[
+                ("identifier_type", "username"),
+                ("identifier", "activity-user"),
+                ("password", "ActivityPass123!"),
+                ("redirect", "/dashboard/events"),
+            ]),
+        )
+        .await;
+    assert_eq!(login["redirect"], "/sso/mfa?redirect=%2Fdashboard%2Fevents");
+    let (_, challenge) = browser
+        .call(&app, login["redirect"].as_str().unwrap(), None)
+        .await;
+    assert_eq!(challenge["data"]["pending"], true);
+    assert!(
+        state
+            .session_service()
+            .validate(browser.cookies.get("pero_sso").unwrap())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let code = sec::totp(secret, "activity-user")
+        .unwrap()
+        .generate(time::OffsetDateTime::now_utc().unix_timestamp() as u64)
+        .to_string();
+    let (_, verified) = browser
+        .call(
+            &app,
+            "/sso/mfa",
+            Some(&[
+                ("action", "verify"),
+                ("code", &code),
+                ("redirect", "/dashboard/events"),
+            ]),
+        )
+        .await;
+    assert_eq!(verified["redirect"], "/dashboard/events");
+    for path in [
+        "/account/activity",
+        "/dashboard/events?event_type=login_success&q=activity",
+    ] {
+        let (status, activity) = browser.call(&app, path, None).await;
+        assert_eq!(status, StatusCode::OK, "{activity}");
+        assert_eq!(
+            activity["data"]["rows"].as_array().unwrap().len(),
+            1,
+            "{activity}"
+        );
+        assert_eq!(activity["data"]["rows"][0]["username"], "activity-user");
+        assert_eq!(activity["data"]["rows"][0]["event_type"], "login_success");
+    }
+    for role in ["super_admin", "admin", "remove"] {
+        let (status, rejected) = browser
+            .call(
+                &app,
+                "/dashboard/admins",
+                Some(&[("username", "activity-user"), ("role", role)]),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+        assert_eq!(rejected["error"], "cannot_change_own_admin_role");
+        assert!(
+            state
+                .session_service()
+                .validate(browser.cookies.get("pero_sso").unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            sec::role(&db, user).await.unwrap().as_deref(),
+            Some("super_admin")
+        );
+    }
+    let other = Uuid::now_v7();
+    sec::execute(
+        &db,
+        "INSERT INTO users(id,username) VALUES($1,'activity-other')",
+        vec![other.into()],
+    )
+    .await
+    .unwrap();
+    let (_, results) = browser
+        .call(&app, "/dashboard/admins/users?q=activity", None)
+        .await;
+    assert_eq!(results["users"].as_array().unwrap().len(), 1);
+    assert_eq!(results["users"][0]["id"], other.to_string());
+    let (_, roles) = browser
+        .call(&app, "/dashboard/admins?q=activity&role=super_admin", None)
+        .await;
+    assert_eq!(roles["data"]["current_user_id"], user.to_string());
+    assert_eq!(roles["data"]["rows"].as_array().unwrap().len(), 1);
+    guard.shutdown().await;
     fixture.cleanup().await;
 }

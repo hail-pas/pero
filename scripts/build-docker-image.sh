@@ -3,7 +3,8 @@
 set -euo pipefail
 umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE=pero-user-center:local
+IMAGE_TAG="git-$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+IMAGE="pero-user-center:$IMAGE_TAG"
 ARCHIVE=pero-user-center-linux-amd64.tar.gz
 if ! command -v docker >/dev/null && [[ -x "${HOME}/.docker/bin/docker" ]]; then
     export PATH="${HOME}/.docker/bin:${PATH}"
@@ -22,7 +23,9 @@ trap 'rm -rf "$STAGE"' EXIT
 docker image save --platform linux/amd64 "$IMAGE" | gzip > "$STAGE/$ARCHIVE"
 mv -f "$STAGE/$ARCHIVE" "$ROOT/deploy/$ARCHIVE"
 (cd "$ROOT/deploy" && shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256")
+printf 'PERO_IMAGE_TAG=%s\n' "$IMAGE_TAG" > "$STAGE/pero-image.env"
+mv -f "$STAGE/pero-image.env" "$ROOT/deploy/pero-image.env"
 echo "Image: $IMAGE ($PLATFORM)"
 echo "Archive: $ROOT/deploy/$ARCHIVE"
 cat "$ROOT/deploy/$ARCHIVE.sha256"
-echo 'Upload the archive, checksum and deploy/pero/compose.yaml; load the image on the server. Existing production config is reused.'
+echo 'Upload the archive, checksum, deploy/pero-image.env and deploy/pero/compose.yaml; load the image on the server. Existing production config is reused.'

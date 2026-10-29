@@ -24,7 +24,7 @@ pub fn view_response<T: serde::Serialize>(view: &'static str, tpl: T, jar: Cooki
     (jar, pero_api_axum::form::view(view, tpl)).into_response()
 }
 
-const REDIRECT_DEFAULT: &str = "/account/profile";
+const REDIRECT_DEFAULT: &str = "/account/applications";
 
 pub fn safe_redirect(raw: &str) -> String {
     pero_utils::redirect::safe_site_redirect(raw, REDIRECT_DEFAULT)
@@ -82,7 +82,10 @@ pub fn management_response(result: Result<(), crate::service::ManagementError>) 
                     axum::http::StatusCode::FORBIDDEN
                 }
                 "rate_limited" => axum::http::StatusCode::TOO_MANY_REQUESTS,
-                "policy_conflict" => axum::http::StatusCode::CONFLICT,
+                "not_found" => axum::http::StatusCode::NOT_FOUND,
+                "permission_revision_conflict" | "policy_conflict" => {
+                    axum::http::StatusCode::CONFLICT
+                }
                 "notification_disabled" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 _ => axum::http::StatusCode::BAD_REQUEST,
             };

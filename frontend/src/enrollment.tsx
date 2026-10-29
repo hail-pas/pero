@@ -1,5 +1,16 @@
+import { useAction } from "./use-action";
+import { can } from "./permissions";
 import { useState } from "react";
-import { Alert, Button, Stack, Typography, Pagination } from "@mui/material";
+import {
+  Alert,
+  Button,
+  Stack,
+  Typography,
+  Pagination,
+  Avatar,
+  TextField,
+  Box,
+} from "@mui/material";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { FieldsForm } from "./forms";
 import { Heading, Panel, type Actions } from "./shared";
@@ -29,7 +40,8 @@ export function Enrollment({
   data: ViewDataMap["EnrollmentView"];
   mutate: Actions["mutate"];
 }) {
-  const [failure, setFailure] = useState("");
+  const { error: failure, busy, run, clearError } = useAction();
+  const [formBusy, setFormBusy] = useState(false);
   return (
     <>
       {failure && <Alert severity="error">{failure}</Alert>}
@@ -54,17 +66,28 @@ export function Enrollment({
             </Alert>
             {data.reason && <Typography>{data.reason}</Typography>}
             <Button
+              disabled={busy || formBusy}
               onClick={() =>
-                mutate("/sso/register", { action: "reset" }).catch((e) =>
-                  setFailure(e.message),
-                )
+                run(() => mutate("/sso/register", { action: "reset" }))
               }
             >
               {t("退出本次注册流程")}
             </Button>
           </Stack>
         ) : data.mode === "closed" ? (
-          <Alert severity="info">{t("注册已关闭")}</Alert>
+          <Stack spacing={2}>
+            <Alert severity="info">{t("注册已关闭")}</Alert>
+            {data.status && (
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  run(() => mutate("/sso/register", { action: "reset" }))
+                }
+              >
+                {t("退出本次注册流程")}
+              </Button>
+            )}
+          </Stack>
         ) : data.status ? (
           <Stack spacing={3}>
             <Typography>
@@ -77,10 +100,9 @@ export function Enrollment({
                   {t("请确认验证此邮箱。邀请仅授予邮件所指定的应用资格。")}
                 </Alert>
                 <Button
+                  disabled={busy || formBusy}
                   onClick={() =>
-                    mutate("/sso/register", { action: "verify" }).catch((e) =>
-                      setFailure(e.message),
-                    )
+                    run(() => mutate("/sso/register", { action: "verify" }))
                   }
                 >
                   {t("确认邮箱并继续")}
@@ -106,6 +128,11 @@ export function Enrollment({
                   {data.social ? t("重新验证第三方身份") : t("登录已有账户")}
                 </Button>
                 <FieldsForm
+                  disabled={busy}
+                  onBusyChange={(submitting) => {
+                    setFormBusy(submitting);
+                    if (submitting) clearError();
+                  }}
                   fields={[
                     { name: "username", label: t("用户名") },
                     ...(!data.social
@@ -133,10 +160,9 @@ export function Enrollment({
               </>
             )}
             <Button
+              disabled={busy || formBusy}
               onClick={() =>
-                mutate("/sso/register", { action: "reset" }).catch((e) =>
-                  setFailure(e.message),
-                )
+                run(() => mutate("/sso/register", { action: "reset" }))
               }
             >
               {t("退出本次注册流程")}
@@ -268,7 +294,15 @@ export function Admission({
   ask,
   editor,
 }: { data: ViewDataMap["AdmissionView"] } & Actions) {
-  const [failure, setFailure] = useState("");
+  const { error: failure, busy, run } = useAction();
+  const [search, setSearch] = useState("");
+  const apps = data.rows.filter(
+    (r) =>
+      r.status === "active" &&
+      `${r.name} ${r.code} ${r.description || ""}`
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase()),
+  );
   return (
     <>
       {failure && <Alert severity="error">{failure}</Alert>}
@@ -278,6 +312,60 @@ export function Admission({
           "退出应用会撤销该应用访问资格；注销账户会移除个人资料并退出所有会话。",
         )}
       />
+      <Panel title={t("我的应用")}>
+        <TextField
+          fullWidth
+          label={t("搜索应用")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          sx={{ mb: 3 }}
+        />
+        {!apps.length && <Typography>{t("暂无可用应用")}</Typography>}
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr",
+              sm: "repeat(2, 1fr)",
+              lg: "repeat(3, 1fr)",
+            },
+            gap: 2,
+          }}
+        >
+          {apps.map((app) => (
+            <Stack
+              key={app.id}
+              spacing={2}
+              sx={{ border: 1, borderColor: "divider", borderRadius: 2, p: 3 }}
+            >
+              <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+                <Avatar src={app.logo_url || undefined} variant="rounded">
+                  {app.name.slice(0, 1)}
+                </Avatar>
+                <Typography variant="h6">{app.name}</Typography>
+              </Stack>
+              <Typography variant="body2" sx={{ flex: 1 }}>
+                {app.description}
+              </Typography>
+              {app.homepage_url && /^https?:\/\//i.test(app.homepage_url) ? (
+                <Button
+                  component="a"
+                  href={app.homepage_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="contained"
+                >
+                  {t("打开应用")}
+                </Button>
+              ) : (
+                <Typography variant="caption">
+                  {t("请联系管理员配置应用主页")}
+                </Typography>
+              )}
+            </Stack>
+          ))}
+        </Box>
+      </Panel>
       {data.progress && (
         <Progress data={data.progress} actions={{ mutate, ask, editor }} />
       )}
@@ -312,10 +400,13 @@ export function Admission({
                 <Typography>{t("请联系管理员重新授权")}</Typography>
               ) : (
                 <Button
+                  disabled={busy}
                   onClick={() =>
-                    mutate(`/account/applications/${r.id}`, {
-                      action: "join",
-                    }).catch((e) => setFailure(e.message))
+                    run(() =>
+                      mutate(`/account/applications/${r.id}`, {
+                        action: "join",
+                      }),
+                    )
                   }
                 >
                   {t("申请加入（邮件验证）")}
@@ -366,7 +457,7 @@ function Progress({
   actions: Actions;
 }) {
   const [params, setParams] = useSearchParams();
-  const [failure, setFailure] = useState("");
+  const { error: failure, busy, run } = useAction();
   const update = (values: Record<string, unknown>) => {
     const next = new URLSearchParams(params);
     next.delete("page");
@@ -385,6 +476,8 @@ function Progress({
         </Typography>
       )}
       <FieldsForm
+        compact
+        submitSize="small"
         key={params.toString()}
         fields={[
           { name: "q", label: t("搜索邮箱或应用") },
@@ -485,12 +578,13 @@ function Progress({
                 <>
                   {!admin && (
                     <Button
+                      disabled={busy}
                       onClick={() =>
-                        actions
-                          .mutate(`/account/enrollments/${r.id}`, {
+                        run(() =>
+                          actions.mutate(`/account/enrollments/${r.id}`, {
                             action: "continue",
-                          })
-                          .catch((e) => setFailure(e.message))
+                          }),
+                        )
                       }
                     >
                       {t("继续办理")}
@@ -548,7 +642,7 @@ export function AppMembers({
     <>
       <Heading
         title={t("应用成员")}
-        description={data.app_name}
+        description={`${data.app_name} · ${t("撤销访问后，用户仍可能通过注册或邀请流程重新获得资格。")}`}
         back={`/dashboard/apps/${data.app_id}`}
       />
       <Panel title={t("查询成员")}>
@@ -578,7 +672,7 @@ export function AppMembers({
           label={t("查询")}
         />
       </Panel>
-      {!data.system && (
+      {!data.system && can(data.layout, "apps.members.manage", data.app_id) && (
         <Panel title={t("添加成员")}>
           <FieldsForm
             fields={[
@@ -606,25 +700,26 @@ export function AppMembers({
                 {r.nickname || r.username} · {r.username} ·{" "}
                 {admissionStatus(r.status)}
               </Typography>
-              {!data.system && (
-                <Button
-                  onClick={() =>
-                    ask(
-                      r.status === "active"
-                        ? t("撤销应用访问")
-                        : t("授予访问资格"),
-                      endpoint,
-                      {
-                        action: r.status === "active" ? "revoke" : "grant",
-                        user_id: r.user_id,
-                        username: r.username,
-                      },
-                    )
-                  }
-                >
-                  {r.status === "active" ? t("撤销") : t("启用")}
-                </Button>
-              )}
+              {!data.system &&
+                can(data.layout, "apps.members.manage", data.app_id) && (
+                  <Button
+                    onClick={() =>
+                      ask(
+                        r.status === "active"
+                          ? t("撤销应用访问")
+                          : t("授予访问资格"),
+                        endpoint,
+                        {
+                          action: r.status === "active" ? "revoke" : "grant",
+                          user_id: r.user_id,
+                          username: r.username,
+                        },
+                      )
+                    }
+                  >
+                    {r.status === "active" ? t("撤销") : t("启用")}
+                  </Button>
+                )}
             </Stack>
           ))}
           <Pagination

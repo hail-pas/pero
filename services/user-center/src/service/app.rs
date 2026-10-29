@@ -1,4 +1,5 @@
-//! Application policy mutations hold the policy lock through grant revocation.
+use super::permissions::{self, Actor, Permission as P};
+// Application policy mutations hold the policy lock through grant revocation.
 use super::ManagementError;
 use crate::db::{
     entity::apps,
@@ -40,6 +41,7 @@ impl AppUpdate {
 
 pub async fn create(
     db: &DatabaseConnection,
+    actor: &Actor,
     code: &str,
     input: AppUpdate,
 ) -> Result<(), ManagementError> {
@@ -47,9 +49,15 @@ pub async fn create(
         return Err(ManagementError::Invalid("code_and_name_required"));
     }
     input.validate()?;
+    let txn = db.begin().await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    if !access.super_admin {
+        return Err(ManagementError::Invalid("forbidden"));
+    }
+
     if apps::Entity::find()
         .filter(apps::Column::Code.eq(code))
-        .one(db)
+        .one(&txn)
         .await?
         .is_some()
     {
@@ -64,13 +72,14 @@ pub async fn create(
         ..Default::default()
     };
     input.apply(&mut active);
-    active.insert(db).await.map_err(|error| {
+    active.insert(&txn).await.map_err(|error| {
         if crate::db::error::is_unique_violation(&error) {
             ManagementError::Invalid("code_exists")
         } else {
             error.into()
         }
     })?;
+    txn.commit().await?;
     Ok(())
 }
 
@@ -91,12 +100,15 @@ async fn editable(
 
 pub async fn update(
     db: &DatabaseConnection,
+    actor: &Actor,
     id: uuid::Uuid,
     input: AppUpdate,
 ) -> Result<(), ManagementError> {
     input.validate()?;
     let txn = db.begin().await?;
-    super::admin::lock_policy(&txn).await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    permissions::app(&txn, &access, id, P::AppsManage).await?;
+
     let mut active: apps::ActiveModel = editable(&txn, id).await?.into();
     input.apply(&mut active);
     active.update(&txn).await?;
@@ -104,9 +116,15 @@ pub async fn update(
     Ok(())
 }
 
-pub async fn toggle_status(db: &DatabaseConnection, id: uuid::Uuid) -> Result<(), ManagementError> {
+pub async fn toggle_status(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    id: uuid::Uuid,
+) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
-    super::admin::lock_policy(&txn).await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    permissions::app(&txn, &access, id, P::AppsManage).await?;
+
     let app = editable(&txn, id).await?;
     let status = match app.status {
         CommonStatus::Active => CommonStatus::Disabled,

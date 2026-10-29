@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 cache_key_specs! {
     error = pero_error::AppError;
 
+    pub integration_test: IntegrationTestKey => IntegrationTestValue {
+        pattern: "integration_test:{hash}", ttl: 600, args: (hash: &str),
+    }
+
     pub mfa_attempt: MfaAttemptKey => u32 { pattern: "mfa_attempt:{user}", ttl: 300, args: (user: &str), }
 
     pub pending_req: PendingReqKey => PendingReqValue {
@@ -62,4 +66,15 @@ pub struct SocialLinkValue {
     pub email_verified: bool,
     pub name: Option<String>,
     pub avatar_url: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct IntegrationTestValue {
+    pub user_id: uuid::Uuid,
+    pub session_id: uuid::Uuid,
+    pub app_id: uuid::Uuid,
+    pub client_id: uuid::Uuid,
+    pub verifier: String,
+    pub nonce: String,
+    pub code: Option<String>,
 }

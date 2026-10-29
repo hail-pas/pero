@@ -21,6 +21,8 @@ cache_key_specs! {
         args: (account: &str),
     }
 
+    pub rl_admin_members: RlAdminMembersKey => u64 { pattern: "rl:admin:members:{actor}", ttl: 60, args: (actor: &str), }
+
     pub rl_enrollment_email: RlEnrollmentEmailKey => u64 { pattern: "rl:enrollment:email:{hash}", ttl: 3600, args: (hash: &str), }
 
     pub rl_register_ip: RlRegisterIpKey => u64 {

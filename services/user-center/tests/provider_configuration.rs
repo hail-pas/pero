@@ -47,16 +47,26 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         let mut invalid = form();
         invalid.code = code.into();
         assert_eq!(
-            providers::create(State(state.clone()), jar.clone(), Form(invalid))
-                .await
-                .status(),
+            providers::create(
+                State(state.clone()),
+                jar.clone(),
+                database::management_context(&db).await,
+                Form(invalid)
+            )
+            .await
+            .status(),
             400
         );
     }
     assert_eq!(
-        providers::create(State(state.clone()), jar.clone(), Form(form()))
-            .await
-            .status(),
+        providers::create(
+            State(state.clone()),
+            jar.clone(),
+            database::management_context(&db).await,
+            Form(form())
+        )
+        .await
+        .status(),
         200
     );
     use user_center::db::entity::identity_providers as ip;
@@ -72,6 +82,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     let response = providers::update(
         State(state.clone()),
         jar.clone(),
+        database::management_context(&db).await,
         Path(row.id),
         Form(changed),
     )
@@ -96,7 +107,13 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     oidc.issuer = "https://old.example.test".into();
     oidc.jwks_uri = "https://old.example.test/jwks".into();
     oidc.scopes = "openid".into();
-    providers::create(State(state.clone()), jar.clone(), Form(oidc.clone())).await;
+    providers::create(
+        State(state.clone()),
+        jar.clone(),
+        database::management_context(&db).await,
+        Form(oidc.clone()),
+    )
+    .await;
     let oidc_id = ip::Entity::find()
         .filter(ip::Column::Code.eq("oidc"))
         .one(&db)
@@ -106,9 +123,15 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         .id;
     oidc.issuer = "https://new.example.test".into();
     assert_eq!(
-        providers::update(State(state.clone()), jar.clone(), Path(oidc_id), Form(oidc))
-            .await
-            .status(),
+        providers::update(
+            State(state.clone()),
+            jar.clone(),
+            database::management_context(&db).await,
+            Path(oidc_id),
+            Form(oidc)
+        )
+        .await
+        .status(),
         400
     );
     for field in ["client_id", "userinfo_endpoint"] {
@@ -122,6 +145,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
             providers::update(
                 State(state.clone()),
                 jar.clone(),
+                database::management_context(&db).await,
                 Path(row.id),
                 Form(repointed)
             )
@@ -196,6 +220,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         user_center::web::dashboard::keys::create(
             State(state.clone()),
             key_jar.clone(),
+            database::management_context(&db).await,
             Path(local_id),
             Form(key_form())
         )
@@ -210,6 +235,7 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         user_center::web::dashboard::keys::create(
             State(state.clone()),
             key_jar,
+            database::management_context(&db).await,
             Path(local_id),
             Form(invalid)
         )
@@ -364,9 +390,13 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
     );
     service.delete_social_link_cache(&pending).await;
 
-    user_center::service::provider::toggle_enabled(&db, row.id)
-        .await
-        .unwrap();
+    user_center::service::provider::toggle_enabled(
+        &db,
+        &database::management_actor(&db).await,
+        row.id,
+    )
+    .await
+    .unwrap();
     let accepted_link = service
         .link_social_identity(&password, row.id, &link)
         .await

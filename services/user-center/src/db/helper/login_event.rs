@@ -1,5 +1,5 @@
 use ipnetwork::IpNetwork;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, Set};
 use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -17,8 +17,8 @@ pub struct RecordParams {
     pub detail: Value,
 }
 
-pub async fn record(
-    db: &DatabaseConnection,
+pub async fn record<C: ConnectionTrait>(
+    db: &C,
     params: RecordParams,
 ) -> Result<login_events::Model, sea_orm::DbErr> {
     let now = OffsetDateTime::now_utc();
@@ -33,5 +33,7 @@ pub async fn record(
         detail: Set(params.detail),
         created_at: Set(now),
     };
-    model.insert(db).await
+    model.insert(db).await.inspect_err(|error| {
+        tracing::error!(%error, "Failed to persist login event");
+    })
 }

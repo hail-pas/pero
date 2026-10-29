@@ -1,3 +1,4 @@
+use crate::service::permissions::Permission as P;
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
@@ -24,6 +25,7 @@ pub async fn list(
     Query(query): Query<ListQuery>,
     admin: AdminContext,
 ) -> Response {
+    let access = admin.access.clone();
     let AdminPage {
         layout,
         csrf_token,
@@ -42,6 +44,7 @@ pub async fn list(
         &q,
         &status_filter,
         &type_filter,
+        &access,
     )
     .await
     {
@@ -88,6 +91,7 @@ pub async fn new_form(
 pub async fn create(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     axum::Form(form): axum::Form<AppFormData>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
@@ -98,7 +102,9 @@ pub async fn create(
         Ok(input) => input,
         Err(error) => return json_error(error),
     };
-    util::management_response(crate::service::app::create(&state.db, form.code.trim(), input).await)
+    util::management_response(
+        crate::service::app::create(&state.db, &admin.actor(&state), form.code.trim(), input).await,
+    )
 }
 
 pub async fn detail(
@@ -107,6 +113,7 @@ pub async fn detail(
     Path(id): Path<uuid::Uuid>,
     admin: AdminContext,
 ) -> Response {
+    let access = admin.access.clone();
     let AdminPage {
         layout,
         csrf_token,
@@ -119,9 +126,13 @@ pub async fn detail(
         _ => return Redirect::to("/dashboard/apps").into_response(),
     };
 
-    let clients = match crate::db::helper::admin::list_clients_by_app(&state.db, id).await {
-        Ok(data) => data,
-        Err(error) => return util::dependency_error(error),
+    let clients = if !access.can_app(id, P::ClientsRead) {
+        Vec::new()
+    } else {
+        match crate::db::helper::admin::list_clients_by_app(&state.db, id).await {
+            Ok(data) => data,
+            Err(error) => return util::dependency_error(error),
+        }
     };
 
     let tpl = AppDetailView {
@@ -177,6 +188,7 @@ pub async fn edit_form(
 pub async fn update(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<AppFormData>,
 ) -> Response {
@@ -187,7 +199,9 @@ pub async fn update(
         Ok(input) => input,
         Err(error) => return json_error(error),
     };
-    util::management_response(crate::service::app::update(&state.db, id, input).await)
+    util::management_response(
+        crate::service::app::update(&state.db, &admin.actor(&state), id, input).await,
+    )
 }
 
 fn app_input(form: &AppFormData) -> Result<crate::service::app::AppUpdate, &'static str> {
@@ -203,11 +217,14 @@ fn app_input(form: &AppFormData) -> Result<crate::service::app::AppUpdate, &'sta
 pub async fn toggle_status(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<CsrfOnly>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    util::management_response(crate::service::app::toggle_status(&state.db, id).await)
+    util::management_response(
+        crate::service::app::toggle_status(&state.db, &admin.actor(&state), id).await,
+    )
 }

@@ -1,11 +1,14 @@
 pub mod access;
 pub mod account;
 pub mod account_security;
+pub mod account_sync;
 pub mod admin;
+pub mod admin_sessions;
 pub mod app;
 pub mod client;
 pub mod contact;
 pub mod enrollment;
+pub mod integration;
 pub mod keys;
 pub mod login;
 pub mod logout;
@@ -46,3 +49,7 @@ impl From<sea_orm::DbErr> for ManagementError {
 }
 
 pub mod token_status;
+
+pub mod backchannel;
+
+pub mod permissions;

@@ -83,6 +83,8 @@ pub async fn run(
             return response;
         }
     };
+    let permission_change =
+        target.starts_with("/dashboard/admins/") && target.ends_with("/permissions");
     let result = audit_events::ActiveModel {
         id: Set(event.id),
         outcome: Set(if status.is_success() {
@@ -92,7 +94,11 @@ pub async fn run(
         }
         .into()),
         http_status: Set(Some(status.as_u16() as i32)),
-        details: Set(changes(before, after)),
+        details: if permission_change {
+            sea_orm::ActiveValue::NotSet
+        } else {
+            Set(changes(before, after))
+        },
         ..Default::default()
     }
     .update(&state.db)
@@ -256,7 +262,7 @@ async fn snapshot(
             "SELECT jsonb_build_object('username',username,'nickname',nickname,'status',status,'email_verified',email_verified_at IS NOT NULL,'phone_verified',phone_verified_at IS NOT NULL) AS value FROM users WHERE id=$1"
         }
         Some("clients") => {
-            "SELECT jsonb_build_object('identifier',identifier,'status',status,'type',type,'redirect_uris',redirect_uris,'post_logout_redirect_uris',post_logout_redirect_uris,'scopes',scopes,'grant_types',grant_types,'require_pkce',require_pkce,'access_token_ttl_seconds',access_token_ttl_seconds,'refresh_token_ttl_seconds',refresh_token_ttl_seconds,'id_token_ttl_seconds',id_token_ttl_seconds,'previous_secret_expires_at',previous_secret_expires_at) AS value FROM oauth_clients WHERE id=$1"
+            "SELECT jsonb_build_object('identifier',identifier,'status',status,'type',type,'redirect_uris',redirect_uris,'post_logout_redirect_uris',post_logout_redirect_uris,'backchannel_logout_uri',backchannel_logout_uri,'account_sync_uri',account_sync_uri,'scopes',scopes,'grant_types',grant_types,'require_pkce',require_pkce,'access_token_ttl_seconds',access_token_ttl_seconds,'refresh_token_ttl_seconds',refresh_token_ttl_seconds,'id_token_ttl_seconds',id_token_ttl_seconds,'previous_secret_expires_at',previous_secret_expires_at) AS value FROM oauth_clients WHERE id=$1"
         }
         Some("enrollments") => {
             "SELECT jsonb_build_object('status',status,'reason',reason,'approved_by',approved_by,'approved_at',approved_at,'last_sent_at',last_sent_at) AS value FROM enrollments WHERE id=$1"

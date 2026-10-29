@@ -98,7 +98,10 @@ async fn render<T: Serialize>(
     pagination: (u64, u64),
 ) -> Response {
     let (page, total_pages) = pagination;
-    let layout = AccountLayout::from_user(&state.db, user).await;
+    let layout = match AccountLayout::from_user(&state.db, user).await {
+        Ok(layout) => layout,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
     util::view_response(
         view,
@@ -126,6 +129,22 @@ pub struct SessionRow {
     pub last_seen_at: time::OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: time::OffsetDateTime,
+}
+
+impl SessionRow {
+    pub fn new(s: sso_sessions::Model, current: Uuid) -> Self {
+        Self {
+            id: s.id,
+            ip: s.ip.map(|ip| ip.to_string()),
+            user_agent: s.user_agent,
+            current: s.id == current,
+            authentication_pending: s.recovery_pending
+                || s.mfa_required && s.mfa_verified_at.is_none(),
+            created_at: s.created_at,
+            last_seen_at: s.last_seen_at,
+            expires_at: s.expires_at,
+        }
+    }
 }
 
 pub async fn sessions(
@@ -156,17 +175,7 @@ pub async fn sessions(
     };
     let rows = rows
         .into_iter()
-        .map(|s| SessionRow {
-            id: s.id,
-            ip: s.ip.map(|ip| ip.to_string()),
-            user_agent: s.user_agent,
-            current: s.id == account.session.id,
-            authentication_pending: s.recovery_pending
-                || s.mfa_required && s.mfa_verified_at.is_none(),
-            created_at: s.created_at,
-            last_seen_at: s.last_seen_at,
-            expires_at: s.expires_at,
-        })
+        .map(|s| SessionRow::new(s, account.session.id))
         .collect();
     render(
         &state,
@@ -511,7 +520,10 @@ pub async fn identities(
             })
         })
         .collect();
-    let layout = AccountLayout::from_user(&state.db, &account.user).await;
+    let layout = match AccountLayout::from_user(&state.db, &account.user).await {
+        Ok(layout) => layout,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
     util::view_response(
         "IdentityListView",

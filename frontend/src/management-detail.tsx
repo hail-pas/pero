@@ -1,7 +1,8 @@
+import { can, isSuper } from "./permissions";
 import { AddRounded, EditRounded } from "@mui/icons-material";
-import { Box, Button, Card, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Stack, Typography } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
-import { date, lower } from "./api";
+import { date, lower, errorText } from "./api";
 import type { ViewEnvelope, DetailView } from "./contracts";
 import { clientFields, keyFields } from "./forms";
 import { t, useLocale } from "./i18n";
@@ -13,6 +14,13 @@ export function ManagementDetail({
   editor,
 }: { page: ViewEnvelope<DetailView> } & Actions) {
   const { view, data } = page;
+  const allowed = (p: string) =>
+    can(
+      data.layout,
+      p,
+      page.view === "AppDetailView" ? page.data.app.id : undefined,
+    );
+  const superAdmin = isSuper(data.layout);
   useLocale();
   const isApp = view === "AppDetailView",
     isUser = view === "UserDetailView",
@@ -62,20 +70,46 @@ export function ManagementDetail({
         })}
         back={`/dashboard/${kind}`}
         action={
-          <Button
-            component={RouterLink}
-            to={`${base}/edit`}
-            variant="contained"
-            color="inherit"
-            startIcon={<EditRounded />}
-          >
-            {t("编辑")}
-          </Button>
+          (isApp
+            ? allowed("apps.manage")
+            : isUser
+              ? allowed("users.update") || allowed("users.contact.update")
+              : superAdmin && !system) && (
+            <Button
+              component={RouterLink}
+              to={`${base}/edit`}
+              variant="contained"
+              color="inherit"
+              startIcon={<EditRounded />}
+            >
+              {t("编辑")}
+            </Button>
+          )
         }
       />
+      {data.error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {errorText(data.error)}
+        </Alert>
+      )}
+      {isUser && superAdmin && (
+        <Button component={RouterLink} to={`${base}/security`} sx={{ mb: 2 }}>
+          {t("会话与登录锁定")}
+        </Button>
+      )}
+      {isApp && superAdmin && (
+        <Button
+          component={RouterLink}
+          to={`${base}/integration`}
+          sx={{ mb: 2 }}
+        >
+          {t("接入向导与诊断")}
+        </Button>
+      )}
       {isApp && !system && (
         <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
           <Button
+            sx={{ display: superAdmin ? undefined : "none" }}
             component={RouterLink}
             to={`/dashboard/registration?app=${row.id}`}
           >
@@ -83,9 +117,10 @@ export function ManagementDetail({
           </Button>
           <Button
             component={RouterLink}
+            sx={{ display: allowed("apps.members.read") ? undefined : "none" }}
             to={`/dashboard/apps/${row.id}/members`}
           >
-            {t("应用成员")}
+            {t("本应用成员")}
           </Button>
         </Stack>
       )}
@@ -117,11 +152,12 @@ export function ManagementDetail({
           ))}
         </Box>
       </Panel>
-      {isApp && (
+      {isApp && allowed("clients.read") && (
         <Panel
           title={t("OAuth 客户端")}
           action={
             <Button
+              sx={{ display: allowed("clients.manage") ? undefined : "none" }}
               startIcon={<AddRounded />}
               onClick={() =>
                 editor(
@@ -179,14 +215,34 @@ export function ManagementDetail({
                 sx={{ flexWrap: "wrap", alignItems: "center", gap: 1 }}
               >
                 <Button
+                  sx={{
+                    display: allowed("clients.manage") ? undefined : "none",
+                  }}
                   size="small"
                   onClick={() =>
                     editor(
                       t("编辑 OAuth 客户端"),
                       `/dashboard/clients/${client.id}/edit`,
-                      clientFields.filter(
-                        (field) => field.name !== "identifier",
-                      ),
+                      clientFields
+                        .filter(
+                          (field) =>
+                            field.name !== "identifier" &&
+                            (field.name !== "secret" ||
+                              allowed("clients.secret.rotate")),
+                        )
+                        .map((field) =>
+                          client.account_sync_uri &&
+                          !isSuper(data.layout) &&
+                          ["scopes", "client_type"].includes(field.name)
+                            ? {
+                                ...field,
+                                disabled: true,
+                                hint: t(
+                                  "账户同步已启用，请由超级管理员调整类型和 scope。",
+                                ),
+                              }
+                            : field,
+                        ),
                       {
                         name: client.name,
                         client_type: lower(client.type),
@@ -207,8 +263,60 @@ export function ManagementDetail({
                   {t("编辑配置")}
                 </Button>
                 <Button
+                  sx={{
+                    display: allowed("clients.manage") ? undefined : "none",
+                  }}
                   size="small"
-                  disabled={lower(client.type) === "public"}
+                  onClick={() =>
+                    editor(
+                      t("应用注销通知"),
+                      `/dashboard/clients/${client.id}/backchannel-logout`,
+                      [
+                        {
+                          name: "backchannel_logout_uri",
+                          label: t("Back-channel Logout 地址"),
+                          hint: t("应用接收注销令牌的 HTTPS 地址；留空停用"),
+                        },
+                      ],
+                      {
+                        backchannel_logout_uri:
+                          client.backchannel_logout_uri || "",
+                      },
+                    )
+                  }
+                >
+                  {t("应用注销通知")}
+                </Button>
+                {isSuper(data.layout) &&
+                  lower(client.type) === "confidential" && (
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        editor(
+                          t("账户生命周期同步"),
+                          `/dashboard/clients/${client.id}/account-sync`,
+                          [
+                            {
+                              name: "account_sync_uri",
+                              label: t("账户同步地址"),
+                              hint: t(
+                                "应用接收签名事件的 HTTPS 地址；保存后同步现有成员，留空停用。资料按客户端 scope 提供。",
+                              ),
+                            },
+                          ],
+                          { account_sync_uri: client.account_sync_uri || "" },
+                        )
+                      }
+                    >
+                      {t("账户生命周期同步")}
+                    </Button>
+                  )}
+                <Button
+                  size="small"
+                  disabled={
+                    !allowed("clients.secret.rotate") ||
+                    lower(client.type) === "public"
+                  }
                   onClick={() =>
                     editor(
                       t("平滑轮换密钥"),
@@ -237,6 +345,11 @@ export function ManagementDetail({
                       {date(client.previous_secret_expires_at)}
                     </Typography>
                     <Button
+                      sx={{
+                        display: allowed("clients.secret.rotate")
+                          ? undefined
+                          : "none",
+                      }}
                       size="small"
                       onClick={() =>
                         ask(
@@ -251,7 +364,10 @@ export function ManagementDetail({
                 )}
                 <Button
                   size="small"
-                  disabled={lower(client.type) === "public"}
+                  disabled={
+                    !allowed("clients.secret.rotate") ||
+                    lower(client.type) === "public"
+                  }
                   onClick={() =>
                     ask(
                       t("重置客户端密钥"),
@@ -264,6 +380,9 @@ export function ManagementDetail({
                   {t("紧急重置密钥")}
                 </Button>
                 <Button
+                  sx={{
+                    display: allowed("clients.manage") ? undefined : "none",
+                  }}
                   size="small"
                   onClick={() =>
                     ask(
@@ -327,7 +446,10 @@ export function ManagementDetail({
                   <Button
                     size="small"
                     color="error"
-                    disabled={lower(access.status) !== "active"}
+                    disabled={
+                      !can(data.layout, "apps.members.manage", access.app_id) ||
+                      lower(access.status) !== "active"
+                    }
                     onClick={() =>
                       ask(
                         t("撤销应用权限"),
@@ -347,6 +469,7 @@ export function ManagementDetail({
             title={t("登录身份")}
             action={
               <Button
+                sx={{ display: allowed("events.read") ? undefined : "none" }}
                 component={RouterLink}
                 to={`/dashboard/events?user_id=${data.user.id}`}
               >
@@ -387,7 +510,7 @@ export function ManagementDetail({
           </Panel>
         </>
       )}
-      {!isApp && !isUser && (
+      {!isApp && !isUser && superAdmin && (
         <Panel
           title={t("签名密钥")}
           action={
@@ -401,6 +524,29 @@ export function ManagementDetail({
             </Button>
           }
         >
+          {data.signing_health && (
+            <Alert
+              severity={
+                data.signing_health.healthy
+                  ? data.signing_health.expiring
+                    ? "warning"
+                    : "success"
+                  : "error"
+              }
+              sx={{ mb: 2 }}
+            >
+              {!data.signing_health.healthy
+                ? t("当前签名能力异常，请检查有效期与私钥")
+                : data.signing_health.expiring
+                  ? t("签名正常，但密钥将在 30 天内到期，请安排轮换")
+                  : t("当前签名能力正常")}
+            </Alert>
+          )}
+          <Typography variant="body2">
+            {t(
+              "先添加并计划激活新密钥，旧公钥保留至安全撤销时间；撤销会停止旧令牌验签。",
+            )}
+          </Typography>
           {!data.keys?.length && <Empty text={t("尚未配置密钥")} />}
           {data.keys?.map((key) => (
             <Stack
@@ -412,6 +558,17 @@ export function ManagementDetail({
             >
               <Box>
                 <Typography variant="subtitle2">{key.kid}</Typography>
+                <Typography variant="body2">
+                  {t("到期时间")}：{date(key.expires_at)}
+                </Typography>
+                <Typography variant="body2">
+                  {t("计划激活")}：{date(key.activate_at)}
+                </Typography>
+                <Typography variant="body2">
+                  {key.active
+                    ? t("先激活替代密钥后再退役")
+                    : `${t("可安全撤销时间")}：${key.safe_revoke_at ? date(key.safe_revoke_at) : t("现在")}`}
+                </Typography>
                 <Typography
                   variant="caption"
 
@@ -426,7 +583,39 @@ export function ManagementDetail({
                       : t("未激活")}
                 </Typography>
               </Box>
-              <Stack direction="row">
+              <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
+                {key.activate_at && (
+                  <Button
+                    onClick={() =>
+                      ask(
+                        t("取消轮换计划"),
+                        `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
+                        { activate_at: "" },
+                      )
+                    }
+                  >
+                    {t("取消轮换计划")}
+                  </Button>
+                )}
+                <Button
+                  disabled={!!key.revoked_at || key.active}
+                  onClick={() =>
+                    editor(
+                      t("轮换计划"),
+                      `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
+                      [
+                        {
+                          name: "activate_at",
+                          label: t("计划激活时间（RFC3339，带时区）"),
+                          required: true,
+                        },
+                      ],
+                      { activate_at: key.activate_at || "" },
+                    )
+                  }
+                >
+                  {t("轮换计划")}
+                </Button>
                 <Button
                   disabled={!!key.revoked_at || key.active}
                   onClick={() =>
@@ -440,17 +629,40 @@ export function ManagementDetail({
                 </Button>
                 <Button
                   color="error"
-                  disabled={!!key.revoked_at}
+                  disabled={
+                    !!key.revoked_at ||
+                    key.active ||
+                    (!!key.safe_revoke_at &&
+                      Date.parse(key.safe_revoke_at) > Date.now())
+                  }
                   onClick={() =>
                     ask(
                       t("撤销密钥"),
                       `${base}/keys/${encodeURIComponent(key.kid!)}/revoke`,
                       {},
-                      t("密钥撤销后无法用于新的签名操作。"),
+                      t(
+                        "撤销会从公钥集移除此密钥，旧令牌将无法验签。确认已超过安全撤销时间？",
+                      ),
                     )
                   }
                 >
                   {t("撤销")}
+                </Button>
+                <Button
+                  color="error"
+                  disabled={!!key.revoked_at}
+                  onClick={() =>
+                    ask(
+                      t("紧急撤销泄露密钥"),
+                      `${base}/keys/${encodeURIComponent(key.kid)}/revoke`,
+                      { emergency: true },
+                      t(
+                        "仅限密钥泄露：立即停止签名并移除公钥，所有旧令牌验签会失败，可能中断登录。确认继续？",
+                      ),
+                    )
+                  }
+                >
+                  {t("紧急撤销")}
                 </Button>
               </Stack>
             </Stack>
@@ -461,6 +673,9 @@ export function ManagementDetail({
         {isUser ? (
           <Stack direction="row" sx={{ flexWrap: "wrap", gap: 2 }}>
             <Button
+              sx={{
+                display: allowed("users.status.update") ? undefined : "none",
+              }}
               onClick={() =>
                 editor(t("修改用户状态"), `${base}/set-status`, [
                   {
@@ -479,6 +694,9 @@ export function ManagementDetail({
               {t("修改账户状态")}
             </Button>
             <Button
+              sx={{
+                display: allowed("users.password.reset") ? undefined : "none",
+              }}
               color="warning"
               onClick={() =>
                 editor(t("重置用户密码"), `${base}/reset-password`, [
@@ -501,7 +719,9 @@ export function ManagementDetail({
             </Typography>
             <Button
               color="warning"
-              disabled={system}
+              disabled={
+                system || (isApp ? !allowed("apps.manage") : !superAdmin)
+              }
               onClick={() => ask(t("切换启用状态"), `${base}/toggle`)}
             >
               {t("切换启用状态")}

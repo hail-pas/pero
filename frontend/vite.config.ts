@@ -72,7 +72,10 @@ export default defineConfig(({ command }) => ({
                 "/sso/error",
                 "/sso/social/link",
               ].includes(pathname) ||
-              /^\/dashboard\/apps\/[^/]+\/members$/.test(pathname) ||
+              /^\/dashboard\/apps\/[^/]+\/(members|integration)$/.test(
+                pathname,
+              ) ||
+              /^\/dashboard\/users\/[^/]+\/security$/.test(pathname) ||
               /^\/dashboard\/audit\/[^/]+$/.test(pathname) ||
               /^\/dashboard(?:\/(?:apps|users|providers)(?:\/[^/]+(?:\/edit)?)?)?$/.test(
                 pathname,

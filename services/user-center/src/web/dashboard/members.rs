@@ -53,7 +53,7 @@ pub async fn list(
     }
     let page = query.page.unwrap_or(1).clamp(1, 1_000_000);
     let values: Vec<sea_orm::Value> = vec![id.into(), query.q.trim().into(), query.status.into()];
-    let filter = "FROM user_app_access a JOIN users u ON u.id=a.user_id WHERE a.app_id=$1 AND u.deleted_at IS NULL AND ($2='' OR strpos(lower(u.username::text),lower($2))>0 OR strpos(lower(COALESCE(u.nickname,'')),lower($2))>0) AND ($3='' OR a.status::text=$3)";
+    let filter = "FROM user_app_access a JOIN users u ON u.id=a.user_id WHERE a.app_id=$1 AND u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM admin_roles r WHERE r.user_id=u.id) AND ($2='' OR strpos(lower(u.username::text),lower($2))>0 OR strpos(lower(COALESCE(u.nickname,'')),lower($2))>0) AND ($3='' OR a.status::text=$3)";
     let result=async {
         #[derive(FromQueryResult)] struct Count { total:i64 }
         let total=Count::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT count(*) AS total {filter}"),values.clone())).one(&state.db).await?.map(|v|v.total).unwrap_or(0);
@@ -83,12 +83,28 @@ pub struct Change {
 pub async fn change(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<Uuid>,
     Extension(audit): Extension<super::audit::AuditId>,
     Form(f): Form<Change>,
 ) -> Response {
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
         return e;
+    }
+    if f.action == "grant" {
+        let key = match pero_cache_redis::rate_limit_key::rl_admin_members
+            .key(&admin.session.user_id.to_string())
+        {
+            Ok(k) => k,
+            Err(e) => return util::dependency_error(e),
+        };
+        match pero_cache_redis::enforce_rate_limit(&state.cache, &key, 30).await {
+            Ok(()) => {}
+            Err(pero_cache_redis::RateLimitError::Denied { .. }) => {
+                return util::management_response(Err(ManagementError::Invalid("rate_limited")));
+            }
+            Err(e) => return util::dependency_error(e),
+        }
     }
     let result = async {
         let app = apps::Entity::find_by_id(id)
@@ -123,9 +139,9 @@ pub async fn change(
         .update(&state.db)
         .await?;
         if f.action == "grant" {
-            access::grant_app(&state.db, user_id, id).await
+            access::grant_app(&state.db, &admin.actor(&state), user_id, id).await
         } else {
-            access::revoke_app(&state.db, user_id, id).await
+            access::revoke_app(&state.db, &admin.actor(&state), user_id, id).await
         }
     }
     .await;

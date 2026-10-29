@@ -24,6 +24,8 @@ pub struct Model {
     pub r#type: OauthClientType,
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
+    pub backchannel_logout_uri: Option<String>,
+    pub account_sync_uri: Option<String>,
     pub scopes: Vec<String>,
     pub grant_types: Vec<String>,
     pub require_pkce: bool,

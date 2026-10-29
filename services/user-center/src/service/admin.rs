@@ -1,4 +1,4 @@
-//! The two fixed roles deliberately do not implement a general permission system.
+//! Fixed administrator identities and serialized policy changes.
 use super::{ManagementError, security as sec};
 use crate::{
     db::{entity::users, enums::UserStatus},
@@ -9,6 +9,17 @@ use sea_orm::{
     QueryFilter, Statement, TransactionTrait,
 };
 use uuid::Uuid;
+
+/// Shared dashboard entitlement. MFA is enforced separately as an authentication step.
+pub async fn can_access_dashboard<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+) -> Result<bool, sea_orm::DbErr> {
+    Ok(matches!(
+        sec::role(db, user).await?.as_deref(),
+        Some("super_admin" | "admin")
+    ))
+}
 
 pub async fn lock_policy<C: ConnectionTrait>(db: &C) -> Result<(), sea_orm::DbErr> {
     sec::execute(db, "SELECT pg_advisory_xact_lock(71234019)", vec![]).await
@@ -44,16 +55,16 @@ pub async fn update_role(
         return Err(ManagementError::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
-    lock_policy(&txn).await?;
-    let actor_user =
-        super::password::PasswordIdentityService::lock_user(&txn, actor.user_id).await?;
-    if actor_user.status != UserStatus::Active
-        || sec::role(&txn, actor.user_id).await?.as_deref() != Some("super_admin")
-    {
+    let access = super::permissions::authorize(
+        &txn,
+        &super::permissions::Actor {
+            session: actor.clone(),
+            idle_ttl_seconds,
+        },
+    )
+    .await?;
+    if !access.super_admin {
         return Err(ManagementError::Invalid("forbidden"));
-    }
-    if !sec::recent(&txn, actor.id, idle_ttl_seconds).await? {
-        return Err(ManagementError::Invalid("reauth_required"));
     }
     let mut query = users::Entity::find()
         .filter(users::Column::Username.eq(username.trim()))
@@ -65,9 +76,20 @@ pub async fn update_role(
         .one(&txn)
         .await?
         .ok_or(ManagementError::Invalid("not_found"))?;
+    if user.id == actor.user_id {
+        return Err(ManagementError::Invalid("cannot_change_own_admin_role"));
+    }
     super::password::PasswordIdentityService::lock_user(&txn, user.id).await?;
     if role != "super_admin" {
         protect_last_super_admin(&txn, user.id).await?;
+    }
+    if sec::role(&txn, user.id).await?.as_deref() != Some(role) {
+        sec::execute(
+            &txn,
+            "DELETE FROM admin_permission_state WHERE user_id=$1",
+            vec![user.id.into()],
+        )
+        .await?;
     }
     if role == "remove" {
         sec::execute(
@@ -79,6 +101,21 @@ pub async fn update_role(
     } else {
         sec::execute(&txn,"INSERT INTO admin_roles(user_id,role) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET role=EXCLUDED.role",vec![user.id.into(),role.into()]).await?;
     }
+    if sec::role(&txn, user.id).await?.as_deref() == Some("admin") {
+        sec::execute(
+            &txn,
+            "INSERT INTO admin_permission_state(user_id) VALUES($1) ON CONFLICT DO NOTHING",
+            vec![user.id.into()],
+        )
+        .await?;
+    } else {
+        sec::execute(
+            &txn,
+            "DELETE FROM admin_permission_state WHERE user_id=$1",
+            vec![user.id.into()],
+        )
+        .await?;
+    }
     if role != "super_admin" {
         super::enrollment::invalidate_sponsor(&txn, user.id).await?;
     }
@@ -89,5 +126,21 @@ pub async fn update_role(
     )
     .await?;
     txn.commit().await?;
+    Ok(())
+}
+
+/// Call inside a transaction under the policy lock for administrative security interventions.
+pub async fn require_recent_super_admin(
+    db: &sea_orm::DatabaseTransaction,
+    actor: &SsoSession,
+    config: &crate::config::SsoConfig,
+) -> Result<(), ManagementError> {
+    super::account_security::lock_account_session(db, actor, config).await?;
+    if sec::role(db, actor.user_id).await?.as_deref() != Some("super_admin") {
+        return Err(ManagementError::Invalid("forbidden"));
+    }
+    if !sec::recent(db, actor.id, config.session_idle_ttl_seconds).await? {
+        return Err(ManagementError::Invalid("reauth_required"));
+    }
     Ok(())
 }

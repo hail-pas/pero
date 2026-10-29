@@ -55,7 +55,21 @@ static_dir = "ui/static"
 [http_config]
 
 [notification]
-# HTTPS gateway accepting the documented JSON payload and Idempotency-Key header.
-# Empty disables recovery/contact notification submission rather than pretending to send.
+# Optional HTTP gateway for channels without a direct adapter.
+# Configure notification.smtp or notification.sms below to send without a gateway.
 endpoint = ""
 bearer_token = ""
+
+# Optional direct delivery channels. Missing/invalid settings do not block startup;
+# requests requiring an unavailable channel return 503. See docs/application-portal-and-delivery.md.
+# [notification.smtp]
+# host = "smtp.example.com"
+# port = 587
+# security = "starttls" # or "tls" with port 465
+# username = "notify@example.com"
+# password = "REPLACE_WITH_SMTP_PASSWORD"
+# from = "Pero <notify@example.com>"
+# [notification.sms]
+# account_sid = "AC_REPLACE_WITH_32_HEX_DIGITS"
+# auth_token = "REPLACE_WITH_TWILIO_TOKEN"
+# from = "+12025550123"

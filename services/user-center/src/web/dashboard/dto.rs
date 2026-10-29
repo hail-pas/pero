@@ -1,25 +1,7 @@
 use serde::Deserialize;
 
 use crate::db::entity::{apps, identity_provider_keys, identity_providers, oauth_clients, users};
-use crate::web::util::UserInfo;
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DashboardLayout {
-    pub user_username: String,
-    pub user_name: String,
-    pub user_avatar_url: String,
-}
-
-impl DashboardLayout {
-    pub fn from_user(user: &users::Model) -> Self {
-        let info = UserInfo::from_user(user);
-        Self {
-            user_username: info.username,
-            user_name: info.name,
-            user_avatar_url: info.avatar_url,
-        }
-    }
-}
+pub use crate::web::navigation::UserLayout as DashboardLayout;
 
 // === Forbidden ===
 
@@ -55,6 +37,7 @@ pub struct AppFormView {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppFormData {
     #[serde(default)]
     pub csrf_token: String,
@@ -107,6 +90,7 @@ pub struct ClientSettingsForm {
     #[serde(default)]
     pub csrf_token: String,
     pub client_type: String,
+    #[serde(default)]
     pub secret: String,
     pub name: String,
     pub redirect_uris: String,
@@ -178,6 +162,7 @@ pub struct UserFormView {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct UserFormData {
     #[serde(default)]
     pub csrf_token: String,
@@ -287,6 +272,7 @@ pub struct ProviderFormData {
     pub token_endpoint: String,
     pub userinfo_endpoint: String,
     pub jwks_uri: String,
+    #[serde(default)]
     pub end_session_endpoint: String,
     pub client_id: String,
     pub client_secret: String,
@@ -306,6 +292,7 @@ pub struct ProviderDetailView {
     pub csrf_token: String,
     pub provider: ProviderSummary,
     pub keys: Vec<KeySummary>,
+    pub signing_health: serde_json::Value,
     pub error: String,
 }
 
@@ -338,6 +325,8 @@ pub struct ClientSummary {
     pub r#type: String,
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
+    pub backchannel_logout_uri: Option<String>,
+    pub account_sync_uri: Option<String>,
     pub scopes: Vec<String>,
     pub grant_types: Vec<String>,
     pub require_pkce: bool,
@@ -358,6 +347,8 @@ impl From<oauth_clients::Model> for ClientSummary {
             r#type: model.r#type.to_string(),
             redirect_uris: model.redirect_uris,
             post_logout_redirect_uris: model.post_logout_redirect_uris,
+            backchannel_logout_uri: model.backchannel_logout_uri,
+            account_sync_uri: model.account_sync_uri,
             scopes: model.scopes,
             grant_types: model.grant_types,
             require_pkce: model.require_pkce,
@@ -400,6 +391,12 @@ impl From<identity_providers::Model> for ProviderSummary {
 
 #[derive(Debug, serde::Serialize)]
 pub struct KeySummary {
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<time::OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub safe_revoke_at: Option<time::OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub activate_at: Option<time::OffsetDateTime>,
     pub id: uuid::Uuid,
     pub kid: String,
     pub algorithm: String,
@@ -411,6 +408,9 @@ pub struct KeySummary {
 impl From<identity_provider_keys::Model> for KeySummary {
     fn from(model: identity_provider_keys::Model) -> Self {
         Self {
+            expires_at: model.expires_at,
+            safe_revoke_at: model.last_issued_until,
+            activate_at: model.activate_at,
             id: model.id,
             kid: model.kid,
             algorithm: model.algorithm.to_string(),
@@ -477,5 +477,19 @@ impl From<users::Model> for UserSummary {
             status: model.status.to_string(),
             created_at: model.created_at,
         }
+    }
+}
+
+impl UserSummary {
+    pub fn from_authorized(
+        user: users::Model,
+        access: &crate::service::permissions::Access,
+    ) -> Self {
+        let mut row = Self::from(user);
+        if !access.can_global(crate::service::permissions::Permission::UsersSensitiveRead) {
+            row.email = row.email.map(|_| "***".into());
+            row.phone = row.phone.map(|_| "***".into());
+        }
+        row
     }
 }

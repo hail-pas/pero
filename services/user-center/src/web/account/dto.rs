@@ -1,40 +1,6 @@
 use serde::Deserialize;
 
-use crate::web::util::UserInfo;
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AccountLayout {
-    pub user_username: String,
-    pub user_name: String,
-    pub user_avatar_url: String,
-    pub is_admin: bool,
-}
-
-impl AccountLayout {
-    pub async fn from_user(
-        db: &sea_orm::DatabaseConnection,
-        user: &crate::db::entity::users::Model,
-    ) -> Self {
-        let is_admin = crate::web::dashboard::guard::is_dashboard_admin(db, user.id)
-            .await
-            .unwrap_or_else(|error| {
-                // This only controls a navigation link; the dashboard enforces access independently.
-                tracing::warn!(%error, "Admin navigation unavailable");
-                false
-            });
-        Self::build(user, is_admin)
-    }
-
-    fn build(user: &crate::db::entity::users::Model, is_admin: bool) -> Self {
-        let info = UserInfo::from_user(user);
-        Self {
-            user_username: info.username,
-            user_name: info.name,
-            user_avatar_url: info.avatar_url,
-            is_admin,
-        }
-    }
-}
+pub use crate::web::navigation::UserLayout as AccountLayout;
 
 #[derive(Debug, serde::Serialize)]
 pub struct ProfileView {

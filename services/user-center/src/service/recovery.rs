@@ -44,11 +44,13 @@ pub async fn request(
     identifier: &str,
 ) -> Result<(), RecoveryError> {
     use crate::db::{
-        entity::{identities, password_reset_tokens, users},
-        enums::{IdentityKind, UserStatus},
+        entity::{password_reset_tokens, users},
+        enums::UserStatus,
     };
     use sea_orm::{ActiveModelTrait, Set, TransactionTrait};
-    if state.config.notification.endpoint.is_empty() {
+    if !(state.config.notification.available("email")
+        || state.config.notification.available("phone"))
+    {
         return Err(RecoveryError::NotConfigured);
     }
     let user = users::Entity::find()
@@ -70,18 +72,6 @@ pub async fn request(
         Ok(_) | Err(DbErr::RecordNotFound(_)) => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    // Recovery changes an existing local password. Social-only users set their
-    // first password from an authenticated account session instead.
-    if identities::Entity::find()
-        .filter(identities::Column::UserId.eq(user.id))
-        .filter(identities::Column::Kind.eq(IdentityKind::Password))
-        .filter(identities::Column::UnboundAt.is_null())
-        .one(&txn)
-        .await?
-        .is_none_or(|identity| identity.password_hash.is_none_or(|hash| hash.is_empty()))
-    {
-        return Ok(());
-    }
     // Only verified contacts may recover an account; registration alone proves no ownership.
     // Contact changes and issuance use the same user lock.
     let (channel, recipient) =
@@ -98,6 +88,10 @@ pub async fn request(
         } else {
             return Ok(());
         };
+    if !state.config.notification.available(channel) {
+        // A disabled channel must not reveal that this verified contact exists.
+        return Ok(());
+    }
     let token = pero_utils::oauth::jwt::sign_password_reset_token(
         &user.id.to_string(),
         state.config.password_reset.ttl_seconds as i64,
@@ -134,4 +128,76 @@ pub async fn request(
     .await?;
     txn.commit().await?;
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct Readiness {
+    pub password: bool,
+    pub oidc: bool,
+    pub verified_contact: bool,
+    pub password_recovery: bool,
+    pub recovery_codes_remaining: usize,
+}
+
+pub fn readiness(
+    config: &crate::config::AppConfig,
+    user: &crate::db::entity::users::Model,
+    password: bool,
+    oidc: bool,
+    recovery_codes_remaining: usize,
+) -> Readiness {
+    let verified_contact = user.email.is_some() && user.email_verified_at.is_some()
+        || user.phone.is_some() && user.phone_verified_at.is_some();
+    Readiness {
+        password,
+        oidc,
+        verified_contact,
+        recovery_codes_remaining,
+        password_recovery: verified_contact
+            && ((user.email_verified_at.is_some() && config.notification.available("email"))
+                || (user.phone_verified_at.is_some() && config.notification.available("phone"))),
+    }
+}
+
+/// Issue a short-lived recovery credential without clearing the existing authenticator.
+pub async fn issue_assisted_recovery(
+    state: &crate::state::app::AppState,
+    actor: &crate::state::session::SsoSession,
+    target: Uuid,
+    reason: &str,
+) -> Result<String, super::ManagementError> {
+    use crate::db::enums::UserStatus;
+    use sea_orm::TransactionTrait;
+    let reason = reason.trim();
+    if reason.is_empty() || reason.chars().count() > 500 {
+        return Err(super::ManagementError::Invalid("recovery_reason_required"));
+    }
+    let txn = state.db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    super::admin::require_recent_super_admin(&txn, actor, &state.config.sso).await?;
+    if actor.user_id == target {
+        return Err(super::ManagementError::Invalid("cannot_modify_self"));
+    }
+    let target = super::password::PasswordIdentityService::lock_user(&txn, target).await?;
+    if target.status != UserStatus::Active || !super::security::mfa_enabled(&txn, target.id).await?
+    {
+        return Err(super::ManagementError::Invalid("mfa_not_enabled"));
+    }
+    let code = pero_utils::crypto::generate_nonce();
+    super::security::execute(&txn,
+        "UPDATE user_mfa SET recovery_hashes='{}',pending_secret_enc=NULL,setup_session=NULL,assisted_recovery_hash=$2,assisted_recovery_expires_at=now()+interval '15 minutes' WHERE user_id=$1",
+        vec![target.id.into(), pero_utils::crypto::sha256_hex(&code).into()]).await?;
+    super::session::SessionService::revoke_all_login_state_for_user_in_db(
+        &txn,
+        target.id,
+        "assisted_mfa_recovery",
+    )
+    .await?;
+    super::security::execute(&txn,
+        "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status,details) SELECT id,username,'admin_mfa_recovery',$2,'success',200,$3 FROM users WHERE id=$1",
+        vec![actor.user_id.into(), target.id.to_string().into(),
+            serde_json::json!({"reason":{"before":null,"after":reason}}).into()]).await?;
+    super::security::notify(&txn, &target, "mfa_recovery").await?;
+    txn.commit().await?;
+    Ok(code)
 }

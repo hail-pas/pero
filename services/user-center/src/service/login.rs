@@ -137,29 +137,6 @@ impl<'a> LoginService<'a> {
         .await;
     }
 
-    pub async fn record_success(
-        &self,
-        user_id: Uuid,
-        identity_id: Uuid,
-        provider_id: Option<Uuid>,
-        ip: Option<IpNetwork>,
-        detail: serde_json::Value,
-    ) {
-        let _ = crate::db::helper::login_event::record(
-            self.db,
-            crate::db::helper::login_event::RecordParams {
-                user_id: Some(user_id),
-                identity_id: Some(identity_id),
-                provider_id,
-                event_type: LoginEventType::LoginSuccess,
-                ip,
-                user_agent: self.user_agent.clone(),
-                detail,
-            },
-        )
-        .await;
-    }
-
     pub async fn password_login(
         &self,
         session_svc: &crate::service::session::SessionService<'_>,
@@ -219,8 +196,6 @@ impl<'a> LoginService<'a> {
 
         self.clear_failures(user.id).await;
         self.update_identity_last_login(identity.id).await;
-        self.record_success(user.id, identity.id, None, ip, serde_json::json!({}))
-            .await;
 
         Ok(token)
     }
@@ -234,5 +209,47 @@ fn map_rate_limit_result(result: Result<(), RateLimitError>) -> Result<(), Passw
             tracing::error!(error = %e, "rate_limit_check redis error");
             Err(PasswordLoginError::ServiceUnavailable)
         }
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct LoginLockStatus {
+    pub failed_attempts: i64,
+    pub locked: bool,
+    pub retry_after_seconds: i64,
+}
+
+impl LoginService<'_> {
+    /// Read count and remaining lifetime atomically, without extending the lock.
+    pub async fn lock_status(
+        &self,
+        user_id: Uuid,
+    ) -> Result<LoginLockStatus, super::ManagementError> {
+        use pero_cache_redis::{CacheCommandValue, CommandArg};
+        let key = login_fail.key(&user_id.to_string())?;
+        let result = self.cache.command("EVAL", &[
+            CommandArg::str("local n=tonumber(redis.call('GET',KEYS[1]) or '0'); local t=redis.call('TTL',KEYS[1]); return {n,math.max(t,0)}"),
+            1i64.into(), CommandArg::str(key.as_str()),
+        ]).await?;
+        if let CacheCommandValue::Array(values) = result
+            && let [
+                CacheCommandValue::Integer(count),
+                CacheCommandValue::Integer(ttl),
+            ] = values.as_slice()
+        {
+            return Ok(LoginLockStatus {
+                failed_attempts: *count,
+                locked: *count >= 5,
+                retry_after_seconds: *ttl,
+            });
+        }
+        Err(super::ManagementError::Invalid("service_unavailable"))
+    }
+
+    pub async fn unlock(&self, user_id: Uuid) -> Result<(), super::ManagementError> {
+        self.cache
+            .del(login_fail.key(&user_id.to_string())?)
+            .await?;
+        Ok(())
     }
 }

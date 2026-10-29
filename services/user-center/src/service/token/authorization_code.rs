@@ -277,6 +277,11 @@ impl TokenService<'_> {
             };
         }
 
+        if id_token.is_some() {
+            crate::service::backchannel::remember(db, session_id, client.id, user.id)
+                .await
+                .map_err(|_| TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?;
+        }
         let mut refresh_token = None;
         let mut refresh_model = None;
         if client

@@ -1,9 +1,6 @@
 use crate::{
     db::entity::{apps, oauth_clients, refresh_tokens, sso_sessions, user_app_access},
-    service::{
-        token::{TokenEndpointResult, TokenRequest, TokenService},
-        token_status,
-    },
+    service::token_status,
     state::app::AppState,
 };
 use axum::{
@@ -17,37 +14,10 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct Input {
     token: String,
+    #[serde(default)]
     client_id: String,
     client_secret: Option<String>,
     token_type_hint: Option<String>,
-}
-async fn authenticate(
-    state: &AppState,
-    input: &Input,
-    source: &str,
-) -> Result<oauth_clients::Model, Response> {
-    let request = TokenRequest {
-        grant_type: String::new(),
-        code: None,
-        redirect_uri: None,
-        code_verifier: None,
-        refresh_token: None,
-        scope: None,
-        client_id: input.client_id.clone(),
-        client_secret: input.client_secret.clone(),
-    };
-    TokenService::new(state)
-        .authenticate_endpoint(&request, source, 6000)
-        .await
-        .map_err(|error| match error {
-            TokenEndpointResult::Error { code, desc } => {
-                pero_api_axum::oauth::token_error_response(code, desc.as_deref())
-            }
-            TokenEndpointResult::Unauthorized(desc) => {
-                pero_api_axum::oauth::token_error_unauthorized_response(&desc)
-            }
-            TokenEndpointResult::Success(_) => unreachable!(),
-        })
 }
 fn json(value: serde_json::Value) -> Response {
     (
@@ -73,9 +43,18 @@ async fn refresh(
 pub async fn introspect(
     State(state): State<AppState>,
     source: pero_api_axum::extractor::ClientIp,
-    Form(input): Form<Input>,
+    headers: axum::http::HeaderMap,
+    Form(mut input): Form<Input>,
 ) -> Response {
-    let client = match authenticate(&state, &input, &source.for_rate_limit()).await {
+    let client = match super::client_auth::authenticate(
+        &state,
+        &headers,
+        &mut input.client_id,
+        &mut input.client_secret,
+        &source.for_rate_limit(),
+    )
+    .await
+    {
         Ok(c) => c,
         Err(e) => return e,
     };
@@ -137,9 +116,18 @@ async fn inspect(
 pub async fn revoke(
     State(state): State<AppState>,
     source: pero_api_axum::extractor::ClientIp,
-    Form(input): Form<Input>,
+    headers: axum::http::HeaderMap,
+    Form(mut input): Form<Input>,
 ) -> Response {
-    let client = match authenticate(&state, &input, &source.for_rate_limit()).await {
+    let client = match super::client_auth::authenticate(
+        &state,
+        &headers,
+        &mut input.client_id,
+        &mut input.client_secret,
+        &source.for_rate_limit(),
+    )
+    .await
+    {
         Ok(c) => c,
         Err(e) => return e,
     };

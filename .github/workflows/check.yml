@@ -42,7 +42,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: bash scripts/migrate.sh
       - run: cargo test --workspace --locked
-      - run: cargo test -p user-center --locked -- --ignored
+      - run: cargo test -p user-center --locked -- --ignored --test-threads=1
       - run: cargo test -p pero-cache-redis --locked --test live_redis -- --ignored
       - run: bash tests/migrations_test.sh
       - run: cargo test -p user-center --locked --test logout -- --ignored

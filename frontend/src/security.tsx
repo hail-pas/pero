@@ -101,6 +101,8 @@ export function Security({
       {(view === "ActivityListView" || view === "AuditListView") && (
         <Panel title={t("检索条件")}>
           <FieldsForm
+            compact
+            submitSize="small"
             key={params.toString()}
             fields={[
               {

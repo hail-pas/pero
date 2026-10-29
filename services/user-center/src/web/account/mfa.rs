@@ -42,6 +42,7 @@ struct SecurityView {
     redirect: String,
     error: String,
     providers: Vec<crate::web::sso::dto::SocialProvider>,
+    readiness: crate::service::recovery::Readiness,
 }
 async fn session(state: &AppState, jar: &CookieJar) -> Result<sso_sessions::Model, Response> {
     crate::web::session::extract_browser_session(state, jar)
@@ -62,14 +63,17 @@ async fn page(
         Ok(None) => return Redirect::to("/account/login").into_response(),
         Err(e) => return util::dependency_error(e),
     };
-    let layout = super::dto::AccountLayout::from_user(&state.db, &user).await;
+    let layout = match super::dto::AccountLayout::from_user(&state.db, &user).await {
+        Ok(layout) => layout,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
     let result = async {
         let f = sec::factor(&state.db, s.user_id).await?;
         let required = sec::role(&state.db, s.user_id).await?.is_some();
-        let has_password =
-            crate::service::password::PasswordIdentityService::find(&state.db, s.user_id)
-                .await?
-                .is_some();
+        let recovery_codes_remaining = f
+            .as_ref()
+            .filter(|f| f.enabled)
+            .map_or(0, |f| f.recovery_hashes.len());
         let enabled = f.as_ref().is_some_and(|f| f.enabled);
         let secret = f
             .filter(|f| {
@@ -86,10 +90,10 @@ async fn page(
                 .to_qr_base64()
                 .map_err(|_| sea_orm::DbErr::Custom("QR generation".into()))?
         };
-        Ok::<_, sea_orm::DbErr>((required, has_password, enabled, secret, qr))
+        Ok::<_, sea_orm::DbErr>((required, recovery_codes_remaining, enabled, secret, qr))
     }
     .await;
-    let (required, has_password, enabled, secret, qr) = match result {
+    let (required, recovery_codes_remaining, enabled, secret, qr) = match result {
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
     };
@@ -118,11 +122,26 @@ async fn page(
                 .is_some_and(|idp| idp.code == p.key && idp.kind == IdentityProviderKind::Oidc)
         })
     });
+    let has_password = bound.iter().any(|(identity, _)| {
+        identity.kind == crate::db::enums::IdentityKind::Password
+            && identity
+                .password_hash
+                .as_ref()
+                .is_some_and(|hash| !hash.is_empty())
+    });
+    let readiness = crate::service::recovery::readiness(
+        &state.config,
+        &user,
+        has_password,
+        !providers.is_empty(),
+        recovery_codes_remaining,
+    );
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
     util::view_response(
         "SecurityView",
         SecurityView {
             providers,
+            readiness,
             layout,
             csrf_token,
             required,
@@ -143,11 +162,18 @@ pub async fn get(
     State(state): State<AppState>,
     jar: CookieJar,
     Query(input): Query<Input>,
+    uri: axum::http::Uri,
 ) -> Response {
     let s = match session(&state, &jar).await {
         Ok(s) => s,
         Err(r) => return r,
     };
+    if uri.path() == "/sso/mfa"
+        && !s.recovery_pending
+        && (!s.mfa_required || s.mfa_verified_at.is_some())
+    {
+        return Redirect::to(&util::safe_redirect(&input.redirect)).into_response();
+    }
     page(&state, jar, &s, &input, vec![], "").await
 }
 pub async fn post(

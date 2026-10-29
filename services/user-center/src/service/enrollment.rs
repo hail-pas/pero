@@ -240,10 +240,11 @@ async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, E
             .one(db)
             .await?
             .ok_or_else(invalid)?;
-        if user.status != UserStatus::Active
-            || user.deleted_at.is_some()
-            || super::security::role(db, actor).await?.as_deref() != Some("super_admin")
-        {
+        if user.status != UserStatus::Active || user.deleted_at.is_some() {
+            return Err(invalid());
+        }
+        let access = super::permissions::load(db, actor).await?;
+        if !can_invite(&access, row.app_id, row.domain_exception) {
             return Err(invalid());
         }
     }
@@ -254,6 +255,13 @@ async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, E
     }
     Ok(p)
 }
+
+fn can_invite(access: &super::permissions::Access, app: Option<Uuid>, exception: bool) -> bool {
+    access.super_admin
+        || (app.is_none()
+            && !exception
+            && access.can_global(super::permissions::Permission::UsersCreate))
+}
 async fn send<C: ConnectionTrait>(
     db: &C,
     state: &AppState,
@@ -262,7 +270,7 @@ async fn send<C: ConnectionTrait>(
     token: &str,
     expires: OffsetDateTime,
 ) -> Result<(), Error> {
-    if state.config.notification.endpoint.is_empty() {
+    if !state.config.notification.available("email") {
         return Err(Error::Invalid("notification_disabled"));
     }
     let mut link =
@@ -294,7 +302,17 @@ pub async fn start(
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     let (invited, actor, exception, reason) = if let Some((actor, exception, reason)) = invitation {
-        require_admin(&txn, actor, state).await?;
+        let access = super::permissions::authorize(
+            &txn,
+            &super::permissions::Actor {
+                session: actor.clone(),
+                idle_ttl_seconds: state.config.sso.session_idle_ttl_seconds,
+            },
+        )
+        .await?;
+        if !can_invite(&access, app, exception) || (!access.super_admin && !reason.is_empty()) {
+            return Err(Error::Invalid("forbidden"));
+        }
         if reason.len() > 500 || (exception && reason.trim().is_empty()) {
             return Err(Error::Invalid("invalid_request"));
         }

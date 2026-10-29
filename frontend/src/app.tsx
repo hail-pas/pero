@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   redirect,
   redirectDocument,
+  ScrollRestoration,
   useLoaderData,
   useLocation,
   useNavigate,
@@ -36,7 +37,9 @@ function documentNavigation(url: URL) {
 
 // The router commits a location only after the server has resolved access and
 // redirects. Existing content and its layout stay mounted while this runs.
+let loaderSequence = 0;
 export async function pageLoader({ request: navigation }: LoaderFunctionArgs) {
+  const sequence = ++loaderSequence;
   try {
     const url = new URL(navigation.url);
     const result = await request(
@@ -51,10 +54,10 @@ export async function pageLoader({ request: navigation }: LoaderFunctionArgs) {
         : redirect(target.pathname + target.search);
     }
     if (!result.view) throw new Error(errorText("invalid_response"));
-    return { payload: result, failure: "" };
+    return { payload: result, failure: "", sequence };
   } catch (error) {
     if (navigation.signal.aborted) throw error;
-    return { payload: undefined, failure: (error as Error).message };
+    return { payload: undefined, failure: (error as Error).message, sequence };
   }
 }
 
@@ -78,25 +81,49 @@ export function App() {
   const location = useLocation(),
     navigate = useNavigate();
   const loaded = useLoaderData<typeof pageLoader>();
+  const pendingRequests = useRef(0);
   const navigation = useNavigation();
   const revalidator = useRevalidator();
+  const activeRoute = useRef({ key: location.key });
+  if (activeRoute.current.key !== location.key) {
+    activeRoute.current = { key: location.key };
+  }
   const [updated, setUpdated] = useState<{
-    source: typeof loaded;
+    sequence: number;
+    route: typeof activeRoute.current;
     payload: ViewEnvelope;
   }>();
-  const payload = updated?.source === loaded ? updated.payload : loaded.payload;
-  const failure = loaded.failure;
+  // A GET started before a mutation completed must not replace its newer view,
+  // especially when that response contains one-time recovery credentials.
+  const currentUpdate =
+    updated?.route === activeRoute.current &&
+    updated.sequence >= loaded.sequence
+      ? updated
+      : undefined;
+  const payload = currentUpdate?.payload ?? loaded.payload;
+  const failure = currentUpdate ? "" : loaded.failure;
   const routeKey = location.pathname + location.search;
-  const [noticeState, setNoticeState] = useState({ routeKey, text: "" });
-  const notice = noticeState.routeKey === routeKey ? noticeState.text : "";
-  const setNotice = (text: string) => setNoticeState({ routeKey, text });
+  const [notice, setNotice] = useState("");
+  const [pendingNotice, setPendingNotice] = useState<{
+    sourceKey: string;
+    text: string;
+  }>();
+  useEffect(() => {
+    if (navigation.state !== "idle") setNotice("");
+    else if (pendingNotice && location.key !== pendingNotice.sourceKey) {
+      // Navigation callbacks can resolve before React commits their destination.
+      setNotice(pendingNotice.text);
+      setPendingNotice(undefined);
+    }
+  }, [navigation.state, location.key, pendingNotice]);
   const [modalState, setModalState] = useState<{
-    routeKey: string;
+    route: typeof activeRoute.current;
     value: ActionModal | null;
   }>();
-  const modal = modalState?.routeKey === routeKey ? modalState.value : null;
+  const modal =
+    modalState?.route === activeRoute.current ? modalState.value : null;
   const setModal = (value: ActionModal | null) =>
-    setModalState({ routeKey, value });
+    setModalState({ route: activeRoute.current, value });
   const [showProgress, setShowProgress] = useState(false);
   const busy = navigation.state !== "idle" || revalidator.state !== "idle";
   useEffect(() => {
@@ -107,10 +134,12 @@ export function App() {
     const timer = window.setTimeout(() => setShowProgress(true), 180);
     return () => window.clearTimeout(timer);
   }, [busy]);
-  const activeRoute = useRef(routeKey);
-  activeRoute.current = routeKey;
   const setPayload = (next: ViewEnvelope) =>
-    setUpdated({ source: loaded, payload: next });
+    setUpdated({
+      sequence: loaderSequence,
+      route: activeRoute.current,
+      payload: next,
+    });
   const refresh = () => revalidator.revalidate();
   const csrfToken =
     payload?.data && "csrf_token" in payload.data
@@ -119,6 +148,33 @@ export function App() {
   const layout =
     payload?.data && "layout" in payload.data ? payload.data.layout : undefined;
   const path = location.pathname;
+  const showingRecoveryCodes =
+    payload?.view === "SecurityView" && payload.data.codes.length > 0;
+  // Re-read server permissions when returning from another tab or application.
+  useEffect(() => {
+    const revalidate = () => {
+      if (
+        document.visibilityState === "visible" &&
+        navigation.state === "idle" &&
+        revalidator.state === "idle" &&
+        !modal &&
+        pendingRequests.current === 0 &&
+        !showingRecoveryCodes &&
+        (path === "/" ||
+          path.startsWith("/account") ||
+          path.startsWith("/dashboard"))
+      ) {
+        revalidator.revalidate();
+      }
+    };
+    window.addEventListener("focus", revalidate);
+    document.addEventListener("visibilitychange", revalidate);
+    return () => {
+      window.removeEventListener("focus", revalidate);
+      document.removeEventListener("visibilitychange", revalidate);
+    };
+  }, [path, navigation.state, revalidator, modal, showingRecoveryCodes]);
+
   const follow = useCallback(
     (target: string) => {
       const url = new URL(target, window.location.origin);
@@ -138,16 +194,44 @@ export function App() {
       ),
     });
   }, [path, locale]);
+  function clearViewError() {
+    if (payload?.data && "error" in payload.data && payload.data.error) {
+      setPayload({
+        ...payload,
+        data: { ...payload.data, error: "" },
+      } as ViewEnvelope);
+    }
+  }
   async function mutate(
     endpoint: string,
     values: Values = {},
     after?: () => void,
   ) {
-    const sourceRoute = routeKey;
-    const result = await request(endpoint, {
-      ...values,
-      csrf_token: csrfToken,
-    });
+    const sourceRoute = activeRoute.current;
+    setNotice("");
+    setPendingNotice(undefined);
+    if (payload?.view === "ForgotPasswordView") {
+      setPayload({
+        ...payload,
+        data: { ...payload.data, error: "", success: false },
+      });
+    } else {
+      clearViewError();
+    }
+    let result;
+    pendingRequests.current++;
+    try {
+      result = await request(endpoint, { ...values, csrf_token: csrfToken });
+    } catch (error) {
+      if (activeRoute.current !== sourceRoute) return;
+      if ((error as Error & { code?: string }).code === "forbidden") {
+        setModal(null);
+        setPayload({ view: "ForbiddenView", data: { code: "forbidden" } });
+      }
+      throw error;
+    } finally {
+      pendingRequests.current--;
+    }
     if (activeRoute.current !== sourceRoute) return;
     if (!result.view && result.redirect) {
       await follow(result.redirect);
@@ -161,22 +245,39 @@ export function App() {
     ) {
       setModal({
         kind: "secret",
-        title: t("请保存客户端密钥"),
-        description: t("密钥只在此时显示，请复制并妥善保存。"),
+        label:
+          result.data.purpose === "mfa_recovery"
+            ? t("临时恢复码")
+            : t("客户端密钥"),
+        title:
+          result.data.purpose === "mfa_recovery"
+            ? t("临时恢复码")
+            : t("请保存客户端密钥"),
+        description:
+          result.data.purpose === "mfa_recovery"
+            ? t(
+                "恢复码仅显示一次，15 分钟内有效。核验身份后私下交付本人；用户须先登录，再使用恢复码重新绑定验证器。",
+              )
+            : t("密钥只在此时显示，请复制并妥善保存。"),
         secret: result.data.secret,
       });
       return;
     }
     if (result.view) {
+      // A view response owns its feedback and latest state, including expired
+      // MFA setup or recovery transitions. JSON action errors reject above.
+      setModal(null);
       setPayload(result);
-      if (result.data && "error" in result.data && result.data.error)
-        throw new Error(errorText(result.data.error));
       return;
     }
     setModal(null);
-    setNotice(t("操作已完成"));
-    if (after) after();
-    else await refresh();
+    if (after) {
+      await after();
+      setPendingNotice({ sourceKey: sourceRoute.key, text: t("操作已完成") });
+    } else {
+      setNotice(t("操作已完成"));
+      await refresh();
+    }
   }
   function ask(
     title: string,
@@ -222,20 +323,29 @@ export function App() {
       />
     );
   content = (
-    <Box inert={navigation.state !== "idle"} aria-busy={busy}>
+    <Box
+      inert={navigation.state !== "idle"}
+      aria-busy={busy}
+      onChangeCapture={clearViewError}
+    >
       {content}
     </Box>
   );
+  const authenticationStep =
+    payload?.view === "SecurityView" &&
+    (payload.data.pending || payload.data.recovery || path === "/sso/mfa");
   const managed =
-    path.startsWith("/dashboard") ||
-    payload?.view === "SecurityView" ||
-    (path.startsWith("/account") && !path.endsWith("/login"));
+    !authenticationStep &&
+    (path.startsWith("/dashboard") ||
+      payload?.view === "SecurityView" ||
+      (path.startsWith("/account") && !path.endsWith("/login")));
   return (
     <>
+      <ScrollRestoration />
       {showProgress && <InitialLoading />}
       {managed ? (
         <Layout
-          layout={layout}
+          layout={layout ?? undefined}
           onLogout={() =>
             ask(
               t("退出登录"),
@@ -261,7 +371,9 @@ export function App() {
       </Snackbar>
       {modal && (
         <ActionDialog
-          key={modal.kind + modal.title}
+          key={
+            modal.kind === "secret" ? modal.kind : modal.kind + modal.endpoint
+          }
           modal={modal}
           mutate={mutate}
           onClose={() => {

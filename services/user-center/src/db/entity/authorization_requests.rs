@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    pub diagnostic_session_id: Option<Uuid>,
     pub client_id: Uuid,
     pub app_id: Uuid,
     #[sea_orm(column_type = "Text")]

@@ -90,11 +90,6 @@ impl OAuth2Error {
         self
     }
 
-    pub fn with_status(mut self, status: StatusCode) -> Self {
-        self.status = status;
-        self
-    }
-
     pub fn response_body(&self) -> OAuth2ErrorResponse {
         OAuth2ErrorResponse {
             error: self.code.as_str().to_owned(),
@@ -206,11 +201,6 @@ impl BearerError {
         Self::new(BearerErrorCode::InsufficientScope).with_scope(scope)
     }
 
-    pub fn with_realm(mut self, realm: impl Into<String>) -> Self {
-        self.realm = Some(realm.into());
-        self
-    }
-
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
@@ -227,7 +217,7 @@ impl BearerError {
     }
 
     pub fn www_authenticate_value(&self) -> String {
-        let mut parts = vec!["Bearer".to_owned()];
+        let mut parts = Vec::new();
 
         if let Some(realm) = &self.realm {
             parts.push(format!("realm=\"{}\"", escape_header_value(realm)));
@@ -250,7 +240,7 @@ impl BearerError {
             parts.push(format!("scope=\"{}\"", escape_header_value(scope)));
         }
 
-        parts.join(", ")
+        format!("Bearer {}", parts.join(", "))
     }
 }
 
@@ -281,4 +271,23 @@ impl From<BearerError> for AppError {
 
 fn escape_header_value(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearer_challenge_separates_scheme_from_parameters_with_a_space() {
+        assert_eq!(
+            BearerError::invalid_token("Token expired").www_authenticate_value(),
+            "Bearer error=\"invalid_token\", error_description=\"Token expired\""
+        );
+        let mut error = BearerError::insufficient_scope("profile email");
+        error.realm = Some("Pero".into());
+        assert_eq!(
+            error.www_authenticate_value(),
+            "Bearer realm=\"Pero\", error=\"insufficient_scope\", scope=\"profile email\""
+        );
+    }
 }

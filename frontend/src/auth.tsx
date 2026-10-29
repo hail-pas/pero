@@ -13,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useState } from "react";
+import { useAction } from "./use-action";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import { errorText } from "./api";
 import type { ViewEnvelope, AuthView } from "./contracts";
@@ -33,10 +34,23 @@ export function Auth({
   const { view, data } = page;
   const location = useLocation();
   const [identifierType, setIdentifierType] = useState("username");
-  const [actionFailure, setActionFailure] = useState("");
+  const {
+    busy: actionBusy,
+    error: actionFailure,
+    run,
+    clearError,
+  } = useAction();
+  const [formBusy, setFormBusy] = useState(false);
+  const runAction = (
+    values: Parameters<typeof mutate>[1],
+    endpoint = location.pathname,
+  ) => run(() => mutate(endpoint, values));
   const login = view === "LoginView" || view === "AccountLoginView",
     forgot = view === "ForgotPasswordView",
     reset = view === "ResetPasswordView";
+  const resetUnavailable =
+    reset &&
+    ["missing_token", "invalid_token", "token_already_used"].includes(data.error);
   const done = view === "EndSessionView",
     error = ["ErrorView", "ForbiddenView"].includes(view);
   let title =
@@ -67,12 +81,13 @@ export function Auth({
         {data.username && (
           <Button
             variant="contained"
+            disabled={actionBusy || formBusy}
             onClick={() =>
-              mutate(location.pathname, {
+              runAction({
                 action: "current",
                 token: data.token,
                 redirect: data.redirect,
-              }).catch((e) => setActionFailure(e.message))
+              })
             }
           >
             {t("继续使用 {{0}}", { "0": data.username })}
@@ -80,12 +95,13 @@ export function Auth({
         )}
         <Button
           variant="outlined"
+          disabled={actionBusy || formBusy}
           onClick={() =>
-            mutate(location.pathname, {
+            runAction({
               action: "other",
               token: data.token,
               redirect: data.redirect,
-            }).catch((e) => setActionFailure(e.message))
+            })
           }
         >
           {t("登录其他账号")}
@@ -137,9 +153,11 @@ export function Auth({
           ];
     content = (
       <>
-        {data.error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {errorText(data.error)}
+        {forgot && (
+          <Alert severity="info" sx={{ mb: 3 }}>
+            {t(
+              "已验证邮箱或手机号可用于设置或重置本地密码，此操作不会关闭双重验证。",
+            )}
           </Alert>
         )}
         {"success" in data && data.success && (
@@ -156,6 +174,7 @@ export function Auth({
             size="small"
             label={t("登录方式")}
             value={identifierType}
+            disabled={actionBusy || formBusy}
             onChange={(e) => setIdentifierType(e.target.value)}
             sx={{ mb: 3 }}
           >
@@ -170,23 +189,43 @@ export function Auth({
             ))}
           </TextField>
         )}
-        <FieldsForm
-          fullWidthSubmit
-          key={view}
-          fields={fields}
-          submit={async (values) => {
-            if (reset && values.new_password !== values.confirm_password)
-              throw new Error(t("两次输入的密码不一致"));
-            await mutate(location.pathname + location.search, {
-              ...values,
-              identifier_type: identifierType,
-              redirect: "redirect" in data ? data.redirect : "",
-            });
-          }}
-          label={
-            login ? t("登录") : forgot ? t("发送恢复通知") : t("保存新密码")
-          }
-        />
+        {resetUnavailable && (
+          <Stack spacing={2}>
+            <Alert severity="error">{errorText(data.error)}</Alert>
+            <Button
+              component={RouterLink}
+              to="/sso/forgot-password"
+              variant="contained"
+              color="inherit"
+            >
+              {t("重新申请重置链接")}
+            </Button>
+          </Stack>
+        )}
+        {!resetUnavailable && !(reset && "success" in data && data.success) && (
+          <FieldsForm
+            fullWidthSubmit
+            key={view}
+            serverError={data.error ? errorText(data.error) : ""}
+            onBusyChange={(busy) => {
+              setFormBusy(busy);
+              if (busy) clearError();
+            }}
+            fields={fields}
+            submit={async (values) => {
+              if (reset && values.new_password !== values.confirm_password)
+                throw new Error(t("两次输入的密码不一致"));
+              await mutate(location.pathname + location.search, {
+                ...values,
+                identifier_type: identifierType,
+                redirect: "redirect" in data ? data.redirect : "",
+              });
+            }}
+            label={
+              login ? t("登录") : forgot ? t("发送恢复通知") : t("保存新密码")
+            }
+          />
+        )}
         <Stack direction="row" sx={{ justifyContent: "space-between", mt: 3 }}>
           <Button
             component={RouterLink}
@@ -257,6 +296,11 @@ export function Auth({
           fullWidthSubmit
           fields={[]}
           label={t("允许访问")}
+          disabled={actionBusy}
+          onBusyChange={(busy) => {
+            setFormBusy(busy);
+            if (busy) clearError();
+          }}
           submit={() =>
             mutate("/sso/consent", {
               action: "allow",
@@ -266,11 +310,15 @@ export function Auth({
           footer={
             <Button
               color="inherit"
+              disabled={actionBusy || formBusy}
               onClick={() =>
-                mutate("/sso/consent", {
-                  action: "deny",
-                  request_token: data.request_token,
-                }).catch((e: Error) => setActionFailure(e.message))
+                runAction(
+                  {
+                    action: "deny",
+                    request_token: data.request_token,
+                  },
+                  "/sso/consent",
+                )
               }
             >
               {t("拒绝授权")}
@@ -290,10 +338,12 @@ export function Auth({
         {data.has_password ? (
           <FieldsForm
             fullWidthSubmit
+            serverError={data.error ? errorText(data.error) : ""}
             fields={[
               {
                 name: "password",
                 label: t("已有账户密码"),
+                autoComplete: "current-password",
                 type: "password",
                 required: true,
               },
@@ -467,7 +517,7 @@ export function Auth({
           </Alert>
         )}
         {content}
-        {!done && (
+        {!done && !error && (
           <Button
             component={RouterLink}
             to="/"

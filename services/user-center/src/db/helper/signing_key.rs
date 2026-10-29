@@ -71,6 +71,7 @@ where
             .filter(ipk::Column::Use.eq(KeyUse::Sig))
             .filter(ipk::Column::Algorithm.eq(KeyAlgorithm::Rs256)),
     )
+    .lock_exclusive()
     .into_model::<SigningKeyRow>()
     .one(db)
     .await
@@ -86,6 +87,11 @@ where
     let private_key = row
         .private_key_pem
         .ok_or_else(|| DbErr::Custom("private key decrypt returned null".into()))?;
+    // Issuance holds this row lock until commit; rotation/revocation cannot race it.
+    // Include ID/access-token lifetime, logout-token lifetime and clock skew.
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Postgres,
+        "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,now()+make_interval(secs=>GREATEST(120,COALESCE((SELECT max(GREATEST(access_token_ttl_seconds,id_token_ttl_seconds)) FROM oauth_clients),0))+300)) WHERE id=$1",
+        [row.key.id.into()])).await?;
     Ok(SigningKeyMaterial {
         kid: row.key.kid,
         private_key,

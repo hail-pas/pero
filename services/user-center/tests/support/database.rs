@@ -36,23 +36,7 @@ impl DatabaseFixture {
     }
 
     pub async fn migrate(&self, db: &DatabaseConnection) {
-        db.execute_unprepared(concat!(
-            include_str!("../../migrations/001_init.sql"),
-            "\n",
-            include_str!("../../migrations/002_audit_events.sql"),
-            "\n",
-            include_str!("../../migrations/003_mfa_admin_roles.sql"),
-            "\n",
-            include_str!("../../migrations/004_notification_deliveries.sql"),
-            "\n",
-            include_str!("../../migrations/005_enrollment.sql"),
-            "\n",
-            include_str!("../../migrations/006_management_workflows.sql"),
-            "\n",
-            include_str!("../../migrations/007_client_secret_rotation.sql")
-        ))
-        .await
-        .unwrap();
+        user_center::db::migrate::migrate(db).await.unwrap();
     }
 
     pub async fn cleanup(self) {
@@ -61,5 +45,69 @@ impl DatabaseFixture {
             .await
             .unwrap();
         self.bootstrap.close().await.unwrap();
+    }
+}
+
+/// Real authenticated administrator for service-level mutation tests.
+#[allow(dead_code)]
+pub async fn management_actor(db: &DatabaseConnection) -> user_center::service::permissions::Actor {
+    use sea_orm::{DbBackend, Statement};
+    let user = Uuid::now_v7();
+    let id = Uuid::now_v7();
+    for (sql, values) in [
+        (
+            "INSERT INTO users(id,username) VALUES($1,$2)",
+            vec![user.into(), user.to_string().into()],
+        ),
+        (
+            "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+            vec![user.into()],
+        ),
+        (
+            "INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt('GEZDGNBVGY3TQOJQ',current_setting('app.encrypt_key')),true)",
+            vec![user.into()],
+        ),
+        (
+            "INSERT INTO sso_sessions(id,user_id,token_hash,expires_at,mfa_required,mfa_verified_at,reauthenticated_at) VALUES($1,$2,$3,now()+interval '1 day',true,now(),now())",
+            vec![id.into(), user.into(), id.to_string().into()],
+        ),
+    ] {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            sql,
+            values,
+        ))
+        .await
+        .unwrap();
+    }
+    user_center::service::permissions::Actor {
+        session: user_center::state::session::SsoSession {
+            id,
+            user_id: user,
+            identity_id: None,
+            created_at: time::OffsetDateTime::now_utc(),
+            authenticated_at: time::OffsetDateTime::now_utc(),
+        },
+        idle_ttl_seconds: 3600,
+    }
+}
+
+#[allow(dead_code)]
+pub async fn management_context(
+    db: &DatabaseConnection,
+) -> user_center::web::dashboard::guard::AdminContext {
+    use sea_orm::EntityTrait;
+    let actor = management_actor(db).await;
+    user_center::web::dashboard::guard::AdminContext {
+        user: user_center::db::entity::users::Entity::find_by_id(actor.session.user_id)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap(),
+        session: actor.session,
+        access: user_center::service::permissions::Access {
+            super_admin: true,
+            ..Default::default()
+        },
     }
 }

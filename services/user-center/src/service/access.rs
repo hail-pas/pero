@@ -1,3 +1,4 @@
+use super::permissions::{self, Actor, Permission as P};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
     QueryFilter, QuerySelect, Set, TransactionTrait, sea_query::Expr,
@@ -12,28 +13,36 @@ async fn lock_app_for_access_change(
     txn: &DatabaseTransaction,
     user_id: Uuid,
     app_id: Uuid,
-) -> Result<(), ManagementError> {
+) -> Result<users::Model, ManagementError> {
     // Match token issuance's app -> access lock order.
     apps_entity::Entity::find_by_id(app_id)
         .lock_shared()
         .one(txn)
         .await?
         .ok_or(ManagementError::Invalid("invalid_app_id"))?;
-    users::Entity::find_by_id(user_id)
+    let user = users::Entity::find_by_id(user_id)
         .filter(users::Column::DeletedAt.is_null())
         .one(txn)
         .await?
         .ok_or(ManagementError::Invalid("not_found"))?;
-    Ok(())
+    Ok(user)
 }
 
 pub async fn grant_app(
     db: &DatabaseConnection,
+    actor: &Actor,
     user_id: Uuid,
     app_id: Uuid,
 ) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
-    lock_app_for_access_change(&txn, user_id, app_id).await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    permissions::app(&txn, &access, app_id, P::AppsMembersManage).await?;
+    permissions::protect_user(&txn, &access, user_id).await?;
+
+    let user = lock_app_for_access_change(&txn, user_id, app_id).await?;
+    if user.status != crate::db::enums::UserStatus::Active {
+        return Err(ManagementError::Invalid("not_found"));
+    }
     let now = time::OffsetDateTime::now_utc();
     uaa::Entity::insert(uaa::ActiveModel {
         user_id: Set(user_id),
@@ -56,10 +65,15 @@ pub async fn grant_app(
 
 pub async fn revoke_app(
     db: &DatabaseConnection,
+    actor: &Actor,
     user_id: Uuid,
     app_id: Uuid,
 ) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
+    let access = permissions::authorize(&txn, actor).await?;
+    permissions::app(&txn, &access, app_id, P::AppsMembersManage).await?;
+    permissions::protect_user(&txn, &access, user_id).await?;
+
     lock_app_for_access_change(&txn, user_id, app_id).await?;
     uaa::Entity::update_many()
         .col_expr(uaa::Column::Status, Expr::value(CommonStatus::Disabled))

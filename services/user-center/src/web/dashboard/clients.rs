@@ -32,6 +32,7 @@ fn client_input(form: ClientSettingsForm) -> Result<ClientInput, ManagementError
 pub async fn create(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     axum::Form(form): axum::Form<CreateClientForm>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
@@ -43,7 +44,15 @@ pub async fn create(
         Ok(input) => input,
         Err(error) => return util::management_response(Err(error)),
     };
-    match client::create(&state.db, app_id, identifier.trim(), input).await {
+    match client::create(
+        &state.db,
+        &admin.actor(&state),
+        app_id,
+        identifier.trim(),
+        input,
+    )
+    .await
+    {
         Ok(Some(secret)) => json_ok_with_sensitive(serde_json::json!({"secret":secret})),
         Ok(None) => json_ok(),
         Err(error) => util::management_response(Err(error)),
@@ -53,6 +62,7 @@ pub async fn create(
 pub async fn update(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<ClientSettingsForm>,
 ) -> Response {
@@ -63,19 +73,20 @@ pub async fn update(
         Ok(input) => input,
         Err(error) => return util::management_response(Err(error)),
     };
-    util::management_response(client::update(&state.db, id, input).await)
+    util::management_response(client::update(&state.db, &admin.actor(&state), id, input).await)
 }
 
 pub async fn reset_secret(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<CsrfOnly>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    match client::reset_secret(&state.db, id).await {
+    match client::reset_secret(&state.db, &admin.actor(&state), id).await {
         Ok(secret) => json_ok_with_sensitive(serde_json::json!({"secret":secret})),
         Err(error) => util::management_response(Err(error)),
     }
@@ -84,13 +95,14 @@ pub async fn reset_secret(
 pub async fn toggle_status(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<CsrfOnly>,
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    util::management_response(client::toggle_status(&state.db, id).await)
+    util::management_response(client::toggle_status(&state.db, &admin.actor(&state), id).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -101,13 +113,14 @@ pub struct Rotation {
 pub async fn rotate_secret(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<Rotation>,
 ) -> Response {
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return e;
     }
-    match client::rotate_secret(&state.db, id, form.grace_seconds).await {
+    match client::rotate_secret(&state.db, &admin.actor(&state), id, form.grace_seconds).await {
         Ok(secret) => json_ok_with_sensitive(serde_json::json!({"secret":secret})),
         Err(e) => util::management_response(Err(e)),
     }
@@ -115,11 +128,109 @@ pub async fn rotate_secret(
 pub async fn retire_secret(
     State(state): State<AppState>,
     jar: CookieJar,
+    admin: super::guard::AdminContext,
     Path(id): Path<uuid::Uuid>,
     axum::Form(form): axum::Form<CsrfOnly>,
 ) -> Response {
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return e;
     }
-    util::management_response(client::retire_secret(&state.db, id).await)
+    util::management_response(client::retire_secret(&state.db, &admin.actor(&state), id).await)
+}
+
+#[derive(serde::Deserialize)]
+pub struct LogoutForm {
+    csrf_token: String,
+    backchannel_logout_uri: String,
+}
+pub async fn logout_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    admin: super::guard::AdminContext,
+    Path(id): Path<uuid::Uuid>,
+    axum::Form(form): axum::Form<LogoutForm>,
+) -> Response {
+    use sea_orm::{EntityTrait, Set};
+    if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
+        return response;
+    }
+    let endpoint = util::empty_or_opt(&form.backchannel_logout_uri);
+    if endpoint
+        .as_ref()
+        .is_some_and(|uri| pero_utils::redirect::validate_provider_endpoint_uri(uri).is_err())
+    {
+        return pero_api_axum::json_error("invalid_logout_uri");
+    }
+    let client = match crate::db::entity::oauth_clients::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => return pero_api_axum::json_error("not_found"),
+        Err(e) => return util::dependency_error(e),
+    };
+    let expected = client.clone();
+    let mut active: crate::db::entity::oauth_clients::ActiveModel = client.into();
+    active.backchannel_logout_uri = Set(endpoint);
+    match client::save_security_change(
+        &state.db,
+        &admin.actor(&state),
+        crate::service::permissions::Permission::ClientsManage,
+        &expected,
+        active,
+        None,
+    )
+    .await
+    {
+        Ok(_) => json_ok(),
+        Err(e) => util::dependency_error(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct AccountSyncForm {
+    csrf_token: String,
+    account_sync_uri: String,
+}
+
+pub async fn account_sync_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    admin: super::guard::AdminContext,
+    Path(id): Path<uuid::Uuid>,
+    axum::Form(form): axum::Form<AccountSyncForm>,
+) -> Response {
+    use sea_orm::{EntityTrait, Set};
+    if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
+        return response;
+    }
+    let endpoint = util::empty_or_opt(&form.account_sync_uri);
+    if pero_utils::redirect::validate_optional_provider_endpoint_uri(endpoint.as_deref()).is_err() {
+        return pero_api_axum::json_error("invalid_url");
+    }
+    let current = match crate::db::entity::oauth_clients::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(client)) => client,
+        Ok(None) => return pero_api_axum::json_error("not_found"),
+        Err(error) => return util::dependency_error(error),
+    };
+    if endpoint.is_some() && current.r#type != OauthClientType::Confidential {
+        return pero_api_axum::json_error("invalid_client_type");
+    }
+    let mut active: crate::db::entity::oauth_clients::ActiveModel = current.clone().into();
+    active.account_sync_uri = Set(endpoint);
+    active.updated_at = Set(time::OffsetDateTime::now_utc());
+    util::management_response(
+        client::save_security_change(
+            &state.db,
+            &admin.actor(&state),
+            crate::service::permissions::Permission::ClientsManage,
+            &current,
+            active,
+            None,
+        )
+        .await,
+    )
 }

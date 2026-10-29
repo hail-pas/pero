@@ -10,8 +10,14 @@ use crate::state::app::AppState;
 pub async fn token(
     State(state): State<AppState>,
     source: pero_api_axum::extractor::ClientIp,
-    axum::Form(form): axum::Form<TokenRequest>,
+    headers: axum::http::HeaderMap,
+    axum::Form(mut form): axum::Form<TokenRequest>,
 ) -> Response {
+    if let Err(e) =
+        super::client_auth::apply(&headers, &mut form.client_id, &mut form.client_secret)
+    {
+        return token_error_unauthorized_response(e);
+    }
     match TokenService::new(&state)
         .token(&form, &source.for_rate_limit())
         .await

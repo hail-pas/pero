@@ -74,8 +74,7 @@ pub async fn post(
         }
     };
 
-    let cookie = state.cookie_factory().build_session_cookie(&token);
-    (jar.add(cookie), Redirect::to(&redirect)).into_response()
+    crate::web::login_flow::finish_login(&state, jar, &token, &redirect).await
 }
 
 async fn render_error(state: &AppState, jar: CookieJar, error: &str, redirect: &str) -> Response {

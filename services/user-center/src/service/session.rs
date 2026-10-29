@@ -202,7 +202,7 @@ impl<'a> SessionService<'a> {
                 identity_id,
                 provider_id,
                 ip,
-                user_agent,
+                user_agent: user_agent.clone(),
                 expires_at,
                 authenticated_at: authenticated_at.unwrap_or_else(OffsetDateTime::now_utc),
                 reauthenticated_at: credential_authenticated_at,
@@ -226,6 +226,20 @@ impl<'a> SessionService<'a> {
                 .await
                 .map_err(db_error)?;
         }
+        crate::db::helper::login_event::record(
+            &txn,
+            crate::db::helper::login_event::RecordParams {
+                user_id: Some(user_id),
+                identity_id,
+                provider_id,
+                event_type: crate::db::enums::LoginEventType::LoginSuccess,
+                ip,
+                user_agent,
+                detail: serde_json::json!({}),
+            },
+        )
+        .await
+        .map_err(db_error)?;
         txn.commit().await.map_err(db_error)?;
         Ok((token, session.id))
     }

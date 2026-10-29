@@ -17,7 +17,7 @@ pub struct LoginQuery {
 
 /// EP-02: GET /sso/login
 ///
-/// 已有 session → 读 pero_auth_nonce → 恢复授权 or /account/profile
+/// 已有 session → 读 pero_auth_nonce → 恢复授权 or /account/applications
 /// 未登录 → 查询社交 provider → 渲染 login.html
 pub async fn get(
     State(state): State<AppState>,
@@ -50,9 +50,9 @@ pub async fn get(
                 Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
             }
             let cleared = jar.add(cookies.clear_cookie(&nonce_name));
-            return (cleared, Redirect::to("/account/profile")).into_response();
+            return (cleared, Redirect::to("/account/applications")).into_response();
         }
-        return (jar, Redirect::to("/account/profile")).into_response();
+        return (jar, Redirect::to("/account/applications")).into_response();
     }
 
     let providers = match find_enabled_social_providers(&state).await {
@@ -66,7 +66,7 @@ pub async fn get(
 /// EP-03: POST /sso/login
 ///
 /// 完整流程：限流 → 查用户 → 检查锁定 → 查 password identity → 验证密码
-/// → 创建 session → 记录事件 → 恢复 pending 授权 or /account/profile
+/// → 创建 session → 记录事件 → 恢复 pending 授权 or /account/applications
 pub async fn post(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -107,15 +107,14 @@ pub async fn post(
             Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
             Ok(false) => {
                 jar = jar.add(cookies.clear_cookie(&nonce_name));
-                "/account/profile".to_owned()
+                "/account/applications".to_owned()
             }
         }
     } else {
-        "/account/profile".to_owned()
+        "/account/applications".to_owned()
     };
 
-    let cookie = cookies.build_session_cookie(&token);
-    (jar.add(cookie), Redirect::to(&redirect_target)).into_response()
+    crate::web::login_flow::finish_login(&state, jar, &token, &redirect_target).await
 }
 
 fn render_login(

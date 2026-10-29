@@ -146,3 +146,26 @@ impl From<PasswordLoginError> for LoginFormError {
         }
     }
 }
+
+/// Continue primary authentication through MFA before returning to the requested page.
+pub async fn finish_login(
+    state: &AppState,
+    jar: CookieJar,
+    token: &str,
+    redirect: &str,
+) -> axum::response::Response {
+    use axum::response::{IntoResponse, Redirect};
+    let jar = jar.add(state.cookie_factory().build_session_cookie(token));
+    let session = match crate::web::session::extract_browser_session(state, &jar).await {
+        Ok(Some(session)) => session,
+        Ok(None) => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        Err(status) => return status.into_response(),
+    };
+    let mut target = crate::web::util::safe_redirect(redirect);
+    if session.mfa_required && session.mfa_verified_at.is_none() || session.recovery_pending {
+        let mut challenge = "/sso/mfa".to_owned();
+        pero_utils::encode::append_query_param(&mut challenge, "redirect", &target);
+        target = challenge;
+    }
+    (jar, Redirect::to(&target)).into_response()
+}

@@ -84,11 +84,8 @@ pub async fn verify_contact(
         Err(status) => return status.into_response(),
     };
 
-    let svc = ContactVerificationService::new(&state.db, &state.cache);
-    match svc
-        .verify_contact(session.user_id, &form.nonce, &form.code)
-        .await
-    {
+    let svc = ContactVerificationService::new(&state);
+    match svc.verify_contact(&session, &form.nonce, &form.code).await {
         Ok(_) => json_ok(),
         Err(e) => contact_error_response(&e),
     }
@@ -111,7 +108,7 @@ pub async fn verify_contact_get(
         Err(status) => return status.into_response(),
     };
 
-    let svc = ContactVerificationService::new(&state.db, &state.cache);
+    let svc = ContactVerificationService::new(&state);
 
     let req = match svc.load_pending_request(&query.nonce).await {
         Ok(Some(r)) => r,
@@ -143,7 +140,10 @@ pub async fn verify_contact_get(
         ContactChangeType::Phone => "phone",
     };
 
-    let layout = super::dto::AccountLayout::from_user(&state.db, &user).await;
+    let layout = match super::dto::AccountLayout::from_user(&state.db, &user).await {
+        Ok(layout) => layout,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
 
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
@@ -172,8 +172,8 @@ pub async fn cancel_contact(
         Err(status) => return status.into_response(),
     };
 
-    let svc = ContactVerificationService::new(&state.db, &state.cache);
-    match svc.cancel_contact(session.user_id, &form.nonce).await {
+    let svc = ContactVerificationService::new(&state);
+    match svc.cancel_contact(&session, &form.nonce).await {
         Ok(()) => json_ok(),
         Err(e) => contact_error_response(&e),
     }
@@ -195,7 +195,7 @@ async fn send_current_contact_verification(
         Err(status) => return status.into_response(),
     };
 
-    let mut svc = ContactVerificationService::new(&state.db, &state.cache);
+    let svc = ContactVerificationService::new(state);
     let user = match svc.load_active_user(session.user_id).await {
         Ok(u) => u,
         Err(e) => return contact_error_response(&e),
@@ -210,7 +210,7 @@ async fn send_current_contact_verification(
         return json_ok_with_error("already_verified");
     }
 
-    create_and_send_contact_request(state, &mut svc, user.id, channel, value).await
+    create_and_send_contact_request(state, &svc, &session, channel, value).await
 }
 
 async fn change_contact(
@@ -238,7 +238,7 @@ async fn change_contact(
         Err(status) => return status.into_response(),
     };
 
-    let mut svc = ContactVerificationService::new(&state.db, &state.cache);
+    let svc = ContactVerificationService::new(state);
     let user = match svc.load_active_user(session.user_id).await {
         Ok(u) => u,
         Err(e) => return contact_error_response(&e),
@@ -248,25 +248,27 @@ async fn change_contact(
         return json_ok_with_error(same_value_error(channel));
     }
 
-    create_and_send_contact_request(state, &mut svc, user.id, channel, new_value).await
+    create_and_send_contact_request(state, &svc, &session, channel, new_value).await
 }
 
 async fn create_and_send_contact_request(
     state: &AppState,
-    svc: &mut ContactVerificationService<'_>,
-    user_id: uuid::Uuid,
+    svc: &ContactVerificationService<'_>,
+    session: &crate::state::session::SsoSession,
     channel: ContactChannel,
     value: String,
 ) -> Response {
-    if state.config.notification.endpoint.is_empty() {
-        return crate::web::util::dependency_error("Notifications are not configured");
+    if !state.config.notification.available(channel.key()) {
+        return crate::web::util::management_response(Err(
+            crate::service::ManagementError::Invalid("notification_disabled"),
+        ));
     }
-    if let Err(e) = svc.check_rate_limit(user_id, channel.key()).await {
+    if let Err(e) = svc.check_rate_limit(session.user_id, channel.key()).await {
         return contact_error_response(&e);
     }
 
     let (_, nonce) = match svc
-        .create_contact_request(user_id, channel, value, Some(&state.config.sso.base_url))
+        .create_contact_request(session, channel, value, Some(&state.config.sso.base_url))
         .await
     {
         Ok(r) => r,
@@ -306,6 +308,7 @@ fn format_error(channel: ContactChannel) -> &'static str {
 
 fn contact_error_to_json(e: &ContactError) -> &'static str {
     match e {
+        ContactError::Unauthorized => "unauthorized",
         ContactError::UserNotFound => "user_not_found",
         ContactError::SamePendingValue => "same_pending_value",
         ContactError::ContactTaken => "contact_taken",
@@ -321,6 +324,11 @@ fn contact_error_to_json(e: &ContactError) -> &'static str {
 
 fn contact_error_response(e: &ContactError) -> Response {
     match e {
+        ContactError::Unauthorized => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error":"unauthorized"})),
+        )
+            .into_response(),
         ContactError::ServiceUnavailable | ContactError::SendFailed => {
             crate::web::util::dependency_error("Contact verification unavailable")
         }

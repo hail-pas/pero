@@ -188,9 +188,7 @@ impl<'a> AccountService<'a> {
         let now = time::OffsetDateTime::now_utc();
         let token_hash = pero_utils::crypto::sha256_hex(token);
 
-        use crate::db::entity::identities::{Column, Entity};
         use crate::db::entity::password_reset_tokens as prt;
-        use sea_orm::sea_query::Expr;
 
         let hash_result = PasswordIdentityService::hash_password(new_password)
             .await
@@ -228,27 +226,32 @@ impl<'a> AccountService<'a> {
             }
         };
 
-        let password_update = Entity::update_many()
-            .col_expr(Column::PasswordHash, Expr::value(Some(hash_result.hash)))
-            .col_expr(
-                Column::PasswordAlgorithm,
-                Expr::value(Some(hash_result.algorithm)),
-            )
-            .col_expr(Column::PasswordUpdatedAt, Expr::value(Some(now)))
-            .filter(Column::UserId.eq(user_id))
-            .filter(Column::Kind.eq(IdentityKind::Password))
-            .filter(Column::UnboundAt.is_null())
-            .exec(&txn)
-            .await;
-
-        match password_update {
-            Ok(r) if r.rows_affected > 0 => {}
-            Ok(_) => return Err(PasswordResetError::InvalidToken),
-            Err(e) => {
-                tracing::error!("Password update error: {e}");
-                return Err(PasswordResetError::Internal);
+        let identity = PasswordIdentityService::find(&txn, user_id)
+            .await
+            .map_err(|_| PasswordResetError::Internal)?;
+        let password_update = async {
+            if let Some(identity) = identity {
+                PasswordIdentityService::update_hashed(&txn, identity, hash_result, now).await?;
+            } else {
+                let provider =
+                    crate::db::helper::identity_provider::find_local_provider(&txn).await?;
+                PasswordIdentityService::create_hashed(
+                    &txn,
+                    user_id,
+                    provider.id,
+                    user_id.to_string(),
+                    hash_result,
+                    now,
+                )
+                .await?;
             }
+            Ok::<_, sea_orm::DbErr>(())
         }
+        .await;
+        password_update.map_err(|error| {
+            tracing::error!(%error, "Password recovery failed");
+            PasswordResetError::Internal
+        })?;
 
         crate::service::contact::invalidate_contact_credentials(&txn, user_id, None)
             .await
