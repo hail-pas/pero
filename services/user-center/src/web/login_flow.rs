@@ -147,7 +147,7 @@ impl From<PasswordLoginError> for LoginFormError {
     }
 }
 
-/// Continue primary authentication through MFA before returning to the requested page.
+/// Complete primary login; the target application enforces its MFA policy.
 pub async fn finish_login(
     state: &AppState,
     jar: CookieJar,
@@ -162,7 +162,18 @@ pub async fn finish_login(
         Err(status) => return status.into_response(),
     };
     let mut target = crate::web::util::safe_redirect(redirect);
-    if session.mfa_required && session.mfa_verified_at.is_none() || session.recovery_pending {
+    // Challenge direct dashboard navigation here. OAuth destinations enforce the
+    // target application's policy after resume, independently of the user's role.
+    let target_path = target.split('?').next().unwrap_or("");
+    let management_pending = session.mfa_required
+        && session.mfa_verified_at.is_none()
+        && (target_path == "/dashboard" || target_path.starts_with("/dashboard/"));
+    if (session.recovery_pending || management_pending)
+        && !matches!(
+            target.split('?').next(),
+            Some("/sso/mfa" | "/account/security" | "/account/reauth")
+        )
+    {
         let mut challenge = "/sso/mfa".to_owned();
         pero_utils::encode::append_query_param(&mut challenge, "redirect", &target);
         target = challenge;

@@ -69,6 +69,7 @@ export function PageContent({
       return <Home data={data} />;
     case "AdminHomeView":
       return <AdminHome data={data} />;
+    case "AppAccessDeniedView":
     case "SelectAccountView":
     case "LoginView":
     case "AccountLoginView":

@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
             post(admission::progress_action),
         )
         .route("/account/applications/{id}", post(admission::app))
+        .route("/account/applications/{id}/mfa", post(admission::mfa))
         .route("/account/close", post(admission::close))
         .route("/account/security", get(mfa::get).post(mfa::post))
         .route("/account/reauth/{provider}", post(mfa::oidc))

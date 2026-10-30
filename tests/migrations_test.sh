@@ -22,7 +22,8 @@ first=$!
 second=$!
 wait "$first"
 wait "$second"
-[[ $(psql "$DATABASE_URL" -X -Atc 'SELECT count(*) FROM schema_migrations') == 1 ]]
+migration_files=("$ROOT"/services/user-center/migrations/*.sql)
+[[ $(psql "$DATABASE_URL" -X -Atc 'SELECT count(*) FROM schema_migrations') == ${#migration_files[@]} ]]
 "$RUNNER" >/dev/null
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE schema_migrations SET checksum='tampered'" >/dev/null
 if "$RUNNER" >/dev/null 2>&1; then echo 'Checksum mismatch accepted' >&2; exit 1; fi

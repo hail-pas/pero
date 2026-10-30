@@ -5,7 +5,7 @@ use pero_api_axum::extractor::ClientIp;
 
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, authenticate_password_form};
-use crate::web::session::extract_session;
+use crate::web::session::extract_browser_session;
 use crate::web::sso::dto::{AccountLoginView, LoginForm};
 use crate::web::sso::utility::find_enabled_social_providers;
 use crate::web::util::safe_redirect;
@@ -18,11 +18,11 @@ pub async fn get(
 ) -> Response {
     let redirect = query.get("redirect").cloned().unwrap_or_default();
 
-    if (match extract_session(&state, &jar).await {
+    if let Some(session) = match extract_browser_session(&state, &jar).await {
         Ok(session) => session,
         Err(status) => return status.into_response(),
-    })
-    .is_some()
+    } && !session.recovery_pending
+        && (!session.mfa_required || session.mfa_verified_at.is_some())
     {
         return Redirect::to(&safe_redirect(&redirect)).into_response();
     }

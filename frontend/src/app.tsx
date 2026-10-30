@@ -333,8 +333,12 @@ export function App() {
   );
   const authenticationStep =
     payload?.view === "SecurityView" &&
-    (payload.data.pending || payload.data.recovery || path === "/sso/mfa");
+    (payload.data.pending ||
+      payload.data.recovery ||
+      (payload.data.required && !payload.data.enabled) ||
+      path === "/sso/mfa");
   const managed =
+    !!layout &&
     !authenticationStep &&
     (path.startsWith("/dashboard") ||
       payload?.view === "SecurityView" ||

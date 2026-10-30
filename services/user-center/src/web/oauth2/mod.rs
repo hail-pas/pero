@@ -1,3 +1,4 @@
+pub mod access;
 pub mod authorize;
 pub mod end_session;
 pub mod select_account;
@@ -16,6 +17,10 @@ pub fn routes() -> axum::Router<crate::state::app::AppState> {
             get(crate::web::dashboard::integration::callback),
         )
         .route("/oauth2/authorize/resume", get(authorize::resume))
+        .route(
+            "/oauth2/authorize/access",
+            get(access::get).post(access::post),
+        )
         .route(
             "/oauth2/session/end",
             get(end_session::end_session).post(end_session::end_session_post),

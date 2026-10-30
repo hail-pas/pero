@@ -28,7 +28,7 @@ export function SecurityCenter({
   mutate,
 }: { data: ViewDataMap["SecurityView"] } & Pick<Actions, "mutate">) {
   useLocale();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [busy, setBusy] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -36,7 +36,10 @@ export function SecurityCenter({
   }, [d.error]);
   const reauth = pathname === "/account/reauth";
   const authenticationPending = d.pending || d.recovery;
-  const standalone = authenticationPending || pathname === "/sso/mfa";
+  const standalone =
+    authenticationPending ||
+    (d.required && !d.enabled) ||
+    pathname === "/sso/mfa";
   const submit = (
     action: string,
     values: Record<string, string | boolean | number | null | undefined> = {},
@@ -89,6 +92,15 @@ export function SecurityCenter({
           <Alert ref={errorRef} tabIndex={-1} severity="error" sx={{ mb: 2 }}>
             {errorText(d.error)}
           </Alert>
+        )}
+        {standalone && !reauth && d.error === "reauth_required" && (
+          <Button
+            component={RouterLink}
+            to={`/account/reauth?${new URLSearchParams({ redirect: pathname + search })}`}
+            sx={{ mb: 2 }}
+          >
+            {t("重新验证身份")}
+          </Button>
         )}
         {!authenticationPending && !reauth && d.readiness && (
           <Panel title={t("账户恢复检查")}>
@@ -509,12 +521,7 @@ export function AdminRoles({
               </Button>
             </Stack>
             {r.role === "admin" && (
-              <AdminPermissions
-                key={`${r.user_id}-${r.grants?.revision}`}
-                row={r}
-                data={data}
-                mutate={mutate}
-              />
+              <AdminPermissions row={r} data={data} mutate={mutate} />
             )}
           </Box>
         ))}

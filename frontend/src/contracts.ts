@@ -299,6 +299,13 @@ export interface ViewDataMap {
     password_url: string;
     issuer: string;
   };
+  AppAccessDeniedView: CsrfPage & {
+    token: string;
+    app_name: string;
+    username: string;
+    system: boolean;
+    expired: boolean;
+  };
   SelectAccountView: CsrfPage & {
     token: string;
     username: string;
@@ -331,6 +338,7 @@ export interface ViewDataMap {
       inherited: boolean;
     };
   AdmissionView: AccountPage & {
+    mfa_enabled: boolean;
     username: string;
     progress: ProgressList;
     rows: {
@@ -341,6 +349,7 @@ export interface ViewDataMap {
       homepage_url: string | null;
       logo_url: string | null;
       status: string | null;
+      require_mfa: boolean;
     }[];
   };
   ForgotPasswordView: CsrfPage & { error: string; success: boolean };
@@ -439,6 +448,7 @@ export type ViewEnvelope<V extends ViewName = ViewName> = {
   [K in V]: { view: K; data: ViewDataMap[K] };
 }[V];
 export type AuthView =
+  | "AppAccessDeniedView"
   | "SelectAccountView"
   | "LoginView"
   | "AccountLoginView"

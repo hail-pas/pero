@@ -122,7 +122,10 @@ async fn navigation_and_dashboard_share_live_administrator_entitlement() {
             .await
             .unwrap();
             let (_, challenge) = get(&app, &token, "/dashboard/apps").await;
-            assert_eq!(challenge["redirect"], "/account/security");
+            assert_eq!(
+                challenge["redirect"],
+                "/account/security?redirect=%2Fdashboard%2Fapps"
+            );
             sec::execute(
                 &db,
                 "UPDATE user_mfa SET enabled=true WHERE user_id=$1",

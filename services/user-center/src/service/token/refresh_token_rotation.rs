@@ -153,9 +153,10 @@ impl TokenService<'_> {
                 "Session revoked",
             );
         };
-        let active_session = crate::db::helper::session::active_query(
+        let active_session = crate::db::helper::session::app_query(
             now,
             self.state.config.sso.session_idle_ttl_seconds,
+            client.app_id,
         )
         .filter(crate::db::entity::sso_sessions::Column::Id.eq(session_id))
         .filter(crate::db::entity::sso_sessions::Column::UserId.eq(existing.user_id))

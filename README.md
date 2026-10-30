@@ -152,7 +152,7 @@ MIT OR Apache-2.0
 
 角色和 MFA 结构已包含在初始迁移中。bootstrap 创建超级管理员；此后系统应用访问资格不再自动授予管理员身份。
 
-`/account/security` 提供 TOTP 设置、二维码/手动密钥、一次性恢复码生成及停用；`/sso/mfa` 完成登录验证。TOTP 六位、30 秒、允许相邻时间步，同一成功时间步不可重放。恢复码每个含 128 位随机性，数据库只存 SHA-256 哈希，使用后立即作废。管理员必须启用 MFA，普通用户自愿。管理员首次登录只能先完成设置；待验证和恢复中的会话不能用于 OAuth 授权、刷新及 UserInfo。
+`/account/security` 提供 TOTP 设置、二维码/手动密钥、一次性恢复码生成及停用；`/sso/mfa` 完成登录验证。TOTP 六位、30 秒、允许相邻时间步，同一成功时间步不可重放。恢复码每个含 128 位随机性，数据库只存 SHA-256 哈希，使用后立即作废。管理后台仅允许管理员访问，并始终要求设置和验证 MFA。普通应用默认不要求 MFA；用户可在个人中心“我的应用”为自己逐个开启或关闭 MFA，不影响其他用户。即使账号是管理员或已设置验证器，登录未开启此开关的普通应用也无需 MFA；开启后在授权、令牌刷新及 UserInfo 中均校验 MFA。更改个人应用 MFA 设置需要近期认证，并撤销本人在该应用已有的授权。开启前需先设置验证器。恢复中的会话仍不能访问任何应用。
 
 丢失验证器时，先使用原登录方式验证主身份，再输入恢复码。恢复会撤销其他会话，并限制当前会话只能重新设置验证器；设置新验证器使用独立草稿，确认前保留原认证器及未使用的恢复码；页面中断后可用剩余恢复码重新开始，设置完成才替换全部恢复码。不提供管理员直接清除 MFA 的接口，密码重置不会清除 MFA。验证器与恢复码均丢失时，可由另一位超级管理员在用户安全页面核验身份后签发短时恢复码，仍需主身份验证和重新绑定验证器。
 
@@ -198,6 +198,8 @@ MIT OR Apache-2.0
 
 Revocation 接受本客户端的 access token 或 refresh token；采用应用授权级撤销，使该用户在目标应用的既有令牌及未使用授权码失效，保留应用访问资格、SSO 会话和其他应用授权。未知、已撤销或其他客户端的令牌统一返回 200。旧刷新令牌的主动撤销不会触发刷新重放导致的 SSO 全局退出。
 
+Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，实时查询当前用户的 `super_admin` 平台角色，不从令牌或调用方参数推断。仅认证通过的 confidential 客户端可查询自己的令牌；用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
+
 业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie；本项目 admin 示例已采用每次请求在线 introspection。仅在登录时离线验签无法获得即时撤销效果。
 
 协议依据：[RFC 7662](https://www.rfc-editor.org/rfc/rfc7662)、[RFC 7009](https://www.rfc-editor.org/rfc/rfc7009)。
@@ -212,7 +214,7 @@ Revocation 接受本客户端的 access token 或 refresh token；采用应用�
 
 `prompt=select_account` 进入账号选择页，可继续使用当前账号或重新登录其他账号，保留原 OAuth state、nonce、PKCE、scope 和回调。选择操作绑定授权请求和当时的会话，并要求 CSRF；不会把授权请求 ID 当成登录凭据。个人菜单也提供“切换账号”。切换时撤销当前浏览器的 SSO 会话及关联刷新令牌，不影响其他设备。
 
-通知 outbox 新增安全消息 kind：`new_login`、`password_changed`、`password_reset_completed`、`admin_password_reset`、`contact_changed`、`identity_linked`、`identity_unlinked`。使用 HTTP 网关时，网关需识别这些 kind。登录提醒仅在完成主认证且无需 MFA，或 MFA 验证成功后生成；再认证不重复发送登录提醒。联系方式变更通知发送到原已验证渠道及本次验证的新渠道；管理员修改联系方式只通知原已验证渠道。所有提醒与对应变更同事务入队，复用已有投递、重试、脱敏及保留策略，不包含密码、验证码、密钥或恢复码。
+通知 outbox 新增安全消息 kind：`new_login`、`password_changed`、`password_reset_completed`、`admin_password_reset`、`contact_changed`、`identity_linked`、`identity_unlinked`。使用 HTTP 网关时，网关需识别这些 kind。登录提醒在完成主认证后生成，应用 MFA 验证不重复提醒；再认证不重复发送登录提醒。联系方式变更通知发送到原已验证渠道及本次验证的新渠道；管理员修改联系方式只通知原已验证渠道。所有提醒与对应变更同事务入队，复用已有投递、重试、脱敏及保留策略，不包含密码、验证码、密钥或恢复码。
 
 上述结构均包含在初始迁移，服务启动自动核对并验收。
 

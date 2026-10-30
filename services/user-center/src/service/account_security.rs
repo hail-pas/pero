@@ -276,3 +276,48 @@ pub async fn close_account(
     txn.commit().await?;
     Ok(())
 }
+
+/// Users manage only their own application's MFA preference under the grant locks.
+pub async fn set_app_mfa(
+    state: &crate::state::app::AppState,
+    session: &crate::state::session::SsoSession,
+    app_id: Uuid,
+    required: bool,
+) -> Result<(), ManagementError> {
+    let txn = state.db.begin().await?;
+    let app = apps::Entity::find_by_id(app_id)
+        .lock_shared()
+        .one(&txn)
+        .await?
+        .ok_or(ManagementError::Invalid("not_found"))?;
+    if app.system || app.status != crate::db::enums::CommonStatus::Active {
+        return Err(ManagementError::Invalid("forbidden"));
+    }
+    let access = user_app_access::Entity::find_by_id((session.user_id, app_id))
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .filter(|a| a.status == crate::db::enums::CommonStatus::Active)
+        .ok_or(ManagementError::Invalid("forbidden"))?;
+    lock_account_session(&txn, session, &state.config.sso).await?;
+    if !super::security::recent(&txn, session.id, state.config.sso.session_idle_ttl_seconds).await?
+    {
+        return Err(ManagementError::Invalid("reauth_required"));
+    }
+    if required && !super::security::mfa_enabled(&txn, session.user_id).await? {
+        return Err(ManagementError::Invalid("mfa_not_enabled"));
+    }
+    if access.require_mfa != required {
+        let mut active: user_app_access::ActiveModel = access.into();
+        active.require_mfa = Set(required);
+        active.updated_at = Set(OffsetDateTime::now_utc());
+        active.update(&txn).await?;
+        SessionService::revoke_app_grants(&txn, app_id, Some(session.user_id), "app_mfa_changed")
+            .await?;
+        super::security::execute(&txn,
+            "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,$2,$3,'success',200 FROM users WHERE id=$1",
+            vec![session.user_id.into(), format!("security:app_mfa:{}", required).into(), app_id.to_string().into()]).await?;
+    }
+    txn.commit().await?;
+    Ok(())
+}

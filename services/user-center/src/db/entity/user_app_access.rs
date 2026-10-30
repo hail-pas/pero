@@ -13,6 +13,8 @@ pub struct Model {
     pub app_id: Uuid,
     pub status: CommonStatus,
     pub token_version: i64,
+    #[serde(default)]
+    pub require_mfa: bool,
     pub created_at: TimeDateTimeWithTimeZone,
     pub updated_at: TimeDateTimeWithTimeZone,
 }

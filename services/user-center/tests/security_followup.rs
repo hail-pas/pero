@@ -268,14 +268,23 @@ async fn authorization_and_recovery_regressions() {
             "{location}"
         );
     }
-    // Incomplete MFA and recovery are unauthenticated for silent authorization;
-    // the protocol must return login_required to the validated client, never UI.
-    for recovery in [false, true] {
+    // Silent authorization follows the personal application policy; recovery stays restricted.
+    for (required, recovery, expected) in [
+        (false, false, "code="),
+        (true, false, "error=interaction_required"),
+        (false, true, "error=login_required"),
+    ] {
+        sql(
+            &db,
+            "UPDATE user_app_access SET require_mfa=$2 WHERE app_id=$1",
+            vec![app_a.into(), required.into()],
+        )
+        .await;
         sql(&db, "UPDATE sso_sessions SET mfa_required=true,mfa_verified_at=NULL,recovery_pending=$2 WHERE token_hash=$1", vec![pero_utils::crypto::sha256_hex(&raw_old).into(), recovery.into()]).await;
         let response=app.clone().oneshot(Request::builder().uri("/oauth2/authorize?client_id=admin-client&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=none&state=mfa-silent").header("cookie",format!("pero_sso={raw_old}")).body(axum::body::Body::empty()).unwrap()).await.unwrap();
         let location = response.headers()["location"].to_str().unwrap();
         assert!(
-            location.starts_with("https://client.example.test/callback?error=login_required")
+            location.starts_with(&format!("https://client.example.test/callback?{expected}"))
                 && location.contains("state=mfa-silent"),
             "{location}"
         );

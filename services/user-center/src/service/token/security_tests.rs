@@ -3617,3 +3617,201 @@ async fn account_sync_is_transactional_signed_and_scoped() {
     );
     f.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL"]
+async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
+    use crate::db::entity::sso_sessions;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let fixture = SecurityFixture::new().await;
+    let state = &fixture.state;
+    let db = &state.db;
+    // Enrolled administrators still log into ordinary apps without an OTP by default.
+    sql(
+        db,
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+        vec![fixture.user.into()],
+    )
+    .await;
+    sql(db,"INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',current_setting('app.encrypt_key')),true)",vec![fixture.user.into()]).await;
+    let (raw, sid) = state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let session = state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let ready = || {
+        crate::db::helper::session::app_query(time::OffsetDateTime::now_utc(), 60, fixture.app)
+            .filter(sso_sessions::Column::Id.eq(sid))
+    };
+    assert!(ready().one(db).await.unwrap().is_some());
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let service = TokenService::new(state);
+    let code = pero_utils::crypto::generate_token();
+    sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&code).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),sid.into()]).await;
+    let request = TokenRequest {
+        grant_type: "authorization_code".into(),
+        code: Some(code),
+        redirect_uri: Some("https://client.example.test/callback".into()),
+        ..refresh_form(fixture.client, "")
+    };
+    let TokenEndpointResult::Success(tokens) =
+        service.handle_authorization_code(&request, &client).await
+    else {
+        panic!("ordinary application must accept primary login")
+    };
+    assert!(
+        crate::service::token_status::active_access(state, &tokens.access_token)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let TokenEndpointResult::Success(refreshed) = service
+        .handle_refresh_token(
+            &refresh_form(fixture.client, tokens.refresh_token.as_deref().unwrap()),
+            &client,
+        )
+        .await
+    else {
+        panic!("ordinary app refresh must not require MFA")
+    };
+    // Enforced at online token use and refresh, independently of browser redirects.
+    sql(
+        db,
+        "UPDATE user_app_access SET require_mfa=true WHERE user_id=$1 AND app_id=$2",
+        vec![fixture.user.into(), fixture.app.into()],
+    )
+    .await;
+    assert!(
+        crate::service::token_status::active_access(state, &refreshed.access_token)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        service
+            .handle_refresh_token(
+                &refresh_form(fixture.client, refreshed.refresh_token.as_deref().unwrap()),
+                &client
+            )
+            .await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    let blocked_code = pero_utils::crypto::generate_token();
+    sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&blocked_code).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),sid.into()]).await;
+    let blocked_request = TokenRequest {
+        code: Some(blocked_code),
+        ..request
+    };
+    assert!(matches!(
+        service
+            .handle_authorization_code(&blocked_request, &client)
+            .await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    sql(
+        db,
+        "UPDATE user_app_access SET require_mfa=false WHERE user_id=$1 AND app_id=$2",
+        vec![fixture.user.into(), fixture.app.into()],
+    )
+    .await;
+    // Setting changes require recent MFA, even though ordinary application access does not.
+    assert!(
+        crate::service::account_security::set_app_mfa(state, &session, fixture.app, true)
+            .await
+            .is_err()
+    );
+    sql(
+        db,
+        "UPDATE sso_sessions SET mfa_verified_at=now() WHERE id=$1",
+        vec![sid.into()],
+    )
+    .await;
+    crate::service::account_security::set_app_mfa(state, &session, fixture.app, true)
+        .await
+        .unwrap();
+    assert!(
+        crate::service::token_status::active_access(state, &refreshed.access_token)
+            .await
+            .unwrap()
+            .is_none(),
+        "preference changes revoke previous grants"
+    );
+    let (_, pending) = state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    assert!(
+        crate::db::helper::session::app_query(time::OffsetDateTime::now_utc(), 60, fixture.app)
+            .filter(sso_sessions::Column::Id.eq(pending))
+            .one(db)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // Another application and another user are unaffected by this preference.
+    let other_app = Uuid::now_v7();
+    let other_user = Uuid::now_v7();
+    sql(
+        db,
+        "INSERT INTO apps(id,code,name) VALUES($1,$2,'Other')",
+        vec![other_app.into(), other_app.to_string().into()],
+    )
+    .await;
+    sql(
+        db,
+        "INSERT INTO users(id,username) VALUES($1,$2)",
+        vec![other_user.into(), other_user.to_string().into()],
+    )
+    .await;
+    for (user, app) in [(fixture.user, other_app), (other_user, fixture.app)] {
+        sql(
+            db,
+            "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+            vec![user.into(), app.into()],
+        )
+        .await;
+        let (_, id) = state
+            .session_service()
+            .create(user, None, None, None, None)
+            .await
+            .unwrap();
+        assert!(
+            crate::db::helper::session::app_query(time::OffsetDateTime::now_utc(), 60, app)
+                .filter(sso_sessions::Column::Id.eq(id))
+                .one(db)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+    // Turning it back off restores default behavior for new primary sessions.
+    crate::service::account_security::set_app_mfa(state, &session, fixture.app, false)
+        .await
+        .unwrap();
+    assert!(
+        crate::db::helper::session::app_query(time::OffsetDateTime::now_utc(), 60, fixture.app)
+            .filter(sso_sessions::Column::Id.eq(pending))
+            .one(db)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    fixture.cleanup().await;
+}

@@ -853,5 +853,18 @@
   "允许新用户通过此渠道注册，仍受系统和应用注册策略限制；关闭后仅供已有账号登录或绑定。": "Allow new users to register through this provider, subject to system and application registration policies. When off, only existing accounts can sign in or link.",
   "开启后会出现在登录页；暂未填齐配置时可关闭，先保存为草稿。": "Show this provider on the sign-in page. Turn off to save an incomplete configuration as a draft.",
   "可选，登录按钮使用的图标；留空使用协议默认图标。": "Optional icon for the sign-in button. Leave blank to use the protocol default.",
-  "可选，通常保留 {}。例如 GitHub 可设置 emails_endpoint 获取邮箱；预设已包含所需配置。": "Optional; usually leave as {}. For example, GitHub uses emails_endpoint to fetch email addresses. Presets include the required settings."
+  "可选，通常保留 {}。例如 GitHub 可设置 emails_endpoint 获取邮箱；预设已包含所需配置。": "Optional; usually leave as {}. For example, GitHub uses emails_endpoint to fetch email addresses. Presets include the required settings.",
+  "此应用已开启 MFA": "MFA is enabled for this application",
+  "此应用未开启 MFA": "MFA is disabled for this application",
+  "设置验证器以开启 MFA": "Set up an authenticator to enable MFA",
+  "关闭此应用的 MFA": "Disable MFA for this application",
+  "开启此应用的 MFA": "Enable MFA for this application",
+  "授权请求已失效": "Authorization request expired",
+  "暂无应用访问权限": "Application access required",
+  "本次授权已过期、已结束或登录账号已变化。请返回原应用重新发起登录。": "This authorization has expired, ended, or the signed-in account has changed. Return to the original application and sign in again.",
+  "账号 {{0}} 尚无 {{1}} 的访问资格。": "Account {{0}} does not have access to {{1}}.",
+  "请联系管理员开通此应用权限，完成后回到本页重试。": "Ask an administrator to grant application access, then return here to retry.",
+  "请在新窗口申请或查看应用访问资格；审批通过后，回到本页重试。若资格已被停用，请联系管理员。": "Request or check application access in a new window, then return here to retry after approval. Contact an administrator if access has been disabled.",
+  "申请或查看访问资格": "Request or check access",
+  "已获得权限，重新尝试": "Access granted, retry"
 }

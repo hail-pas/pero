@@ -72,13 +72,31 @@ async fn inspect(
     token: &str,
     client: &oauth_clients::Model,
 ) -> Result<serde_json::Value, sea_orm::DbErr> {
-    if let Some((claims, _, owner)) = token_status::active_access(state, token).await?
+    if let Some((claims, user, owner)) = token_status::active_access(state, token).await?
         && owner.id == client.id
     {
-        return Ok(serde_json::json!({
+        // Read the current platform role, never a role supplied by the OAuth client.
+        let is_superadmin = crate::service::security::role(&state.db, user.id)
+            .await?
+            .as_deref()
+            == Some("super_admin");
+        let scopes = claims
+            .scope
+            .split_whitespace()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        let mut response = serde_json::json!({
             "active":true,"client_id":client.identifier,"sub":claims.sub,"scope":claims.scope,
-            "exp":claims.exp,"iat":claims.iat,"iss":claims.iss,"aud":claims.aud,"sid":claims.sid,"token_type":"Bearer"
-        }));
+            "exp":claims.exp,"iat":claims.iat,"iss":claims.iss,"aud":claims.aud,"sid":claims.sid,"token_type":"Bearer",
+            "is_superadmin":is_superadmin
+        });
+        let profile = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
+            .expect("user claims contain only JSON primitives");
+        response
+            .as_object_mut()
+            .unwrap()
+            .extend(profile.as_object().unwrap().clone());
+        return Ok(response);
     }
     let Some(rt) = refresh(state, token, client).await? else {
         return Ok(serde_json::json!({"active":false}));
@@ -93,12 +111,15 @@ async fn inspect(
     {
         return Ok(serde_json::json!({"active":false}));
     }
-    let session =
-        crate::db::helper::session::active_query(now, state.config.sso.session_idle_ttl_seconds)
-            .filter(sso_sessions::Column::Id.eq(rt.session_id))
-            .filter(sso_sessions::Column::UserId.eq(rt.user_id))
-            .one(&state.db)
-            .await?;
+    let session = crate::db::helper::session::app_query(
+        now,
+        state.config.sso.session_idle_ttl_seconds,
+        client.app_id,
+    )
+    .filter(sso_sessions::Column::Id.eq(rt.session_id))
+    .filter(sso_sessions::Column::UserId.eq(rt.user_id))
+    .one(&state.db)
+    .await?;
     let user = crate::db::entity::users::Entity::find_by_id(rt.user_id)
         .one(&state.db)
         .await?;

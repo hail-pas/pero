@@ -65,9 +65,10 @@ pub async fn active_access(
     else {
         return Ok(None);
     };
-    if crate::db::helper::session::active_query(
+    if crate::db::helper::session::app_query(
         time::OffsetDateTime::now_utc(),
         state.config.sso.session_idle_ttl_seconds,
+        client.app_id,
     )
     .filter(sso_sessions::Column::Id.eq(sid))
     .filter(sso_sessions::Column::UserId.eq(id))

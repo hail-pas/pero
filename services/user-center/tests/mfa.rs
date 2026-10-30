@@ -92,6 +92,17 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
         .await
         .unwrap();
     let app = user_center::router::build(state.clone());
+    let response = user_center::web::login_flow::finish_login(
+        &state,
+        axum_extra::extract::CookieJar::new(),
+        &token,
+        "/dashboard/apps?page=2",
+    )
+    .await;
+    assert_eq!(
+        response.headers()["location"],
+        "/sso/mfa?redirect=%2Fdashboard%2Fapps%3Fpage%3D2"
+    );
     let mut b = Browser {
         cookies: [("pero_sso".into(), token)].into(),
         csrf: String::new(),
@@ -114,11 +125,16 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
     sec::execute(&db,"INSERT INTO identities(id,user_id,provider_id,kind,subject) VALUES($1,$2,$3,'oauth','bound-subject')",vec![oidc_identity.into(),user.into(),oidc_provider.into()]).await.unwrap();
     sec::execute(
         &db,
-        "UPDATE sso_sessions SET authenticated_at=now()-interval '10 minutes',reauthenticated_at=now()-interval '10 minutes' WHERE id=$1",
+        "UPDATE sso_sessions SET created_at=now()-interval '10 minutes',authenticated_at=now()-interval '10 minutes',reauthenticated_at=now()-interval '10 minutes' WHERE id=$1",
         vec![initial_session.into()],
     )
     .await
     .unwrap();
+    let (_, reauth_page) = b.call(&app, "/account/reauth", None).await;
+    assert_eq!(
+        reauth_page["view"], "SecurityView",
+        "First OIDC enrollment must remain reachable"
+    );
     let (_, start) = b
         .call(&app, "/account/reauth/enrollment-oidc", Some(&[]))
         .await;
@@ -160,7 +176,7 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
     ));
     for authenticated_at in [
         None,
-        Some(time::OffsetDateTime::now_utc() - time::Duration::minutes(6)),
+        Some(time::OffsetDateTime::now_utc() - time::Duration::seconds(sec::RECENT_SECONDS + 60)),
     ] {
         assert!(matches!(
             user_center::service::mfa::record_oidc_reauthentication(
@@ -202,16 +218,53 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
             .validate(b.cookies.get("pero_sso").unwrap())
             .await
             .unwrap()
-            .is_none(),
-        "Upstream proof alone must not complete mandatory MFA"
+            .is_some(),
+        "Primary authentication remains usable for ordinary applications"
     );
+    // An unenrolled administrator can refresh primary proof without receiving
+    // MFA assurance; this allows first enrollment after the original login ages.
+    let (_, reauth) = b
+        .call(&app, "/account/reauth", Some(&[("action", "reauth")]))
+        .await;
+    assert!(reauth["redirect"].is_string(), "{reauth}");
+    let refreshed = state
+        .session_service()
+        .validate(b.cookies.get("pero_sso").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let row = user_center::db::entity::sso_sessions::Entity::find_by_id(refreshed.id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.mfa_verified_at.is_none(),
+        "Primary proof must not manufacture an MFA verification"
+    );
+    assert_eq!(
+        row.reauthenticated_at.unwrap().unix_timestamp(),
+        proof_at.unix_timestamp()
+    );
+    assert!(
+        !sec::recent(&db, row.id, state.config.sso.session_idle_ttl_seconds)
+            .await
+            .unwrap()
+    );
+    state
+        .cache
+        .del(
+            user_center::cache::key::mfa_attempt
+                .key(&user.to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    b.call(&app, "/account/security", None).await;
     let (_, setup) = b
         .call(&app, "/account/security", Some(&[("action", "setup")]))
         .await;
-    assert!(
-        setup["data"]["error"].as_str().unwrap().is_empty(),
-        "{setup}"
-    );
+    assert!(setup["data"]["error"].as_str() == Some(""), "{setup}");
     let secret = setup["data"]["secret"].as_str().unwrap();
     assert!(!secret.is_empty(), "{setup}");
     let otp = sec::totp(secret, "test").unwrap();
@@ -259,7 +312,7 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
             .validate(&token)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
     b.cookies.insert("pero_sso".into(), token.clone());
     let (_, restart) = b.call(&app, "/sso/social/missing/login", None).await;
@@ -689,8 +742,10 @@ async fn password_login_challenges_before_redirect_and_activity_is_visible() {
         )
         .await;
     assert_eq!(login["redirect"], "/sso/mfa?redirect=%2Fdashboard%2Fevents");
+    let (_, gate) = browser.call(&app, "/dashboard/events", None).await;
+    assert_eq!(gate["redirect"], "/sso/mfa?redirect=%2Fdashboard%2Fevents");
     let (_, challenge) = browser
-        .call(&app, login["redirect"].as_str().unwrap(), None)
+        .call(&app, gate["redirect"].as_str().unwrap(), None)
         .await;
     assert_eq!(challenge["data"]["pending"], true);
     assert!(
@@ -699,7 +754,7 @@ async fn password_login_challenges_before_redirect_and_activity_is_visible() {
             .validate(browser.cookies.get("pero_sso").unwrap())
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
     let code = sec::totp(secret, "activity-user")
         .unwrap()
@@ -772,6 +827,135 @@ async fn password_login_challenges_before_redirect_and_activity_is_visible() {
         .await;
     assert_eq!(roles["data"]["current_user_id"], user.to_string());
     assert_eq!(roles["data"]["rows"].as_array().unwrap().len(), 1);
+    // Per-user application settings are independent from the mandatory dashboard factor.
+    let ordinary_app = Uuid::now_v7();
+    let client = Uuid::now_v7();
+    sec::execute(
+        &db,
+        "INSERT INTO apps(id,code,name) VALUES($1,$2,'Personal MFA test')",
+        vec![ordinary_app.into(), ordinary_app.to_string().into()],
+    )
+    .await
+    .unwrap();
+    sec::execute(
+        &db,
+        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+        vec![user.into(), ordinary_app.into()],
+    )
+    .await
+    .unwrap();
+    sec::execute(&db,"INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'test-hash','confidential',ARRAY['https://client.example.test/callback'],ARRAY['openid'],false)",vec![client.into(),ordinary_app.into(),client.to_string().into()]).await.unwrap();
+    let (_, applications) = browser.call(&app, "/account/applications", None).await;
+    assert_eq!(applications["data"]["mfa_enabled"], true);
+    assert_eq!(applications["data"]["rows"][0]["require_mfa"], false);
+    let endpoint = format!("/account/applications/{ordinary_app}/mfa");
+    let (status, result) = browser
+        .call(&app, &endpoint, Some(&[("action", "enable_mfa")]))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let (_, applications) = browser.call(&app, "/account/applications", None).await;
+    assert_eq!(applications["data"]["rows"][0]["require_mfa"], true);
+    // Password login for an enrolled super administrator must reach the target
+    // application before applying its explicitly enabled MFA preference.
+    let authorize = format!(
+        "/oauth2/authorize?client_id={client}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&state=personal-mfa"
+    );
+    browser.cookies.remove("pero_sso");
+    browser.call(&app, "/account/login", None).await;
+    let (_, login) = browser
+        .call(
+            &app,
+            "/account/login",
+            Some(&[
+                ("identifier_type", "username"),
+                ("identifier", "activity-user"),
+                ("password", "ActivityPass123!"),
+                ("redirect", &authorize),
+            ]),
+        )
+        .await;
+    assert_eq!(login["redirect"], authorize);
+    let (_, silent) = browser
+        .call(&app, &format!("{authorize}&prompt=none"), None)
+        .await;
+    assert!(
+        silent["redirect"]
+            .as_str()
+            .unwrap()
+            .contains("error=interaction_required"),
+        "{silent}"
+    );
+    let (_, challenge) = browser.call(&app, &authorize, None).await;
+    assert_eq!(
+        challenge["redirect"],
+        "/sso/mfa?redirect=%2Foauth2%2Fauthorize%2Fresume"
+    );
+    // Ordinary apps without the personal setting continue through consent without MFA.
+    sec::execute(
+        &db,
+        "UPDATE user_app_access SET require_mfa=false WHERE user_id=$1 AND app_id=$2",
+        vec![user.into(), ordinary_app.into()],
+    )
+    .await
+    .unwrap();
+    let (_, authorized) = browser.call(&app, &authorize, None).await;
+    assert_eq!(authorized["redirect"], "/sso/consent");
+    let (_, dashboard) = browser.call(&app, "/dashboard/events", None).await;
+    assert_eq!(
+        dashboard["redirect"],
+        "/sso/mfa?redirect=%2Fdashboard%2Fevents"
+    );
+    // A primary-only session can reach account settings, but must finish MFA
+    // before changing its application's preference through the reauth screen.
+    let (_, reauth) = browser
+        .call(
+            &app,
+            "/account/reauth?redirect=%2Faccount%2Fapplications",
+            None,
+        )
+        .await;
+    assert_eq!(
+        reauth["redirect"],
+        "/sso/mfa?redirect=%2Faccount%2Fapplications"
+    );
+    let primary = browser.cookies.get("pero_sso").unwrap().clone();
+    sec::execute(
+        &db,
+        "UPDATE sso_sessions SET created_at=now()-interval '10 minutes' WHERE token_hash=$1",
+        vec![pero_utils::crypto::sha256_hex(&primary).into()],
+    )
+    .await
+    .unwrap();
+    let (_, expired) = browser
+        .call(&app, "/sso/mfa?redirect=%2Fdashboard%2Fevents", None)
+        .await;
+    let login_url = expired["redirect"].as_str().unwrap();
+    let login = url::Url::parse(&format!("http://localhost{login_url}")).unwrap();
+    assert_eq!(login.path(), "/account/login");
+    let next = login
+        .query_pairs()
+        .find(|(key, _)| key == "redirect")
+        .unwrap()
+        .1
+        .into_owned();
+    assert_eq!(next, "/sso/mfa?redirect=%2Fdashboard%2Fevents");
+    let (_, page) = browser.call(&app, login_url, None).await;
+    assert_eq!(page["view"], "AccountLoginView");
+    let (_, fresh) = browser
+        .call(
+            &app,
+            "/account/login",
+            Some(&[
+                ("identifier_type", "username"),
+                ("identifier", "activity-user"),
+                ("password", "ActivityPass123!"),
+                ("redirect", &next),
+            ]),
+        )
+        .await;
+    assert_eq!(fresh["redirect"], next);
+    let (_, challenge) = browser.call(&app, &next, None).await;
+    assert_eq!(challenge["data"]["pending"], true);
     guard.shutdown().await;
     fixture.cleanup().await;
 }

@@ -53,6 +53,7 @@ export default defineConfig(({ command }) => ({
                 "/dashboard/registration",
                 "/account/applications",
                 "/sso/select-account",
+                "/oauth2/authorize/access",
                 "/account/login",
                 "/account/profile",
                 "/account/sessions",

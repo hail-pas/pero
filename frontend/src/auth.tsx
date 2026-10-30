@@ -50,31 +50,104 @@ export function Auth({
     reset = view === "ResetPasswordView";
   const resetUnavailable =
     reset &&
-    ["missing_token", "invalid_token", "token_already_used"].includes(data.error);
+    ["missing_token", "invalid_token", "token_already_used"].includes(
+      data.error,
+    );
   const done = view === "EndSessionView",
     error = ["ErrorView", "ForbiddenView"].includes(view);
   let title =
-    view === "SelectAccountView"
-      ? t("选择账号")
-      : login
-        ? t("欢迎回来")
-        : forgot
-          ? t("找回密码")
-          : reset
-            ? t("设置新密码")
-            : view === "ConsentView"
-              ? t("授权应用访问")
-              : view === "SocialLinkView"
-                ? t("关联已有账户")
-                : view === "ConfirmLogoutView"
-                  ? t("确认退出登录")
-                  : view === "AdminLoginView"
-                    ? t("登录应用")
-                    : done
-                      ? t("你已安全退出")
-                      : t("暂时无法访问");
+    view === "AppAccessDeniedView"
+      ? t(data.expired ? "授权请求已失效" : "暂无应用访问权限")
+      : view === "SelectAccountView"
+        ? t("选择账号")
+        : login
+          ? t("欢迎回来")
+          : forgot
+            ? t("找回密码")
+            : reset
+              ? t("设置新密码")
+              : view === "ConsentView"
+                ? t("授权应用访问")
+                : view === "SocialLinkView"
+                  ? t("关联已有账户")
+                  : view === "ConfirmLogoutView"
+                    ? t("确认退出登录")
+                    : view === "AdminLoginView"
+                      ? t("登录应用")
+                      : done
+                        ? t("你已安全退出")
+                        : t("暂时无法访问");
   let content: React.ReactNode;
-  if (view === "SelectAccountView") {
+  if (view === "AppAccessDeniedView") {
+    const recover = (action: string) =>
+      runAction({ action, token: data.token }, "/oauth2/authorize/access");
+    content = (
+      <Stack spacing={2}>
+        <Alert severity="warning">
+          {data.expired
+            ? t(
+                "本次授权已过期、已结束或登录账号已变化。请返回原应用重新发起登录。",
+              )
+            : t("账号 {{0}} 尚无 {{1}} 的访问资格。", {
+                "0": data.username,
+                "1": data.app_name,
+              })}
+        </Alert>
+        {!data.expired && (
+          <>
+            <Typography color="text.secondary">
+              {data.system
+                ? t("请联系管理员开通此应用权限，完成后回到本页重试。")
+                : t(
+                    "请在新窗口申请或查看应用访问资格；审批通过后，回到本页重试。若资格已被停用，请联系管理员。",
+                  )}
+            </Typography>
+            {!data.system && (
+              <Button
+                component="a"
+                href="/account/applications"
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="outlined"
+              >
+                {t("申请或查看访问资格")}
+              </Button>
+            )}
+            <Button
+              variant="contained"
+              disabled={actionBusy}
+              onClick={() => recover("retry")}
+            >
+              {t("已获得权限，重新尝试")}
+            </Button>
+            <Button
+              variant="outlined"
+              disabled={actionBusy}
+              onClick={() => recover("other")}
+            >
+              {t("登录其他账号")}
+            </Button>
+            <Button
+              color="inherit"
+              disabled={actionBusy}
+              onClick={() => recover("cancel")}
+            >
+              {t("取消并返回个人中心")}
+            </Button>
+          </>
+        )}
+        {data.expired && (
+          <Button
+            component={RouterLink}
+            to="/account/profile"
+            variant="contained"
+          >
+            {t("返回个人中心")}
+          </Button>
+        )}
+      </Stack>
+    );
+  } else if (view === "SelectAccountView") {
     content = (
       <Stack spacing={2}>
         <Typography>{t("请选择继续使用当前账号，或登录其他账号。")}</Typography>
@@ -517,7 +590,7 @@ export function Auth({
           </Alert>
         )}
         {content}
-        {!done && !error && (
+        {!done && !error && view !== "AppAccessDeniedView" && (
           <Button
             component={RouterLink}
             to="/"

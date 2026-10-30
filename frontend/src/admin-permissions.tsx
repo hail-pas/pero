@@ -25,6 +25,9 @@ export function AdminPermissions({
 }) {
   useLocale();
   const [open, setOpen] = useState(false);
+  // Keep the revision and preview bound to the grants being edited, even if
+  // a focus refresh receives newer permissions from another administrator.
+  const [baseline, setBaseline] = useState(row.grants);
   const [global, setGlobal] = useState(row.grants?.global_permissions || []);
   const [apps, setApps] = useState<Record<string, string[]>>(
     row.grants?.app_grants || {},
@@ -42,7 +45,7 @@ export function AdminPermissions({
     setSaving(true);
     try {
       await mutate(`/dashboard/admins/${row.user_id}/permissions`, {
-        revision: row.grants!.revision,
+        revision: baseline!.revision,
         global_permissions: JSON.stringify(global),
         app_grants: JSON.stringify(
           Object.entries(apps).map(([app_id, permissions]) => ({
@@ -108,8 +111,8 @@ export function AdminPermissions({
         </Stack>
       ));
   const before: Record<string, string[]> = {
-    global: row.grants?.global_permissions || [],
-    ...row.grants?.app_grants,
+    global: baseline?.global_permissions || [],
+    ...baseline?.app_grants,
   };
   const after: Record<string, string[]> = { global, ...apps };
   const labels: Record<string, string> = {
@@ -125,7 +128,21 @@ export function AdminPermissions({
     .filter((d) => d.added.length || d.removed.length);
   return (
     <>
-      <Button disabled={saving} onClick={() => setOpen(!open)}>
+      <Button
+        disabled={saving}
+        onClick={() => {
+          if (!open) {
+            setBaseline(row.grants);
+            setGlobal(row.grants?.global_permissions || []);
+            setApps(row.grants?.app_grants || {});
+            setSelected("");
+            setTargets([]);
+            setReview(false);
+            setError("");
+          }
+          setOpen(!open);
+        }}
+      >
         {t("分配权限")} · {row.username}
       </Button>
       {open && (

@@ -137,12 +137,20 @@ impl<'a> OAuthService<'a> {
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))
     }
 
-    /// 检查用户是否有权访问该 App（user_app_access 表 status=active）
-    pub async fn check_app_access(&self, user_id: Uuid, app_id: Uuid) -> Result<bool, OAuthError> {
-        crate::service::access::active_app_access(self.db, user_id, app_id)
-            .await
-            .map(|access| access.is_some())
-            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))
+    /// 检查应用准入；超级管理员缺少资格时自动开通本人的访问权限。
+    pub async fn ensure_app_access(
+        &self,
+        session: &SsoSession,
+        app_id: Uuid,
+    ) -> Result<bool, OAuthError> {
+        crate::service::access::ensure_oauth_app_access(
+            self.db,
+            session,
+            app_id,
+            self.sso_config.session_idle_ttl_seconds,
+        )
+        .await
+        .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))
     }
 
     /// 检查用户是否已同意所有请求的 scope（user_consents 表）
@@ -218,12 +226,15 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
 
-        if crate::db::helper::session::lock_active(
-            &txn,
-            session.id,
-            session.user_id,
+        if crate::db::helper::session::app_query(
+            OffsetDateTime::now_utc(),
             self.sso_config.session_idle_ttl_seconds,
+            request.app_id,
         )
+        .filter(crate::db::entity::sso_sessions::Column::Id.eq(session.id))
+        .filter(crate::db::entity::sso_sessions::Column::UserId.eq(session.user_id))
+        .lock_shared()
+        .one(&txn)
         .await
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
         .is_none()

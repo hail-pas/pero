@@ -10,6 +10,7 @@ import {
   Avatar,
   TextField,
   Box,
+  Container,
 } from "@mui/material";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { FieldsForm } from "./forms";
@@ -43,8 +44,23 @@ export function Enrollment({
   const { error: failure, busy, run, clearError } = useAction();
   const [formBusy, setFormBusy] = useState(false);
   return (
-    <>
-      {failure && <Alert severity="error">{failure}</Alert>}
+    <Container
+      component="main"
+      maxWidth="sm"
+      sx={{
+        minHeight: "100dvh",
+        px: { xs: 2, sm: 3 },
+        py: { xs: 4, sm: 6, md: 8 },
+      }}
+    >
+      {failure && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {failure}
+        </Alert>
+      )}
+      <Button component={RouterLink} to="/sso/login" sx={{ mb: 3 }}>
+        {t("返回登录")}
+      </Button>
       <Heading
         title={t("注册与应用准入")}
         description={
@@ -53,9 +69,6 @@ export function Enrollment({
             : t("验证邮箱并完成账户注册。")
         }
       />
-      <Button component={RouterLink} to="/sso/login" sx={{ mb: 2 }}>
-        {t("返回登录")}
-      </Button>
       <Panel title={t("注册进度")}>
         {["completed", "rejected", "revoked", "expired"].includes(
           data.status,
@@ -191,7 +204,7 @@ export function Enrollment({
           />
         )}
       </Panel>
-    </>
+    </Container>
   );
 }
 export function EnrollmentAdmin({
@@ -347,6 +360,31 @@ export function Admission({
               <Typography variant="body2" sx={{ flex: 1 }}>
                 {app.description}
               </Typography>
+              <Typography variant="body2">
+                {app.require_mfa
+                  ? t("此应用已开启 MFA")
+                  : t("此应用未开启 MFA")}
+              </Typography>
+              {!data.mfa_enabled && !app.require_mfa ? (
+                <Button component={RouterLink} to="/account/security">
+                  {t("设置验证器以开启 MFA")}
+                </Button>
+              ) : (
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    run(() =>
+                      mutate(`/account/applications/${app.id}/mfa`, {
+                        action: app.require_mfa ? "disable_mfa" : "enable_mfa",
+                      }),
+                    )
+                  }
+                >
+                  {app.require_mfa
+                    ? t("关闭此应用的 MFA")
+                    : t("开启此应用的 MFA")}
+                </Button>
+              )}
               {app.homepage_url && /^https?:\/\//i.test(app.homepage_url) ? (
                 <Button
                   component="a"
@@ -464,7 +502,7 @@ function Progress({
     Object.entries(values).forEach(([k, v]) =>
       typeof v === "boolean" || v ? next.set(k, String(v)) : next.delete(k),
     );
-    setParams(next);
+    setParams(next, { flushSync: true });
     return Promise.resolve();
   };
   return (
@@ -624,7 +662,7 @@ function Progress({
           onChange={(_, page) => {
             const next = new URLSearchParams(params);
             next.set("page", String(page));
-            setParams(next);
+            setParams(next, { flushSync: true });
           }}
         />
       </Stack>
@@ -666,7 +704,7 @@ export function AppMembers({
           submit={(v) => {
             const next = new URLSearchParams();
             Object.entries(v).forEach(([k, v]) => v && next.set(k, String(v)));
-            setParams(next);
+            setParams(next, { flushSync: true });
             return Promise.resolve();
           }}
           label={t("查询")}
@@ -728,7 +766,7 @@ export function AppMembers({
             onChange={(_, page) => {
               const next = new URLSearchParams(params);
               next.set("page", String(page));
-              setParams(next);
+              setParams(next, { flushSync: true });
             }}
           />
         </Stack>

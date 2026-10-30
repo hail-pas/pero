@@ -38,7 +38,7 @@ impl<'a> SessionService<'a> {
     pub async fn validate(&self, token: &str) -> Result<Option<SsoSession>, AppError> {
         let token_hash = pero_utils::crypto::sha256_hex(token);
         let now = OffsetDateTime::now_utc();
-        let row = session_helper::active_query(now, self.config.session_idle_ttl_seconds)
+        let row = session_helper::primary_query(now, self.config.session_idle_ttl_seconds)
             .filter(sso_sessions::Column::TokenHash.eq(token_hash))
             .find_also_related(users::Entity)
             .one(self.db)
@@ -217,15 +217,9 @@ impl<'a> SessionService<'a> {
         txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
             "UPDATE sso_sessions SET mfa_required = (EXISTS(SELECT 1 FROM user_mfa WHERE user_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM admin_roles WHERE user_id=$1)) WHERE id=$2",
             [user_id.into(), session.id.into()])).await.map_err(db_error)?;
-        let created = sso_sessions::Entity::find_by_id(session.id)
-            .one(&txn)
+        super::security::notify(&txn, &user, "new_login")
             .await
             .map_err(db_error)?;
-        if created.is_some_and(|s| !s.mfa_required) {
-            super::security::notify(&txn, &user, "new_login")
-                .await
-                .map_err(db_error)?;
-        }
         crate::db::helper::login_event::record(
             &txn,
             crate::db::helper::login_event::RecordParams {

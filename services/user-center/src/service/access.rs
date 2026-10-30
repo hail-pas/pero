@@ -43,6 +43,16 @@ pub async fn grant_app(
     if user.status != crate::db::enums::UserStatus::Active {
         return Err(ManagementError::Invalid("not_found"));
     }
+    write_app_access(&txn, user_id, app_id).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+async fn write_app_access<C: ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+    app_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
     let now = time::OffsetDateTime::now_utc();
     uaa::Entity::insert(uaa::ActiveModel {
         user_id: Set(user_id),
@@ -57,10 +67,74 @@ pub async fn grant_app(
             .update_columns([uaa::Column::Status, uaa::Column::UpdatedAt])
             .to_owned(),
     )
-    .exec(&txn)
+    .exec(db)
     .await?;
-    txn.commit().await?;
     Ok(())
+}
+
+/// OAuth may provision a super administrator's own entitlement before MFA/consent.
+/// Ordinary administrators and users still require explicit application admission.
+pub async fn ensure_oauth_app_access(
+    db: &DatabaseConnection,
+    session: &crate::state::session::SsoSession,
+    app_id: Uuid,
+    idle_ttl_seconds: u64,
+) -> Result<bool, sea_orm::DbErr> {
+    if active_app_access(db, session.user_id, app_id)
+        .await?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    if super::security::role(db, session.user_id).await?.as_deref() != Some("super_admin") {
+        return Ok(false);
+    }
+    let txn = db.begin().await?;
+    let app = apps_entity::Entity::find_by_id(app_id)
+        .lock_shared()
+        .one(&txn)
+        .await?;
+    if !app.is_some_and(|a| a.status == CommonStatus::Active) {
+        return Ok(false);
+    }
+    // Keep the app -> access -> user lock order used by token issuance.
+    uaa::Entity::find_by_id((session.user_id, app_id))
+        .lock_exclusive()
+        .one(&txn)
+        .await?;
+    let user = users::Entity::find_by_id(session.user_id)
+        .lock_shared()
+        .one(&txn)
+        .await?;
+    if !user
+        .is_some_and(|u| u.deleted_at.is_none() && u.status == crate::db::enums::UserStatus::Active)
+    {
+        return Ok(false);
+    }
+    // Role changes take the user's exclusive policy lock. Recheck under that lock.
+    if super::security::role(&txn, session.user_id)
+        .await?
+        .as_deref()
+        != Some("super_admin")
+    {
+        return Ok(false);
+    }
+    let live_session = crate::db::helper::session::primary_query(
+        time::OffsetDateTime::now_utc(),
+        idle_ttl_seconds,
+    )
+    .filter(crate::db::entity::sso_sessions::Column::Id.eq(session.id))
+    .filter(crate::db::entity::sso_sessions::Column::UserId.eq(session.user_id))
+    .lock_shared()
+    .one(&txn)
+    .await?;
+    if live_session.is_none() {
+        return Ok(false);
+    }
+    write_app_access(&txn, session.user_id, app_id).await?;
+    txn.commit().await?;
+    tracing::info!(user_id = %session.user_id, %app_id, "Automatically granted super administrator application access");
+    Ok(true)
 }
 
 pub async fn revoke_app(

@@ -502,6 +502,7 @@ test("my applications filters authorized cards and opens configured homepages", 
       data: {
         ...base,
         username: "member",
+        mfa_enabled: true,
         rows: [
           {
             id: "a",
@@ -511,6 +512,7 @@ test("my applications filters authorized cards and opens configured homepages", 
             status: "active",
             homepage_url: "https://design.example.test",
             logo_url: null,
+            require_mfa: false,
           },
           {
             id: "b",
@@ -529,6 +531,16 @@ test("my applications filters authorized cards and opens configured homepages", 
   await expect(open).toHaveCount(1);
   await expect(open).toHaveAttribute("href", "https://design.example.test");
   await expect(open).toHaveAttribute("rel", "noopener noreferrer");
+  const submitted = page.waitForRequest(
+    (r) =>
+      r.method() === "POST" && r.url().endsWith("/account/applications/a/mfa"),
+  );
+  await page
+    .getByRole("button", { name: "开启此应用的 MFA", exact: true })
+    .click();
+  expect(
+    Object.fromEntries(new URLSearchParams((await submitted).postData()!)),
+  ).toMatchObject({ action: "enable_mfa", csrf_token: "csrf-test" });
   await page.getByLabel("搜索应用").fill("finance");
   await expect(open).toHaveCount(0);
   await expect(page.getByText("暂无可用应用")).toBeVisible();
@@ -539,7 +551,8 @@ test("my applications filters authorized cards and opens configured homepages", 
 test("permission assignment checks dependencies and submits explicit application grants", async ({
   page,
 }) => {
-  await mock(page, {
+  let revision = 2;
+  const views = {
     "/dashboard/admins": {
       view: "AdminRolesView",
       data: {
@@ -581,7 +594,26 @@ test("permission assignment checks dependencies and submits explicit application
         ],
       },
     },
-  });
+  };
+  await mock(page, views);
+  await page.route("**/dashboard/admins", (route) =>
+    !route.request().headers().accept?.includes("application/json")
+      ? route.fallback()
+      : route.fulfill({
+          json: {
+            ...views["/dashboard/admins"],
+            data: {
+              ...views["/dashboard/admins"].data,
+              rows: [
+                {
+                  ...views["/dashboard/admins"].data.rows[0],
+                  grants: { revision, global_permissions: [], app_grants: {} },
+                },
+              ],
+            },
+          },
+        }),
+  );
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
@@ -606,6 +638,13 @@ test("permission assignment checks dependencies and submits explicit application
       exact: true,
     }),
   ).toBeChecked();
+  // Refreshing while editing must not submit an old draft with a new revision.
+  revision = 3;
+  const refreshed = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/dashboard/admins",
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await refreshed;
   await page.getByRole("button", { name: "预览权限变更" }).click();
   const submitted = page.waitForRequest(
     (r) =>

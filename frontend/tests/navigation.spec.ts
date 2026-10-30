@@ -69,6 +69,9 @@ for (const allowed of [true, false]) {
     await page.goto("/dashboard/apps");
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(page.locator('a[href^="/dashboard"]')).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "切换工作空间" }),
+    ).toHaveCount(0);
   });
 }
 
@@ -106,7 +109,13 @@ test("permission refresh preserves one-time MFA recovery codes", async ({
             user_name: "管理员",
             user_username: "admin",
             user_avatar_url: "",
-            can_access_dashboard: true, admin_access: {super_admin:true,revision:0,global_permissions:[],app_grants:{}},
+            can_access_dashboard: true,
+            admin_access: {
+              super_admin: true,
+              revision: 0,
+              global_permissions: [],
+              app_grants: {},
+            },
           },
           csrf_token: "csrf",
           codes: ["one-time-recovery-code"],

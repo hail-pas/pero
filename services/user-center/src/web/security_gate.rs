@@ -34,13 +34,9 @@ pub async fn gate(
         ) || path.starts_with("/sso/social/")
             && matches!(path.rsplit('/').next(), Some("login" | "callback"));
         // Authorize validates the client and handles prompt=none itself. Its
-        // full-session extractor already rejects incomplete MFA and recovery.
+        // recovery sessions remain ineligible for protocol access.
         let authorize = path == "/oauth2/authorize";
-        if (s.recovery_pending || s.mfa_required && s.mfa_verified_at.is_none())
-            && !security
-            && !primary_login
-            && !authorize
-        {
+        if s.recovery_pending && !security && !primary_login && !authorize {
             let target = "/sso/mfa";
             let mut url = target.to_string();
             if req.method() == axum::http::Method::GET {
@@ -62,7 +58,8 @@ pub async fn gate(
                         | "/account/profile/verify-contact"
                         | "/account/change-password"
                 )
-                || path.starts_with("/account/identities/"));
+                || path.starts_with("/account/identities/")
+                || (path.starts_with("/account/applications/") && path.ends_with("/mfa")));
         if sensitive && !security {
             match sec::recent(&state.db, s.id, state.config.sso.session_idle_ttl_seconds).await {
                 Ok(true) => {}
@@ -70,6 +67,8 @@ pub async fn gate(
                     let mut url = "/account/reauth".to_string();
                     let target = if path.starts_with("/dashboard") {
                         "/dashboard"
+                    } else if path.starts_with("/account/applications/") {
+                        "/account/applications"
                     } else {
                         "/account/security"
                     };

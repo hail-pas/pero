@@ -11,7 +11,7 @@ use crate::state::app::AppState;
 use crate::web::error::OAuthError;
 use crate::web::security::AuthReqCookieValue;
 use crate::web::session::extract_session;
-use sea_orm::EntityTrait;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 /// GET /oauth2/authorize 查询参数
 ///
@@ -168,7 +168,18 @@ pub async fn authorize(
     }
 
     if !crate::service::scope::allowed(&scopes, &client.scopes) {
-        return Err(params.redirect_err("invalid_scope", None));
+        let denied = scopes
+            .iter()
+            .filter(|scope| !crate::service::scope::contains(&client.scopes, scope))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Err(params.redirect_err(
+            "invalid_scope",
+            Some(&format!(
+                "Requested scopes are not allowed for this client: {denied}"
+            )),
+        ));
     }
 
     if (client.require_pkce || client.r#type == OauthClientType::Public)
@@ -215,12 +226,16 @@ pub async fn authorize(
             return Err(params.redirect_err("login_required", None));
         }
 
-        if !oauth.check_app_access(session.user_id, app.id).await? {
+        if !oauth.ensure_app_access(&session, app.id).await? {
             return Err(params.redirect_err(
                 "access_denied",
                 Some("User does not have access to this application"),
             ));
         }
+        if !app_session_ready(&state, session.id, app.id).await? {
+            return Err(params.redirect_err("interaction_required", None));
+        }
+
         if !oauth
             .check_consent(session.user_id, client.id, &scopes)
             .await?
@@ -348,7 +363,7 @@ pub async fn resume(
 ///
 /// 根据当前 session 状态决定下一步：
 /// - 无 session → 存 pending request + 跳转 /sso/login
-/// - 有 session + 无 app access → redirect_uri?error=access_denied
+/// - 有 session + 无 app access → 权限恢复页面（保留原授权请求）
 /// - 有 session + prompt=consent → 强制跳转 /sso/consent（不检查已有 consent）
 /// - 有 session + 已 consent → 生成 authorization code → 302 redirect_uri?code=xxx
 /// - 有 session + 未 consent → 设 pero_auth_req cookie → 302 /sso/consent
@@ -379,14 +394,26 @@ pub(crate) async fn resolve_authorization(
     let oauth = state.oauth_service();
 
     if !oauth
-        .check_app_access(session.user_id, auth_request.app_id)
+        .ensure_app_access(&session, auth_request.app_id)
         .await?
     {
-        return Err(OAuthError::redirect(
-            &auth_request.redirect_uri,
-            "access_denied",
-            Some("User does not have access to this application"),
-            auth_request.client_state.as_deref(),
+        return super::access::redirect(state, jar.clone(), auth_request.id, session.id);
+    }
+
+    if !app_session_ready(state, session.id, auth_request.app_id).await? {
+        let (jar, _) = pending_redirect(state, jar, auth_request.id).await?;
+        let enrolled = crate::service::security::mfa_enabled(&state.db, session.user_id)
+            .await
+            .map_err(|_| OAuthError::Unavailable)?;
+        let target = if enrolled {
+            "/sso/mfa"
+        } else {
+            "/account/security"
+        };
+        return Ok((
+            jar,
+            Redirect::to(&format!("{target}?redirect=%2Foauth2%2Fauthorize%2Fresume"))
+                .into_response(),
         ));
     }
 
@@ -435,6 +462,24 @@ pub(crate) async fn resolve_authorization(
             Redirect::to("/sso/consent").into_response(),
         ))
     }
+}
+
+async fn app_session_ready(
+    state: &AppState,
+    session_id: Uuid,
+    app_id: Uuid,
+) -> Result<bool, OAuthError> {
+    use crate::db::entity::sso_sessions;
+    Ok(crate::db::helper::session::app_query(
+        time::OffsetDateTime::now_utc(),
+        state.config.sso.session_idle_ttl_seconds,
+        app_id,
+    )
+    .filter(sso_sessions::Column::Id.eq(session_id))
+    .one(&state.db)
+    .await
+    .map_err(|_| OAuthError::Unavailable)?
+    .is_some())
 }
 
 /// 将 authorization_request 存入 Redis pending，设 nonce cookie，跳转 /sso/login

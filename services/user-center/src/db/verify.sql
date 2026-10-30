@@ -21,7 +21,7 @@ SELECT id, user_id, token_hash, issued_at, expires_at, consumed_at FROM password
 SELECT id, token_hash, user_id, app_id, client_id, session_id, scopes, created_at, expires_at, revoked_at, revoke_reason, replaced_by_id FROM refresh_tokens LIMIT 0;
 SELECT id, app_id, mode, domains, approval_required, emergency_stop, version FROM registration_policies LIMIT 0;
 SELECT recovery_pending, reauthenticated_at, oidc_reauthenticated_at, mfa_verified_at, mfa_required, id, token_hash, user_id, identity_id, provider_id, ip, user_agent, created_at, authenticated_at, last_seen_at, expires_at, revoked_at, revoke_reason FROM sso_sessions LIMIT 0;
-SELECT user_id, app_id, status, token_version, created_at, updated_at FROM user_app_access LIMIT 0;
+SELECT user_id, app_id, status, token_version, require_mfa, created_at, updated_at FROM user_app_access LIMIT 0;
 SELECT user_id, client_id, scopes, granted_at FROM user_consents LIMIT 0;
 SELECT assisted_recovery_expires_at, assisted_recovery_hash, user_id, secret_enc, pending_secret_enc, setup_session, enabled, setup_expires_at, last_step, recovery_hashes FROM user_mfa LIMIT 0;
 SELECT id, username, email, email_verified_at, phone, phone_verified_at, nickname, avatar_url, status, created_at, updated_at, deleted_at FROM users LIMIT 0;

@@ -177,7 +177,7 @@ pub async fn post(
         Err(e) => e.into_response(),
     }
 }
-async fn switch(state: &AppState, jar: CookieJar) -> Result<CookieJar, Response> {
+pub(super) async fn switch(state: &AppState, jar: CookieJar) -> Result<CookieJar, Response> {
     // Switching must also revoke incomplete MFA and recovery sessions. The
     // authenticated extractor intentionally excludes these browser credentials.
     let session = crate::web::session::extract_browser_session(state, &jar)

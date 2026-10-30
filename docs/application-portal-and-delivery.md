@@ -58,3 +58,15 @@ SMTP 可使用无认证的可信 TLS 中继，此时留空 username/password。�
 可运行的 Flask/Redis 接收端在 `examples/backchannel-logout/app.py`。安装 requirements，设置 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`REDIS_URL`，执行 `flask --app app run --port 8090`，通过 HTTPS 反向代理暴露 `/backchannel-logout`。把示例中的 Redis 本地会话写入逻辑接到应用自己的 OIDC 回调及会话中间件。
 
 协议参考：[OpenID Connect Back-Channel Logout](https://openid.net/specs/openid-connect-backchannel-1_0.html)，[SMTP 库](https://docs.rs/lettre/latest/lettre/transport/smtp/struct.AsyncSmtpTransport.html)，[Twilio Messages API](https://www.twilio.com/docs/messaging/api/message-resource)。
+
+## 授权时缺少应用访问资格
+
+非管理平台默认不要求 MFA，仅在该用户明确开启对应应用的 `require_mfa` 后要求验证。已绑定验证器或拥有超级管理员角色不会单独触发普通应用的 MFA；管理平台仍强制 MFA。密码和第三方登录完成后，OAuth 流程按目标应用策略执行。
+
+OAuth 登录发现超级管理员缺少目标应用访问资格时，会自动开通本人的资格（已有停用记录会恢复为 active），再继续原来的 MFA、授权确认及回调流程；不会降低已有 MFA 要求或重置令牌撤销版本，停用的应用仍不可访问。普通管理员和用户继续使用显式应用准入流程。
+
+交互式 OAuth 登录发现普通账号没有应用访问资格时，认证中心保留原授权请求，并进入权限恢复页。页面显示账号和应用名称；普通应用可在新窗口申请或查看访问资格，系统应用提示联系管理员开通权限。取得资格后点击“已获得权限，重新尝试”，重新校验客户端配置和访问资格，继续原来的 MFA、授权确认及回调流程；state、nonce、scope 和 PKCE 参数沿用原请求。
+
+“登录其他账号”会撤销当前中心登录状态，再继续原授权请求；“取消并返回个人中心”会结束本次请求。恢复入口绑定原会话，并校验签名、CSRF、请求有效期和完成状态。审批期间不会延长授权请求期限；请求过期或会话变化后，应从原业务应用重新发起登录。
+
+`prompt=none` 不展示此页面，仍通过已验证的回调地址返回 OAuth 错误。业务应用的回调端仍需处理协议错误，校验 state，并提供友好的登录失败及重试入口。

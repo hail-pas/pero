@@ -3,7 +3,7 @@ use super::ManagementError;
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement};
 use time::OffsetDateTime;
 use uuid::Uuid;
-pub const RECENT_SECONDS: i64 = 300;
+pub const RECENT_SECONDS: i64 = 900;
 
 pub async fn execute<C: ConnectionTrait>(
     db: &C,

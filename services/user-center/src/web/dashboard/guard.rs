@@ -95,7 +95,7 @@ pub async fn require_admin_middleware(
     }
     match crate::service::security::mfa_enabled(&state.db, user.id).await {
         Ok(true) => {}
-        Ok(false) => return Redirect::to("/account/security").into_response(),
+        Ok(false) => return admin_challenge("/account/security", req.uri()),
         Err(e) => return crate::web::util::dependency_error(e),
     }
     use sea_orm::{ColumnTrait, QueryFilter};
@@ -108,7 +108,7 @@ pub async fn require_admin_middleware(
     .await;
     match assurance {
         Ok(Some(s)) if s.mfa_verified_at.is_some() => {}
-        Ok(_) => return Redirect::to("/sso/mfa").into_response(),
+        Ok(_) => return admin_challenge("/sso/mfa", req.uri()),
         Err(e) => return crate::web::util::dependency_error(e),
     }
     let access = match crate::service::permissions::load(&state.db, user.id).await {
@@ -121,6 +121,12 @@ pub async fn require_admin_middleware(
         user: user.clone(),
     });
     super::audit::run(&state, req, &user, next).await
+}
+
+fn admin_challenge(path: &str, uri: &axum::http::Uri) -> Response {
+    let mut target = path.to_owned();
+    pero_utils::encode::append_query_param(&mut target, "redirect", &uri.to_string());
+    Redirect::to(&target).into_response()
 }
 
 async fn find_active_user(

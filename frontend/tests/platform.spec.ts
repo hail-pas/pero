@@ -1287,6 +1287,13 @@ test("security notices, cards and footer actions keep their spacing and alignmen
 test("HTTP login and MFA redirects commit the final route without an intermediate profile", async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    const state = window as Window & { workspaceRendered?: boolean };
+    new MutationObserver(() => {
+      if (document.querySelector('[aria-label="切换工作空间"]'))
+        state.workspaceRendered = true;
+    }).observe(document, { childList: true, subtree: true });
+  });
   await page.setViewportSize({ width: 1440, height: 1000 });
   const security = {
     view: "SecurityView",
@@ -1339,6 +1346,13 @@ test("HTTP login and MFA redirects commit the final route without an intermediat
       page.getByRole("link", { name: "返回个人中心", exact: true }),
     ).toHaveCount(0);
     await expect(page.locator("aside")).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as Window & { workspaceRendered?: boolean })
+            .workspaceRendered,
+      ),
+    ).toBeFalsy();
     await expect(
       page.getByRole("heading", { name: "个人资料", exact: true }),
     ).toHaveCount(0);
@@ -1883,6 +1897,73 @@ test("expired MFA setup accepts the server state and allows restarting", async (
     page.getByText("fresh-setup-secret", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("first administrator enrollment can refresh expired proof and resume its destination", async ({
+  page,
+}) => {
+  const destination = "/dashboard/apps?status=active";
+  const challenge = `/sso/mfa?${new URLSearchParams({ redirect: destination })}`;
+  const data = {
+    layout,
+    csrf_token: "csrf-test",
+    enabled: false,
+    required: true,
+    pending: true,
+    recovery: false,
+    has_password: true,
+    secret: "",
+    qr: "",
+    codes: [],
+    providers: [],
+    error: "",
+    redirect: destination,
+  };
+  let fresh = false;
+  await mock(page, { "/sso/mfa": { view: "SecurityView", data } });
+  await page.route("**/sso/mfa**", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      json: {
+        view: "SecurityView",
+        data: {
+          ...data,
+          error: fresh ? "" : "reauth_required",
+          secret: fresh ? "fresh-enrollment-secret" : "",
+        },
+      },
+    });
+  });
+  await page.route("**/account/reauth**", async (route) => {
+    if (!route.request().headers().accept?.includes("application/json"))
+      return route.fallback();
+    const target =
+      new URL(route.request().url()).searchParams.get("redirect") || challenge;
+    if (route.request().method() === "POST") {
+      fresh = true;
+      await route.fulfill({ json: { redirect: target } });
+    } else {
+      await route.fulfill({
+        json: { view: "SecurityView", data: { ...data, redirect: target } },
+      });
+    }
+  });
+  await page.goto(challenge);
+  await page.getByRole("button", { name: "开始设置" }).click();
+  await page.getByRole("link", { name: "重新验证身份", exact: true }).click();
+  await expect(page).toHaveURL(/\/account\/reauth\?/);
+  expect(new URL(page.url()).searchParams.get("redirect")).toBe(challenge);
+  await page.locator('[name="password"]').fill("Password123!");
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp("/sso/mfa\\?"));
+  expect(new URL(page.url()).searchParams.get("redirect")).toBe(destination);
+  await page.getByRole("button", { name: "开始设置" }).click();
+  await expect(
+    page.getByText("fresh-enrollment-secret", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "切换工作空间" })).toHaveCount(
+    0,
+  );
 });
 
 test("recovery retries clear previous success before reporting a new failure", async ({

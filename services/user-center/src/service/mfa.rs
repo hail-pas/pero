@@ -3,6 +3,10 @@ use super::{ManagementError, security as sec};
 use crate::{db::entity::sso_sessions, state::app::AppState};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 
+pub(crate) fn challenge_expired(session: &sso_sessions::Model) -> bool {
+    session.created_at < time::OffsetDateTime::now_utc() - time::Duration::minutes(5)
+}
+
 pub async fn ensure_oidc_reauthentication_allowed<C: sea_orm::ConnectionTrait>(
     db: &C,
     session: &sso_sessions::Model,
@@ -114,9 +118,7 @@ pub async fn change(
     let mut codes = None;
     match action {
         "verify" => {
-            if !pending
-                || current.created_at < time::OffsetDateTime::now_utc() - time::Duration::minutes(5)
-            {
+            if !pending || challenge_expired(&current) {
                 return Err(ManagementError::Invalid("unauthorized"));
             }
             sec::verify(&txn, s.user_id, f.as_ref(), code, false).await?;
@@ -126,12 +128,9 @@ pub async fn change(
                 vec![s.id.into()],
             )
             .await?;
-            sec::notify(&txn, &user, "new_login").await?;
         }
         "recover" => {
-            if !pending
-                || current.created_at < time::OffsetDateTime::now_utc() - time::Duration::minutes(5)
-            {
+            if !pending || challenge_expired(&current) {
                 return Err(ManagementError::Invalid("unauthorized"));
             }
             sec::verify(&txn, s.user_id, f.as_ref(), code, true).await?;
@@ -152,7 +151,7 @@ pub async fn change(
             codes = Some(vec![]);
         }
         "reauth" => {
-            if pending || current.recovery_pending {
+            if (pending && enabled) || current.recovery_pending {
                 return Err(ManagementError::Invalid("unauthorized"));
             }
             if enabled {
@@ -178,7 +177,7 @@ pub async fn change(
                     })
                     .ok_or(ManagementError::Invalid("reauth_required"))?
             };
-            sec::execute(&txn,"UPDATE sso_sessions SET authenticated_at=$2,reauthenticated_at=$2,oidc_reauthenticated_at=NULL,mfa_verified_at=CASE WHEN mfa_required THEN now() ELSE mfa_verified_at END WHERE id=$1",vec![s.id.into(), authenticated_at.into()]).await?;
+            sec::execute(&txn,"UPDATE sso_sessions SET authenticated_at=$2,reauthenticated_at=$2,oidc_reauthenticated_at=NULL,mfa_verified_at=CASE WHEN $3 THEN now() ELSE mfa_verified_at END WHERE id=$1",vec![s.id.into(), authenticated_at.into(), enabled.into()]).await?;
         }
         "setup" => {
             let recent = sec::recent(&txn, s.id, state.config.sso.session_idle_ttl_seconds).await?;

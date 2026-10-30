@@ -100,7 +100,7 @@ pub async fn touch_last_seen_after<C: ConnectionTrait>(
         .await?;
     Ok(())
 }
-/// A single validity policy for browser sessions, grants and online token use.
+/// Account assurance for sensitive operations, including the enrolled factor.
 pub fn active_query(
     now: OffsetDateTime,
     idle_ttl_seconds: u64,
@@ -112,6 +112,30 @@ pub fn active_query(
                 .add(sso_sessions::Column::MfaVerifiedAt.is_not_null()),
         )
         .filter(sso_sessions::Column::RecoveryPending.eq(false))
+}
+
+/// Primary authentication permits ordinary applications; recovery remains restricted.
+pub fn primary_query(
+    now: OffsetDateTime,
+    idle_ttl_seconds: u64,
+) -> sea_orm::Select<sso_sessions::Entity> {
+    valid_query(now, idle_ttl_seconds).filter(sso_sessions::Column::RecoveryPending.eq(false))
+}
+
+/// Apply the target application's MFA policy to grants and online token use.
+pub fn app_query(
+    now: OffsetDateTime,
+    idle_ttl_seconds: u64,
+    app_id: Uuid,
+) -> sea_orm::Select<sso_sessions::Entity> {
+    primary_query(now, idle_ttl_seconds).filter(
+        sea_orm::Condition::any()
+            .add(sso_sessions::Column::MfaVerifiedAt.is_not_null())
+            .add(Expr::cust_with_values(
+                "EXISTS (SELECT 1 FROM apps a JOIN user_app_access u ON u.app_id=a.id WHERE a.id = $1 AND u.user_id=sso_sessions.user_id AND NOT a.system AND NOT u.require_mfa)",
+                [app_id],
+            )),
+    )
 }
 
 /// Session lifetime checks also apply to incomplete MFA and recovery sessions.

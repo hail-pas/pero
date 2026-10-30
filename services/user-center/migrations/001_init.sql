@@ -992,6 +992,7 @@ CREATE TABLE user_app_access (
 
     status common_status NOT NULL DEFAULT 'active',
     token_version bigint NOT NULL DEFAULT 0,
+    require_mfa boolean NOT NULL DEFAULT false,
 
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),

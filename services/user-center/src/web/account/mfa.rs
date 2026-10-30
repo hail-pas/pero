@@ -168,6 +168,34 @@ pub async fn get(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let pending = s.mfa_required && s.mfa_verified_at.is_none() && !s.recovery_pending;
+    let challenge_expired = crate::service::mfa::challenge_expired(&s);
+    // Unenrolled OIDC administrators must still be able to obtain the fresh
+    // upstream proof needed for their first factor enrollment.
+    let needs_challenge = if pending && (uri.path() == "/account/reauth" || challenge_expired) {
+        match sec::mfa_enabled(&state.db, s.user_id).await {
+            Ok(enabled) => enabled,
+            Err(e) => return util::dependency_error(e),
+        }
+    } else {
+        false
+    };
+    if needs_challenge {
+        // Primary-only sessions may outlive the challenge window. Reauthenticate
+        // before offering an OTP that the service can no longer accept.
+        let mut target = "/sso/mfa".to_owned();
+        pero_utils::encode::append_query_param(
+            &mut target,
+            "redirect",
+            &util::safe_redirect(&input.redirect),
+        );
+        if challenge_expired {
+            let mut login = "/account/login".to_owned();
+            pero_utils::encode::append_query_param(&mut login, "redirect", &target);
+            target = login;
+        }
+        return Redirect::to(&target).into_response();
+    }
     if uri.path() == "/sso/mfa"
         && !s.recovery_pending
         && (!s.mfa_required || s.mfa_verified_at.is_some())

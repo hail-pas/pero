@@ -18,6 +18,7 @@ struct AppRow {
     description: Option<String>,
     homepage_url: Option<String>,
     logo_url: Option<String>,
+    require_mfa: bool,
 }
 pub async fn get(
     State(state): State<AppState>,
@@ -25,7 +26,7 @@ pub async fn get(
     account: AccountContext,
     Query(query): Query<crate::service::enrollment::ListQuery>,
 ) -> Response {
-    let rows=AppRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,u.status::text AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name",[account.user.id.into()])).all(&state.db).await;
+    let rows=AppRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,COALESCE(u.require_mfa,false) AS require_mfa,u.status::text AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name",[account.user.id.into()])).all(&state.db).await;
     match rows {
         Ok(rows) => {
             let progress = match crate::service::enrollment::list(
@@ -38,6 +39,11 @@ pub async fn get(
                 Ok(v) => v,
                 Err(e) => return util::management_response(Err(e)),
             };
+            let mfa_enabled =
+                match crate::service::security::mfa_enabled(&state.db, account.user.id).await {
+                    Ok(v) => v,
+                    Err(e) => return util::dependency_error(e),
+                };
             let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
             let layout = match AccountLayout::from_user(&state.db, &account.user).await {
                 Ok(layout) => layout,
@@ -45,7 +51,7 @@ pub async fn get(
             };
             util::view_response(
                 "AdmissionView",
-                serde_json::json!({"layout":layout,"csrf_token":csrf_token,"rows":rows,"username":account.user.username,"progress":progress}),
+                serde_json::json!({"layout":layout,"csrf_token":csrf_token,"rows":rows,"mfa_enabled":mfa_enabled,"username":account.user.username,"progress":progress}),
                 jar,
             )
         }
@@ -126,4 +132,25 @@ pub async fn progress_action(
         Ok(None) => pero_api_axum::json_ok(),
         Err(e) => util::management_response(Err(e)),
     }
+}
+
+/// This endpoint takes its owner exclusively from the authenticated account.
+pub async fn mfa(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    account: AccountContext,
+    Path(id): Path<Uuid>,
+    Form(f): Form<Action>,
+) -> Response {
+    if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
+        return e;
+    }
+    let required = match f.action.as_str() {
+        "enable_mfa" => true,
+        "disable_mfa" => false,
+        _ => return pero_api_axum::json_error("invalid_request"),
+    };
+    util::management_response(
+        crate::service::account_security::set_app_mfa(&state, &account.session, id, required).await,
+    )
 }
