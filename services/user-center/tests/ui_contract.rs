@@ -28,8 +28,8 @@ fn browser_dtos_never_serialize_backend_credential_material() {
     }))
     .unwrap();
     let app: apps::Model = serde_json::from_value(json!({
-        "id":id,"code":"test-app","name":"Test App","type":"Web","status":"Active",
-        "auto_access":false,"system":false,"created_at":now,"updated_at":now
+        "id":id,"code":"test-app","name":"Test App","status":"Active",
+        "system":false,"created_at":now,"updated_at":now
     }))
     .unwrap();
     let user: users::Model = serde_json::from_value(json!({

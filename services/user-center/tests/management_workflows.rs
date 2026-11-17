@@ -502,7 +502,6 @@ async fn approval_progress_members_and_audit_share_existing_security() {
             ("csrf_token", &csrf),
             ("name", "After"),
             ("code", "workflow-app"),
-            ("app_type", "web"),
             ("description", ""),
             ("homepage_url", ""),
             ("logo_url", ""),

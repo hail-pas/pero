@@ -2752,7 +2752,6 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         ("csrf_token", csrf.clone()),
         ("code", "audited-app".into()),
         ("name", "Audited".into()),
-        ("app_type", "web".into()),
         ("description", "".into()),
         ("homepage_url", "".into()),
         ("logo_url", "".into()),

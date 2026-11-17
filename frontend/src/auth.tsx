@@ -330,6 +330,7 @@ export function Auth({
                 <Button
                   key={p.key}
                   component="a"
+                  disabled={formBusy}
                   href={`/sso/social/${encodeURIComponent(p.key || "")}/login${"redirect" in data && data.redirect ? `?redirect=${encodeURIComponent(data.redirect)}` : ""}`}
                   variant="outlined"
                 >

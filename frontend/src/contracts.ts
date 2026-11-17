@@ -29,7 +29,6 @@ export interface AppSummary {
   id: string;
   code: string;
   name: string;
-  type: string;
   description: string | null;
   homepage_url: string | null;
   logo_url: string | null;
@@ -396,7 +395,6 @@ export interface ViewDataMap {
     apps: AppSummary[];
     q: string;
     status_filter: string;
-    type_filter: string;
   };
   UserListView: ListPage & {
     users: UserSummary[];

@@ -19,8 +19,6 @@ CREATE TYPE user_status AS ENUM ('active', 'disabled', 'locked');
 
 CREATE TYPE common_status AS ENUM ('active', 'disabled');
 
-CREATE TYPE app_type AS ENUM ('web', 'spa', 'mobile', 'service');
-
 CREATE TYPE oauth_client_type AS ENUM ('confidential', 'public');
 
 CREATE TYPE identity_provider_kind AS ENUM ('wechat', 'local', 'oauth2', 'oidc');
@@ -143,7 +141,6 @@ CREATE TABLE apps (
 
     code citext NOT NULL,
     name text NOT NULL,
-    type app_type NOT NULL DEFAULT 'web',
 
     description text NULL,
     homepage_url text NULL,
@@ -172,9 +169,6 @@ COMMENT ON COLUMN apps.code IS
 
 COMMENT ON COLUMN apps.name IS
 '应用展示名称。';
-
-COMMENT ON COLUMN apps.type IS
-'应用类型：web=传统 Web 应用（confidential client）；spa=单页应用（public client + PKCE）；mobile=移动应用；service=后端服务。';
 
 COMMENT ON COLUMN apps.description IS
 '应用说明。';
@@ -1229,12 +1223,11 @@ COMMENT ON COLUMN login_events.created_at IS
 '事件发生时间。';
 
 -- 数据初始化
-INSERT INTO apps (id, code, name, type, status, system, created_at, updated_at)
+INSERT INTO apps (id, code, name, status, system, created_at, updated_at)
 VALUES (
     gen_random_uuid(),
     'user-center',
     '用户中心',
-    'web',
     'active',
     true,
     now(),

@@ -50,7 +50,6 @@ export function ManagementDetail({
     : isApp
       ? [
           [t("应用标识"), data.app.code],
-          [t("类型"), lower(data.app.type)],
           [t("主页"), data.app.homepage_url],
           [t("说明"), data.app.description],
         ]

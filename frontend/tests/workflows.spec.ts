@@ -7,7 +7,7 @@ for (const kind of ["apps", "providers"] as const) {
     const path = `/dashboard/${kind}/item-1/edit`;
     const form =
       kind === "apps"
-        ? { code: "alpha", name: "Original", app_type: "web" }
+        ? { code: "alpha", name: "Original" }
         : {
             code: "oidc",
             name: "Original",

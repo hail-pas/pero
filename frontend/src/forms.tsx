@@ -396,17 +396,6 @@ export const userFields: Field[] = [
 export const appFields: Field[] = [
   text("code", "应用标识", true),
   text("name", "应用名称", true),
-  {
-    name: "app_type",
-    label: "应用类型",
-    options: [
-      ["web", "Web 应用"],
-      ["spa", "单页应用"],
-      ["mobile", "移动应用"],
-      ["service", "服务端应用"],
-    ],
-    default: "web",
-  },
   text("homepage_url", "应用主页"),
   text("logo_url", "Logo URL"),
   { ...text("description", "应用说明"), multiline: true },

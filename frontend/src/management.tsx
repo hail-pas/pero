@@ -37,7 +37,7 @@ interface ManagementRow {
   name: string;
   description: string;
   code: string;
-  label: string;
+  protocol?: string;
   avatar_url?: string;
   email?: string | null;
   phone?: string | null;
@@ -62,7 +62,6 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
           name: app.name,
           description: app.description || "",
           code: app.code,
-          label: app.type,
           status: app.status,
           created_at: app.created_at,
           editable: !app.system && can(data.layout, "apps.manage", app.id),
@@ -73,7 +72,6 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
             name: user.nickname || user.username,
             description: user.username,
             code: user.username,
-            label: "",
             avatar_url: user.avatar_url || undefined,
             email: user.email,
             phone: user.phone,
@@ -88,7 +86,7 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
             name: provider.name,
             description: "",
             code: provider.code,
-            label: provider.kind,
+            protocol: provider.kind,
             status: provider.enabled,
             created_at: provider.created_at,
             editable: isSuper(data.layout) && lower(provider.kind) !== "local",
@@ -185,28 +183,6 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
               ))}
             </TextField>
           )}
-          {kind === "apps" && (
-            <TextField
-              label={t("类型")}
-              select
-              size="small"
-              sx={{ minWidth: 130 }}
-              value={params.get("app_type") || ""}
-              onChange={(e) => filter("app_type", e.target.value)}
-            >
-              {[
-                ["", t("全部类型")],
-                ["web", "Web"],
-                ["spa", "SPA"],
-                ["mobile", "Mobile"],
-                ["service", "Service"],
-              ].map(([v, l]) => (
-                <MenuItem key={v} value={v}>
-                  {t(l)}
-                </MenuItem>
-              ))}
-            </TextField>
-          )}
         </Stack>
         <TableContainer>
           <Table>
@@ -214,7 +190,11 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
               <TableRow>
                 <TableCell>{t("名称")}</TableCell>
                 <TableCell>
-                  {kind === "users" ? t("联系方式") : t("标识 / 协议")}
+                  {kind === "users"
+                    ? t("联系方式")
+                    : kind === "providers"
+                      ? t("标识 / 协议")
+                      : t("应用标识")}
                 </TableCell>
                 <TableCell>{t("状态")}</TableCell>
                 <TableCell>{t("创建时间")}</TableCell>
@@ -277,7 +257,9 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
                     ) : (
                       <>
                         <Typography variant="body2">{row.code}</Typography>
-                        <Chip size="small" label={lower(row.label)} />
+                        {row.protocol && (
+                          <Chip size="small" label={lower(row.protocol)} />
+                        )}
                       </>
                     )}
                   </TableCell>

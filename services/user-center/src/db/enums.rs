@@ -4,18 +4,6 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
-#[sea_orm(rs_type = "Enum", db_type = "Enum", enum_name = "app_type")]
-pub enum AppType {
-    #[sea_orm(string_value = "web")]
-    Web,
-    #[sea_orm(string_value = "spa")]
-    Spa,
-    #[sea_orm(string_value = "mobile")]
-    Mobile,
-    #[sea_orm(string_value = "service")]
-    Service,
-}
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(
     rs_type = "Enum",
     db_type = "Enum",

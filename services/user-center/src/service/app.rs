@@ -1,10 +1,7 @@
 use super::permissions::{self, Actor, Permission as P};
 // Application policy mutations hold the policy lock through grant revocation.
 use super::ManagementError;
-use crate::db::{
-    entity::apps,
-    enums::{AppType, CommonStatus},
-};
+use crate::db::{entity::apps, enums::CommonStatus};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
     TransactionTrait,
@@ -12,7 +9,6 @@ use sea_orm::{
 
 pub struct AppUpdate {
     pub name: String,
-    pub app_type: AppType,
     pub description: Option<String>,
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
@@ -31,7 +27,6 @@ impl AppUpdate {
     }
     fn apply(self, active: &mut apps::ActiveModel) {
         active.name = Set(self.name);
-        active.r#type = Set(self.app_type);
         active.description = Set(self.description);
         active.homepage_url = Set(self.homepage_url);
         active.logo_url = Set(self.logo_url);

@@ -30,7 +30,6 @@ const app = {
   id: "app-1",
   name: "团队协作平台",
   code: "workspace",
-  type: "Web",
   status: "active",
   description: "让工作更有条理",
   created_at: "2026-10-20T12:00:00Z",
@@ -296,27 +295,71 @@ test("client creation displays generated secret once", async ({ page }) => {
   await page.getByRole("button", { name: "已保存，关闭" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
 });
-test("login submits credentials and follows server redirect", async ({
+test("login stays busy while loading the redirected profile", async ({
   page,
 }) => {
-  await mock(page, {
-    "/account/login": {
-      view: "AccountLoginView",
-      data: { csrf_token: "csrf-test", providers: [] },
-    },
+  await mock(page);
+  await page.route("**/account/login", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ json: { redirect: "/account/profile" } })
+      : route.fallback(),
+  );
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  await page.route("**/account/login", async (route) => {
-    if (route.request().method() === "POST")
-      return route.fulfill({ json: { redirect: "/account/profile" } });
-    return route.fallback();
+  await page.route("**/account/profile", async (route) => {
+    await waiting;
+    await route.fallback();
   });
   await page.goto("/account/login");
   await page.locator('[name="identifier"]').fill("lin");
   await page.locator('[name="password"]').fill("Test123!");
-  await page.getByRole("button", { name: "登录", exact: true }).click();
-  await expect(page).toHaveURL(/account\/profile$/);
+  const submit = page.locator('button[type="submit"]');
+  try {
+    await submit.click();
+    await expect(
+      page.getByRole("progressbar", { name: "正在加载" }),
+    ).toBeVisible();
+    await expect(submit).toHaveText("正在提交…");
+    await expect(submit).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(page).toHaveURL(/\/account\/profile$/);
   await expect(page.getByRole("heading", { name: "个人资料" })).toBeVisible();
 });
+
+test("login can retry when the OAuth redirect leaves the document unchanged", async ({
+  page,
+}) => {
+  const destination = "/oauth2/authorize/resume";
+  await mock(page);
+  await page.route("**/account/login", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ json: { redirect: destination } })
+      : route.fallback(),
+  );
+  await page.route(`**${destination}`, (route) => route.fulfill({ status: 204 }));
+  await page.goto("/account/login");
+  await page.locator('[name="identifier"]').fill("lin");
+  await page.locator('[name="password"]').fill("Test123!");
+  const interrupted = page.waitForRequest(
+    (request) =>
+      request.url().endsWith(destination) && request.isNavigationRequest(),
+  );
+  await page.locator('button[type="submit"]').click({ noWaitAfter: true });
+  await interrupted;
+  // Read the current document because Playwright waits for a new one in locator assertions.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled,
+      ),
+    )
+    .toBe(false);
+});
+
 test("forbidden response has a clear recoverable state", async ({ page }) => {
   await mock(page, {
     "/dashboard/apps": { view: "ForbiddenView", data: { code: "forbidden" } },
@@ -505,19 +548,10 @@ test("provider key activation addresses the key identifier and asks for confirma
   await page.getByRole("button", { name: "确认", exact: true }).click();
   await submitted;
 });
-test("new app defaults to a valid type and server timestamps render as calendar dates", async ({
+test("application list renders server timestamps as calendar dates", async ({
   page,
 }) => {
   await mock(page, {
-    "/dashboard/apps/new": {
-      view: "AppFormView",
-      data: {
-        layout,
-        csrf_token: "csrf-test",
-        mode: "create",
-        form: { code: "", name: "", app_type: "" },
-      },
-    },
     "/dashboard/apps": {
       view: "AppListView",
       data: {
@@ -529,10 +563,6 @@ test("new app defaults to a valid type and server timestamps render as calendar 
       },
     },
   });
-  await page.goto("/dashboard/apps/new");
-  await expect(page.getByRole("combobox", { name: "应用类型" })).toContainText(
-    "Web 应用",
-  );
   await page.goto("/dashboard/apps");
   await expect(page.getByRole("cell", { name: /2026-10-22/ })).toBeVisible();
 });
@@ -592,8 +622,8 @@ test("English forms, modals, validation and sign-in are fully localized", async 
   ).toBeVisible();
   await page.goto("/dashboard/apps/new");
   await expect(
-    page.getByRole("combobox", { name: /App Type|Application Type/ }),
-  ).toContainText("Web application");
+    page.getByRole("textbox", { name: "App Name", exact: true }),
+  ).toBeVisible();
   expect(await page.locator("main").innerText()).not.toMatch(/[\u3400-\u9fff]/);
   await page.goto("/account/login");
   await expect(
@@ -659,7 +689,7 @@ test("English visual review across account, dashboard and login", async ({
   }
 });
 
-test("application type filtering and returning from registration preserve their request contracts", async ({
+test("returning from registration preserves the login request contract", async ({
   page,
 }) => {
   await mock(page, {
@@ -678,15 +708,6 @@ test("application type filtering and returning from registration preserve their 
       data: { csrf_token: "csrf-test", error: "", providers: [] },
     },
   });
-  await page.goto("/dashboard/apps?page=2&status=active");
-  await page.getByRole("combobox", { name: "类型", exact: true }).click();
-  await page.getByRole("option", { name: "SPA", exact: true }).click();
-  await expect(page).toHaveURL(/app_type=spa/);
-  const params = new URL(page.url()).searchParams;
-  expect(params.get("app_type")).toBe("spa");
-  expect(params.get("status")).toBe("active");
-  expect(params.has("page")).toBeFalsy();
-
   await page.goto("/sso/register");
   await page.getByRole("link", { name: "返回登录", exact: true }).click();
   await page.locator('[name="identifier"]').fill("test-user");

@@ -2,7 +2,7 @@ SELECT user_id, app_id, permission FROM admin_app_permissions LIMIT 0;
 SELECT user_id, revision, updated_by, updated_at FROM admin_permission_state LIMIT 0;
 SELECT user_id, permission FROM admin_permissions LIMIT 0;
 SELECT user_id, role FROM admin_roles LIMIT 0;
-SELECT id, code, name, type, description, homepage_url, logo_url, status, system, created_at, updated_at FROM apps LIMIT 0;
+SELECT id, code, name, description, homepage_url, logo_url, status, system, created_at, updated_at FROM apps LIMIT 0;
 SELECT details, id, actor_id, actor_username, action, target, ip, user_agent, request_id, outcome, http_status, created_at FROM audit_events LIMIT 0;
 SELECT id, code_hash, authorization_request_id, user_id, app_id, client_id, session_id, redirect_uri, scopes, nonce, code_challenge, code_challenge_method, created_at, expires_at, consumed_at FROM authorization_codes LIMIT 0;
 SELECT id, client_id, app_id, redirect_uri, scopes, client_state, nonce, code_challenge, code_challenge_method, prompt, max_age, login_hint, authorized_user_id, created_at, expires_at, completed_at, diagnostic_session_id FROM authorization_requests LIMIT 0;

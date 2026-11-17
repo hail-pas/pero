@@ -4,18 +4,16 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 
-use crate::db::enums::AppType;
+use crate::service::app::{self, AppUpdate};
 use crate::state::app::AppState;
 use crate::web::dashboard::dto::{AppDetailView, AppFormData, AppFormView, AppListView};
 use crate::web::dashboard::guard::{AdminContext, AdminPage};
 use crate::web::util::{self, CsrfOnly, view_response};
-use pero_api_axum::json_error;
 
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
     pub q: Option<String>,
     pub status: Option<String>,
-    pub app_type: Option<String>,
     pub page: Option<u64>,
 }
 
@@ -36,21 +34,14 @@ pub async fn list(
     let page_num = query.page.unwrap_or(1).max(1);
     let q = query.q.unwrap_or_default();
     let status_filter = query.status.unwrap_or_default();
-    let type_filter = query.app_type.unwrap_or_default();
 
-    let (apps_list, total_pages) = match crate::db::helper::admin::list_apps(
-        &state.db,
-        page_num,
-        &q,
-        &status_filter,
-        &type_filter,
-        &access,
-    )
-    .await
-    {
-        Ok(data) => data,
-        Err(error) => return util::dependency_error(error),
-    };
+    let (apps_list, total_pages) =
+        match crate::db::helper::admin::list_apps(&state.db, page_num, &q, &status_filter, &access)
+            .await
+        {
+            Ok(data) => data,
+            Err(error) => return util::dependency_error(error),
+        };
 
     let tpl = AppListView {
         layout,
@@ -60,7 +51,6 @@ pub async fn list(
         total_pages,
         q,
         status_filter,
-        type_filter,
     };
     view_response("AppListView", tpl, jar)
 }
@@ -98,12 +88,9 @@ pub async fn create(
         return response;
     }
 
-    let input = match app_input(&form) {
-        Ok(input) => input,
-        Err(error) => return json_error(error),
-    };
+    let input = app_input(&form);
     util::management_response(
-        crate::service::app::create(&state.db, &admin.actor(&state), form.code.trim(), input).await,
+        app::create(&state.db, &admin.actor(&state), form.code.trim(), input).await,
     )
 }
 
@@ -175,7 +162,6 @@ pub async fn edit_form(
             csrf_token: String::new(),
             code: app.code.clone(),
             name: app.name.clone(),
-            app_type: app.r#type.to_string(),
             description: app.description.unwrap_or_default(),
             homepage_url: app.homepage_url.unwrap_or_default(),
             logo_url: app.logo_url.unwrap_or_default(),
@@ -195,23 +181,18 @@ pub async fn update(
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    let input = match app_input(&form) {
-        Ok(input) => input,
-        Err(error) => return json_error(error),
-    };
     util::management_response(
-        crate::service::app::update(&state.db, &admin.actor(&state), id, input).await,
+        app::update(&state.db, &admin.actor(&state), id, app_input(&form)).await,
     )
 }
 
-fn app_input(form: &AppFormData) -> Result<crate::service::app::AppUpdate, &'static str> {
-    Ok(crate::service::app::AppUpdate {
+fn app_input(form: &AppFormData) -> AppUpdate {
+    AppUpdate {
         name: form.name.trim().to_owned(),
-        app_type: AppType::try_from_str(&form.app_type).map_err(|_| "invalid_app_type")?,
         description: util::empty_or_opt(&form.description),
         homepage_url: util::empty_or_opt(&form.homepage_url),
         logo_url: util::empty_or_opt(&form.logo_url),
-    })
+    }
 }
 
 pub async fn toggle_status(
@@ -224,7 +205,5 @@ pub async fn toggle_status(
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    util::management_response(
-        crate::service::app::toggle_status(&state.db, &admin.actor(&state), id).await,
-    )
+    util::management_response(app::toggle_status(&state.db, &admin.actor(&state), id).await)
 }

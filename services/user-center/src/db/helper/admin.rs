@@ -34,7 +34,6 @@ pub async fn list_apps(
     page: u64,
     q: &str,
     status: &str,
-    app_type: &str,
     access: &Access,
 ) -> Result<(Vec<apps::Model>, u64), DbErr> {
     let mut query = apps::Entity::find().order_by_desc(apps::Column::CreatedAt);
@@ -48,11 +47,6 @@ pub async fn list_apps(
         && let Ok(v) = CommonStatus::try_from_str(s)
     {
         query = query.filter(apps::Column::Status.eq(v));
-    }
-    if let Some(t) = non_empty(app_type)
-        && let Ok(v) = crate::db::enums::AppType::try_from_str(t)
-    {
-        query = query.filter(apps::Column::Type.eq(v));
     }
     if let Some(search) = non_empty(q) {
         let pattern = format!("%{}%", escape_like(search));

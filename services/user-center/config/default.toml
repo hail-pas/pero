@@ -32,7 +32,8 @@ auth_code_ttl_seconds = 600
 
 [sso]
 base_url = ""
-session_ttl_seconds = 600
+session_ttl_seconds = 3600
+session_idle_ttl_seconds = 1800
 cookie_secure = true
 cookie_same_site = "Lax"
 cookie_signing_secret = ""

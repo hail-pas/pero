@@ -21,7 +21,6 @@ pub struct AppListView {
     pub total_pages: u64,
     pub q: String,
     pub status_filter: String,
-    pub type_filter: String,
 }
 
 // === App Form ===
@@ -43,7 +42,6 @@ pub struct AppFormData {
     pub csrf_token: String,
     pub code: String,
     pub name: String,
-    pub app_type: String,
     pub description: String,
     pub homepage_url: String,
     pub logo_url: String,
@@ -425,7 +423,6 @@ pub struct AppSummary {
     pub id: uuid::Uuid,
     pub code: String,
     pub name: String,
-    pub r#type: String,
     pub description: Option<String>,
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
@@ -441,7 +438,6 @@ impl From<apps::Model> for AppSummary {
             id: model.id,
             code: model.code,
             name: model.name,
-            r#type: model.r#type.to_string(),
             description: model.description,
             homepage_url: model.homepage_url,
             logo_url: model.logo_url,

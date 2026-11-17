@@ -89,7 +89,6 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
         ("csrf_token", csrf.as_str()),
         ("code", "created-app"),
         ("name", "Created App"),
-        ("app_type", "web"),
         ("description", ""),
         ("homepage_url", ""),
         ("logo_url", ""),
