@@ -30,17 +30,41 @@ pub fn safe_site_redirect(raw: &str, default: &str) -> String {
     out
 }
 
-pub fn validate_oauth_redirect_uri(uri: &str) -> Result<(), RedirectUriError> {
+pub fn validate_oauth_redirect_uri(
+    uri: &str,
+    allow_private_scheme: bool,
+) -> Result<(), RedirectUriError> {
     let parsed = url::Url::parse(uri).map_err(|_| RedirectUriError::Invalid)?;
     let scheme = parsed.scheme();
-    if !DEFAULT_ALLOWED_REDIRECT_SCHEMES.contains(&scheme) {
-        return Err(RedirectUriError::InvalidScheme);
-    }
-    if parsed.host_str().is_none() {
-        return Err(RedirectUriError::MissingHost);
-    }
-    if scheme == "http" && !is_loopback_http_redirect(&parsed) {
-        return Err(RedirectUriError::InsecureHttpHost);
+    if DEFAULT_ALLOWED_REDIRECT_SCHEMES.contains(&scheme) {
+        if parsed.host_str().is_none() {
+            return Err(RedirectUriError::MissingHost);
+        }
+        if scheme == "http" && !is_loopback_http_redirect(&parsed) {
+            return Err(RedirectUriError::InsecureHttpHost);
+        }
+    } else {
+        // RFC 8252 §7.1: reverse-domain scheme and an absolute path without an authority.
+        if !allow_private_scheme
+            || !scheme.contains('.')
+            || scheme.split('.').any(|label| {
+                label.is_empty()
+                    || label.starts_with('-')
+                    || label.ends_with('-')
+                    || !label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            })
+        {
+            return Err(RedirectUriError::InvalidScheme);
+        }
+        if parsed.has_authority()
+            || !parsed.path().starts_with('/')
+            || !uri.bytes().all(|b| b.is_ascii_graphic())
+            || uri.contains('\\')
+        {
+            return Err(RedirectUriError::Invalid);
+        }
     }
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(RedirectUriError::UserInfoNotAllowed);
@@ -51,9 +75,12 @@ pub fn validate_oauth_redirect_uri(uri: &str) -> Result<(), RedirectUriError> {
     Ok(())
 }
 
-pub fn validate_oauth_redirect_uris(uris: &[String]) -> Result<(), RedirectUriError> {
+pub fn validate_oauth_redirect_uris(
+    uris: &[String],
+    allow_private_scheme: bool,
+) -> Result<(), RedirectUriError> {
     for uri in uris {
-        validate_oauth_redirect_uri(uri)?;
+        validate_oauth_redirect_uri(uri, allow_private_scheme)?;
     }
     Ok(())
 }
@@ -184,6 +211,33 @@ pub fn is_public_ip(ip: std::net::IpAddr) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oauth_private_scheme_requires_opt_in_and_an_authority_free_uri() {
+        use super::validate_oauth_redirect_uri as validate;
+
+        let callback = "com.example.app:/oauth2/callback?source=native";
+        assert!(validate(callback, true).is_ok());
+        assert!(validate(callback, false).is_err());
+        for uri in [
+            "https://example.test/callback",
+            "http://127.0.0.1:8080/callback",
+        ] {
+            assert!(validate(uri, false).is_ok(), "{uri}");
+        }
+        for uri in [
+            "http://example.test/callback",
+            "javascript:alert(1)",
+            "myapp:/callback",
+            "com..app:/callback",
+            "com.example.app://host/callback",
+            "com.example.app:callback",
+            "com.example.app:/callback#fragment",
+            "com.example.app:/call\tback",
+        ] {
+            assert!(validate(uri, true).is_err(), "{uri}");
+        }
+    }
+
     #[test]
     fn private_addresses_and_ipv4_mapped_ipv6_are_blocked() {
         for ip in [

@@ -318,6 +318,9 @@ impl Fixture {
         (cookies, csrf)
     }
     fn token(&self, sid: Uuid) -> String {
+        self.token_for(sid, &self.client.to_string())
+    }
+    fn token_for(&self, sid: Uuid, client_identifier: &str) -> String {
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
             "../../../tests/fixtures/rsa-private.pem"
         ))
@@ -326,7 +329,7 @@ impl Fixture {
             &pero_utils::oauth::jwt::AccessTokenParams {
                 issuer: &self.state.config.oidc.issuer,
                 user_id: &self.user.to_string(),
-                client_identifier: &self.client.to_string(),
+                client_identifier,
                 scopes: "openid",
                 client_version: 0,
                 access_version: 0,
@@ -1850,6 +1853,132 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
         .await
         .0,
         StatusCode::FORBIDDEN
+    );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn native_introspection_shares_live_roles_only_with_the_same_app_backend() {
+    let f = Fixture::new().await;
+    let native = Uuid::now_v7();
+    let sibling = Uuid::now_v7();
+    let foreign_app = Uuid::now_v7();
+    let foreign_native = Uuid::now_v7();
+    f.sql(
+        "INSERT INTO apps(id,code,name) VALUES($1,'foreign-native-app','Foreign')",
+        vec![foreign_app.into()],
+    )
+    .await;
+    for app in [f.app, foreign_app] {
+        f.sql(
+            "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+            vec![f.user.into(), app.into()],
+        )
+        .await;
+    }
+    for (id, app) in [(native, f.app), (foreign_native, foreign_app)] {
+        f.sql("INSERT INTO oauth_clients(id,app_id,identifier,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'public',ARRAY['com.example.native:/oauth2/callback'],ARRAY['openid']::text[],true)", vec![id.into(),app.into(),id.to_string().into()]).await;
+    }
+    f.sql("INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'private-sibling-hash','confidential',ARRAY['https://sibling.example.test/callback'],ARRAY['openid']::text[],false)", vec![sibling.into(),f.app.into(),sibling.to_string().into()]).await;
+    let (_, _, sid, raw) = f.login(f.user).await;
+    let token = f.token_for(sid, &native.to_string());
+    let router = user_center::router::build(f.state.clone());
+    let backend = f.client.to_string();
+    let inspect = async |token: &str| {
+        call(
+            &router,
+            "",
+            "/api/oauth2/introspect",
+            Some(&[
+                ("client_id", &backend),
+                ("client_secret", &f.secret),
+                ("token", token),
+            ]),
+        )
+        .await
+    };
+    let (status, result, headers) = inspect(&token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["active"], true);
+    assert_eq!(result["client_id"], native.to_string());
+    assert_eq!(result["aud"], native.to_string());
+    assert_eq!(result["sub"], f.user.to_string());
+    assert_eq!(result["is_superadmin"], false);
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(inspect(&f.token(sid)).await.1["active"], true);
+
+    // The native refresh token is still private to its original client.
+    let refresh = "native-refresh-token";
+    f.sql("INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid']::text[],now()+interval '1 hour')", vec![pero_utils::crypto::sha256_hex(refresh).into(),f.user.into(),f.app.into(),native.into(),sid.into()]).await;
+    assert_eq!(inspect(refresh).await.1, json!({"active":false}));
+
+    // The next request observes role grants and revocation on the same token.
+    f.sql(
+        "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
+        vec![f.user.into()],
+    )
+    .await;
+    assert_eq!(inspect(&token).await.1["is_superadmin"], true);
+    f.sql(
+        "UPDATE admin_roles SET role='admin' WHERE user_id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    assert_eq!(inspect(&token).await.1["is_superadmin"], false);
+    f.sql(
+        "DELETE FROM admin_roles WHERE user_id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    assert_eq!(inspect(&token).await.1["is_superadmin"], false);
+
+    for client in [foreign_native, sibling] {
+        assert_eq!(
+            inspect(&f.token_for(sid, &client.to_string())).await.1,
+            json!({"active":false})
+        );
+    }
+    assert_eq!(
+        call(
+            &router,
+            "",
+            "/api/oauth2/introspect",
+            Some(&[("client_id", &native.to_string()), ("token", &token),])
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            &router,
+            "",
+            "/api/oauth2/introspect",
+            Some(&[
+                ("client_id", &backend),
+                ("client_secret", "wrong-secret"),
+                ("token", &token),
+            ])
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    f.state
+        .session_service()
+        .revoke_login_state(sid, "native-test")
+        .await
+        .unwrap();
+    assert_eq!(inspect(&token).await.1, json!({"active":false}));
+    assert!(
+        f.state
+            .session_service()
+            .validate(&raw)
+            .await
+            .unwrap()
+            .is_none()
     );
     f.cleanup().await;
 }

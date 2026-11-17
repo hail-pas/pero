@@ -14,7 +14,7 @@ use crate::db::entity::apps;
 use crate::db::entity::authorization_requests;
 use crate::db::entity::oauth_clients;
 use crate::db::entity::user_consents;
-use crate::db::enums::CommonStatus;
+use crate::db::enums::{CommonStatus, OauthClientType};
 use crate::db::helper::{auth_code, auth_request};
 use crate::state::session::SsoSession;
 
@@ -73,10 +73,13 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::InvalidClient("Client is disabled"));
         }
 
-        if !client.redirect_uris.iter().any(|uri| uri == redirect_uri) {
-            return Err(OAuthError::InvalidRedirectUri);
-        }
-        if pero_utils::redirect::validate_oauth_redirect_uri(redirect_uri).is_err() {
+        if !client.redirect_uris.iter().any(|uri| uri == redirect_uri)
+            || pero_utils::redirect::validate_oauth_redirect_uri(
+                redirect_uri,
+                client.r#type == OauthClientType::Public,
+            )
+            .is_err()
+        {
             return Err(OAuthError::InvalidRedirectUri);
         }
 

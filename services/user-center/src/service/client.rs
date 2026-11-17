@@ -77,8 +77,9 @@ impl ClientInput {
         if self.redirect_uris.is_empty() {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
+        let allow_private_scheme = self.client_type == OauthClientType::Public;
         for uris in [&self.redirect_uris, &self.post_logout_redirect_uris] {
-            pero_utils::redirect::validate_oauth_redirect_uris(uris)
+            pero_utils::redirect::validate_oauth_redirect_uris(uris, allow_private_scheme)
                 .map_err(|_| ManagementError::Invalid("invalid_redirect_uri"))?;
         }
         Ok(())

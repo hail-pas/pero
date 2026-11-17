@@ -1,7 +1,11 @@
 #[path = "support/database.rs"]
 mod database;
 
-use axum::{Router, body::Body, http::Request};
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode, header},
+};
 use axum_extra::extract::{CookieJar, cookie::Cookie};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use tower::ServiceExt;
@@ -113,8 +117,11 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
         ("client_type", "public"),
         ("secret", ""),
         ("name", "Client"),
-        ("redirect_uris", "https://client.example.test/callback"),
-        ("post_logout_redirect_uris", ""),
+        (
+            "redirect_uris",
+            "https://client.example.test/callback\ncom.example.app:/callback",
+        ),
+        ("post_logout_redirect_uris", "com.example.app:/signed-out"),
         ("scopes", "openid"),
         ("grant_types", "authorization_code"),
         ("require_pkce", "true"),
@@ -156,6 +163,30 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
             .identifier,
         "fixed-client"
     );
+    let authorize = "/oauth2/authorize?client_id=fixed-client&response_type=code&scope=openid";
+    let request = |callback| {
+        Request::get(format!("{authorize}&redirect_uri={callback}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let registered = app
+        .clone()
+        .oneshot(request("com.example.app%3A%2Fcallback"))
+        .await
+        .unwrap();
+    assert_eq!(registered.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        registered.headers()[header::LOCATION],
+        "com.example.app:/callback?error=invalid_request&error_description=PKCE%20is%20required%20for%20this%20client"
+    );
+    let unregistered = app
+        .clone()
+        .oneshot(request("com.example.app%3A%2Fcallback%2F"))
+        .await
+        .unwrap();
+    assert_eq!(unregistered.status(), StatusCode::BAD_REQUEST);
+    assert!(!unregistered.headers().contains_key(header::LOCATION));
+
     assert_eq!(
         post(&app, &cookies, "/dashboard/apps/new", &app_fields).await["error"],
         "code_exists"

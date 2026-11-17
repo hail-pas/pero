@@ -66,7 +66,7 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
     )
     .await
     .unwrap();
-    execute(&db,"INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,'recovery-client','hash','confidential',ARRAY['https://client.example.test/callback'],ARRAY['openid'],false)",vec![client.into(),application.into()]).await.unwrap();
+    execute(&db,"INSERT INTO oauth_clients(id,app_id,identifier,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,'recovery-client','public',ARRAY['com.example.app:/callback'],ARRAY['openid'],true)",vec![client.into(),application.into()]).await.unwrap();
     let (raw, sid) = state
         .session_service()
         .create(user, None, None, None, None)
@@ -86,7 +86,11 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
     let (_, csrf) = state.web_security().ensure_csrf(jar);
     let cookie = format!("pero_sso={raw}; pero_csrf={csrf}");
     let app = user_center::router::build(state.clone());
-    let start = "/oauth2/authorize?client_id=recovery-client&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&state=preserved-state&nonce=preserved-nonce";
+    let pkce = pero_utils::oauth::pkce::PkcePair::generate();
+    let start = format!(
+        "/oauth2/authorize?client_id=recovery-client&redirect_uri=com.example.app%3A%2Fcallback&response_type=code&scope=openid&state=preserved-state&nonce=preserved-nonce&code_challenge_method=S256&code_challenge={}",
+        pkce.code_challenge
+    );
     // Scope permission belongs to the client, independently of application membership.
     let invalid_scope = request(
         &app,
@@ -108,7 +112,7 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
             .query_pairs()
             .any(|(k, v)| k == "state" && v == "preserved-state")
     );
-    let initial = request(&app, &cookie, start, None).await;
+    let initial = request(&app, &cookie, &start, None).await;
     let recovery = initial["redirect"].as_str().unwrap();
     assert!(recovery.starts_with("/oauth2/authorize/access?token="));
     let view = request(&app, &cookie, recovery, None).await;
@@ -188,6 +192,8 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
     )
     .await;
     let callback = url::Url::parse(completed["redirect"].as_str().unwrap()).unwrap();
+    assert_eq!(callback.scheme(), "com.example.app");
+    assert_eq!(callback.path(), "/callback");
     assert!(
         callback
             .query_pairs()
@@ -209,7 +215,7 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
     )
     .await
     .unwrap();
-    let cancel_start = request(&app, &cookie, start, None).await;
+    let cancel_start = request(&app, &cookie, &start, None).await;
     let recovery = cancel_start["redirect"].as_str().unwrap();
     let view = request(&app, &cookie, recovery, None).await;
     let cancel_form = url::form_urlencoded::Serializer::new(String::new())
@@ -231,7 +237,7 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
     )
     .await
     .unwrap();
-    let next = request(&app, &cookie, start, None).await;
+    let next = request(&app, &cookie, &start, None).await;
     let next = next["redirect"].as_str().unwrap();
     let view = request(&app, &cookie, next, None).await;
     let expired_form = url::form_urlencoded::Serializer::new(String::new())
@@ -255,7 +261,7 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
         true
     );
     // A fresh request can switch identity; the old recovery token becomes unusable.
-    let next = request(&app, &cookie, start, None).await;
+    let next = request(&app, &cookie, &start, None).await;
     let next = next["redirect"].as_str().unwrap();
     let view = request(&app, &cookie, next, None).await;
     let switch_form = url::form_urlencoded::Serializer::new(String::new())

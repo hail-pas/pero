@@ -9,6 +9,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 const PRIVATE: &str = include_str!("../../../tests/fixtures/rsa-private.pem");
 const PUBLIC: &str = include_str!("../../../tests/fixtures/rsa-public.pem");
+const WEB_CALLBACK: &str = "https://rp.test/out?existing=1";
+const NATIVE_CALLBACK: &str = "com.example.app:/signed-out?existing=1";
 async fn sql(db: &sea_orm::DatabaseConnection, q: &str, v: Vec<sea_orm::Value>) {
     db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres, q, v))
         .await
@@ -26,10 +28,10 @@ fn token(sub: Uuid, sid: Option<Uuid>, expired: bool) -> String {
     )
     .unwrap()
 }
-fn params(jwt: &str) -> String {
+fn params(jwt: &str, redirect_uri: &str) -> String {
     url::form_urlencoded::Serializer::new(String::new())
         .append_pair("id_token_hint", jwt)
-        .append_pair("post_logout_redirect_uri", "https://rp.test/out?existing=1")
+        .append_pair("post_logout_redirect_uri", redirect_uri)
         .append_pair("state", "a&b+c")
         .finish()
 }
@@ -76,9 +78,13 @@ async fn logout_confirmation_expiry_and_form_contract() {
         vec![app.into()],
     )
     .await;
-    sql(&db,"INSERT INTO oauth_clients(id,app_id,identifier,type,redirect_uris,post_logout_redirect_uris) VALUES($1,$2,'logout-test','public',ARRAY['https://rp.test/cb'],ARRAY['https://rp.test/out?existing=1'])",vec![client.into(),app.into()]).await;
+    sql(&db,"INSERT INTO oauth_clients(id,app_id,identifier,type,redirect_uris,post_logout_redirect_uris) VALUES($1,$2,'logout-test','public',ARRAY['https://rp.test/cb'],ARRAY[$3,$4]::text[])",vec![client.into(),app.into(),WEB_CALLBACK.into(),NATIVE_CALLBACK.into()]).await;
     let router = user_center::router::build(state.clone());
-    for mode in ["get", "expired_get", "post"] {
+    for (mode, redirect_uri) in [
+        ("get", WEB_CALLBACK),
+        ("expired_get", WEB_CALLBACK),
+        ("post", NATIVE_CALLBACK),
+    ] {
         let (raw, sid) = state
             .session_service()
             .create(user, None, None, None, None)
@@ -96,7 +102,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
                 .is_err()
             );
         }
-        let query = params(&jwt);
+        let query = params(&jwt, redirect_uri);
         let (uri, body) = if mode == "post" {
             ("/oauth2/session/end".to_owned(), Body::from(query))
         } else {
@@ -116,11 +122,9 @@ async fn logout_confirmation_expiry_and_form_contract() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER, "{mode}");
-        let location = url::Url::parse(response.headers()["location"].to_str().unwrap()).unwrap();
-        assert!(
-            location
-                .query_pairs()
-                .any(|(k, v)| k == "state" && v == "a&b+c")
+        assert_eq!(
+            response.headers()["location"],
+            format!("{redirect_uri}&state=a%26b%2Bc")
         );
         assert!(
             state
@@ -159,10 +163,13 @@ async fn logout_confirmation_expiry_and_form_contract() {
         let response = router
             .clone()
             .oneshot(
-                Request::get(format!("/oauth2/session/end?{}", params(&jwt)))
-                    .header("cookie", format!("pero_sso={raw}"))
-                    .body(Body::empty())
-                    .unwrap(),
+                Request::get(format!(
+                    "/oauth2/session/end?{}",
+                    params(&jwt, WEB_CALLBACK)
+                ))
+                .header("cookie", format!("pero_sso={raw}"))
+                .body(Body::empty())
+                .unwrap(),
             )
             .await
             .unwrap();
@@ -254,7 +261,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
         .create(user, None, None, None, None)
         .await
         .unwrap();
-    let query = params(&token(user, Some(Uuid::now_v7()), false));
+    let query = params(&token(user, Some(Uuid::now_v7()), false), WEB_CALLBACK);
     let response = router
         .clone()
         .oneshot(
@@ -410,7 +417,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
         .oneshot(
             Request::get(format!(
                 "/oauth2/session/end?{}",
-                params(&token(user, None, false))
+                params(&token(user, None, false), WEB_CALLBACK)
             ))
             .body(Body::empty())
             .unwrap(),

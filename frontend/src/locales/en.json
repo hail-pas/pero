@@ -293,7 +293,7 @@
   "正在处理…": "Working…",
   "正在提交…": "Saving…",
   "此操作会立即生效，请确认后继续。": "This change takes effect immediately. Confirm to continue.",
-  "每行一个完整 URL": "One complete URL per line",
+  "每行一个完整 URI。公开客户端可将自己控制的域名倒写为私有 Scheme，例如 com.example.app:/callback。": "One complete URI per line. Public clients may use a private scheme based on a domain they control in reverse order, for example com.example.app:/callback.",
   "注册时间": "Joined",
   "注册账户": "Create account",
   "添加客户端": "Add client",

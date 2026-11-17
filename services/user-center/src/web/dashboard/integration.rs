@@ -5,7 +5,10 @@ use super::{
 };
 use crate::service::integration::{self, callback_uri};
 use crate::{
-    db::{entity::apps, enums::CommonStatus},
+    db::{
+        entity::apps,
+        enums::{CommonStatus, OauthClientType},
+    },
     service::ManagementError,
     state::app::AppState,
     web::util,
@@ -123,7 +126,11 @@ async fn page(
             Check {
                 code: "redirects",
                 passed: !c.redirect_uris.is_empty()
-                    && pero_utils::redirect::validate_oauth_redirect_uris(&c.redirect_uris).is_ok(),
+                    && pero_utils::redirect::validate_oauth_redirect_uris(
+                        &c.redirect_uris,
+                        c.r#type == OauthClientType::Public,
+                    )
+                    .is_ok(),
             },
             Check {
                 code: "membership",

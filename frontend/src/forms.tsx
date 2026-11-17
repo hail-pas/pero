@@ -523,12 +523,12 @@ export const clientFields: Field[] = [
   {
     ...text("redirect_uris", "回调地址", true),
     multiline: true,
-    hint: "每行一个完整 URL",
+    hint: "每行一个完整 URI。公开客户端可将自己控制的域名倒写为私有 Scheme，例如 com.example.app:/callback。",
   },
   {
     ...text("post_logout_redirect_uris", "退出回调地址"),
     multiline: true,
-    hint: "每行一个完整 URL",
+    hint: "每行一个完整 URI。公开客户端可将自己控制的域名倒写为私有 Scheme，例如 com.example.app:/callback。",
   },
   { ...text("scopes", "权限范围"), default: "openid,profile,email" },
   {

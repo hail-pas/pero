@@ -1,6 +1,6 @@
 //! Logout hints are evidence of a session, never general authentication tokens.
 use crate::{
-    db::entity::oauth_clients,
+    db::{entity::oauth_clients, enums::OauthClientType},
     state::{app::AppState, session::SsoSession},
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -48,7 +48,11 @@ pub async fn prepare(
             .post_logout_redirect_uris
             .iter()
             .any(|uri| uri == redirect)
-            || pero_utils::redirect::validate_oauth_redirect_uri(redirect).is_err()
+            || pero_utils::redirect::validate_oauth_redirect_uri(
+                redirect,
+                client.r#type == OauthClientType::Public,
+            )
+            .is_err()
         {
             return None;
         }

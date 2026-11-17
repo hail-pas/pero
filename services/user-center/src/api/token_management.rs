@@ -73,8 +73,12 @@ async fn inspect(
     client: &oauth_clients::Model,
 ) -> Result<serde_json::Value, sea_orm::DbErr> {
     if let Some((claims, user, owner)) = token_status::active_access(state, token).await?
-        && owner.id == client.id
+        && (owner.id == client.id
+            || owner.app_id == client.app_id
+                && owner.r#type == crate::db::enums::OauthClientType::Public)
     {
+        // A confidential backend may validate its own app's native/public access tokens.
+        // Public callers, other apps and sibling confidential clients remain isolated.
         // Read the current platform role, never a role supplied by the OAuth client.
         let is_superadmin = crate::service::security::role(&state.db, user.id)
             .await?
@@ -86,7 +90,7 @@ async fn inspect(
             .map(String::from)
             .collect::<Vec<_>>();
         let mut response = serde_json::json!({
-            "active":true,"client_id":client.identifier,"sub":claims.sub,"scope":claims.scope,
+            "active":true,"client_id":owner.identifier,"sub":claims.sub,"scope":claims.scope,
             "exp":claims.exp,"iat":claims.iat,"iss":claims.iss,"aud":claims.aud,"sid":claims.sid,"token_type":"Bearer",
             "is_superadmin":is_superadmin
         });

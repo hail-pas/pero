@@ -194,11 +194,11 @@ MIT OR Apache-2.0
 
 ## 业务应用在线校验与令牌撤销
 
-新增 `POST /api/oauth2/introspect` 和 `POST /api/oauth2/revoke`，Discovery 同步公布地址。接口使用表单参数 `token`、`client_id`、`client_secret`，`token_type_hint` 可选；沿用 `client_secret_post` 认证。Introspection 仅允许 confidential 客户端查询自己的令牌，支持 access token 和 refresh token，无效、不属于本客户端或已撤销时只返回 `{"active":false}`。依赖不可用返回 503，不能当作令牌无效。状态响应禁止缓存；协议管理接口与 Token 签发使用独立的来源配额。
+新增 `POST /api/oauth2/introspect` 和 `POST /api/oauth2/revoke`，Discovery 同步公布地址。接口使用表单参数 `token`、`client_id`、`client_secret`，`token_type_hint` 可选；沿用 `client_secret_post` 认证。Introspection 仅允许认证通过的 confidential 客户端查询：自己的 access token / refresh token，以及同一应用下 public 客户端的 access token。后者供原生 App 的业务后端在线校验身份及角色；响应中的 `client_id` / `aud` 始终是令牌原始客户端。其他应用、兄弟 confidential 客户端的令牌及其他客户端的 refresh token 均不开放查询；无效、越权或已撤销时只返回 `{"active":false}`。依赖不可用返回 503，不能当作令牌无效。状态响应禁止缓存；协议管理接口与 Token 签发使用独立的来源配额。
 
 Revocation 接受本客户端的 access token 或 refresh token；采用应用授权级撤销，使该用户在目标应用的既有令牌及未使用授权码失效，保留应用访问资格、SSO 会话和其他应用授权。未知、已撤销或其他客户端的令牌统一返回 200。旧刷新令牌的主动撤销不会触发刷新重放导致的 SSO 全局退出。
 
-Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，实时查询当前用户的 `super_admin` 平台角色，不从令牌或调用方参数推断。仅认证通过的 confidential 客户端可查询自己的令牌；用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
+Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，实时查询当前用户的 `super_admin` 平台角色，不从令牌或调用方参数推断。仅认证通过的 confidential 客户端可按上述应用和客户端边界查询；public 客户端自身仍不能调用 introspection。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
 
 业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie；本项目 admin 示例已采用每次请求在线 introspection。仅在登录时离线验签无法获得即时撤销效果。
 
