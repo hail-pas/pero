@@ -90,3 +90,7 @@ flask --app examples/account-sync/app run --port 8091
 ```
 
 通过 HTTPS 反向代理暴露 `/account-sync` 并登记到客户端。示例用 Redis 保存去重标记和当前账户投影；实际接入时将其替换为业务数据库事务，并在业务请求中检查本地投影的 `active`。每个 `jti` 的去重标记至少保留两天。
+
+## 租户成员状态通知
+
+租户成员加入/移除或租户状态切换时，复用当前签名投递队列发送 tenant.membership.changed。JWT 附带 tenant_id，不包含成员角色和用户资料。接收方验证签名、aud 与 tenant_id 后，使用 POST /api/tenants/membership/sync 查询当前状态，不按历史事件覆盖最新状态。

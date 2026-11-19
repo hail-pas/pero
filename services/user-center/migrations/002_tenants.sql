@@ -73,3 +73,34 @@ ALTER TABLE refresh_tokens ADD COLUMN tenant_member_version bigint;
 UPDATE authorization_requests SET completed_at=now() WHERE completed_at IS NULL;
 UPDATE authorization_codes SET consumed_at=now() WHERE consumed_at IS NULL;
 UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_context_migration' WHERE revoked_at IS NULL;
+
+ALTER TABLE account_sync_deliveries ADD COLUMN tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE account_sync_deliveries DROP CONSTRAINT account_sync_deliveries_kind_check;
+ALTER TABLE account_sync_deliveries ADD CONSTRAINT account_sync_deliveries_kind_check
+ CHECK (kind IN ('sync.requested','account.updated','account.status_changed','account.deleted','membership.granted','membership.revoked','tenant.membership.changed'));
+CREATE FUNCTION enqueue_tenant_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND (OLD.status,OLD.auth_version) IS NOT DISTINCT FROM (NEW.status,NEW.auth_version) THEN RETURN NEW; END IF;
+ INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+ SELECT c.id,NEW.user_id,NEW.tenant_id,'tenant.membership.changed',c.account_sync_uri
+ FROM tenants t JOIN user_app_access a ON a.user_id=NEW.user_id AND a.status='active'
+ JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=app.id
+ WHERE t.id=NEW.tenant_id AND c.account_sync_uri IS NOT NULL AND c.status='active'
+ AND (app.tenant_mode='both' OR app.tenant_mode=t.kind);
+ RETURN NEW;
+END $$;
+CREATE TRIGGER tenant_membership_sync AFTER INSERT OR UPDATE OF status,auth_version ON tenant_members
+FOR EACH ROW EXECUTE FUNCTION enqueue_tenant_membership_sync();
+CREATE FUNCTION enqueue_tenant_status_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF OLD.status IS NOT DISTINCT FROM NEW.status THEN RETURN NEW; END IF;
+ INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+ SELECT c.id,m.user_id,NEW.id,'tenant.membership.changed',c.account_sync_uri
+ FROM tenant_members m JOIN user_app_access a ON a.user_id=m.user_id AND a.status='active'
+ JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=app.id
+ WHERE m.tenant_id=NEW.id AND m.status='active' AND c.account_sync_uri IS NOT NULL AND c.status='active'
+ AND (app.tenant_mode='both' OR app.tenant_mode=NEW.kind);
+ RETURN NEW;
+END $$;
+CREATE TRIGGER tenant_status_sync AFTER UPDATE OF status ON tenants
+FOR EACH ROW EXECUTE FUNCTION enqueue_tenant_status_sync();

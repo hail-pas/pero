@@ -92,3 +92,5 @@ SELECT tenant_id FROM refresh_tokens LIMIT 0;
 
 SELECT tenant_version,tenant_member_version FROM authorization_codes LIMIT 0;
 SELECT tenant_version,tenant_member_version FROM refresh_tokens LIMIT 0;
+
+SELECT tenant_id FROM account_sync_deliveries LIMIT 0;
