@@ -47,6 +47,20 @@ async fn exec<C: ConnectionTrait>(
         .await?
         .rows_affected())
 }
+async fn audit<C: ConnectionTrait>(
+    db: &C,
+    actor: Uuid,
+    action: &str,
+    target: &str,
+) -> std::result::Result<(), DbErr> {
+    exec(
+        db,
+        "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,$2,$3,'success',200 FROM users WHERE id=$1",
+        vec![actor.into(), action.into(), target.into()],
+    )
+    .await?;
+    Ok(())
+}
 pub async fn list<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Vec<Tenant>> {
     Ok(Tenant::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' ORDER BY (t.kind='personal') DESC,t.name",
@@ -98,6 +112,14 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
+    let verified = txn.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL AND (email_verified_at IS NOT NULL OR phone_verified_at IS NOT NULL)",
+        [user.into()],
+    )).await?.is_some();
+    if !verified {
+        return Err(Error::Invalid("tenant_verified_contact_required"));
+    }
     let row = txn
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -120,6 +142,7 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
         vec![id.into(), user.into()],
     )
     .await?;
+    audit(&txn, user, "tenant.created", &id.to_string()).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -136,6 +159,7 @@ pub async fn rename(db: &DatabaseConnection, user: Uuid, id: Uuid, name: &str) -
         vec![id.into(), name.into()],
     )
     .await?;
+    audit(&txn, user, "tenant.renamed", &id.to_string()).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -179,6 +203,10 @@ pub async fn update_member(
     if status != "active"
         || (role == "owner" && actor_role != "owner")
         || (action == "owner" && actor_role != "owner")
+        || (actor != target
+            && actor_role == "admin"
+            && (role != "member" || action != "remove"))
+        || (actor == target && action != "remove" && actor_role != "owner")
     {
         return Err(Error::Invalid("forbidden"));
     }
@@ -202,6 +230,13 @@ pub async fn update_member(
         )
         .await?;
     }
+    audit(
+        &txn,
+        actor,
+        &format!("tenant.member.{action}"),
+        &format!("{tenant}/{target}"),
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }
@@ -246,6 +281,7 @@ pub async fn invite(
         expiry,
     )
     .await?;
+    audit(&txn, user, "tenant.invitation.created", &id.to_string()).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -258,6 +294,7 @@ pub async fn revoke_invite(
     let txn = db.begin().await?;
     governance(&txn, user, tenant).await?;
     if exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE id=$1 AND tenant_id=$2 AND status='pending'",vec![invitation.into(),tenant.into()]).await?!=1{return Err(Error::Invalid("not_found"));}
+    audit(&txn, user, "tenant.invitation.revoked", &format!("{tenant}/{invitation}")).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -278,11 +315,20 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     let txn = db.begin().await?;
     let hash = pero_utils::crypto::sha256_hex(token);
     let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT i.id,i.tenant_id,i.role FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status='pending' AND i.expires_at>now() AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL FOR UPDATE OF i",
+        "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL FOR UPDATE OF i",
         [hash.into(),user.into()])).await?.ok_or(Error::Invalid("invalid_invitation"))?;
     let id: Uuid = row.try_get("", "id")?;
     let tenant: Uuid = row.try_get("", "tenant_id")?;
     let role: String = row.try_get("", "role")?;
+    let status: String = row.try_get("", "status")?;
+    if status == "accepted" {
+        let joined = txn.query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 AND status='active'",
+            [tenant.into(), user.into()],
+        )).await?.is_some();
+        return if joined { Ok(()) } else { Err(Error::Invalid("invalid_invitation")) };
+    }
     exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' AND tenant_members.role='owner' THEN 'owner' ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     exec(
         &txn,
@@ -290,6 +336,46 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
         vec![id.into()],
     )
     .await?;
+    audit(&txn, user, "tenant.invitation.accepted", &tenant.to_string()).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+pub async fn toggle_status(
+    db: &DatabaseConnection,
+    actor: Uuid,
+    tenant: Uuid,
+    platform_super_admin: bool,
+) -> Result<()> {
+    let txn = db.begin().await?;
+    if !platform_super_admin {
+        let space = get(&txn, actor, tenant).await?;
+        if space.kind != "organization" || space.role != "owner" {
+            return Err(Error::Invalid("forbidden"));
+        }
+    }
+    let changed = exec(
+        &txn,
+        "UPDATE tenants SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization'",
+        vec![tenant.into()],
+    )
+    .await?;
+    if changed != 1 {
+        return Err(Error::Invalid("not_found"));
+    }
+    exec(
+        &txn,
+        "UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_status_changed' WHERE tenant_id=$1 AND revoked_at IS NULL",
+        vec![tenant.into()],
+    )
+    .await?;
+    exec(
+        &txn,
+        "UPDATE authorization_codes SET consumed_at=now() WHERE tenant_id=$1 AND consumed_at IS NULL",
+        vec![tenant.into()],
+    )
+    .await?;
+    audit(&txn, actor, "tenant.status.toggled", &tenant.to_string()).await?;
     txn.commit().await?;
     Ok(())
 }
