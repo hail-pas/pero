@@ -65,7 +65,7 @@ export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
     </Panel>
     {tenant.kind==="organization"&&<Panel title={t("组织成员")} action={admin?<Button variant="contained" onClick={()=>editor(t("邀请成员"),`/account/tenants/${tenant.id}/invitations`,[
       {name:"email",label:t("成员邮箱"),type:"email",required:true},
-      {name:"role",label:t("治理角色"),required:true,options:[["member",t("成员")],["admin",t("管理员")]]}
+      {name:"role",label:t("治理角色"),required:true,options:tenant.role==="owner"?[["member",t("成员")],["admin",t("管理员")]]:[["member",t("成员")]]}
     ],{role:"member"})}>{t("邀请成员")}</Button>:undefined}>
       <Stack spacing={1.5}>{members.map(member=><Box key={member.user_id}><Stack direction={{xs:"column",sm:"row"}} sx={{alignItems:{sm:"center"},justifyContent:"space-between"}} spacing={1}>
         <Box><Typography sx={{fontWeight:600}}>{member.name} ({member.username})</Typography><Typography variant="caption" color="text.secondary">{member.role}</Typography></Box>

@@ -223,7 +223,7 @@ pub async fn update_member(
     } else {
         exec(
             &txn,
-            "UPDATE tenant_members SET role=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2",
+            "UPDATE tenant_members SET role=$3,auth_version=auth_version+1,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND role<>$3",
             vec![tenant.into(), target.into(), action.into()],
         )
         .await?;
@@ -256,7 +256,10 @@ pub async fn invite(
     }
     let email = email.trim().to_lowercase();
     let txn = state.db.begin().await?;
-    governance(&txn, user, id).await?;
+    let actor_role = governance(&txn, user, id).await?;
+    if role == "admin" && actor_role != "owner" {
+        return Err(Error::Invalid("forbidden"));
+    }
     let token = pero_utils::crypto::generate_token();
     let hash = pero_utils::crypto::sha256_hex(&token);
     let expiry = time::OffsetDateTime::now_utc() + time::Duration::days(7);
@@ -337,7 +340,7 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
             Err(Error::Invalid("invalid_invitation"))
         };
     }
-    exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' AND tenant_members.role='owner' THEN 'owner' ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
+    exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' THEN tenant_members.role ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     exec(
         &txn,
         "UPDATE tenant_invitations SET status='accepted',accepted_at=now() WHERE id=$1",
