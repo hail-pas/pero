@@ -161,7 +161,7 @@ async fn navigation_and_dashboard_share_live_administrator_entitlement() {
     db.execute_unprepared(
         "DROP TABLE admin_roles CASCADE;
          CREATE FUNCTION test_admin_role_unavailable() RETURNS text LANGUAGE plpgsql
-         AS $ BEGIN RAISE EXCEPTION 'administrative role store unavailable'; END $;
+         AS $$ BEGIN RAISE EXCEPTION 'administrative role store unavailable'; END $$;
          CREATE VIEW admin_roles AS
          SELECT id AS user_id, test_admin_role_unavailable() AS role FROM users",
     )
