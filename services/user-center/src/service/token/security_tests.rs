@@ -3960,9 +3960,24 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
             "last_tenant_owner"
         ))
     ));
+    // An unused invitation must never let a removed member restore their own access.
+    let stale_invite = pero_utils::crypto::generate_token();
+    sql(
+        db,
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'member@tenant.example','member',$2,$3,now()+interval '1 day')",
+        vec![
+            organization.id.into(),
+            pero_utils::crypto::sha256_hex(&stale_invite).into(),
+            fixture.user.into(),
+        ],
+    )
+    .await;
     crate::service::tenant::update_member(db, fixture.user, organization.id, member, "remove")
         .await
         .unwrap();
+    assert!(crate::service::tenant::accept(db, member, &stale_invite)
+        .await
+        .is_err());
     assert!(
         crate::service::tenant_context::active(db, member, fixture.app, organization.id)
             .await
