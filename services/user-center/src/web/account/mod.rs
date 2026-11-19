@@ -29,6 +29,10 @@ pub fn routes() -> Router<AppState> {
             post(tenant::revoke_invite),
         )
         .route(
+            "/account/tenants/{id}/invitations/{invitation}/revoke",
+            post(tenant::revoke_invite),
+        )
+        .route(
             "/account/invitations/{token}",
             get(tenant::invitation).post(tenant::accept),
         )
