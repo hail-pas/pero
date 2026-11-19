@@ -39,17 +39,22 @@ async fn bind_test_grants(db: &sea_orm::DatabaseConnection, user: Uuid, app: Uui
         db,
         "UPDATE authorization_requests SET tenant_id=$2 WHERE app_id=$1 AND tenant_id IS NULL",
         vec![app.into(), ctx.tenant_id.into()],
-    ).await;
+    )
+    .await;
     for table in ["authorization_codes", "refresh_tokens"] {
         let statement = format!("UPDATE {table} SET tenant_id=$3,tenant_version=$4,tenant_member_version=$5 WHERE user_id=$1 AND app_id=$2 AND tenant_id IS NULL");
         sql(
             db,
             &statement,
             vec![
-                user.into(), app.into(), ctx.tenant_id.into(),
-                ctx.tenant_version.into(), ctx.tenant_member_version.into(),
+                user.into(),
+                app.into(),
+                ctx.tenant_id.into(),
+                ctx.tenant_version.into(),
+                ctx.tenant_member_version.into(),
             ],
-        ).await;
+        )
+        .await;
     }
 }
 
