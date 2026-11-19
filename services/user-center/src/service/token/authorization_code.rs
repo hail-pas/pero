@@ -235,6 +235,19 @@ impl TokenService<'_> {
             ));
         };
 
+        let tenant = if let Some(id)=auth_code.tenant_id {
+            let ctx=crate::service::tenant_context::active(db,user.id,client.app_id,id).await
+                .map_err(|_|TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?
+                .ok_or(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant))?;
+            if Some(ctx.tenant_version)!=auth_code.tenant_version || Some(ctx.tenant_member_version)!=auth_code.tenant_member_version {
+                return Err(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant));
+            }
+            Some(ctx)
+        } else { None };
+        let app=crate::db::entity::apps::Entity::find_by_id(client.app_id).one(db).await
+            .map_err(|_|TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?
+            .ok_or(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant))?;
+        if !app.system && tenant.is_none(){return Err(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant));}
         let signing = match require_active_signing_key(db).await {
             Ok(k) => k,
             Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
@@ -251,7 +264,7 @@ impl TokenService<'_> {
         let scopes_str = auth_code.scopes.join(" ");
         let issuer = TokenIssuer::new(self.state, client, &signing);
         let access_token =
-            match issuer.issue_access_token(user.id, &scopes_str, Some(session_id), access_version)
+            match issuer.issue_access_token(user.id, &scopes_str, Some(session_id), access_version, tenant.as_ref())
             {
                 Ok(t) => t,
                 Err(e) => {
@@ -269,6 +282,7 @@ impl TokenService<'_> {
                 &active_session,
                 Some(&access_token),
                 Some(raw_code),
+                tenant.as_ref(),
             ) {
                 Ok(t) => Some(t),
                 Err(e) => {
@@ -300,6 +314,9 @@ impl TokenService<'_> {
                 token_hash: Set(rt_hash),
                 user_id: Set(user.id),
                 app_id: Set(auth_code.app_id),
+                tenant_id: Set(tenant.as_ref().map(|c|c.tenant_id)),
+                tenant_version: Set(tenant.as_ref().map(|c|c.tenant_version)),
+                tenant_member_version: Set(tenant.as_ref().map(|c|c.tenant_member_version)),
                 client_id: Set(client.id),
                 session_id: Set(Some(session_id)),
                 scopes: Set(auth_code.scopes.clone()),

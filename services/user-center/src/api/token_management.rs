@@ -92,7 +92,8 @@ async fn inspect(
         let mut response = serde_json::json!({
             "active":true,"client_id":owner.identifier,"sub":claims.sub,"scope":claims.scope,
             "exp":claims.exp,"iat":claims.iat,"iss":claims.iss,"aud":claims.aud,"sid":claims.sid,"token_type":"Bearer",
-            "is_superadmin":is_superadmin
+            "is_superadmin":is_superadmin,
+            "tenant_id":claims.tenant_id,"tenant_kind":claims.tenant_kind
         });
         let profile = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
             .expect("user claims contain only JSON primitives");
@@ -115,6 +116,13 @@ async fn inspect(
     {
         return Ok(serde_json::json!({"active":false}));
     }
+    if let Some(id)=rt.tenant_id {
+        let Some(ctx)=crate::service::tenant_context::active(&state.db,rt.user_id,client.app_id,id).await? else{return Ok(serde_json::json!({"active":false}));};
+        if Some(ctx.tenant_version)!=rt.tenant_version || Some(ctx.tenant_member_version)!=rt.tenant_member_version {return Ok(serde_json::json!({"active":false}));}
+    } else {
+        let app=apps::Entity::find_by_id(client.app_id).one(&state.db).await?;
+        if !app.is_some_and(|a|a.system){return Ok(serde_json::json!({"active":false}));}
+    }
     let session = crate::db::helper::session::app_query(
         now,
         state.config.sso.session_idle_ttl_seconds,
@@ -135,7 +143,7 @@ async fn inspect(
         return Ok(serde_json::json!({"active":false}));
     }
     Ok(
-        serde_json::json!({"active":true,"client_id":client.identifier,"sub":rt.user_id,"scope":rt.scopes.join(" "),"exp":rt.expires_at.unix_timestamp(),"iat":rt.created_at.unix_timestamp()}),
+        serde_json::json!({"active":true,"client_id":client.identifier,"sub":rt.user_id,"scope":rt.scopes.join(" "),"exp":rt.expires_at.unix_timestamp(),"iat":rt.created_at.unix_timestamp(),"tenant_id":rt.tenant_id}),
     )
 }
 pub async fn revoke(

@@ -21,6 +21,7 @@ use crate::state::session::SsoSession;
 pub struct CreateAuthorizationRequestParams {
     pub client_id: Uuid,
     pub app_id: Uuid,
+    pub tenant_id: Option<Uuid>,
     pub redirect_uri: String,
     pub scopes: Vec<String>,
     pub client_state: Option<String>,
@@ -124,6 +125,7 @@ impl<'a> OAuthService<'a> {
                 diagnostic_session_id: None,
                 client_id: params.client_id,
                 app_id: params.app_id,
+                tenant_id: params.tenant_id,
                 redirect_uri: params.redirect_uri,
                 scopes: params.scopes,
                 client_state: params.client_state,
@@ -294,6 +296,13 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
 
+        let system_app = apps::Entity::find_by_id(request.app_id).one(&txn).await.map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?.is_some_and(|a|a.system);
+        let tenant = if !system_app {
+            Some(crate::service::tenant_context::resolve(&txn, session.user_id, request.app_id, request.tenant_id).await.map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?.ok_or(OAuthError::AccessDenied)?)
+        } else { None };
+        if request.tenant_id != tenant.as_ref().map(|c|c.tenant_id) {
+            return Err(OAuthError::AccessDenied);
+        }
         auth_code::create(
             &txn,
             auth_code::CreateParams {
@@ -301,6 +310,7 @@ impl<'a> OAuthService<'a> {
                 authorization_request_id: Some(auth_request.id),
                 user_id: session.user_id,
                 app_id: auth_request.app_id,
+                tenant,
                 client_id: auth_request.client_id,
                 session_id: session.id,
                 redirect_uri: auth_request.redirect_uri.clone(),

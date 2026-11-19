@@ -27,6 +27,7 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
     let mut resp = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
         .expect("user claims contain only JSON primitives");
     resp["sub"] = serde_json::json!(user.id.to_string());
+    if let Some(tenant_id)=claims.tenant_id {resp["tenant_id"]=serde_json::json!(tenant_id);}
     if crate::service::scope::contains(&scopes, "profile") {
         resp["updated_at"] = serde_json::json!(user.updated_at.unix_timestamp());
     }

@@ -193,6 +193,19 @@ impl TokenService<'_> {
             }
         };
 
+        let tenant = if let Some(id)=existing.tenant_id {
+            let ctx=crate::service::tenant_context::active(&txn,user.id,client.app_id,id).await
+                .map_err(|_|TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?
+                .ok_or(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant))?;
+            if Some(ctx.tenant_version)!=existing.tenant_version || Some(ctx.tenant_member_version)!=existing.tenant_member_version {
+                return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+            }
+            Some(ctx)
+        } else { None };
+        let app=crate::db::entity::apps::Entity::find_by_id(client.app_id).one(&txn).await;
+        if !app.ok().flatten().is_some_and(|a|a.system) && tenant.is_none(){
+            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+        }
         let requested =
             match crate::service::scope::refresh_scopes(form.scope.as_deref(), &existing.scopes) {
                 Some(scopes) => scopes,
@@ -207,7 +220,7 @@ impl TokenService<'_> {
 
         let issuer = TokenIssuer::new(self.state, client, &signing);
         let access_token =
-            match issuer.issue_access_token(user.id, &scopes_str, session_id, access.token_version)
+            match issuer.issue_access_token(user.id, &scopes_str, session_id, access.token_version, tenant.as_ref())
             {
                 Ok(t) => t,
                 Err(e) => {
@@ -221,6 +234,9 @@ impl TokenService<'_> {
             token_hash: Set(rt_hash_new),
             user_id: Set(existing.user_id),
             app_id: Set(existing.app_id),
+            tenant_id: Set(existing.tenant_id),
+            tenant_version: Set(existing.tenant_version),
+            tenant_member_version: Set(existing.tenant_member_version),
             client_id: Set(client.id),
             session_id: Set(session_id),
             scopes: Set(existing.scopes.clone()),

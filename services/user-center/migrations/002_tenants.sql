@@ -65,6 +65,10 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE authorization_requests ADD COLUMN tenant_id uuid REFERENCES tenants(id);
 ALTER TABLE authorization_codes ADD COLUMN tenant_id uuid REFERENCES tenants(id);
 ALTER TABLE refresh_tokens ADD COLUMN tenant_id uuid REFERENCES tenants(id);
+ALTER TABLE authorization_codes ADD COLUMN tenant_version bigint;
+ALTER TABLE authorization_codes ADD COLUMN tenant_member_version bigint;
+ALTER TABLE refresh_tokens ADD COLUMN tenant_version bigint;
+ALTER TABLE refresh_tokens ADD COLUMN tenant_member_version bigint;
 -- Existing pending grants are deliberately invalidated by the new protocol context.
 UPDATE authorization_requests SET completed_at=now() WHERE completed_at IS NULL;
 UPDATE authorization_codes SET consumed_at=now() WHERE consumed_at IS NULL;

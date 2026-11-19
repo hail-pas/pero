@@ -89,3 +89,6 @@ SELECT tenant_mode FROM apps LIMIT 0;
 SELECT tenant_id FROM authorization_requests LIMIT 0;
 SELECT tenant_id FROM authorization_codes LIMIT 0;
 SELECT tenant_id FROM refresh_tokens LIMIT 0;
+
+SELECT tenant_version,tenant_member_version FROM authorization_codes LIMIT 0;
+SELECT tenant_version,tenant_member_version FROM refresh_tokens LIMIT 0;
