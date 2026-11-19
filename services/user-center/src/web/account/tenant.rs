@@ -186,7 +186,7 @@ pub async fn invitation(
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantInvitationView",
-        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"invitation":invite,"token":token,"verified_email":a.user.email_verified_at.is_some(),"user_email":a.user.email}),
+        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"invitation":invite,"verified_email":a.user.email_verified_at.is_some(),"user_email":a.user.email}),
         jar,
     )
 }
