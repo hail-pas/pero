@@ -72,7 +72,7 @@ pub async fn start(
     };
     // Validate app policy and create the internal request directly; the public
     // authorize endpoint always creates ordinary requests regardless of state.
-    state
+    let app = state
         .oauth_service()
         .validate_app(&c)
         .await
@@ -80,20 +80,29 @@ pub async fn start(
             super::oauth::OAuthError::Internal(error) => ManagementError::Credential(error),
             _ => ManagementError::Invalid("integration_configuration_required"),
         })?;
+    // Diagnostics exercise a concrete workspace. Prefer the user's personal
+    // workspace when permitted; never create a tenant-less non-system grant.
+    let tenant_id = if app.system {
+        None
+    } else {
+        let choices =
+            crate::service::tenant_context::choices(&state.db, session.user_id, app_id).await?;
+        let selected = choices
+            .iter()
+            .find(|choice| choice.kind == "personal")
+            .or_else(|| (choices.len() == 1).then_some(&choices[0]))
+            .ok_or(ManagementError::Invalid(
+                "integration_tenant_selection_required",
+            ))?;
+        Some(selected.id)
+    };
     let request = crate::db::helper::auth_request::create(
         &state.db,
         crate::db::helper::auth_request::CreateParams {
             diagnostic_session_id: Some(session.id),
             client_id: c.id,
             app_id,
-            tenant_id: crate::service::tenant_context::resolve(
-                &state.db,
-                session.user_id,
-                app_id,
-                None,
-            )
-            .await?
-            .map(|ctx| ctx.tenant_id),
+            tenant_id,
             redirect_uri: callback_uri(state),
             scopes: vec!["openid".into()],
             client_state: Some(ticket.clone()),
