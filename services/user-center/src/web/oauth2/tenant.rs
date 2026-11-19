@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{DbBackend, EntityTrait, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
