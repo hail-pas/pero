@@ -11,8 +11,8 @@ pub mod members;
 pub mod notifications;
 pub mod providers;
 pub mod sessions;
-pub mod users;
 pub mod tenants;
+pub mod users;
 
 use axum::Router;
 use axum::middleware;
