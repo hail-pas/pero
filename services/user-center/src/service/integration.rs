@@ -90,7 +90,7 @@ pub async fn start(
         let selected = choices
             .iter()
             .find(|choice| choice.kind == "personal")
-            .or_else(|| (choices.len() == 1).then_some(&choices[0]))
+            .or_else(|| (choices.len() == 1).then(|| &choices[0]))
             .ok_or(ManagementError::Invalid(
                 "integration_tenant_selection_required",
             ))?;
