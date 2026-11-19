@@ -104,7 +104,14 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
             "INSERT INTO tenants(kind,name,slug) VALUES('organization',$1,$2) RETURNING id",
             [name.into(), slug.into()],
         ))
-        .await?
+        .await
+        .map_err(|error| {
+            if crate::db::error::is_unique_violation(&error) {
+                Error::Invalid("tenant_slug_exists")
+            } else {
+                error.into()
+            }
+        })?
         .ok_or(Error::Invalid("update_failed"))?;
     let id: Uuid = row.try_get("", "id")?;
     exec(
@@ -276,7 +283,7 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     let id: Uuid = row.try_get("", "id")?;
     let tenant: Uuid = row.try_get("", "tenant_id")?;
     let role: String = row.try_get("", "role")?;
-    exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
+    exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' AND tenant_members.role='owner' THEN 'owner' ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     exec(
         &txn,
         "UPDATE tenant_invitations SET status='accepted',accepted_at=now() WHERE id=$1",

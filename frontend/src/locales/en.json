@@ -904,5 +904,8 @@
   "个人及组织": "Personal and organization",
   "停用组织": "Disable organization",
   "恢复组织": "Enable organization",
-  "恢复": "Enable"
+  "恢复": "Enable",
+  "组织标识已被使用": "This organization slug is already in use.",
+  "请先指定另一位所有者，再移除当前所有者": "Assign another owner before removing the last owner.",
+  "邀请已失效或与当前已验证邮箱不匹配": "This invitation has expired or does not match your verified email."
 }
