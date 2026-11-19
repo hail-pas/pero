@@ -156,7 +156,8 @@ async fn navigation_and_dashboard_share_live_administrator_entitlement() {
     );
 
     // Failed permission lookup is an unavailable service, never an ordinary-user result.
-    db.execute_unprepared("ALTER TABLE admin_roles RENAME TO unavailable_admin_roles")
+    // DROP invalidates prepared plans too; RENAME can leave cached queries executable.
+    db.execute_unprepared("DROP TABLE admin_roles CASCADE")
         .await
         .unwrap();
     for path in ["/", "/account/profile", "/dashboard/apps"] {
