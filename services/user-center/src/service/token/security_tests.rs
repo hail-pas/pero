@@ -3975,9 +3975,11 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
     crate::service::tenant::update_member(db, fixture.user, organization.id, member, "remove")
         .await
         .unwrap();
-    assert!(crate::service::tenant::accept(db, member, &stale_invite)
-        .await
-        .is_err());
+    assert!(
+        crate::service::tenant::accept(db, member, &stale_invite)
+            .await
+            .is_err()
+    );
     assert!(
         crate::service::tenant_context::active(db, member, fixture.app, organization.id)
             .await
