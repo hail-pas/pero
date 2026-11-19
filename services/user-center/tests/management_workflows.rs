@@ -322,8 +322,14 @@ impl Fixture {
     }
     async fn token_for(&self, sid: Uuid, client_identifier: &str) -> String {
         let tenant = user_center::service::tenant_context::resolve(
-            &self.state.db, self.user, self.app, None,
-        ).await.unwrap().expect("user has one personal workspace");
+            &self.state.db,
+            self.user,
+            self.app,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("user has one personal workspace");
         let tenant_id = tenant.tenant_id.to_string();
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
             "../../../tests/fixtures/rsa-private.pem"
@@ -1943,7 +1949,9 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
 
     for client in [foreign_native, sibling] {
         assert_eq!(
-            inspect(&f.token_for(sid, &client.to_string()).await).await.1,
+            inspect(&f.token_for(sid, &client.to_string()).await)
+                .await
+                .1,
             json!({"active":false})
         );
     }
