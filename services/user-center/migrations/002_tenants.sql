@@ -69,10 +69,14 @@ ALTER TABLE authorization_codes ADD COLUMN tenant_version bigint;
 ALTER TABLE authorization_codes ADD COLUMN tenant_member_version bigint;
 ALTER TABLE refresh_tokens ADD COLUMN tenant_version bigint;
 ALTER TABLE refresh_tokens ADD COLUMN tenant_member_version bigint;
--- Existing pending grants are deliberately invalidated by the new protocol context.
-UPDATE authorization_requests SET completed_at=now() WHERE completed_at IS NULL;
-UPDATE authorization_codes SET consumed_at=now() WHERE consumed_at IS NULL;
-UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_context_migration' WHERE revoked_at IS NULL;
+-- Only non-system application grants need a fresh tenant-bound authorization.
+-- System application credentials carry no tenant context and remain valid.
+UPDATE authorization_requests SET completed_at=now()
+WHERE completed_at IS NULL AND app_id IN (SELECT id FROM apps WHERE NOT system);
+UPDATE authorization_codes SET consumed_at=now()
+WHERE consumed_at IS NULL AND app_id IN (SELECT id FROM apps WHERE NOT system);
+UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_context_migration'
+WHERE revoked_at IS NULL AND app_id IN (SELECT id FROM apps WHERE NOT system);
 
 ALTER TABLE account_sync_deliveries ADD COLUMN tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE;
 ALTER TABLE account_sync_deliveries DROP CONSTRAINT account_sync_deliveries_kind_check;
