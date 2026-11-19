@@ -86,6 +86,7 @@ pub async fn start(
             diagnostic_session_id: Some(session.id),
             client_id: c.id,
             app_id,
+            tenant_id: crate::service::tenant_context::resolve(&state.db,session.user_id,app_id,None).await?.map(|ctx|ctx.tenant_id),
             redirect_uri: callback_uri(state),
             scopes: vec!["openid".into()],
             client_state: Some(ticket.clone()),
