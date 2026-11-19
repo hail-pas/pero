@@ -907,5 +907,7 @@
   "恢复": "Enable",
   "组织标识已被使用": "This organization slug is already in use.",
   "请先指定另一位所有者，再移除当前所有者": "Assign another owner before removing the last owner.",
-  "邀请已失效或与当前已验证邮箱不匹配": "This invitation has expired or does not match your verified email."
+  "邀请已失效或与当前已验证邮箱不匹配": "This invitation has expired or does not match your verified email.",
+  "组织状态更改会撤销原有租户授权令牌。": "Changing organization status revokes existing tokens for this workspace.",
+  "请先验证邮箱或手机号，再创建组织。": "Verify your email address or phone number before creating an organization."
 }

@@ -61,6 +61,7 @@ export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
       </Stack>
       {admin&&tenant.kind==="organization"&&<Button variant="outlined" onClick={()=>editor(t("修改组织名称"),`/account/tenants/${tenant.id}/edit`,[{name:"name",label:t("组织名称"),required:true}],{name:tenant.name})}>{t("编辑组织")}</Button>}
       {tenant.kind==="organization"&&<Button color="error" sx={{ml:2}} onClick={()=>ask(t("退出组织"),`/account/tenants/${tenant.id}/leave`,{},t("退出后将不能再以此组织身份访问应用。"))}>{t("退出组织")}</Button>}
+      {tenant.kind==="organization"&&tenant.role==="owner"&&<Button sx={{ml:2}} color="warning" variant="outlined" onClick={()=>ask(t(tenant.status==="active"?"停用组织":"恢复组织"),`/account/tenants/${tenant.id}/toggle`,{},t("组织状态更改会撤销原有租户授权令牌。"))}>{t(tenant.status==="active"?"停用":"恢复")}</Button>}
     </Panel>
     {tenant.kind==="organization"&&<Panel title={t("组织成员")} action={admin?<Button variant="contained" onClick={()=>editor(t("邀请成员"),`/account/tenants/${tenant.id}/invitations`,[
       {name:"email",label:t("成员邮箱"),type:"email",required:true},
@@ -68,10 +69,10 @@ export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
     ],{role:"member"})}>{t("邀请成员")}</Button>:undefined}>
       <Stack spacing={1.5}>{members.map(member=><Box key={member.user_id}><Stack direction={{xs:"column",sm:"row"}} sx={{alignItems:{sm:"center"},justifyContent:"space-between"}} spacing={1}>
         <Box><Typography sx={{fontWeight:600}}>{member.name} ({member.username})</Typography><Typography variant="caption" color="text.secondary">{member.role}</Typography></Box>
-        {admin&&<Stack direction="row" spacing={1}>
+        {(tenant.role==="owner"||(tenant.role==="admin"&&member.role==="member"))&&<Stack direction="row" spacing={1}>
           {tenant.role==="owner"&&member.role!=="owner"&&<Button size="small" onClick={()=>ask(t("设为所有者"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"owner"})}>{t("设为所有者")}</Button>}
-          {member.role!=="member"&&(tenant.role==="owner"||member.role!=="owner")&&<Button size="small" onClick={()=>ask(t("设为成员"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"member"})}>{t("设为成员")}</Button>}
-          {member.role==="member"&&<Button size="small" onClick={()=>ask(t("设为管理员"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"admin"})}>{t("设为管理员")}</Button>}
+          {tenant.role==="owner"&&member.role!=="member"&&<Button size="small" onClick={()=>ask(t("设为成员"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"member"})}>{t("设为成员")}</Button>}
+          {tenant.role==="owner"&&member.role==="member"&&<Button size="small" onClick={()=>ask(t("设为管理员"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"admin"})}>{t("设为管理员")}</Button>}
           {member.user_id!==current_user_id&&<Button color="error" size="small" onClick={()=>ask(t("移除成员"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"remove"})}>{t("移除")}</Button>}
         </Stack>}
       </Stack><Divider sx={{mt:1}}/></Box>)}</Stack>

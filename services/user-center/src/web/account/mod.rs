@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
         .route("/account/tenants/{id}/edit", post(tenant::rename))
         .route("/account/tenants/{id}/members/{user}", post(tenant::member))
         .route("/account/tenants/{id}/leave", post(tenant::leave))
+        .route("/account/tenants/{id}/toggle", post(tenant::toggle_status))
         .route("/account/tenants/{id}/invitations", post(tenant::invite))
         .route(
             "/account/tenants/{id}/invitations/{invitation}",

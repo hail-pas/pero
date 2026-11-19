@@ -134,5 +134,6 @@
   "invalid_permission_dependencies": "权限依赖不完整或作用域不正确。",
   "tenant_slug_exists": "组织标识已被使用",
   "last_tenant_owner": "请先指定另一位所有者，再移除当前所有者",
-  "invalid_invitation": "邀请已失效或与当前已验证邮箱不匹配"
+  "invalid_invitation": "邀请已失效或与当前已验证邮箱不匹配",
+  "tenant_verified_contact_required": "请先验证邮箱或手机号，再创建组织。"
 }

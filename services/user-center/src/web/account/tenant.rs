@@ -202,3 +202,16 @@ pub async fn accept(
     }
     util::management_response(svc::accept(&s.db, a.user.id, &token).await)
 }
+
+pub async fn toggle_status(
+    State(s): State<AppState>,
+    jar: CookieJar,
+    a: AccountContext,
+    Path(id): Path<Uuid>,
+    Form(f): Form<OnlyCsrf>,
+) -> Response {
+    if let Some(e) = checked(&jar, &f.csrf_token, &s) {
+        return e;
+    }
+    util::management_response(svc::toggle_status(&s.db, a.user.id, id, false).await)
+}
