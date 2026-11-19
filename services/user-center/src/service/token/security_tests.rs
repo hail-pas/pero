@@ -3927,24 +3927,18 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .into_iter()
         .find(|tenant| tenant.kind == "personal")
         .unwrap();
-    let individual = crate::service::tenant_context::active(
-        db, member, fixture.app, personal.id,
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let prior = crate::service::tenant_context::active(
-        db, member, fixture.app, organization.id,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let individual = crate::service::tenant_context::active(db, member, fixture.app, personal.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let prior = crate::service::tenant_context::active(db, member, fixture.app, organization.id)
+        .await
+        .unwrap()
+        .unwrap();
 
-    crate::service::tenant::update_member(
-        db, fixture.user, organization.id, member, "admin",
-    )
-    .await
-    .unwrap();
+    crate::service::tenant::update_member(db, fixture.user, organization.id, member, "admin")
+        .await
+        .unwrap();
     assert!(
         !crate::service::tenant_context::matches(db, member, fixture.app, &prior)
             .await
@@ -3956,21 +3950,19 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
             .unwrap()
     );
     assert!(
-        crate::service::tenant::update_member(
-            db, member, organization.id, fixture.user, "remove",
-        )
-        .await
-        .is_err()
+        crate::service::tenant::update_member(db, member, organization.id, fixture.user, "remove",)
+            .await
+            .is_err()
     );
     assert!(matches!(
         crate::service::tenant::leave(db, fixture.user, organization.id).await,
-        Err(crate::service::ManagementError::Invalid("last_tenant_owner"))
+        Err(crate::service::ManagementError::Invalid(
+            "last_tenant_owner"
+        ))
     ));
-    crate::service::tenant::update_member(
-        db, fixture.user, organization.id, member, "remove",
-    )
-    .await
-    .unwrap();
+    crate::service::tenant::update_member(db, fixture.user, organization.id, member, "remove")
+        .await
+        .unwrap();
     assert!(
         crate::service::tenant_context::active(db, member, fixture.app, organization.id)
             .await
