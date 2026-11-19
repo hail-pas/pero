@@ -165,8 +165,8 @@ async fn navigation_and_dashboard_share_live_administrator_entitlement() {
          CREATE VIEW admin_roles AS
          SELECT id AS user_id, test_admin_role_unavailable() AS role FROM users",
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     for path in ["/", "/account/profile", "/dashboard/apps"] {
         assert_eq!(
             get(&app, &admin_token, path).await.0,
