@@ -38,7 +38,7 @@ BEGIN
         'identity_provider_keys', 'identity_providers', 'login_events', 'notification_deliveries',
         'notification_outbox', 'oauth_clients', 'oidc_rp_sessions', 'password_reset_tokens',
         'refresh_tokens', 'registration_policies', 'sso_sessions', 'user_app_access',
-        'user_consents', 'user_mfa', 'users'
+        'user_consents', 'user_mfa', 'users', 'tenants', 'tenant_members', 'tenant_invitations'
     ] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace
                        AND relname=object_name AND relkind='r') THEN
@@ -50,7 +50,8 @@ BEGIN
         'ux_sso_sessions_token_hash', 'ux_identity_provider_keys_active_signing',
         'ux_refresh_tokens_token_hash', 'ux_contact_change_nonce',
         'ux_contact_change_one_pending_per_type', 'ux_contact_change_value_pending',
-        'ux_password_reset_tokens_hash', 'ux_enrollments_invitation'
+        'ux_password_reset_tokens_hash', 'ux_enrollments_invitation',
+        'ux_tenant_personal_owner', 'ux_tenant_organization_slug', 'ux_tenant_invitation_pending'
     ] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
                        WHERE c.relnamespace=current_schema()::regnamespace AND c.relname=object_name
@@ -58,7 +59,8 @@ BEGIN
             RAISE EXCEPTION 'Missing/invalid security index: %', object_name;
         END IF;
     END LOOP;
-    FOREACH object_name IN ARRAY ARRAY['assisted_recovery_pair','ck_previous_client_secret','ck_account_sync_confidential'] LOOP
+    FOREACH object_name IN ARRAY ARRAY['assisted_recovery_pair','ck_previous_client_secret','ck_account_sync_confidential',
+                                      'ck_tenant_owner_shape'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE connamespace=current_schema()::regnamespace
                        AND conname=object_name AND convalidated) THEN
             RAISE EXCEPTION 'Missing security constraint: %', object_name;
@@ -66,7 +68,8 @@ BEGIN
     END LOOP;
     FOREACH object_name IN ARRAY ARRAY['session_backchannel_logout','app_backchannel_logout',
                                       'client_backchannel_logout','notification_outbox_deleted',
-                                      'user_account_sync','membership_account_sync','client_account_sync','app_account_sync'] LOOP
+                                      'user_account_sync','membership_account_sync','client_account_sync','app_account_sync',
+                                      'tg_pero_personal_tenant','tenant_membership_sync','tenant_status_sync'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
                        WHERE c.relnamespace=current_schema()::regnamespace AND t.tgname=object_name
                        AND t.tgenabled IN ('O','A')) THEN
