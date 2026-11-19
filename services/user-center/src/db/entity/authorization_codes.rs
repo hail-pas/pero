@@ -14,6 +14,7 @@ pub struct Model {
     pub authorization_request_id: Option<Uuid>,
     pub user_id: Uuid,
     pub app_id: Uuid,
+    pub tenant_id: Option<Uuid>,
     pub client_id: Uuid,
     pub session_id: Option<Uuid>,
     #[sea_orm(column_type = "Text")]

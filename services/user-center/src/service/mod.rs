@@ -48,6 +48,7 @@ impl From<sea_orm::DbErr> for ManagementError {
     }
 }
 
+pub mod tenant_context;
 pub mod token_status;
 
 pub mod backchannel;

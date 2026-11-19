@@ -81,3 +81,11 @@ BEGIN
         RAISE EXCEPTION 'Required platform seed data missing';
     END IF;
 END $$;
+
+SELECT id,kind,name,slug,owner_user_id,status,auth_version,created_at,updated_at FROM tenants LIMIT 0;
+SELECT tenant_id,user_id,role,status,auth_version,joined_at,updated_at FROM tenant_members LIMIT 0;
+SELECT id,tenant_id,email,role,token_hash,status,invited_by,expires_at,accepted_at,created_at FROM tenant_invitations LIMIT 0;
+SELECT tenant_mode FROM apps LIMIT 0;
+SELECT tenant_id FROM authorization_requests LIMIT 0;
+SELECT tenant_id FROM authorization_codes LIMIT 0;
+SELECT tenant_id FROM refresh_tokens LIMIT 0;

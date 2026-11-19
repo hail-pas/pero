@@ -12,6 +12,7 @@ pub struct Model {
     pub token_hash: String,
     pub user_id: Uuid,
     pub app_id: Uuid,
+    pub tenant_id: Option<Uuid>,
     pub client_id: Uuid,
     pub session_id: Option<Uuid>,
     pub scopes: Vec<String>,
