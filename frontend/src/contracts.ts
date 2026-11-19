@@ -438,7 +438,7 @@ export interface ViewDataMap {
   TenantAdminView: AccountPage & {tenants: {id:string;name:string;slug:string|null;status:string;members:number}[]};
   TenantListView: AccountPage & { tenants: TenantSummary[] };
   TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string};
-  TenantInvitationView: AccountPage & {invitation:{tenant_id:string;tenant_name:string;email:string;role:string};token:string;verified_email:boolean;user_email:string|null};
+  TenantInvitationView: AccountPage & {invitation:{tenant_id:string;tenant_name:string;email:string;role:string};verified_email:boolean;user_email:string|null};
   TenantChoiceView: CsrfPage & {token:string;choices:{id:string;kind:string;name:string;role:string}[]};
   ProviderDetailView: AccountPage & {
     provider: ProviderSummary;
