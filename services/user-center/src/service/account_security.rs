@@ -217,6 +217,17 @@ pub async fn close_account(
 ) -> Result<(), ManagementError> {
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
+    // Closing a global account cannot orphan an organization.
+    let lone_owner = txn
+        .query_one_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND NOT EXISTS(SELECT 1 FROM tenant_members other WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active') LIMIT 1",
+            [session.user_id.into()],
+        ))
+        .await?;
+    if lone_owner.is_some() {
+        return Err(ManagementError::Invalid("last_tenant_owner"));
+    }
     let access = user_app_access::Entity::find()
         .filter(user_app_access::Column::UserId.eq(session.user_id))
         .all(&txn)
