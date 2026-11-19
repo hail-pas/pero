@@ -14,13 +14,13 @@ pub struct AccessTokenClaims {
     pub scope: String,
     pub client_version: i64,
     pub access_version: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_version: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_member_version: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sid: Option<String>,
@@ -33,7 +33,6 @@ pub struct IdTokenClaims {
     pub aud: String,
     pub exp: i64,
     pub iat: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
     pub nonce: Option<String>,
@@ -97,6 +96,9 @@ pub struct AccessTokenParams<'a> {
     pub scopes: &'a str,
     pub client_version: i64,
     pub access_version: i64,
+    pub tenant_kind: Option<String>,
+    pub tenant_version: Option<i64>,
+    pub tenant_member_version: Option<i64>,
     pub ttl_seconds: i64,
     pub session_id: Option<&'a str>,
     pub tenant_id: Option<&'a str>,
@@ -137,6 +139,7 @@ pub struct IdTokenParams<'a> {
     pub issuer: &'a str,
     pub user_id: &'a str,
     pub client_identifier: &'a str,
+    pub tenant_id: Option<&'a str>,
     pub nonce: Option<&'a str>,
     pub auth_time: Option<i64>,
     pub at_hash: Option<&'a str>,

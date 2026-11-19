@@ -52,7 +52,7 @@ export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
   return <>
     <Heading title={tenant.name} back="/account/tenants" description={tenant.kind==="personal"?t("个人工作空间"):t("组织工作空间")}/>
     <Panel title={t("组织资料")}>
-      <Stack direction="row" spacing={2} alignItems="center" sx={{mb:2}}>
+      <Stack direction="row" spacing={2} sx={{alignItems:"center"}} sx={{mb:2}}>
         <Chip label={tenant.role}/><Chip variant="outlined" label={tenant.status}/>
         {tenant.slug&&<Typography color="text.secondary">/{tenant.slug}</Typography>}
       </Stack>
@@ -63,8 +63,8 @@ export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
       {name:"email",label:t("成员邮箱"),type:"email",required:true},
       {name:"role",label:t("治理角色"),required:true,options:[["member",t("成员")],["admin",t("管理员")]]}
     ],{role:"member"})}>{t("邀请成员")}</Button>:undefined}>
-      <Stack spacing={1.5}>{members.map(member=><Box key={member.user_id}><Stack direction={{xs:"column",sm:"row"}} alignItems={{sm:"center"}} spacing={1} justifyContent="space-between">
-        <Box><Typography fontWeight={600}>{member.name} ({member.username})</Typography><Typography variant="caption" color="text.secondary">{member.role}</Typography></Box>
+      <Stack spacing={1.5}>{members.map(member=><Box key={member.user_id}><Stack direction={{xs:"column",sm:"row"}} sx={{alignItems:{sm:"center"},justifyContent:"space-between"}} spacing={1}>
+        <Box><Typography sx={{fontWeight:600}}>{member.name} ({member.username})</Typography><Typography variant="caption" color="text.secondary">{member.role}</Typography></Box>
         {admin&&<Stack direction="row" spacing={1}>
           {tenant.role==="owner"&&member.role!=="owner"&&<Button size="small" onClick={()=>ask(t("设为所有者"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"owner"})}>{t("设为所有者")}</Button>}
           {member.role!=="member"&&(tenant.role==="owner"||member.role!=="owner")&&<Button size="small" onClick={()=>ask(t("设为成员"),`/account/tenants/${tenant.id}/members/${member.user_id}`,{action:"member"})}>{t("设为成员")}</Button>}
@@ -73,7 +73,7 @@ export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
         </Stack>}
       </Stack><Divider sx={{mt:1}}/></Box>)}</Stack>
     </Panel>}
-    {admin&&tenant.kind==="organization"&&<Panel title={t("邀请记录")}><Stack spacing={1}>{invitations.map(inv=><Stack key={inv.id} direction="row" alignItems="center" justifyContent="space-between">
+    {admin&&tenant.kind==="organization"&&<Panel title={t("邀请记录")}><Stack spacing={1}>{invitations.map(inv=><Stack key={inv.id} direction="row" sx={{alignItems:"center"}} sx={{justifyContent:"space-between"}}>
       <Typography>{inv.email} · {inv.role} · {inv.status}</Typography>
       {inv.status==="pending"&&<Button size="small" color="error" onClick={()=>ask(t("撤销邀请"),`/account/tenants/${tenant.id}/invitations/${inv.id}`)}>{t("撤销")}</Button>}
     </Stack>)}</Stack></Panel>}
