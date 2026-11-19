@@ -416,11 +416,7 @@ pub async fn toggle_status_admin(
     Ok(())
 }
 
-async fn apply_status_toggle<C: ConnectionTrait>(
-    db: &C,
-    actor: Uuid,
-    tenant: Uuid,
-) -> Result<()> {
+async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uuid) -> Result<()> {
     let changed = exec(
         db,
         "UPDATE tenants SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization'",
