@@ -217,6 +217,15 @@ pub async fn close_account(
 ) -> Result<(), ManagementError> {
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
+    // Serialize ownership checks with member role changes and other account closures.
+    // Without the tenant locks, two co-owners could close their accounts at once,
+    // each observe the other owner, and leave the organization without an owner.
+    txn.query_all_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "SELECT t.id FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' ORDER BY t.id FOR UPDATE OF t",
+        [session.user_id.into()],
+    ))
+    .await?;
     // Closing a global account cannot orphan an organization.
     let lone_owner = txn
         .query_one_raw(sea_orm::Statement::from_sql_and_values(
