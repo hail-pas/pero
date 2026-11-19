@@ -60,20 +60,16 @@ pub async fn snapshot(
     if access.is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let current = match crate::service::tenant_context::snapshot(
-        &s.db,
-        f.sub,
-        client.app_id,
-        f.tenant_id,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return crate::web::util::dependency_error(e),
-    };
-    let active = current.as_ref().is_some_and(|v| {
-        v.tenant_status == "active" && v.membership_status == "active"
-    });
+    let current =
+        match crate::service::tenant_context::snapshot(&s.db, f.sub, client.app_id, f.tenant_id)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return crate::web::util::dependency_error(e),
+        };
+    let active = current
+        .as_ref()
+        .is_some_and(|v| v.tenant_status == "active" && v.membership_status == "active");
     let response = serde_json::json!({
         "sub": f.sub,
         "tenant_id": f.tenant_id,

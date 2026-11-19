@@ -23,7 +23,10 @@ pub fn routes() -> Router<AppState> {
         .route("/account/tenants/{id}/members/{user}", post(tenant::member))
         .route("/account/tenants/{id}/leave", post(tenant::leave))
         .route("/account/tenants/{id}/toggle", post(tenant::toggle_status))
-        .route("/account/tenants/{id}/invitations", get(tenant::invitations).post(tenant::invite))
+        .route(
+            "/account/tenants/{id}/invitations",
+            get(tenant::invitations).post(tenant::invite),
+        )
         .route(
             "/account/tenants/{id}/invitations/{invitation}",
             post(tenant::revoke_invite),
