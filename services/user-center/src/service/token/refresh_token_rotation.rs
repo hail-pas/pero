@@ -193,19 +193,27 @@ impl TokenService<'_> {
             }
         };
 
-        let tenant = if let Some(id)=existing.tenant_id {
-            let ctx=match crate::service::tenant_context::active(&txn,user.id,client.app_id,id).await {
-                Ok(Some(ctx))=>ctx,
-                Ok(None)=>return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-                Err(_)=>return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        let tenant = if let Some(id) = existing.tenant_id {
+            let ctx = match crate::service::tenant_context::active(&txn, user.id, client.app_id, id)
+                .await
+            {
+                Ok(Some(ctx)) => ctx,
+                Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
             };
-            if Some(ctx.tenant_version)!=existing.tenant_version || Some(ctx.tenant_member_version)!=existing.tenant_member_version {
+            if Some(ctx.tenant_version) != existing.tenant_version
+                || Some(ctx.tenant_member_version) != existing.tenant_member_version
+            {
                 return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
             }
             Some(ctx)
-        } else { None };
-        let app=crate::db::entity::apps::Entity::find_by_id(client.app_id).one(&txn).await;
-        if !app.ok().flatten().is_some_and(|a|a.system) && tenant.is_none(){
+        } else {
+            None
+        };
+        let app = crate::db::entity::apps::Entity::find_by_id(client.app_id)
+            .one(&txn)
+            .await;
+        if !app.ok().flatten().is_some_and(|a| a.system) && tenant.is_none() {
             return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
         }
         let requested =
@@ -221,15 +229,19 @@ impl TokenService<'_> {
         };
 
         let issuer = TokenIssuer::new(self.state, client, &signing);
-        let access_token =
-            match issuer.issue_access_token(user.id, &scopes_str, session_id, access.token_version, tenant.as_ref())
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::error!("AT sign: {e}");
-                    return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
-                }
-            };
+        let access_token = match issuer.issue_access_token(
+            user.id,
+            &scopes_str,
+            session_id,
+            access.token_version,
+            tenant.as_ref(),
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("AT sign: {e}");
+                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            }
+        };
 
         let new_rt = rt::ActiveModel {
             id: Set(new_rt_id),

@@ -17,7 +17,12 @@ pub struct AppUpdate {
 
 impl AppUpdate {
     fn validate(&self) -> Result<(), ManagementError> {
-        if !matches!(self.tenant_mode.as_str(),"personal"|"organization"|"both") {return Err(ManagementError::Invalid("invalid_tenant_mode"));}
+        if !matches!(
+            self.tenant_mode.as_str(),
+            "personal" | "organization" | "both"
+        ) {
+            return Err(ManagementError::Invalid("invalid_tenant_mode"));
+        }
         if self.name.trim().is_empty() {
             return Err(ManagementError::Invalid("name_required"));
         }
@@ -107,13 +112,18 @@ pub async fn update(
     let access = permissions::authorize(&txn, actor).await?;
     permissions::app(&txn, &access, id, P::AppsManage).await?;
 
-    let old=editable(&txn,id).await?;
-    if old.tenant_mode!=input.tenant_mode && !access.super_admin {return Err(ManagementError::Invalid("forbidden"));}
-    let changed=old.tenant_mode!=input.tenant_mode;
+    let old = editable(&txn, id).await?;
+    if old.tenant_mode != input.tenant_mode && !access.super_admin {
+        return Err(ManagementError::Invalid("forbidden"));
+    }
+    let changed = old.tenant_mode != input.tenant_mode;
     let mut active: apps::ActiveModel = old.into();
     input.apply(&mut active);
     active.update(&txn).await?;
-    if changed {super::session::SessionService::revoke_app_grants(&txn,id,None,"tenant_mode_changed").await?;}
+    if changed {
+        super::session::SessionService::revoke_app_grants(&txn, id, None, "tenant_mode_changed")
+            .await?;
+    }
     txn.commit().await?;
     Ok(())
 }

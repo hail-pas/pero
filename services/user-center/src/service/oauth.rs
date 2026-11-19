@@ -296,11 +296,27 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
 
-        let system_app = apps::Entity::find_by_id(request.app_id).one(&txn).await.map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?.is_some_and(|a|a.system);
+        let system_app = apps::Entity::find_by_id(request.app_id)
+            .one(&txn)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+            .is_some_and(|a| a.system);
         let tenant = if !system_app {
-            Some(crate::service::tenant_context::resolve(&txn, session.user_id, request.app_id, request.tenant_id).await.map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?.ok_or(OAuthError::AccessDenied)?)
-        } else { None };
-        if request.tenant_id != tenant.as_ref().map(|c|c.tenant_id) {
+            Some(
+                crate::service::tenant_context::resolve(
+                    &txn,
+                    session.user_id,
+                    request.app_id,
+                    request.tenant_id,
+                )
+                .await
+                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+                .ok_or(OAuthError::AccessDenied)?,
+            )
+        } else {
+            None
+        };
+        if request.tenant_id != tenant.as_ref().map(|c| c.tenant_id) {
             return Err(OAuthError::AccessDenied);
         }
         auth_code::create(

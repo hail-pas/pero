@@ -29,7 +29,7 @@ impl<'a> TokenIssuer<'a> {
         tenant: Option<&crate::service::tenant_context::TenantContext>,
     ) -> Result<String, jsonwebtoken::errors::Error> {
         let sid = session_id.map(|id| id.to_string());
-        let tenant_id = tenant.map(|c|c.tenant_id.to_string());
+        let tenant_id = tenant.map(|c| c.tenant_id.to_string());
         pero_utils::oauth::jwt::sign_access_token_with_key(
             &pero_utils::oauth::jwt::AccessTokenParams {
                 issuer: &self.state.config.oidc.issuer,
@@ -39,9 +39,9 @@ impl<'a> TokenIssuer<'a> {
                 client_version: self.client.token_version,
                 access_version,
                 tenant_id: tenant_id.as_deref(),
-                tenant_kind: tenant.map(|c|c.tenant_kind.clone()),
-                tenant_version: tenant.map(|c|c.tenant_version),
-                tenant_member_version: tenant.map(|c|c.tenant_member_version),
+                tenant_kind: tenant.map(|c| c.tenant_kind.clone()),
+                tenant_version: tenant.map(|c| c.tenant_version),
+                tenant_member_version: tenant.map(|c| c.tenant_member_version),
                 ttl_seconds: self.client.access_token_ttl_seconds as i64,
                 session_id: sid.as_deref(),
                 kid: Some(&self.signing.kid),
@@ -64,7 +64,7 @@ impl<'a> TokenIssuer<'a> {
         tenant: Option<&crate::service::tenant_context::TenantContext>,
     ) -> Result<String, jsonwebtoken::errors::Error> {
         let sid = session.id.to_string();
-        let tenant_id = tenant.map(|c|c.tenant_id.to_string());
+        let tenant_id = tenant.map(|c| c.tenant_id.to_string());
         let id_user = crate::service::scope::user_claims(user, scopes);
         pero_utils::oauth::jwt::sign_id_token_with_key(
             &pero_utils::oauth::jwt::IdTokenParams {

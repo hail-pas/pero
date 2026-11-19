@@ -72,7 +72,10 @@ pub async fn new_form(
         csrf_token,
         mode: "create".to_owned(),
         app_id: String::new(),
-        form: AppFormData {tenant_mode:"personal".to_owned(),..Default::default()},
+        form: AppFormData {
+            tenant_mode: "personal".to_owned(),
+            ..Default::default()
+        },
         error: String::new(),
     };
     view_response("AppFormView", tpl, jar)
@@ -165,7 +168,7 @@ pub async fn edit_form(
             description: app.description.unwrap_or_default(),
             homepage_url: app.homepage_url.unwrap_or_default(),
             logo_url: app.logo_url.unwrap_or_default(),
-            tenant_mode:app.tenant_mode,
+            tenant_mode: app.tenant_mode,
         },
         error: String::new(),
     };

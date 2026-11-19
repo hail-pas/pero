@@ -19,6 +19,6 @@ pub mod user_app_access;
 pub mod user_consents;
 pub mod users;
 
-pub mod tenants;
-pub mod tenant_members;
 pub mod tenant_invitations;
+pub mod tenant_members;
+pub mod tenants;

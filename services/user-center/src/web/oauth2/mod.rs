@@ -18,7 +18,10 @@ pub fn routes() -> axum::Router<crate::state::app::AppState> {
             get(crate::web::dashboard::integration::callback),
         )
         .route("/oauth2/authorize/resume", get(authorize::resume))
-        .route("/oauth2/authorize/tenant", get(tenant::get).post(tenant::post))
+        .route(
+            "/oauth2/authorize/tenant",
+            get(tenant::get).post(tenant::post),
+        )
         .route(
             "/oauth2/authorize/access",
             get(access::get).post(access::post),

@@ -116,12 +116,25 @@ async fn inspect(
     {
         return Ok(serde_json::json!({"active":false}));
     }
-    if let Some(id)=rt.tenant_id {
-        let Some(ctx)=crate::service::tenant_context::active(&state.db,rt.user_id,client.app_id,id).await? else{return Ok(serde_json::json!({"active":false}));};
-        if Some(ctx.tenant_version)!=rt.tenant_version || Some(ctx.tenant_member_version)!=rt.tenant_member_version {return Ok(serde_json::json!({"active":false}));}
+    if let Some(id) = rt.tenant_id {
+        let Some(ctx) =
+            crate::service::tenant_context::active(&state.db, rt.user_id, client.app_id, id)
+                .await?
+        else {
+            return Ok(serde_json::json!({"active":false}));
+        };
+        if Some(ctx.tenant_version) != rt.tenant_version
+            || Some(ctx.tenant_member_version) != rt.tenant_member_version
+        {
+            return Ok(serde_json::json!({"active":false}));
+        }
     } else {
-        let app=apps::Entity::find_by_id(client.app_id).one(&state.db).await?;
-        if !app.is_some_and(|a|a.system){return Ok(serde_json::json!({"active":false}));}
+        let app = apps::Entity::find_by_id(client.app_id)
+            .one(&state.db)
+            .await?;
+        if !app.is_some_and(|a| a.system) {
+            return Ok(serde_json::json!({"active":false}));
+        }
     }
     let session = crate::db::helper::session::app_query(
         now,

@@ -244,8 +244,21 @@ pub async fn authorize(
             return Err(params.redirect_err("consent_required", None));
         }
 
-        let tenant_id = if app.system { None } else {
-            Some(crate::service::tenant_context::resolve(&state.db,session.user_id,app.id,params.tenant_id).await.map_err(|_| OAuthError::Unavailable)?.ok_or_else(|| params.redirect_err("interaction_required",None))?.tenant_id)
+        let tenant_id = if app.system {
+            None
+        } else {
+            Some(
+                crate::service::tenant_context::resolve(
+                    &state.db,
+                    session.user_id,
+                    app.id,
+                    params.tenant_id,
+                )
+                .await
+                .map_err(|_| OAuthError::Unavailable)?
+                .ok_or_else(|| params.redirect_err("interaction_required", None))?
+                .tenant_id,
+            )
         };
         // 所有检查通过：创建 auth_request → 生成 code → 302
         let auth_request = oauth
@@ -423,17 +436,39 @@ pub(crate) async fn resolve_authorization(
         ));
     }
 
-    let app = crate::db::entity::apps::Entity::find_by_id(auth_request.app_id).one(&state.db).await.map_err(|_|OAuthError::Unavailable)?.ok_or(OAuthError::BadRequest("Tenant access denied".into()))?;
+    let app = crate::db::entity::apps::Entity::find_by_id(auth_request.app_id)
+        .one(&state.db)
+        .await
+        .map_err(|_| OAuthError::Unavailable)?
+        .ok_or(OAuthError::BadRequest("Tenant access denied".into()))?;
     if !app.system {
         if auth_request.tenant_id.is_none() {
-            let choices=crate::service::tenant_context::choices(&state.db,session.user_id,app.id).await.map_err(|_|OAuthError::Unavailable)?;
-            if choices.len()!=1 {return super::tenant::redirect(state,jar.clone(),auth_request.id,session.id);}
-            let mut active: authorization_requests::ActiveModel=auth_request.clone().into();
-            active.tenant_id=sea_orm::Set(Some(choices[0].id));
-            let request=sea_orm::ActiveModelTrait::update(active,&state.db).await.map_err(|_|OAuthError::Unavailable)?;
-            return Box::pin(resolve_authorization(state,jar,&request)).await;
+            let choices =
+                crate::service::tenant_context::choices(&state.db, session.user_id, app.id)
+                    .await
+                    .map_err(|_| OAuthError::Unavailable)?;
+            if choices.len() != 1 {
+                return super::tenant::redirect(state, jar.clone(), auth_request.id, session.id);
+            }
+            let mut active: authorization_requests::ActiveModel = auth_request.clone().into();
+            active.tenant_id = sea_orm::Set(Some(choices[0].id));
+            let request = sea_orm::ActiveModelTrait::update(active, &state.db)
+                .await
+                .map_err(|_| OAuthError::Unavailable)?;
+            return Box::pin(resolve_authorization(state, jar, &request)).await;
         }
-        if crate::service::tenant_context::active(&state.db,session.user_id,app.id,auth_request.tenant_id.unwrap()).await.map_err(|_|OAuthError::Unavailable)?.is_none(){return Err(OAuthError::BadRequest("Tenant access denied".into()));}
+        if crate::service::tenant_context::active(
+            &state.db,
+            session.user_id,
+            app.id,
+            auth_request.tenant_id.unwrap(),
+        )
+        .await
+        .map_err(|_| OAuthError::Unavailable)?
+        .is_none()
+        {
+            return Err(OAuthError::BadRequest("Tenant access denied".into()));
+        }
     }
     // prompt=consent 强制展示 consent 页面，忽略已有 consent 记录
     let force_consent =

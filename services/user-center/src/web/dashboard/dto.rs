@@ -45,10 +45,12 @@ pub struct AppFormData {
     pub description: String,
     pub homepage_url: String,
     pub logo_url: String,
-    #[serde(default="default_tenant_mode")]
+    #[serde(default = "default_tenant_mode")]
     pub tenant_mode: String,
 }
-fn default_tenant_mode()->String{"personal".to_owned()}
+fn default_tenant_mode() -> String {
+    "personal".to_owned()
+}
 
 // === App Detail ===
 
