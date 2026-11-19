@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{DbBackend, EntityTrait, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -123,11 +123,22 @@ pub async fn post(State(s): State<AppState>, jar: CookieJar, Form(p): Form<Choic
         Ok(None) => return pero_api_axum::json_error("forbidden"),
         Err(e) => return util::dependency_error(e),
     };
-    let mut changed: authorization_requests::ActiveModel = req.into();
-    changed.tenant_id = Set(Some(p.tenant_id));
-    let updated = match changed.update(&s.db).await {
-        Ok(v) => v,
-        Err(e) => return util::dependency_error(e),
+    // Consume the initial choice exactly once; concurrent submissions cannot rewrite its tenant.
+    let updated = match s
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE authorization_requests SET tenant_id=$2 WHERE id=$1 AND tenant_id IS NULL AND completed_at IS NULL AND expires_at>now() RETURNING *",
+            [req.id.into(), p.tenant_id.into()],
+        ))
+        .await
+    {
+        Ok(Some(row)) => match authorization_requests::Model::from_query_result(&row, "") {
+            Ok(value) => value,
+            Err(error) => return util::dependency_error(error),
+        },
+        Ok(None) => return pero_api_axum::json_error("invalid_request"),
+        Err(error) => return util::dependency_error(error),
     };
     match super::authorize::resolve_authorization(&s, &jar, &updated).await {
         Ok(v) => v.into_response(),
