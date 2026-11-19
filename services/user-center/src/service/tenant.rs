@@ -203,9 +203,7 @@ pub async fn update_member(
     if status != "active"
         || (role == "owner" && actor_role != "owner")
         || (action == "owner" && actor_role != "owner")
-        || (actor != target
-            && actor_role == "admin"
-            && (role != "member" || action != "remove"))
+        || (actor != target && actor_role == "admin" && (role != "member" || action != "remove"))
         || (actor == target && action != "remove" && actor_role != "owner")
     {
         return Err(Error::Invalid("forbidden"));
@@ -294,7 +292,13 @@ pub async fn revoke_invite(
     let txn = db.begin().await?;
     governance(&txn, user, tenant).await?;
     if exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE id=$1 AND tenant_id=$2 AND status='pending'",vec![invitation.into(),tenant.into()]).await?!=1{return Err(Error::Invalid("not_found"));}
-    audit(&txn, user, "tenant.invitation.revoked", &format!("{tenant}/{invitation}")).await?;
+    audit(
+        &txn,
+        user,
+        "tenant.invitation.revoked",
+        &format!("{tenant}/{invitation}"),
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }
@@ -327,7 +331,11 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
             "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 AND status='active'",
             [tenant.into(), user.into()],
         )).await?.is_some();
-        return if joined { Ok(()) } else { Err(Error::Invalid("invalid_invitation")) };
+        return if joined {
+            Ok(())
+        } else {
+            Err(Error::Invalid("invalid_invitation"))
+        };
     }
     exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' AND tenant_members.role='owner' THEN 'owner' ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     exec(
@@ -336,7 +344,13 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
         vec![id.into()],
     )
     .await?;
-    audit(&txn, user, "tenant.invitation.accepted", &tenant.to_string()).await?;
+    audit(
+        &txn,
+        user,
+        "tenant.invitation.accepted",
+        &tenant.to_string(),
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }
