@@ -150,7 +150,15 @@ pub async fn update_member(
         vec![tenant.into()],
     )
     .await?;
-    let actor_role = governance(&txn, actor, tenant).await?;
+    let actor_role = if action == "remove" && actor == target {
+        let space = get(&txn, actor, tenant).await?;
+        if space.kind != "organization" {
+            return Err(Error::Invalid("forbidden"));
+        }
+        space.role
+    } else {
+        governance(&txn, actor, tenant).await?
+    };
     let current = txn
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
