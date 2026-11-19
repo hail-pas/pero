@@ -12,7 +12,7 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::Serialize;
 use uuid::Uuid;
 #[derive(Serialize, FromQueryResult)]
