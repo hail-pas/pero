@@ -6,6 +6,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use sea_orm::EntityTrait;
 use serde::Deserialize;
 use uuid::Uuid;
 #[derive(Deserialize)]
@@ -37,6 +38,18 @@ pub async fn snapshot(
     if client.r#type != crate::db::enums::OauthClientType::Confidential
         || client.account_sync_uri.is_none()
     {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    // Keep the original Account Sync boundary: system clients cannot read tenant membership.
+    let app = match crate::db::entity::apps::Entity::find_by_id(client.app_id)
+        .one(&s.db)
+        .await
+    {
+        Ok(Some(app)) if !app.system => app,
+        Ok(_) => return StatusCode::FORBIDDEN.into_response(),
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
+    if app.status != crate::db::enums::CommonStatus::Active {
         return StatusCode::FORBIDDEN.into_response();
     }
     let access = match crate::service::access::active_app_access(&s.db, f.sub, client.app_id).await
