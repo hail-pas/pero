@@ -23,7 +23,7 @@ pub async fn choices<C: ConnectionTrait>(
     app: Uuid,
 ) -> Result<Vec<TenantChoice>, DbErr> {
     TenantChoice::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$2 WHERE m.user_id=$1 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) ORDER BY (t.kind='personal') DESC,t.name,t.id",
+        "SELECT t.id,t.kind,t.name,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$2 JOIN users u ON u.id=m.user_id WHERE m.user_id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) ORDER BY (t.kind='personal') DESC,t.name,t.id",
         [user.into(),app.into()])).all(db).await
 }
 pub async fn active<C: ConnectionTrait>(
@@ -33,7 +33,7 @@ pub async fn active<C: ConnectionTrait>(
     tenant: Uuid,
 ) -> Result<Option<TenantContext>, DbErr> {
     TenantContext::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id AS tenant_id,t.kind AS tenant_kind,t.auth_version AS tenant_version,m.auth_version AS tenant_member_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3 WHERE t.id=$1 AND m.user_id=$2 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind)",
+        "SELECT t.id AS tenant_id,t.kind AS tenant_kind,t.auth_version AS tenant_version,m.auth_version AS tenant_member_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3 JOIN users u ON u.id=m.user_id WHERE t.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.user_id=$2 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind)",
         [tenant.into(),user.into(),app.into()])).one(db).await
 }
 pub async fn resolve<C: ConnectionTrait>(

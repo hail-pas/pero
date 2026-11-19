@@ -266,6 +266,12 @@ pub async fn close_account(
     super::security::execute(&txn,"UPDATE user_app_access SET status='disabled',token_version=token_version+1,updated_at=now() WHERE user_id=$1",vec![user.id.into()]).await?;
     super::security::execute(
         &txn,
+        "UPDATE tenant_members SET status='removed',auth_version=auth_version+1,updated_at=now() WHERE user_id=$1 AND status='active'",
+        vec![user.id.into()],
+    )
+    .await?;
+    super::security::execute(
+        &txn,
         "DELETE FROM user_consents WHERE user_id=$1",
         vec![user.id.into()],
     )
