@@ -213,7 +213,7 @@ pub async fn toggle_status(
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
-    util::management_response(svc::toggle_status(&s.db, a.user.id, id, false).await)
+    util::management_response(svc::toggle_status(&s.db, a.user.id, id).await)
 }
 
 pub async fn members(
