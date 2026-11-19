@@ -194,9 +194,11 @@ impl TokenService<'_> {
         };
 
         let tenant = if let Some(id)=existing.tenant_id {
-            let ctx=crate::service::tenant_context::active(&txn,user.id,client.app_id,id).await
-                .map_err(|_|TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?
-                .ok_or(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant))?;
+            let ctx=match crate::service::tenant_context::active(&txn,user.id,client.app_id,id).await {
+                Ok(Some(ctx))=>ctx,
+                Ok(None)=>return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+                Err(_)=>return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            };
             if Some(ctx.tenant_version)!=existing.tenant_version || Some(ctx.tenant_member_version)!=existing.tenant_member_version {
                 return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
             }

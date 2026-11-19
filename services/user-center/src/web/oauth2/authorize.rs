@@ -423,7 +423,7 @@ pub(crate) async fn resolve_authorization(
         ));
     }
 
-    let app = crate::db::entity::apps::Entity::find_by_id(auth_request.app_id).one(&state.db).await.map_err(|_|OAuthError::Unavailable)?.ok_or(OAuthError::AccessDenied)?;
+    let app = crate::db::entity::apps::Entity::find_by_id(auth_request.app_id).one(&state.db).await.map_err(|_|OAuthError::Unavailable)?.ok_or(OAuthError::BadRequest("Tenant access denied".into()))?;
     if !app.system {
         if auth_request.tenant_id.is_none() {
             let choices=crate::service::tenant_context::choices(&state.db,session.user_id,app.id).await.map_err(|_|OAuthError::Unavailable)?;
@@ -433,7 +433,7 @@ pub(crate) async fn resolve_authorization(
             let request=sea_orm::ActiveModelTrait::update(active,&state.db).await.map_err(|_|OAuthError::Unavailable)?;
             return Box::pin(resolve_authorization(state,jar,&request)).await;
         }
-        if crate::service::tenant_context::active(&state.db,session.user_id,app.id,auth_request.tenant_id.unwrap()).await.map_err(|_|OAuthError::Unavailable)?.is_none(){return Err(OAuthError::AccessDenied);}
+        if crate::service::tenant_context::active(&state.db,session.user_id,app.id,auth_request.tenant_id.unwrap()).await.map_err(|_|OAuthError::Unavailable)?.is_none(){return Err(OAuthError::BadRequest("Tenant access denied".into()));}
     }
     // prompt=consent 强制展示 consent 页面，忽略已有 consent 记录
     let force_consent =
