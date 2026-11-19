@@ -124,13 +124,12 @@ pub async fn post(State(s): State<AppState>, jar: CookieJar, Form(p): Form<Choic
         Err(e) => return util::dependency_error(e),
     };
     // Consume the initial choice exactly once; concurrent submissions cannot rewrite its tenant.
-    let updated = match crate::db::helper::auth_request::bind_tenant(&s.db, req.id, p.tenant_id)
-        .await
-    {
-        Ok(Some(request)) => request,
-        Ok(None) => return pero_api_axum::json_error("invalid_request"),
-        Err(error) => return util::dependency_error(error),
-    };
+    let updated =
+        match crate::db::helper::auth_request::bind_tenant(&s.db, req.id, p.tenant_id).await {
+            Ok(Some(request)) => request,
+            Ok(None) => return pero_api_axum::json_error("invalid_request"),
+            Err(error) => return util::dependency_error(error),
+        };
     match super::authorize::resolve_authorization(&s, &jar, &updated).await {
         Ok(v) => v.into_response(),
         Err(e) => e.into_response(),
