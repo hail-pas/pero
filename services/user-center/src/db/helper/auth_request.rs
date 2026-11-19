@@ -53,7 +53,7 @@ pub async fn create(
     model.insert(db).await
 }
 
-\n/// Bind a pending authorization request exactly once, without changing its other fields.
+/// Bind a pending authorization request exactly once, without changing its other fields.
 pub async fn bind_tenant<C: ConnectionTrait>(
     db: &C,
     request_id: Uuid,
