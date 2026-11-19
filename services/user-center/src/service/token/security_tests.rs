@@ -3861,3 +3861,126 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
     );
     fixture.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
+    let fixture = SecurityFixture::new().await;
+    let db = &fixture.state.db;
+    sql(
+        db,
+        "UPDATE users SET email='owner@tenant.example',email_verified_at=now() WHERE id=$1",
+        vec![fixture.user.into()],
+    )
+    .await;
+    let slug = format!("org-{}", Uuid::now_v7().simple());
+    crate::service::tenant::create(db, fixture.user, "Integration Org", &slug)
+        .await
+        .unwrap();
+    let organization = crate::service::tenant::list(db, fixture.user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|tenant| tenant.kind == "organization")
+        .unwrap();
+
+    let member = Uuid::now_v7();
+    sql(
+        db,
+        "INSERT INTO users(id,username,email,email_verified_at) VALUES($1,$2,'member@tenant.example',now())",
+        vec![member.into(), member.to_string().into()],
+    )
+    .await;
+    sql(
+        db,
+        "UPDATE apps SET tenant_mode='both' WHERE id=$1",
+        vec![fixture.app.into()],
+    )
+    .await;
+    sql(
+        db,
+        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+        vec![member.into(), fixture.app.into()],
+    )
+    .await;
+    let invitation = pero_utils::crypto::generate_token();
+    sql(
+        db,
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'member@tenant.example','member',$2,$3,now()+interval '1 day')",
+        vec![
+            organization.id.into(),
+            pero_utils::crypto::sha256_hex(&invitation).into(),
+            fixture.user.into(),
+        ],
+    )
+    .await;
+    crate::service::tenant::accept(db, member, &invitation)
+        .await
+        .unwrap();
+    crate::service::tenant::accept(db, member, &invitation)
+        .await
+        .unwrap();
+
+    let personal = crate::service::tenant::list(db, member)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|tenant| tenant.kind == "personal")
+        .unwrap();
+    let individual = crate::service::tenant_context::active(
+        db, member, fixture.app, personal.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let prior = crate::service::tenant_context::active(
+        db, member, fixture.app, organization.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    crate::service::tenant::update_member(
+        db, fixture.user, organization.id, member, "admin",
+    )
+    .await
+    .unwrap();
+    assert!(
+        !crate::service::tenant_context::matches(db, member, fixture.app, &prior)
+            .await
+            .unwrap()
+    );
+    assert!(
+        crate::service::tenant_context::matches(db, member, fixture.app, &individual)
+            .await
+            .unwrap()
+    );
+    assert!(
+        crate::service::tenant::update_member(
+            db, member, organization.id, fixture.user, "remove",
+        )
+        .await
+        .is_err()
+    );
+    assert!(matches!(
+        crate::service::tenant::leave(db, fixture.user, organization.id).await,
+        Err(crate::service::ManagementError::Invalid("last_tenant_owner"))
+    ));
+    crate::service::tenant::update_member(
+        db, fixture.user, organization.id, member, "remove",
+    )
+    .await
+    .unwrap();
+    assert!(
+        crate::service::tenant_context::active(db, member, fixture.app, organization.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::service::tenant_context::matches(db, member, fixture.app, &individual)
+            .await
+            .unwrap()
+    );
+    fixture.cleanup().await;
+}
