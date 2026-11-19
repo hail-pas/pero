@@ -388,22 +388,41 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     Ok(())
 }
 
-pub async fn toggle_status(
-    db: &DatabaseConnection,
-    actor: Uuid,
-    tenant: Uuid,
-    platform_super_admin: bool,
-) -> Result<()> {
+/// An organization owner may change the status of their own organization.
+pub async fn toggle_status(db: &DatabaseConnection, actor: Uuid, tenant: Uuid) -> Result<()> {
     let txn = db.begin().await?;
     lock_organization(&txn, tenant).await?;
-    if !platform_super_admin {
-        let space = get(&txn, actor, tenant).await?;
-        if space.kind != "organization" || space.role != "owner" {
-            return Err(Error::Invalid("forbidden"));
-        }
+    let space = get(&txn, actor, tenant).await?;
+    if space.role != "owner" {
+        return Err(Error::Invalid("forbidden"));
     }
+    apply_status_toggle(&txn, actor, tenant).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Platform administration is a separate, re-authorized operation. Never trust
+/// a caller-provided flag to bypass tenant ownership checks.
+pub async fn toggle_status_admin(
+    db: &DatabaseConnection,
+    actor: &super::permissions::Actor,
+    tenant: Uuid,
+) -> Result<()> {
+    let txn = db.begin().await?;
+    super::permissions::require_super(&txn, actor).await?;
+    lock_organization(&txn, tenant).await?;
+    apply_status_toggle(&txn, actor.session.user_id, tenant).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+async fn apply_status_toggle<C: ConnectionTrait>(
+    db: &C,
+    actor: Uuid,
+    tenant: Uuid,
+) -> Result<()> {
     let changed = exec(
-        &txn,
+        db,
         "UPDATE tenants SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization'",
         vec![tenant.into()],
     )
@@ -412,18 +431,17 @@ pub async fn toggle_status(
         return Err(Error::Invalid("not_found"));
     }
     exec(
-        &txn,
+        db,
         "UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_status_changed' WHERE tenant_id=$1 AND revoked_at IS NULL",
         vec![tenant.into()],
     )
     .await?;
     exec(
-        &txn,
+        db,
         "UPDATE authorization_codes SET consumed_at=now() WHERE tenant_id=$1 AND consumed_at IS NULL",
         vec![tenant.into()],
     )
     .await?;
-    audit(&txn, actor, "tenant.status.toggled", &tenant.to_string()).await?;
-    txn.commit().await?;
+    audit(db, actor, "tenant.status.toggled", &tenant.to_string()).await?;
     Ok(())
 }
