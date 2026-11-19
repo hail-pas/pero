@@ -293,8 +293,10 @@ impl TokenService<'_> {
                 &auth_code.scopes,
                 auth_code.nonce.as_deref(),
                 &active_session,
-                Some(&access_token),
-                Some(raw_code),
+                super::token_issuer::OidcHashes {
+                    access_token: &access_token,
+                    authorization_code: raw_code,
+                },
                 tenant.as_ref(),
             ) {
                 Ok(t) => Some(t),
