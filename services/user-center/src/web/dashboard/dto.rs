@@ -45,7 +45,10 @@ pub struct AppFormData {
     pub description: String,
     pub homepage_url: String,
     pub logo_url: String,
+    #[serde(default="default_tenant_mode")]
+    pub tenant_mode: String,
 }
+fn default_tenant_mode()->String{"personal".to_owned()}
 
 // === App Detail ===
 
@@ -428,6 +431,7 @@ pub struct AppSummary {
     pub logo_url: Option<String>,
     pub status: String,
     pub system: bool,
+    pub tenant_mode: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
@@ -443,6 +447,7 @@ impl From<apps::Model> for AppSummary {
             logo_url: model.logo_url,
             status: model.status.to_string(),
             system: model.system,
+            tenant_mode: model.tenant_mode,
             created_at: model.created_at,
         }
     }

@@ -34,6 +34,7 @@ export interface AppSummary {
   logo_url: string | null;
   status: string;
   system: boolean;
+  tenant_mode: string;
   created_at: DateValue;
 }
 export interface UserSummary {
@@ -434,6 +435,10 @@ export interface ViewDataMap {
     all_apps: [string, string, string][];
     error: string;
   };
+  TenantListView: AccountPage & { tenants: TenantSummary[] };
+  TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string};
+  TenantInvitationView: AccountPage & {invitation:{tenant_id:string;tenant_name:string;email:string;role:string};token:string;verified_email:boolean;user_email:string|null};
+  TenantChoiceView: CsrfPage & {token:string;choices:{id:string;kind:string;name:string;role:string}[]};
   ProviderDetailView: AccountPage & {
     provider: ProviderSummary;
     keys: KeySummary[];
@@ -441,6 +446,9 @@ export interface ViewDataMap {
     error: string;
   };
 }
+export type TenantSummary = {id:string;kind:string;name:string;slug:string|null;role:string;status:string};
+export type TenantMember = {user_id:string;username:string;name:string;role:string;status:string};
+export type TenantInvitation = {id:string;email:string;role:string;status:string;expires_at:string};
 export type ViewName = keyof ViewDataMap;
 export type ViewEnvelope<V extends ViewName = ViewName> = {
   [K in V]: { view: K; data: ViewDataMap[K] };

@@ -6,6 +6,7 @@ pub mod providers;
 pub mod token;
 pub mod token_management;
 pub mod userinfo;
+pub mod tenant_membership;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -13,6 +14,7 @@ use axum::routing::{get, post};
 pub fn routes() -> Router<crate::state::app::AppState> {
     Router::new()
         .route("/accounts/sync", post(account_sync::snapshot))
+        .route("/tenants/membership/sync",post(tenant_membership::snapshot))
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/oauth2/token", post(token::token))

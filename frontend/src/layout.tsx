@@ -105,6 +105,7 @@ export function Layout({
       ] as const)
     : ([
         ["/account/profile", t("个人资料"), <PersonOutlined />],
+        ["/account/tenants", t("我的空间与组织"), <PeopleOutlined />],
         ["/account/security", t("账户安全"), <ShieldOutlined />],
         ["/account/sessions", t("登录设备"), <DevicesOutlined />],
         ["/account/activity", t("登录记录"), <HistoryOutlined />],

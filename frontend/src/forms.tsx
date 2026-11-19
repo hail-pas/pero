@@ -396,6 +396,7 @@ export const userFields: Field[] = [
 export const appFields: Field[] = [
   text("code", "应用标识", true),
   text("name", "应用名称", true),
+  {name:"tenant_mode",label:"租户模式",required:true,options:[["personal","个人空间"],["organization","组织空间"],["both","个人及组织"]]},
   text("homepage_url", "应用主页"),
   text("logo_url", "Logo URL"),
   { ...text("description", "应用说明"), multiline: true },

@@ -192,6 +192,7 @@ fn app_input(form: &AppFormData) -> AppUpdate {
         description: util::empty_or_opt(&form.description),
         homepage_url: util::empty_or_opt(&form.homepage_url),
         logo_url: util::empty_or_opt(&form.logo_url),
+        tenant_mode: form.tenant_mode.clone(),
     }
 }
 
