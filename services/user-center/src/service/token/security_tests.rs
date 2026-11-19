@@ -2633,8 +2633,12 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         vec![fixture.user.into(), fixture.client.into()],
     )
     .await;
+    let tenant = crate::service::tenant_context::resolve(db, fixture.user, fixture.app, None)
+        .await
+        .unwrap()
+        .expect("single personal workspace");
     let refresh_raw = pero_utils::crypto::generate_token();
-    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into()]).await;
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at,tenant_id,tenant_version,tenant_member_version) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day',$6,$7,$8)",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into(),tenant.tenant_id.into(),tenant.tenant_version.into(),tenant.tenant_member_version.into()]).await;
     let client = oauth_clients::Entity::find_by_id(fixture.client)
         .one(db)
         .await
@@ -2651,7 +2655,7 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         .await
         .unwrap();
     let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
-        .issue_access_token(fixture.user, "openid", Some(current), 0)
+        .issue_access_token(fixture.user, "openid", Some(current), 0, Some(&tenant))
         .unwrap();
     let userinfo = |token: String| {
         let state = state.clone();
