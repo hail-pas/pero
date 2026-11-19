@@ -50,6 +50,6 @@ pub async fn toggle(
         return e;
     }
     util::management_response(
-        crate::service::tenant::toggle_status(&s.db, admin.user.id, id, true).await,
+        crate::service::tenant::toggle_status_admin(&s.db, &admin.actor(&s), id).await,
     )
 }
