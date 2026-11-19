@@ -76,7 +76,7 @@ export function ManagementForm({
               ? { ...field, disabled: true }
               : field,
           )}
-          initial={data.form}
+          initial={kind === "apps" ? { tenant_mode: "personal", ...data.form } : data.form}
           serverError={data.error ? errorText(data.error) : ""}
           submit={(values) =>
             mutate(path, values, () => navigate(`/dashboard/${kind}`))
