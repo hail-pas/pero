@@ -12,6 +12,7 @@ pub mod notifications;
 pub mod providers;
 pub mod sessions;
 pub mod users;
+pub mod tenants;
 
 use axum::Router;
 use axum::middleware;
@@ -44,6 +45,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(admins::permissions),
         )
         .route("/dashboard/admins", get(admins::list).post(admins::update))
+        .route("/dashboard/tenants", get(tenants::list))
+        .route("/dashboard/tenants/{id}/toggle", post(tenants::toggle))
         .route("/dashboard/audit", get(audit::list))
         .route("/dashboard/audit/{id}", get(audit::detail))
         .route("/dashboard/notifications", get(notifications::list))

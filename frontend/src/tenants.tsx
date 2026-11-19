@@ -5,12 +5,15 @@ import type { Actions } from "./shared";
 import { Heading,Panel } from "./shared";
 import { t,useLocale } from "./i18n";
 
-type TenantPage = ViewEnvelope<"TenantListView"|"TenantDetailView"|"TenantInvitationView"|"TenantChoiceView">;
+type TenantPage = ViewEnvelope<"TenantAdminView"|"TenantListView"|"TenantDetailView"|"TenantInvitationView"|"TenantChoiceView">;
 export function Tenants({page,mutate,ask,editor}: {page:TenantPage}&Actions){
   useLocale();
   const {view,data}=page;
   const navigate=useNavigate();
   const {pathname}=useLocation();
+  if(view==="TenantAdminView"){
+    return <><Heading title={t("租户管理")} description={t("管理组织租户的基本状态；业务权限和资源由应用自行管理。")}/><Panel title={t("组织租户")}><Stack spacing={2}>{data.tenants.map(row=><Stack key={row.id} direction="row" sx={{alignItems:"center",justifyContent:"space-between"}}><Box><Typography sx={{fontWeight:600}}>{row.name} ({row.slug||"—"})</Typography><Typography variant="body2" color="text.secondary">{row.members} {t("名成员")} · {row.status}</Typography></Box><Button color={row.status==="active"?"error":"primary"} variant="outlined" onClick={()=>ask(t(row.status==="active"?"停用组织":"恢复组织"),`/dashboard/tenants/${row.id}/toggle`)}>{t(row.status==="active"?"停用":"恢复")}</Button></Stack>)}</Stack></Panel></>;
+  }
   if(view==="TenantChoiceView"){
     return <Box sx={{maxWidth:520,mx:"auto",mt:10,p:2}}>
       <Card><CardContent>

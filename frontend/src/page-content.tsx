@@ -38,6 +38,7 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "TenantAdminView":
     case "TenantListView":
     case "TenantDetailView":
     case "TenantInvitationView":
