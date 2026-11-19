@@ -306,8 +306,8 @@ impl<'a> OAuthService<'a> {
                 crate::service::tenant_context::resolve(
                     &txn,
                     session.user_id,
-                    request.app_id,
-                    request.tenant_id,
+                    auth_request.app_id,
+                    auth_request.tenant_id,
                 )
                 .await
                 .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
@@ -316,7 +316,7 @@ impl<'a> OAuthService<'a> {
         } else {
             None
         };
-        if request.tenant_id != tenant.as_ref().map(|c| c.tenant_id) {
+        if auth_request.tenant_id != tenant.as_ref().map(|c| c.tenant_id) {
             return Err(OAuthError::AccessDenied);
         }
         auth_code::create(

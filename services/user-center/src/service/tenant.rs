@@ -67,11 +67,14 @@ pub async fn list<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Vec<Tenant>>
         [user.into()])).all(db).await?)
 }
 pub async fn get<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Tenant> {
-    list(db, user)
-        .await?
-        .into_iter()
-        .find(|t| t.id == id)
-        .ok_or(Error::Invalid("not_found"))
+    Tenant::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND m.user_id=$2 AND m.status='active'",
+        [id.into(), user.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or(Error::Invalid("not_found"))
 }
 pub async fn members<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Vec<Member>> {
     let t = get(db, user, id).await?;
@@ -97,6 +100,19 @@ async fn governance<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<
         return Err(Error::Invalid("forbidden"));
     }
     Ok(t.role)
+}
+
+/// Governance mutations lock the organization before checking roles. This prevents
+/// a concurrent removal or demotion from authorizing a later privileged write.
+async fn lock_organization<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<()> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM tenants WHERE id=$1 AND kind='organization' FOR UPDATE",
+        [id.into()],
+    ))
+    .await?
+    .ok_or(Error::Invalid("not_found"))?;
+    Ok(())
 }
 pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str) -> Result<()> {
     let name = name.trim();
@@ -152,6 +168,7 @@ pub async fn rename(db: &DatabaseConnection, user: Uuid, id: Uuid, name: &str) -
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
+    lock_organization(&txn, id).await?;
     governance(&txn, user, id).await?;
     exec(
         &txn,
@@ -174,13 +191,8 @@ pub async fn update_member(
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
-    // Serializing governance mutations on the parent row prevents concurrent last-owner removal.
-    exec(
-        &txn,
-        "UPDATE tenants SET updated_at=updated_at WHERE id=$1 AND kind='organization'",
-        vec![tenant.into()],
-    )
-    .await?;
+    // Serialize role changes and the last-owner check on the tenant row.
+    lock_organization(&txn, tenant).await?;
     let actor_role = if action == "remove" && actor == target {
         let space = get(&txn, actor, tenant).await?;
         if space.kind != "organization" {
@@ -248,14 +260,18 @@ pub async fn invite(
     email: &str,
     role: &str,
 ) -> Result<()> {
-    if !matches!(role, "admin" | "member") || !email.contains('@') || email.len() > 254 {
+    let email = email.trim().to_lowercase();
+    if !matches!(role, "admin" | "member")
+        || email.len() > 254
+        || !validator::ValidateEmail::validate_email(&email)
+    {
         return Err(Error::Invalid("invalid_request"));
     }
     if !state.config.notification.available("email") {
         return Err(Error::Invalid("notification_disabled"));
     }
-    let email = email.trim().to_lowercase();
     let txn = state.db.begin().await?;
+    lock_organization(&txn, id).await?;
     let actor_role = governance(&txn, user, id).await?;
     if role == "admin" && actor_role != "owner" {
         return Err(Error::Invalid("forbidden"));
@@ -293,6 +309,7 @@ pub async fn revoke_invite(
     invitation: Uuid,
 ) -> Result<()> {
     let txn = db.begin().await?;
+    lock_organization(&txn, tenant).await?;
     governance(&txn, user, tenant).await?;
     if exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE id=$1 AND tenant_id=$2 AND status='pending'",vec![invitation.into(),tenant.into()]).await?!=1{return Err(Error::Invalid("not_found"));}
     audit(
@@ -321,11 +338,21 @@ pub async fn invitation<C: ConnectionTrait>(db: &C, token: &str) -> Result<Invit
 pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<()> {
     let txn = db.begin().await?;
     let hash = pero_utils::crypto::sha256_hex(token);
+    let invitation = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT tenant_id FROM tenant_invitations WHERE token_hash=$1",
+            [hash.clone().into()],
+        ))
+        .await?
+        .ok_or(Error::Invalid("invalid_invitation"))?;
+    let tenant: Uuid = invitation.try_get("", "tenant_id")?;
+    // Match governance's tenant -> invitation/member lock order.
+    lock_organization(&txn, tenant).await?;
     let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL FOR UPDATE OF i",
+        "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL AND u.status='active' AND u.deleted_at IS NULL FOR UPDATE OF i",
         [hash.into(),user.into()])).await?.ok_or(Error::Invalid("invalid_invitation"))?;
     let id: Uuid = row.try_get("", "id")?;
-    let tenant: Uuid = row.try_get("", "tenant_id")?;
     let role: String = row.try_get("", "role")?;
     let status: String = row.try_get("", "status")?;
     if status == "accepted" {
@@ -365,6 +392,7 @@ pub async fn toggle_status(
     platform_super_admin: bool,
 ) -> Result<()> {
     let txn = db.begin().await?;
+    lock_organization(&txn, tenant).await?;
     if !platform_super_admin {
         let space = get(&txn, actor, tenant).await?;
         if space.kind != "organization" || space.role != "owner" {

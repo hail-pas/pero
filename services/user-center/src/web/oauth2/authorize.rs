@@ -450,11 +450,14 @@ pub(crate) async fn resolve_authorization(
             if choices.len() != 1 {
                 return super::tenant::redirect(state, jar.clone(), auth_request.id, session.id);
             }
-            let mut active: authorization_requests::ActiveModel = auth_request.clone().into();
-            active.tenant_id = sea_orm::Set(Some(choices[0].id));
-            let request = sea_orm::ActiveModelTrait::update(active, &state.db)
-                .await
-                .map_err(|_| OAuthError::Unavailable)?;
+            let request = crate::db::helper::auth_request::bind_tenant(
+                &state.db,
+                auth_request.id,
+                choices[0].id,
+            )
+            .await
+            .map_err(|_| OAuthError::Unavailable)?
+            .ok_or(OAuthError::AccessDenied)?;
             return Box::pin(resolve_authorization(state, jar, &request)).await;
         }
         if crate::service::tenant_context::active(

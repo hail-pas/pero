@@ -1,4 +1,7 @@
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Set,
+    Statement,
+};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -48,4 +51,21 @@ pub async fn create(
         completed_at: Set(None),
     };
     model.insert(db).await
+}
+
+\n/// Bind a pending authorization request exactly once, without changing its other fields.
+pub async fn bind_tenant<C: ConnectionTrait>(
+    db: &C,
+    request_id: Uuid,
+    tenant_id: Uuid,
+) -> Result<Option<authorization_requests::Model>, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE authorization_requests SET tenant_id=$2 WHERE id=$1 AND tenant_id IS NULL AND completed_at IS NULL AND expires_at>now() RETURNING *",
+            [request_id.into(), tenant_id.into()],
+        ))
+        .await?;
+    row.map(|row| authorization_requests::Model::from_query_result(&row, ""))
+        .transpose()
 }

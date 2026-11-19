@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, FromQueryResult, Statement};
+use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -124,19 +124,10 @@ pub async fn post(State(s): State<AppState>, jar: CookieJar, Form(p): Form<Choic
         Err(e) => return util::dependency_error(e),
     };
     // Consume the initial choice exactly once; concurrent submissions cannot rewrite its tenant.
-    let updated = match s
-        .db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE authorization_requests SET tenant_id=$2 WHERE id=$1 AND tenant_id IS NULL AND completed_at IS NULL AND expires_at>now() RETURNING *",
-            [req.id.into(), p.tenant_id.into()],
-        ))
+    let updated = match crate::db::helper::auth_request::bind_tenant(&s.db, req.id, p.tenant_id)
         .await
     {
-        Ok(Some(row)) => match authorization_requests::Model::from_query_result(&row, "") {
-            Ok(value) => value,
-            Err(error) => return util::dependency_error(error),
-        },
+        Ok(Some(request)) => request,
         Ok(None) => return pero_api_axum::json_error("invalid_request"),
         Err(error) => return util::dependency_error(error),
     };
