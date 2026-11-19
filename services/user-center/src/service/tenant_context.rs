@@ -64,3 +64,28 @@ pub async fn matches<C: ConnectionTrait>(
                 && current.tenant_member_version == ctx.tenant_member_version
         }))
 }
+
+#[derive(Debug, Clone, FromQueryResult, Serialize)]
+pub struct MembershipSnapshot {
+    pub tenant_kind: String,
+    pub tenant_status: String,
+    pub membership_status: String,
+    pub tenant_version: i64,
+    pub membership_version: i64,
+}
+
+/// Current membership including inactive states, only for the authenticated app's user.
+pub async fn snapshot<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+    app: Uuid,
+    tenant: Uuid,
+) -> Result<Option<MembershipSnapshot>, DbErr> {
+    MembershipSnapshot::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN users u ON u.id=m.user_id JOIN apps a ON a.id=$3 WHERE t.id=$1 AND m.user_id=$2 AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind)",
+        [tenant.into(), user.into(), app.into()],
+    ))
+    .one(db)
+    .await
+}

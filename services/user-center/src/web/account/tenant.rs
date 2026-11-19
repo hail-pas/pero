@@ -10,7 +10,7 @@ use crate::{
 use axum::{
     Form,
     extract::{Path, State},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
@@ -214,4 +214,25 @@ pub async fn toggle_status(
         return e;
     }
     util::management_response(svc::toggle_status(&s.db, a.user.id, id, false).await)
+}
+
+pub async fn members(
+    State(s): State<AppState>,
+    a: AccountContext,
+    Path(id): Path<Uuid>,
+) -> Response {
+    match svc::members(&s.db, a.user.id, id).await {
+        Ok(rows) => axum::Json(serde_json::json!({"rows":rows})).into_response(),
+        Err(error) => util::management_response(Err(error)),
+    }
+}
+pub async fn invitations(
+    State(s): State<AppState>,
+    a: AccountContext,
+    Path(id): Path<Uuid>,
+) -> Response {
+    match svc::invitations(&s.db, a.user.id, id).await {
+        Ok(rows) => axum::Json(serde_json::json!({"rows":rows})).into_response(),
+        Err(error) => util::management_response(Err(error)),
+    }
 }

@@ -60,7 +60,7 @@ pub async fn snapshot(
     if access.is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let current = match crate::service::tenant_context::active(
+    let current = match crate::service::tenant_context::snapshot(
         &s.db,
         f.sub,
         client.app_id,
@@ -71,13 +71,18 @@ pub async fn snapshot(
         Ok(v) => v,
         Err(e) => return crate::web::util::dependency_error(e),
     };
+    let active = current.as_ref().is_some_and(|v| {
+        v.tenant_status == "active" && v.membership_status == "active"
+    });
     let response = serde_json::json!({
-        "sub":f.sub,"tenant_id":f.tenant_id,
-        "active":current.is_some(),
-        "tenant_kind":current.as_ref().map(|v|v.tenant_kind.as_str()),
-        "membership_status":if current.is_some(){"active"}else{"inactive"},
-        "tenant_version":current.as_ref().map(|v|v.tenant_version),
-        "membership_version":current.as_ref().map(|v|v.tenant_member_version)
+        "sub": f.sub,
+        "tenant_id": f.tenant_id,
+        "tenant_kind": current.as_ref().map(|v|v.tenant_kind.as_str()),
+        "tenant_status": current.as_ref().map(|v|v.tenant_status.as_str()),
+        "membership_status": current.as_ref().map(|v|v.membership_status.as_str()),
+        "tenant_version": current.as_ref().map(|v|v.tenant_version),
+        "membership_version": current.as_ref().map(|v|v.membership_version),
+        "active": active,
     });
     (
         [
