@@ -457,7 +457,7 @@ pub(crate) async fn resolve_authorization(
             )
             .await
             .map_err(|_| OAuthError::Unavailable)?
-            .ok_or(OAuthError::AccessDenied)?;
+            .ok_or(OAuthError::BadRequest("Tenant access denied".into()))?;
             return Box::pin(resolve_authorization(state, jar, &request)).await;
         }
         if crate::service::tenant_context::active(
