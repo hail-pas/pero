@@ -74,7 +74,8 @@ pub async fn create(
         return e;
     }
     match svc::create(&s.db, a.user.id, &f.name, &f.slug).await {
-        Ok(id) => axum::Json(serde_json::json!({"redirect":format!("/account/tenants/{id}")})).into_response(),
+        Ok(id) => axum::Json(serde_json::json!({"redirect":format!("/account/tenants/{id}")}))
+            .into_response(),
         Err(error) => util::management_response(Err(error)),
     }
 }
