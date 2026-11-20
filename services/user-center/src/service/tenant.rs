@@ -415,7 +415,11 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
         [tenant.into(), user.into()],
     )).await?.is_some();
     if status == "accepted" {
-        return if joined { Ok(()) } else { Err(Error::Invalid("invalid_invitation")) };
+        return if joined {
+            Ok(())
+        } else {
+            Err(Error::Invalid("invalid_invitation"))
+        };
     }
     if !joined {
         if !can_invite(&txn, tenant).await? {

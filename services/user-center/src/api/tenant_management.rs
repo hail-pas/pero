@@ -123,7 +123,11 @@ pub struct Invite {
     email: String,
     role: String,
 }
-pub async fn invitations(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
+pub async fn invitations(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,

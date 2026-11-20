@@ -160,7 +160,14 @@ pub async fn tenant(
     Form(mut f): Form<TenantInput>,
 ) -> Response {
     let result = async {
-        let c = client(&s, &source, &headers, &mut f.client_id, &mut f.client_secret).await?;
+        let c = client(
+            &s,
+            &source,
+            &headers,
+            &mut f.client_id,
+            &mut f.client_secret,
+        )
+        .await?;
         let row = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!("{TENANT_SELECT} AND t.id=$2"),
@@ -186,10 +193,19 @@ pub async fn tenants(
         if f.after_user_id.is_some() {
             return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let c = client(&s, &source, &headers, &mut f.client_id, &mut f.client_secret).await?;
+        let c = client(
+            &s,
+            &source,
+            &headers,
+            &mut f.client_id,
+            &mut f.client_secret,
+        )
+        .await?;
         let mut rows = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{TENANT_SELECT} AND ($2::uuid IS NULL OR t.id>$2::uuid) ORDER BY t.id LIMIT 101"),
+            format!(
+                "{TENANT_SELECT} AND ($2::uuid IS NULL OR t.id>$2::uuid) ORDER BY t.id LIMIT 101"
+            ),
             [c.app_id.into(), f.after_tenant_id.into()],
         ))
         .all(&s.db)
@@ -197,7 +213,11 @@ pub async fn tenants(
         .map_err(crate::web::util::dependency_error)?;
         let more = rows.len() > 100;
         rows.truncate(100);
-        let next = if more { rows.last().map(|row| row.tenant_id) } else { None };
+        let next = if more {
+            rows.last().map(|row| row.tenant_id)
+        } else {
+            None
+        };
         Ok(axum::Json(serde_json::json!({"rows": rows, "next": next})).into_response())
     }
     .await;

@@ -1,4 +1,6 @@
 {
+  "当前没有可访问的工作空间。请先加入一个允许使用此应用的组织，或联系管理员开通准入。": "No accessible workspaces. Join an organization permitted to use this application, or contact an administrator for access.",
+  "管理我的组织": "Manage my organizations",
   "重新申请重置链接": "Request a new reset link",
   "密钥标识不能为 . 或 ..": "Key ID must not be . or ..",
   "身份提供方标识不能为 . 或 ..": "Provider code must not be . or ..",
