@@ -53,6 +53,8 @@ pub async fn resolve<C: ConnectionTrait>(
 }
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
 pub struct MembershipSnapshot {
+    pub tenant_name: String,
+    pub membership_role: String,
     pub tenant_kind: String,
     pub tenant_status: String,
     pub membership_status: String,
@@ -70,7 +72,7 @@ pub async fn snapshot<C: ConnectionTrait>(
 ) -> Result<Option<MembershipSnapshot>, DbErr> {
     MembershipSnapshot::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id)) AS app_allowed FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN users u ON u.id=m.user_id JOIN apps a ON a.id=$3 WHERE t.id=$1 AND m.user_id=$2 AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind)",
+        "SELECT t.name AS tenant_name,m.role AS membership_role,t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id)) AS app_allowed FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN users u ON u.id=m.user_id JOIN apps a ON a.id=$3 WHERE t.id=$1 AND m.user_id=$2 AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind)",
         [tenant.into(), user.into(), app.into()],
     ))
     .one(db)

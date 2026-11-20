@@ -73,6 +73,8 @@ pub async fn snapshot(
     let response = serde_json::json!({
         "sub": f.sub,
         "tenant_id": f.tenant_id,
+        "tenant_name": current.as_ref().map(|v|v.tenant_name.as_str()),
+        "membership_role": current.as_ref().map(|v|v.membership_role.as_str()),
         "tenant_kind": current.as_ref().map(|v|v.tenant_kind.as_str()),
         "tenant_status": current.as_ref().map(|v|v.tenant_status.as_str()),
         "membership_status": current.as_ref().map(|v|v.membership_status.as_str()),

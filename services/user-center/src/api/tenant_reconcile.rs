@@ -22,6 +22,8 @@ pub struct Request {
 pub struct MemberRow {
     pub tenant_id: Uuid,
     pub sub: Uuid,
+    pub tenant_name: String,
+    pub membership_role: String,
     pub tenant_kind: String,
     pub tenant_status: String,
     pub membership_status: String,
@@ -82,7 +84,7 @@ pub async fn memberships(
         }
         let c=client(&s,&source,&headers,&mut f).await?;
         let mut rows=MemberRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-            "SELECT m.tenant_id,m.user_id AS sub,t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(m.status='active' AND t.status='active' AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND app.status='active' AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS active FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id JOIN users u ON u.id=m.user_id JOIN user_app_access a ON a.user_id=m.user_id JOIN apps app ON app.id=a.app_id WHERE a.app_id=$1 AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND ($2::uuid IS NULL OR (m.tenant_id,m.user_id)>($2::uuid,$3::uuid)) ORDER BY m.tenant_id,m.user_id LIMIT 101",
+            "SELECT m.tenant_id,m.user_id AS sub,t.name AS tenant_name,m.role AS membership_role,t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(m.status='active' AND t.status='active' AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND app.status='active' AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS active FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id JOIN users u ON u.id=m.user_id JOIN user_app_access a ON a.user_id=m.user_id JOIN apps app ON app.id=a.app_id WHERE a.app_id=$1 AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND ($2::uuid IS NULL OR (m.tenant_id,m.user_id)>($2::uuid,$3::uuid)) ORDER BY m.tenant_id,m.user_id LIMIT 101",
             [c.app_id.into(),f.after_tenant_id.into(),f.after_user_id.into()]))
             .all(&s.db).await.map_err(crate::web::util::dependency_error)?;
         let more=rows.len()>100;

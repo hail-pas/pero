@@ -56,8 +56,13 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 - `POST /api/accounts/sync`：已知 `sub` 的用户最新账户投影。
 - `POST /api/tenants/membership/sync`：已知 `sub,tenant_id` 的成员快照（包括 `app_allowed`）。
 - `POST /api/accounts/sync/list`：按 `user_id` 升序分页读取本应用有历史准入关系的用户账户投影，每页最多 100 条；可提交 `after_user_id`。
-- `POST /api/tenants/membership/list`：按 `(tenant_id,user_id)` 分页读取本应用可见租户类别下的历史关系及当前 `active`，每页最多 100 条；续页提交 `after_tenant_id` 与 `after_user_id`。
+- `POST /api/tenants/membership/list`：按 `(tenant_id,user_id)` 分页读取本应用可见租户类别下的历史关系及当前 `active`、`tenant_name` 和 `membership_role`，每页最多 100 条；续页提交 `after_tenant_id` 与 `after_user_id`。
 
 分页响应均为 `{rows,next}`，`next=null` 表示结束；从 `next` 中取游标继续查询。所有响应不缓存。全量对账用于初次接入、事件过期后的恢复及主动核对；分页不是跨页一致性事务快照，对账时持续应用增量事件，并在必要时重新执行一轮对账。
 
 现有签名事件 `tenant.membership.changed` 保留 `tenant_id`；事件仅提示重新查询最新状态，接收端应校验签名、受众、时间、jti 并实现幂等，切勿按消息产生顺序直接覆盖业务侧状态。业务系统负责本地数据投影、资源 ACL 和业务数据生命周期。
+
+
+### 组织元数据与治理角色同步
+
+组织改名会触发 `tenant.membership.changed`，但**不会**撤销既有 Access Token（组织名称不是权限判断条件）。成员角色变更同样触发该事件。增量查询和全量成员对账均返回 `tenant_name` 与 `membership_role`，业务系统可用于组织名称显示及基础治理信息同步，但业务资源授权仍以业务系统自身的规则为准。
