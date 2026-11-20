@@ -3939,15 +3939,20 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
     crate::service::tenant::update_member(db, fixture.user, organization.id, member, "admin")
         .await
         .unwrap();
-    assert!(
-        !crate::service::tenant_context::matches(db, member, fixture.app, &prior)
+    assert_ne!(
+        crate::service::tenant_context::active(db, member, fixture.app, organization.id)
             .await
             .unwrap()
+            .unwrap()
+            .tenant_member_version,
+        prior.tenant_member_version
     );
-    assert!(
-        crate::service::tenant_context::matches(db, member, fixture.app, &individual)
+    assert_eq!(
+        crate::service::tenant_context::active(db, member, fixture.app, personal.id)
             .await
             .unwrap()
+            .map(|context| (context.tenant_version, context.tenant_member_version)),
+        Some((individual.tenant_version, individual.tenant_member_version))
     );
     assert!(
         crate::service::tenant::update_member(db, member, organization.id, fixture.user, "remove",)
@@ -3986,10 +3991,12 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
             .unwrap()
             .is_none()
     );
-    assert!(
-        crate::service::tenant_context::matches(db, member, fixture.app, &individual)
+    assert_eq!(
+        crate::service::tenant_context::active(db, member, fixture.app, personal.id)
             .await
             .unwrap()
+            .map(|context| (context.tenant_version, context.tenant_member_version)),
+        Some((individual.tenant_version, individual.tenant_member_version))
     );
     fixture.cleanup().await;
 }
