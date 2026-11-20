@@ -104,6 +104,9 @@ pub async fn set_status(
     access.require_global(P::UsersStatusUpdate)?;
 
     if status != UserStatus::Active {
+        // Use the same policy -> organization lock order as tenant creation and exits.
+        super::tenant_policy::lock_if_present(&txn, Some(id)).await?;
+        super::tenant::ensure_other_active_owner(&txn, id).await?;
         super::admin::protect_last_super_admin(&txn, id).await?;
         super::enrollment::invalidate_sponsor(&txn, id).await?;
     }
