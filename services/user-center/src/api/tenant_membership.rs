@@ -52,14 +52,17 @@ pub async fn snapshot(
     if app.status != crate::db::enums::CommonStatus::Active {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let access = match crate::service::access::active_app_access(&s.db, f.sub, client.app_id).await
+    // A previously admitted user remains queryable after revocation, so a
+    // downstream client can reconcile the former relationship as inactive.
+    let access = match crate::db::entity::user_app_access::Entity::find_by_id((f.sub, client.app_id))
+        .one(&s.db)
+        .await
     {
-        Ok(a) => a,
+        Ok(Some(access)) => access,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return crate::web::util::dependency_error(e),
     };
-    if access.is_none() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
+    let app_access_active = access.status == crate::db::enums::CommonStatus::Active;
     let current =
         match crate::service::tenant_context::snapshot(&s.db, f.sub, client.app_id, f.tenant_id)
             .await
@@ -67,8 +70,9 @@ pub async fn snapshot(
             Ok(v) => v,
             Err(e) => return crate::web::util::dependency_error(e),
         };
-    let active = current.as_ref().is_some_and(|v| {
-        v.tenant_status == "active" && v.membership_status == "active" && v.app_allowed
+    let active = app_access_active && current.as_ref().is_some_and(|v| {
+        v.user_active && v.tenant_status == "active"
+            && v.membership_status == "active" && v.app_allowed
     });
     let response = serde_json::json!({
         "sub": f.sub,
@@ -79,6 +83,7 @@ pub async fn snapshot(
         "tenant_status": current.as_ref().map(|v|v.tenant_status.as_str()),
         "membership_status": current.as_ref().map(|v|v.membership_status.as_str()),
         "app_allowed": current.as_ref().map(|v|v.app_allowed).unwrap_or(false),
+        "app_access_active": app_access_active,
         "tenant_version": current.as_ref().map(|v|v.tenant_version),
         "membership_version": current.as_ref().map(|v|v.membership_version),
         "active": active,

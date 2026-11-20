@@ -55,9 +55,9 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 具有 Account Sync URI 的非系统应用 confidential 客户端，可通过 `client_secret_basic` 或 `client_secret_post` 调用：
 
 - `POST /api/accounts/sync`：已知 `sub` 的用户最新账户投影。
-- `POST /api/tenants/membership/sync`：已知 `sub,tenant_id` 的成员快照（包括 `app_allowed`）。
+- `POST /api/tenants/membership/sync`：已知 `sub,tenant_id` 的成员快照（包括 `app_allowed`、`app_access_active` 和最终 `active`）。只要该用户曾被此应用准入，撤销应用权限后仍返回 `active=false`；从未有关联的用户返回 404。
 - `POST /api/accounts/sync/list`：按 `user_id` 升序分页读取本应用有历史准入关系的用户账户投影，每页最多 100 条；可提交 `after_user_id`。
-- `POST /api/tenants/membership/list`：按 `(tenant_id,user_id)` 分页读取本应用已有关联用户的**历史成员关系**（即使成员已退出、组织已停用、应用不再支持该租户类别）；每条包含 `tenant_name`、`membership_role`、`tenant_status`、`membership_status`、`app_allowed`、`active` 以及版本；每页最多 100 条；续页提交 `after_tenant_id` 与 `after_user_id`。
+- `POST /api/tenants/membership/list`：按 `(tenant_id,user_id)` 分页读取本应用已有关联用户的**历史成员关系**（即使成员已退出、组织已停用、应用不再支持该租户类别）；每条包含 `tenant_name`、`membership_role`、`tenant_status`、`membership_status`、`app_allowed`、`app_access_active`、`active` 以及版本；每页最多 100 条；续页提交 `after_tenant_id` 与 `after_user_id`。
 - `POST /api/tenants/sync`：提交 `tenant_id`，读取本应用历史关联过的单个租户目录快照，包括 `tenant_name`、`tenant_kind`、`slug`、`tenant_status`、`max_members`、`member_count`、`app_allowed`、`active`。不可见租户返回 404。
 - `POST /api/tenants/list`：按 `tenant_id` 升序列出本应用历史关联用户所在的租户目录快照，每页最多 100 条；续页提交 `after_tenant_id`（UUID），响应仍为 `{rows,next}`。
 
@@ -84,7 +84,7 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 ## 首次接入、增量同步与全量恢复
 
 - **首次接入**：业务系统通过 confidential client 凭据（`client_secret_basic` 或 `client_secret_post`）调用 `POST /api/accounts/sync/list`、`POST /api/tenants/list` 和 `POST /api/tenants/membership/list` 建立本地投影。每个请求使用 `application/x-www-form-urlencoded`，这三种列表使用各自独立的游标。
-- **日常更新**：校验签名的 `tenant.membership.changed` 事件仅提示变化（携带 `sub` 和 `tenant_id`），先调用 `POST /api/tenants/membership/sync` 查询最新成员状态；再视需要调用 `POST /api/tenants/sync` 更新组织目录。账户事件仍通过 `POST /api/accounts/sync` 获取最新状态。
+- **日常更新**：校验签名的 `tenant.membership.changed` 事件仅提示变化（携带 `sub` 和 `tenant_id`），先调用 `POST /api/tenants/membership/sync` 查询最新成员状态；再视需要调用 `POST /api/tenants/sync` 更新组织目录。应用成员资格授予/撤销同样会产生有关历史租户关系的变更通知。账户事件仍通过 `POST /api/accounts/sync` 获取最新状态。
 - **断线恢复**：使用三个列表重复全量对账，保留并重放对账期间的增量事件。历史关系可能变为 `active=false`，不能因为记录仍在列表中就继续授予访问，也不应因为某页缺行就直接删除业务历史数据。
 - **接入范围**：所有服务端同步接口都要求**非系统应用的、已配置 Account Sync URI 的 confidential OAuth 客户端**。目录及成员列表以该应用历史有准入关系的用户为边界，并非平台全部组织的全局枚举接口。未关联用户的组织不会出现在目录中。
 - **字段语义**：`app_allowed` 反映该应用当前模式、状态及组织准入条件；`active` 反映当前是否有效。成员列表的 `active` 还要求账户、应用账户准入和组织成员关系均有效。历史记录和租户 tombstone 仅供同步与审计；业务数据是否清理由业务系统自行决定。
