@@ -46,9 +46,10 @@ for package, result in zip(packages, results):
         ), None)
         if accepted and datetime.date.today() <= datetime.date.fromisoformat(policy["expires"]):
             tracked += 1
-            print(f'Visible tracked OSV finding: {identity}; {accepted["kind"]}; review by {policy["expires"]}')
+            label = "false positive" if accepted["kind"] == "osv_false_positive" else "accepted risk"
+            print(f'Visible tracked OSV {label}: {identity}; review by {policy["expires"]}')
         else:
             findings.append(f'{package["name"]} {package["version"]}: {vulnerability["id"]}')
 if findings:
     sys.exit("\n".join(findings))
-print(f"OSV: checked {len(packages)} packages; {tracked} tracked false positives; no untriaged findings")
+print(f"OSV: checked {len(packages)} packages; {tracked} tracked findings; no untriaged findings")
