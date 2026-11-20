@@ -41,12 +41,12 @@ for package, result in zip(packages, results):
         identity = (vulnerability["id"], package["name"], package["version"])
         accepted = next((
             entry for entry in policy.get("accepted", [])
-            if entry["kind"] == "osv_false_positive"
+            if entry["kind"] in ("osv_false_positive", "accepted_risk")
             and (entry["id"], entry["package"], entry["version"]) == identity
         ), None)
         if accepted and datetime.date.today() <= datetime.date.fromisoformat(policy["expires"]):
             tracked += 1
-            print(f'Visible tracked OSV false positive: {identity}; review by {policy["expires"]}')
+            print(f'Visible tracked OSV finding: {identity}; {accepted["kind"]}; review by {policy["expires"]}')
         else:
             findings.append(f'{package["name"]} {package["version"]}: {vulnerability["id"]}')
 if findings:
