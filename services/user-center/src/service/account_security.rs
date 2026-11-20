@@ -217,8 +217,7 @@ pub async fn close_account(
 ) -> Result<(), ManagementError> {
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
-    // Account exit must serialize with organization creation, invitations and role changes.
-    super::tenant_policy::lock_if_present(&txn, Some(session.user_id)).await?;
+    // Owner checks serialize with organization role changes.
     super::tenant::ensure_other_active_owner(&txn, session.user_id).await?;
     let access = user_app_access::Entity::find()
         .filter(user_app_access::Column::UserId.eq(session.user_id))

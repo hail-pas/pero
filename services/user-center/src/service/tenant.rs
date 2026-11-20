@@ -67,13 +67,13 @@ async fn audit<C: ConnectionTrait>(
 }
 pub async fn list<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Vec<Tenant>> {
     Ok(Tenant::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' ORDER BY (t.kind='personal') DESC,t.name",
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' AND t.status<>'deleted' ORDER BY (t.kind='personal') DESC,t.name",
         [user.into()])).all(db).await?)
 }
 pub async fn get<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Tenant> {
     Tenant::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND m.user_id=$2 AND m.status='active'",
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND t.status<>'deleted' AND m.user_id=$2 AND m.status='active'",
         [id.into(), user.into()],
     ))
     .one(db)
@@ -111,7 +111,7 @@ async fn governance<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<
 async fn lock_organization<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<()> {
     db.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id FROM tenants WHERE id=$1 AND kind='organization' FOR UPDATE",
+        "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status<>'deleted' FOR UPDATE",
         [id.into()],
     ))
     .await?
@@ -127,14 +127,14 @@ pub(super) async fn ensure_other_active_owner(
 ) -> Result<()> {
     db.query_all_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT t.id FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' ORDER BY t.id FOR UPDATE OF t",
+        "SELECT t.id FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND t.status<>'deleted' ORDER BY t.id FOR UPDATE OF t",
         [user.into()],
     ))
     .await?;
     let orphaned = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND NOT EXISTS(SELECT 1 FROM tenant_members other JOIN users other_user ON other_user.id=other.user_id WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active' AND other_user.status='active' AND other_user.deleted_at IS NULL) LIMIT 1",
+            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND t.status<>'deleted' AND NOT EXISTS(SELECT 1 FROM tenant_members other JOIN users other_user ON other_user.id=other.user_id WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active' AND other_user.status='active' AND other_user.deleted_at IS NULL) LIMIT 1",
             [user.into()],
         ))
         .await?;
@@ -222,11 +222,6 @@ pub async fn update_member(
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
-    // Policy -> organization is the shared lock order for quota changes and membership mutations.
-    let creator = super::tenant_policy::creator(&txn, tenant).await?;
-    if action == "remove" {
-        super::tenant_policy::lock_if_present(&txn, creator).await?;
-    }
     lock_organization(&txn, tenant).await?;
     let actor_role = if action == "remove" && actor == target {
         let space = get(&txn, actor, tenant).await?;
@@ -278,11 +273,6 @@ pub async fn update_member(
         )
         .await?;
     }
-    if action == "remove"
-        && let Some(creator) = creator
-    {
-        super::tenant_policy::prune_excess(&txn, creator, actor, Some(tenant)).await?;
-    }
     audit(
         &txn,
         actor,
@@ -314,12 +304,11 @@ pub async fn invite(
         return Err(Error::Invalid("notification_disabled"));
     }
     let txn = state.db.begin().await?;
-    // Reject unrelated callers before acquiring the creator's quota lock.
-    governance(&txn, user, id).await?;
-    let creator = super::tenant_policy::creator(&txn, id).await?;
-    super::tenant_policy::authorize_members(&txn, creator).await?;
     lock_organization(&txn, id).await?;
     let actor_role = governance(&txn, user, id).await?;
+    if get(&txn, user, id).await?.status != "active" {
+        return Err(Error::Invalid("tenant_disabled"));
+    }
     if role == "admin" && actor_role != "owner" {
         return Err(Error::Invalid("forbidden"));
     }
@@ -408,13 +397,7 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
         .await?
         .ok_or(Error::Invalid("invalid_invitation"))?;
     let tenant: Uuid = invitation.try_get("", "tenant_id")?;
-    let prior_status: String = invitation.try_get("", "status")?;
-    // Already-accepted invitations may be retried without being a new membership.
-    // Pending invitations still require a fresh, locked expansion authorization.
-    if prior_status == "pending" {
-        let creator = super::tenant_policy::creator(&txn, tenant).await?;
-        super::tenant_policy::authorize_members(&txn, creator).await?;
-    }
+    let _prior_status: String = invitation.try_get("", "status")?;
     lock_organization(&txn, tenant).await?;
     let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL AND u.status='active' AND u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members inviter JOIN users issuer ON issuer.id=inviter.user_id WHERE inviter.tenant_id=i.tenant_id AND inviter.user_id=i.invited_by AND inviter.status='active' AND issuer.status='active' AND issuer.deleted_at IS NULL AND (inviter.role='owner' OR (inviter.role='admin' AND i.role='member'))) FOR UPDATE OF i",
@@ -483,7 +466,7 @@ pub async fn toggle_status_admin(
 async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uuid) -> Result<()> {
     let changed = exec(
         db,
-        "UPDATE tenants SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization'",
+        "UPDATE tenants SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization' AND status IN ('active','disabled')",
         vec![tenant.into()],
     )
     .await?;
@@ -503,5 +486,34 @@ async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uu
     )
     .await?;
     audit(db, actor, "tenant.status.toggled", &tenant.to_string()).await?;
+    Ok(())
+}
+
+/// Explicit, irreversible organization closure. Retain the ID and membership history so
+/// downstream applications can reconcile, and never infer emptiness from membership count.
+pub async fn delete(db: &DatabaseConnection, actor: Uuid, id: Uuid, confirmation: &str) -> Result<()> {
+    let txn = db.begin().await?;
+    lock_organization(&txn, id).await?;
+    let space = get(&txn, actor, id).await?;
+    if space.kind != "organization" || space.role != "owner" {
+        return Err(Error::Invalid("forbidden"));
+    }
+    if space.slug.as_deref() != Some(confirmation.trim()) {
+        return Err(Error::Invalid("confirmation_mismatch"));
+    }
+    let row = txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT count(*)::bigint AS n FROM tenant_members WHERE tenant_id=$1 AND status='active' AND user_id<>$2",
+        [id.into(),actor.into()])).await?.ok_or(Error::Invalid("not_found"))?;
+    if row.try_get::<i64>("", "n")? != 0 {
+        return Err(Error::Invalid("tenant_has_members"));
+    }
+    // Keep the tenant row and ID as a tombstone; 'deleted' cannot be toggled back.
+    exec(&txn, "UPDATE tenants SET status='deleted',slug=NULL,auth_version=auth_version+1,updated_at=now() WHERE id=$1",vec![id.into()]).await?;
+    exec(&txn, "UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND status='pending'",vec![id.into()]).await?;
+    exec(&txn, "UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,now()),revoke_reason=COALESCE(revoke_reason,'tenant_deleted') WHERE tenant_id=$1",vec![id.into()]).await?;
+    exec(&txn, "DELETE FROM authorization_codes WHERE tenant_id=$1 AND consumed_at IS NULL",vec![id.into()]).await?;
+    exec(&txn, "UPDATE authorization_requests SET completed_at=now() WHERE tenant_id=$1 AND completed_at IS NULL",vec![id.into()]).await?;
+    audit(&txn, actor, "tenant.deleted", &id.to_string()).await?;
+    txn.commit().await?;
     Ok(())
 }

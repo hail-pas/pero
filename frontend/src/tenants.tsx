@@ -297,7 +297,7 @@ export function Tenants({
         >
           {!can_invite && canManage && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {t("当前组织已暂停扩张；已有成员仍可调整角色或移除。")}
+              {t("组织已停用，恢复后可以继续邀请成员。")}
             </Typography>
           )}
           <Stack spacing={1.5}>
@@ -386,6 +386,19 @@ export function Tenants({
               </Box>
             ))}
           </Stack>
+        </Panel>
+      )}
+
+      {isOrganization && isOwner && members.length === 1 && (
+        <Panel title={t("解散组织")}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {t("解散将立即停止该组织访问所有应用，保留历史标识供业务系统对账；此操作不可恢复。")}
+          </Typography>
+          <Button color="error" variant="outlined" onClick={() =>
+            editor(t("确认解散组织"), `/account/tenants/${tenant.id}/delete`, [
+              { name: "confirmation", label: t("输入组织标识以确认"), required: true },
+            ])
+          }>{t("解散组织")}</Button>
         </Panel>
       )}
 

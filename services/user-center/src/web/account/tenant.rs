@@ -106,14 +106,7 @@ pub async fn detail(
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
     };
-    let can_invite = if tenant.kind == "organization" {
-        match crate::service::tenant_policy::may_add_members(&s.db, id).await {
-            Ok(allowed) => allowed,
-            Err(error) => return util::management_response(Err(error)),
-        }
-    } else {
-        false
-    };
+    let can_invite = tenant.kind == "organization" && tenant.status == "active";
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantDetailView",
@@ -247,4 +240,24 @@ pub async fn invitations(
         Ok(rows) => axum::Json(serde_json::json!({"rows":rows})).into_response(),
         Err(error) => util::management_response(Err(error)),
     }
+}
+
+/// Organization dissolution requires its exact slug, not an unconfirmed click.
+pub async fn delete(
+    State(s): State<AppState>,
+    jar: CookieJar,
+    a: AccountContext,
+    Path(id): Path<Uuid>,
+    Form(f): Form<Delete>,
+) -> Response {
+    if let Some(e) = checked(&jar, &f.csrf_token, &s) {
+        return e;
+    }
+    util::management_response(svc::delete(&s.db, a.user.id, id, &f.confirmation).await)
+}
+
+#[derive(Deserialize)]
+pub struct Delete {
+    csrf_token: String,
+    confirmation: String,
 }
