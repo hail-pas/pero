@@ -1,0 +1,24 @@
+name: Format Tenant Changes
+on:
+  push:
+    branches: [feature/unified-tenancy]
+permissions:
+  contents: write
+jobs:
+  format:
+    if: "!contains(github.event.head_commit.message, 'style(rust): format tenancy changes')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+      - run: rustup default 1.95.0
+      - run: cargo fmt --all
+      - name: Apply formatter output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          if ! git diff --cached --quiet; then
+            git commit -m "style(rust): format tenancy changes"
+            git push origin HEAD:refs/heads/feature/unified-tenancy
+          fi
