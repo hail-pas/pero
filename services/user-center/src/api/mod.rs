@@ -20,6 +20,7 @@ pub fn routes() -> Router<crate::state::app::AppState> {
             "/tenants",
             get(tenant_management::list).post(tenant_management::create),
         )
+        .route("/tenants/choices", get(tenant_management::choices))
         .route("/tenants/{id}", get(tenant_management::detail))
         .route("/tenants/{id}/members", get(tenant_management::members))
         .route(

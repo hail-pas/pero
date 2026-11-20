@@ -9,19 +9,22 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+fn bearer(h: &HeaderMap) -> Result<&str, Response> {
+    h.get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split_once(' '))
+        .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("Bearer").then_some(value))
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())
+}
+
 async fn actor(
     s: &AppState,
     h: &HeaderMap,
     tenant: Option<Uuid>,
     allow_disabled_recovery: bool,
 ) -> Result<Uuid, Response> {
-    let token = h
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split_once(' '))
-        .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("Bearer").then_some(value))
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
+    let token = bearer(h)?;
     let (claims, user, _client) = match crate::service::token_status::active_access(s, token).await
     {
         Ok(Some(v)) => v,
@@ -57,6 +60,29 @@ async fn actor(
     }
     Ok(user.id)
 }
+/// A logged-in application's user may enumerate their eligible workspaces without tenant.manage.
+pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
+    let token = match bearer(&h) {
+        Ok(token) => token,
+        Err(error) => return error,
+    };
+    let (claims, user, client) = match crate::service::token_status::active_access(&s, token).await {
+        Ok(Some(result)) => result,
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(error) => return util::dependency_error(error),
+    };
+    // System-application tokens are not tenant-bound and cannot enumerate workspaces.
+    if claims.tenant_id.is_none() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let rows = match crate::service::tenant_context::choices(&s.db, user.id, client.app_id).await {
+        Ok(rows) => rows,
+        Err(error) => return util::dependency_error(error),
+    };
+    ([ (header::CACHE_CONTROL, "no-store"), (header::PRAGMA, "no-cache") ],
+        Json(serde_json::json!({"rows": rows}))).into_response()
+}
+
 pub async fn list(State(s): State<AppState>, h: HeaderMap) -> Response {
     let user = match actor(&s, &h, None, false).await {
         Ok(v) => v,

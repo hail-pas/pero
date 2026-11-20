@@ -75,7 +75,7 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 业务系统只应使用 OAuth2 授权码模式（建议 PKCE），**不需要申请 `tenant.manage` 来实现租户切换**。该高权限 scope 仅用于用户明确委托业务应用进行组织管理。
 
 1. 初次登录导航到 `GET /oauth2/authorize`，正常提交 `client_id`、`redirect_uri`、`response_type=code`、`scope`、`state` 和 PKCE 参数。没有 `tenant_id` 时，只有一个可用空间会直接选中，多个/零个会进入 Pero 空间选择页。
-2. 切换到某个已知租户时，重新发起完整的授权码流程，额外提交 `tenant_id=<uuid>`。Pero 会验证该用户属于该租户、该租户可用、应用模式符合且受应用组织准入策略允许。不可用的请求被拒绝，应用不得按用户输入的 UUID 自行授权。
+2. 已登录业务应用可用当前 **Access Token** 调用 `GET /api/tenants/choices`（`Authorization: Bearer <access_token>`），获取当前应用及该用户可进入的 `{rows:[{id,kind,name,role}]}` 空间列表；此接口不需要 `tenant.manage`，也不会提供其他用户的组织列表。切换到某个已知租户时，重新发起完整的授权码流程，额外提交 `tenant_id=<uuid>`。Pero 会验证该用户属于该租户、该租户可用、应用模式符合且受应用组织准入策略允许。不可用的请求被拒绝，应用不得按用户输入的 UUID 自行授权。
 3. 应用服务端验证 OAuth 回调 `state`，交换 code 获取新的 Access Token / Refresh Token。**新登录上下文以已验证 Access Token 的 `tenant_id` 为准**，不要以客户端提交的 `tenant_id` 为准。旧 Refresh Token 只能刷新原租户，不能拿它更换上下文。
 4. 每次业务请求严格校验 JWT 的签名、`typ=at+jwt`、`iss`、`aud`、`exp`，并强制访问的业务资源 `tenant_id` 与 Token 一致。业务应用中的角色权限、数据隔离与资源 ACL 由应用自身实现，不由 Pero 组织的 owner/admin/member 自动映射；本地登录会话和缓存建议以 `(sub,tenant_id)` 为隔离维度。
 5. 当需要实时判断撤销时，调用 `POST /api/oauth2/introspect`。组织停用、成员移除、应用准入撤销后，在线校验可立即判定失效；离线 JWT 校验仍可能接受未过期旧 Token，因此短 TTL + 必要时 introspection 更适合高风险操作。
