@@ -108,3 +108,53 @@ BEGIN
 END $$;
 CREATE TRIGGER tenant_status_sync AFTER UPDATE OF status ON tenants
 FOR EACH ROW EXECUTE FUNCTION enqueue_tenant_status_sync();
+
+-- Existing application grants and newly configured sync receivers must also
+-- receive the tenant relationships already in place at the time of admission.
+-- Otherwise, only subsequent membership changes would be discoverable.
+CREATE OR REPLACE FUNCTION enqueue_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+    IF TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status THEN RETURN NEW; END IF;
+    INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+    SELECT c.id,NEW.user_id,
+           CASE WHEN NEW.status='active' THEN 'membership.granted' ELSE 'membership.revoked' END,
+           c.account_sync_uri
+    FROM oauth_clients c
+    WHERE c.app_id=NEW.app_id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    IF NEW.status='active' THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+        SELECT c.id,NEW.user_id,t.id,'tenant.membership.changed',c.account_sync_uri
+        FROM oauth_clients c JOIN apps app ON app.id=c.app_id
+        JOIN tenant_members m ON m.user_id=NEW.user_id AND m.status='active'
+        JOIN tenants t ON t.id=m.tenant_id AND t.status='active'
+        WHERE c.app_id=NEW.app_id AND c.status='active'
+          AND c.account_sync_uri IS NOT NULL
+          AND (app.tenant_mode='both' OR app.tenant_mode=t.kind);
+    END IF;
+    RETURN NEW;
+END $;
+
+CREATE OR REPLACE FUNCTION configure_account_sync() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+    IF TG_OP='UPDATE' AND (OLD.account_sync_uri,OLD.scopes,OLD.status)
+        IS NOT DISTINCT FROM (NEW.account_sync_uri,NEW.scopes,NEW.status) THEN RETURN NEW; END IF;
+    UPDATE account_sync_deliveries SET cancelled_at=now(),lease_id=NULL,leased_until=NULL
+    WHERE client_id=NEW.id AND delivered_at IS NULL AND cancelled_at IS NULL;
+    IF NEW.account_sync_uri IS NOT NULL THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+        SELECT NEW.id,a.user_id,'sync.requested',NEW.account_sync_uri
+        FROM user_app_access a WHERE a.app_id=NEW.app_id;
+        IF NEW.status='active' THEN
+            INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+            SELECT NEW.id,a.user_id,t.id,'tenant.membership.changed',NEW.account_sync_uri
+            FROM user_app_access a
+            JOIN apps app ON app.id=a.app_id
+            JOIN tenant_members m ON m.user_id=a.user_id AND m.status='active'
+            JOIN tenants t ON t.id=m.tenant_id AND t.status='active'
+            WHERE a.app_id=NEW.app_id AND a.status='active'
+              AND (app.tenant_mode='both' OR app.tenant_mode=t.kind);
+        END IF;
+    END IF;
+    RETURN NEW;
+END $;
+
