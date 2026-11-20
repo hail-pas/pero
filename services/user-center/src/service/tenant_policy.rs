@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(FromQueryResult, Serialize)]
+#[derive(Debug, FromQueryResult, Serialize)]
 pub struct TenantPolicy {
     pub enabled: bool,
     pub max_tenants: i32,
@@ -92,11 +92,11 @@ pub async fn may_add_members<C: ConnectionTrait>(db: &C, tenant: Uuid) -> Result
 }
 
 pub async fn authorize_create<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<()> {
-    let policy = lock(db, user).await?;
-    if !policy.as_ref().is_some_and(|p| p.enabled) {
-        return Err(Error::Invalid("tenant_creation_disabled"));
-    }
-    let max = policy.expect("checked").max_tenants as i64;
+    let policy = lock(db, user)
+        .await?
+        .filter(|p| p.enabled)
+        .ok_or(Error::Invalid("tenant_creation_disabled"))?;
+    let max = i64::from(policy.max_tenants);
     if count(db, user).await? >= max {
         return Err(Error::Invalid("tenant_creation_limit"));
     }
@@ -111,11 +111,11 @@ pub async fn authorize_members<C: ConnectionTrait>(
     creator: Option<Uuid>,
 ) -> Result<()> {
     let user = creator.ok_or(Error::Invalid("tenant_expansion_disabled"))?;
-    let policy = lock(db, user).await?;
-    if !policy.as_ref().is_some_and(|p| p.enabled) {
-        return Err(Error::Invalid("tenant_expansion_disabled"));
-    }
-    if count(db, user).await? > i64::from(policy.expect("checked").max_tenants) {
+    let policy = lock(db, user)
+        .await?
+        .filter(|p| p.enabled)
+        .ok_or(Error::Invalid("tenant_expansion_disabled"))?;
+    if count(db, user).await? > i64::from(policy.max_tenants) {
         return Err(Error::Invalid("tenant_creation_limit"));
     }
     Ok(())
@@ -193,7 +193,7 @@ pub async fn update(
     enabled: bool,
     max_tenants: i32,
 ) -> Result<()> {
-    if !(0..=10_000).contains(&max_tenants) {
+    if max_tenants < 0 {
         return Err(Error::Invalid("invalid_request"));
     }
     let txn=db.begin().await?;

@@ -909,5 +909,19 @@
   "请先指定另一位所有者，再移除当前所有者": "Assign another owner before removing the last owner.",
   "邀请已失效或与当前已验证邮箱不匹配": "This invitation has expired or does not match your verified email.",
   "组织状态更改会撤销原有租户授权令牌。": "Changing organization status revokes existing tokens for this workspace.",
-  "请先验证邮箱或手机号，再创建组织。": "Verify your email address or phone number before creating an organization."
+  "请先验证邮箱或手机号，再创建组织。": "Verify your email address or phone number before creating an organization.",
+  "组织创建权限": "Organization creation permission",
+  "调整组织创建权限": "Change organization creation permissions",
+  "允许创建及扩张组织": "Allow organization creation and expansion",
+  "最多创建组织数": "Maximum number of organizations",
+  "调整权限": "Edit permission",
+  "已开启": "Enabled",
+  "已创建": "Created",
+  "禁用时不得创建组织或新增成员；额度下调后只删除超出额度范围内的空组织（仅一名有效所有者），其余组织仍可维护。": "Disabling permission prevents creating organizations or adding members. A reduced quota only removes excess empty organizations (with a single active owner); existing organizations remain manageable.",
+  "组织创建额度": "Organization quota",
+  "当前未获组织创建权限；已建立的组织仍可管理。": "You do not have permission to create organizations. Existing organizations can still be managed.",
+  "当前组织已暂停扩张；已有成员仍可调整角色或移除。": "Organization expansion is paused. Existing members can still be reassigned or removed.",
+  "未获得创建组织的权限，请联系平台管理员。": "You do not have permission to create organizations. Contact a platform administrator.",
+  "组织创建数量已达到或超过允许的上限。": "The number of organizations has reached or exceeded the allowed limit.",
+  "当前组织已暂停新增成员，原有成员仍可正常维护。": "New members are currently disabled for this organization. Existing members can still be managed."
 }
