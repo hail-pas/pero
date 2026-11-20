@@ -217,26 +217,9 @@ pub async fn close_account(
 ) -> Result<(), ManagementError> {
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
-    // Serialize the last-owner check with organization role changes and exits.
-    // Otherwise a co-owner could demote or remove themselves concurrently with
-    // account closure and leave the organization without an active owner.
-    txn.query_all_raw(sea_orm::Statement::from_sql_and_values(
-        sea_orm::DbBackend::Postgres,
-        "SELECT t.id FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' ORDER BY t.id FOR UPDATE OF t",
-        [session.user_id.into()],
-    ))
-    .await?;
-    // Closing a global account cannot orphan an organization.
-    let lone_owner = txn
-        .query_one_raw(sea_orm::Statement::from_sql_and_values(
-            sea_orm::DbBackend::Postgres,
-            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND NOT EXISTS(SELECT 1 FROM tenant_members other JOIN users other_user ON other_user.id=other.user_id WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active' AND other_user.status='active' AND other_user.deleted_at IS NULL) LIMIT 1",
-            [session.user_id.into()],
-        ))
-        .await?;
-    if lone_owner.is_some() {
-        return Err(ManagementError::Invalid("last_tenant_owner"));
-    }
+    // Account exit must serialize with organization creation, invitations and role changes.
+    super::tenant_policy::lock_if_present(&txn, Some(session.user_id)).await?;
+    super::tenant::ensure_other_active_owner(&txn, session.user_id).await?;
     let access = user_app_access::Entity::find()
         .filter(user_app_access::Column::UserId.eq(session.user_id))
         .all(&txn)
