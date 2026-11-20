@@ -20,6 +20,7 @@ pub struct Tenant {
     pub slug: Option<String>,
     pub status: String,
     pub role: String,
+    pub max_members: i32,
 }
 #[derive(FromQueryResult, Serialize)]
 pub struct Member {
@@ -67,13 +68,13 @@ async fn audit<C: ConnectionTrait>(
 }
 pub async fn list<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Vec<Tenant>> {
     Ok(Tenant::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' AND t.status<>'deleted' ORDER BY (t.kind='personal') DESC,t.name",
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role,t.max_members FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' AND t.status<>'deleted' ORDER BY (t.kind='personal') DESC,t.name",
         [user.into()])).all(db).await?)
 }
 pub async fn get<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Tenant> {
     Tenant::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND t.status<>'deleted' AND m.user_id=$2 AND m.status='active'",
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role,t.max_members FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND t.status<>'deleted' AND m.user_id=$2 AND m.status='active'",
         [id.into(), user.into()],
     ))
     .one(db)
@@ -306,8 +307,8 @@ pub async fn invite(
     let txn = state.db.begin().await?;
     lock_organization(&txn, id).await?;
     let actor_role = governance(&txn, user, id).await?;
-    if get(&txn, user, id).await?.status != "active" {
-        return Err(Error::Invalid("tenant_disabled"));
+    if !can_invite(&txn, id).await? {
+        return Err(Error::Invalid("tenant_member_limit"));
     }
     if role == "admin" && actor_role != "owner" {
         return Err(Error::Invalid("forbidden"));
@@ -417,6 +418,9 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
             Err(Error::Invalid("invalid_invitation"))
         };
     }
+    if !can_invite(&txn, tenant).await? {
+        return Err(Error::Invalid("tenant_member_limit"));
+    }
     exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' THEN tenant_members.role ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     exec(
         &txn,
@@ -516,4 +520,17 @@ pub async fn delete(db: &DatabaseConnection, actor: Uuid, id: Uuid, confirmation
     audit(&txn, actor, "tenant.deleted", &id.to_string()).await?;
     txn.commit().await?;
     Ok(())
+}
+
+/// Checks organization membership capacity; callers performing admission hold the tenant row lock.
+pub async fn can_invite<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<bool> {
+    let row = db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT t.status,t.max_members,(SELECT count(*)::bigint FROM tenant_members m WHERE m.tenant_id=t.id AND m.status='active') AS member_count FROM tenants t WHERE t.id=$1 AND t.kind='organization'",
+        [id.into()],
+    )).await?.ok_or(Error::Invalid("not_found"))?;
+    let status: String = row.try_get("", "status")?;
+    let max_members: i32 = row.try_get("", "max_members")?;
+    let member_count: i64 = row.try_get("", "member_count")?;
+    Ok(status == "active" && member_count < i64::from(max_members))
 }

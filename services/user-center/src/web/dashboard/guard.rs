@@ -201,6 +201,9 @@ fn policy(path: &str, read: bool) -> Option<Policy> {
         ("/dashboard/notifications", true) => Policy::Global(P::NotificationsRead),
         ("/dashboard/notifications/{id}/retry", false) => Policy::Global(P::NotificationsRetry),
         ("/dashboard/tenants", true)
+        | ("/dashboard/tenants/{id}", true)
+        | ("/dashboard/tenants/{id}/member-limit", false)
+        | ("/dashboard/tenants/{id}/owner/{user}", false)
         | ("/dashboard/tenants/{id}/toggle", false)
         | ("/dashboard/admins", _)
         | ("/dashboard/admins/users", true)

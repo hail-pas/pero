@@ -106,7 +106,14 @@ pub async fn detail(
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
     };
-    let can_invite = tenant.kind == "organization" && tenant.status == "active";
+    let can_invite = if tenant.kind == "organization" {
+        match svc::can_invite(&s.db, id).await {
+            Ok(v) => v,
+            Err(e) => return util::management_response(Err(e)),
+        }
+    } else {
+        false
+    };
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantDetailView",

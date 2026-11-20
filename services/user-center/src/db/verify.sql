@@ -61,7 +61,7 @@ BEGIN
         END IF;
     END LOOP;
     FOREACH object_name IN ARRAY ARRAY['assisted_recovery_pair','ck_previous_client_secret','ck_account_sync_confidential',
-                                      'ck_tenant_owner_shape'] LOOP
+                                      'ck_tenant_owner_shape', 'tenants_max_members_check'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE connamespace=current_schema()::regnamespace
                        AND conname=object_name AND convalidated) THEN
             RAISE EXCEPTION 'Missing security constraint: %', object_name;
@@ -86,7 +86,7 @@ BEGIN
     END IF;
 END $$;
 
-SELECT id,kind,name,slug,owner_user_id,status,auth_version,created_at,updated_at FROM tenants LIMIT 0;
+SELECT id,kind,name,slug,owner_user_id,status,auth_version,created_at,updated_at,max_members FROM tenants LIMIT 0;
 SELECT tenant_id,user_id,role,status,auth_version,joined_at,updated_at FROM tenant_members LIMIT 0;
 SELECT id,tenant_id,email,role,token_hash,status,invited_by,expires_at,accepted_at,created_at FROM tenant_invitations LIMIT 0;
 SELECT tenant_mode FROM apps LIMIT 0;
