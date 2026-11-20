@@ -3,8 +3,8 @@ use super::permissions::{self, Actor, Permission as P};
 use super::ManagementError;
 use crate::db::{entity::apps, enums::CommonStatus};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
 };
 
 pub struct AppUpdate {
@@ -126,9 +126,21 @@ pub async fn update(
     }
     let changed = old.tenant_mode != input.tenant_mode
         || old.organization_access != input.organization_access;
+    // Never let old restricted grants silently come back after the application
+    // has been made open or personal-only and is later restricted again.
+    let clear_grants = changed
+        && (input.organization_access == "open" || input.tenant_mode == "personal");
     let mut active: apps::ActiveModel = old.into();
     input.apply(&mut active);
     active.update(&txn).await?;
+    if clear_grants {
+        txn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM tenant_app_grants WHERE app_id=$1",
+            [id.into()],
+        ))
+        .await?;
+    }
     if changed {
         super::session::SessionService::revoke_app_grants(&txn, id, None, "tenant_mode_changed")
             .await?;

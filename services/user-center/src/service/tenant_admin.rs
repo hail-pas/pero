@@ -222,7 +222,7 @@ pub async fn set_app_grant(
     let txn = db.begin().await?;
     super::permissions::require_super(&txn, actor).await?;
     txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT id FROM apps WHERE id=$1 AND NOT system AND tenant_mode IN ('organization','both') FOR SHARE",
+        "SELECT id FROM apps WHERE id=$1 AND NOT system AND tenant_mode IN ('organization','both') AND organization_access='restricted' FOR SHARE",
         [app.into()])).await?.ok_or(Error::Invalid("invalid_app"))?;
     txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status<>'deleted' FOR UPDATE",

@@ -185,7 +185,7 @@ export function Tenants({
               <Stack spacing={1.5}>
                 {data.choices.length === 0 ? (
                   <Typography color="text.secondary">
-                    {t("当前没有可访问的工作空间。")}
+                    {t("当前没有可访问的工作空间。请先加入一个允许使用此应用的组织，或联系管理员开通准入。")}
                   </Typography>
                 ) : (
                   data.choices.map((option) => (
@@ -203,6 +203,11 @@ export function Tenants({
                 )}
               </Stack>
             </Box>
+            {data.choices.length === 0 && (
+              <Button component={RouterLink} to="/account/tenants" sx={{ mt: 2 }}>
+                {t("管理我的组织")}
+              </Button>
+            )}
           </CardContent>
         </Card>
       </Box>
