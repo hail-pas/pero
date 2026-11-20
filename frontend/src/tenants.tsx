@@ -85,29 +85,30 @@ export function Tenants({
               title={t("选择工作空间")}
               description={t("本次授权将限定在选择的个人或组织空间内。")}
             />
-            <Stack spacing={1.5}>
-              {data.choices.length === 0 ? (
-                <Typography color="text.secondary">
-                  {t("当前没有可访问的工作空间。")}
-                </Typography>
-              ) : (
-                data.choices.map((option) => (
-                  <Button
-                    fullWidth
-                    key={option.id}
-                    variant="outlined"
-                    onClick={() =>
-                      mutate("/oauth2/authorize/tenant", {
-                        tenant_id: option.id,
-                        token: data.token,
-                      })
-                    }
-                  >
-                    {option.name} · {option.kind === "personal" ? t("个人") : t("组织")}
-                  </Button>
-                ))
-              )}
-            </Stack>
+            <Box component="form" method="post" action="/oauth2/authorize/tenant">
+              <input type="hidden" name="csrf_token" value={data.csrf_token} />
+              <input type="hidden" name="token" value={data.token} />
+              <Stack spacing={1.5}>
+                {data.choices.length === 0 ? (
+                  <Typography color="text.secondary">
+                    {t("当前没有可访问的工作空间。")}
+                  </Typography>
+                ) : (
+                  data.choices.map((option) => (
+                    <Button
+                      fullWidth
+                      key={option.id}
+                      variant="outlined"
+                      type="submit"
+                      name="tenant_id"
+                      value={option.id}
+                    >
+                      {option.name} · {option.kind === "personal" ? t("个人") : t("组织")}
+                    </Button>
+                  ))
+                )}
+              </Stack>
+            </Box>
           </CardContent>
         </Card>
       </Box>
