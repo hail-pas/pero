@@ -51,20 +51,6 @@ pub async fn resolve<C: ConnectionTrait>(
     }
     active(db, user, app, options[0].id).await
 }
-pub async fn matches<C: ConnectionTrait>(
-    db: &C,
-    user: Uuid,
-    app: Uuid,
-    ctx: &TenantContext,
-) -> Result<bool, DbErr> {
-    Ok(active(db, user, app, ctx.tenant_id)
-        .await?
-        .is_some_and(|current| {
-            current.tenant_version == ctx.tenant_version
-                && current.tenant_member_version == ctx.tenant_member_version
-        }))
-}
-
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
 pub struct MembershipSnapshot {
     pub tenant_kind: String,
