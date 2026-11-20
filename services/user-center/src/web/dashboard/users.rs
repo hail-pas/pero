@@ -385,7 +385,14 @@ pub async fn tenant_policy(
         return response;
     }
     util::management_response(
-        crate::service::tenant_policy::update(&state.db, &admin.actor(&state), id, form.enabled, form.max_tenants).await,
+        crate::service::tenant_policy::update(
+            &state.db,
+            &admin.actor(&state),
+            id,
+            form.enabled,
+            form.max_tenants,
+        )
+        .await,
     )
 }
 

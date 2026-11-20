@@ -110,7 +110,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(users::new_form).post(users::create),
         )
         .route("/dashboard/users/{id}", get(users::detail))
-        .route("/dashboard/users/{id}/tenant-policy", post(users::tenant_policy))
+        .route(
+            "/dashboard/users/{id}/tenant-policy",
+            post(users::tenant_policy),
+        )
         .route(
             "/dashboard/users/{id}/security",
             get(sessions::get).post(sessions::post),
