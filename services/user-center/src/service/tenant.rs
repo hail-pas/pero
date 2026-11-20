@@ -307,6 +307,9 @@ pub async fn invite(
     let txn = state.db.begin().await?;
     lock_organization(&txn, id).await?;
     let actor_role = governance(&txn, user, id).await?;
+    if get(&txn, user, id).await?.status != "active" {
+        return Err(Error::Invalid("tenant_disabled"));
+    }
     if !can_invite(&txn, id).await? {
         return Err(Error::Invalid("tenant_member_limit"));
     }
@@ -503,7 +506,7 @@ pub async fn delete(db: &DatabaseConnection, actor: Uuid, id: Uuid, confirmation
         return Err(Error::Invalid("forbidden"));
     }
     if space.slug.as_deref() != Some(confirmation.trim()) {
-        return Err(Error::Invalid("confirmation_mismatch"));
+        return Err(Error::Invalid("tenant_confirmation_mismatch"));
     }
     let row = txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT count(*)::bigint AS n FROM tenant_members WHERE tenant_id=$1 AND status='active' AND user_id<>$2",

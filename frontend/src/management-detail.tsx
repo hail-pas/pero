@@ -101,7 +101,7 @@ export function ManagementDetail({
                   t("调整组织创建权限"),
                   `${base}/tenant-policy`,
                   [
-                    { name: "enabled", label: t("允许创建及扩张组织"), type: "checkbox" },
+                    { name: "enabled", label: t("允许创建组织"), type: "checkbox" },
                     { name: "max_tenants", label: t("最多创建组织数"), type: "number", required: true },
                   ],
                   {
@@ -121,7 +121,7 @@ export function ManagementDetail({
             {" / "}{data.tenant_creation_policy.max_tenants}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {t("禁用时不得创建组织或新增成员；额度下调后只删除超出额度范围内的空组织（仅一名有效所有者），其余组织仍可维护。")}
+            {t("关闭创建权限只阻止新建组织；降低额度不会影响或删除已创建的组织，成员管理独立受组织成员上限约束。")}
           </Typography>
         </Panel>
       )}
