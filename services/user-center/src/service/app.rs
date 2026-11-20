@@ -128,8 +128,8 @@ pub async fn update(
         || old.organization_access != input.organization_access;
     // Never let old restricted grants silently come back after the application
     // has been made open or personal-only and is later restricted again.
-    let clear_grants = changed
-        && (input.organization_access == "open" || input.tenant_mode == "personal");
+    let clear_grants =
+        changed && (input.organization_access == "open" || input.tenant_mode == "personal");
     let mut active: apps::ActiveModel = old.into();
     input.apply(&mut active);
     active.update(&txn).await?;

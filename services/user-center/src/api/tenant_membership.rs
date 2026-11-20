@@ -51,14 +51,15 @@ pub async fn snapshot(
     };
     // A previously admitted user remains queryable after revocation, so a
     // downstream client can reconcile the former relationship as inactive.
-    let access = match crate::db::entity::user_app_access::Entity::find_by_id((f.sub, client.app_id))
-        .one(&s.db)
-        .await
-    {
-        Ok(Some(access)) => access,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(e) => return crate::web::util::dependency_error(e),
-    };
+    let access =
+        match crate::db::entity::user_app_access::Entity::find_by_id((f.sub, client.app_id))
+            .one(&s.db)
+            .await
+        {
+            Ok(Some(access)) => access,
+            Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+            Err(e) => return crate::web::util::dependency_error(e),
+        };
     let app_access_active = access.status == crate::db::enums::CommonStatus::Active;
     let current =
         match crate::service::tenant_context::snapshot(&s.db, f.sub, client.app_id, f.tenant_id)
@@ -67,10 +68,13 @@ pub async fn snapshot(
             Ok(v) => v,
             Err(e) => return crate::web::util::dependency_error(e),
         };
-    let active = app_access_active && current.as_ref().is_some_and(|v| {
-        v.user_active && v.tenant_status == "active"
-            && v.membership_status == "active" && v.app_allowed
-    });
+    let active = app_access_active
+        && current.as_ref().is_some_and(|v| {
+            v.user_active
+                && v.tenant_status == "active"
+                && v.membership_status == "active"
+                && v.app_allowed
+        });
     let response = serde_json::json!({
         "sub": f.sub,
         "tenant_id": f.tenant_id,

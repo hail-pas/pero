@@ -66,7 +66,8 @@ pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
         Ok(token) => token,
         Err(error) => return error,
     };
-    let (claims, user, client) = match crate::service::token_status::active_access(&s, token).await {
+    let validated = crate::service::token_status::active_access(&s, token).await;
+    let (claims, user, client) = match validated {
         Ok(Some(result)) => result,
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
         Err(error) => return util::dependency_error(error),
@@ -75,12 +76,17 @@ pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
     if claims.tenant_id.is_none() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let rows = match crate::service::tenant_context::choices(&s.db, user.id, client.app_id).await {
+    let available = crate::service::tenant_context::choices(&s.db, user.id, client.app_id).await;
+    let rows = match available {
         Ok(rows) => rows,
         Err(error) => return util::dependency_error(error),
     };
-    ([ (header::CACHE_CONTROL, "no-store"), (header::PRAGMA, "no-cache") ],
-        Json(serde_json::json!({"rows": rows}))).into_response()
+    let mut response = Json(serde_json::json!({"rows": rows})).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 pub async fn list(State(s): State<AppState>, h: HeaderMap) -> Response {
