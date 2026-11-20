@@ -47,7 +47,7 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 | POST | `/tenants/{id}/toggle` | 停用/恢复组织 |
 | POST | `/tenants/{id}/delete` | 解散组织：`{confirmation:slug}` |
 
-所有操作从**已验证的 Access Token** 获取操作者；除列出及创建外，Token 的 `tenant_id` 必须与路径中的组织 ID 完全一致。进一步复用现有 Owner/Admin 规则和安全校验，不接受客户端伪造的 actor 或目标组织。跨租户需重新完成 OAuth 授权。
+所有操作从**已验证的 Access Token** 获取操作者；除列出及创建外，Token 的 `tenant_id` 必须与路径中的组织 ID 完全一致。**唯一例外**：组织已停用且无法再为该组织签发 Token 时，其当前 Owner 可使用具有 `tenant.manage` 的**个人空间** Access Token 调用 `POST /tenants/{id}/toggle` 以恢复组织。该路径只允许恢复已停用组织，不能用个人空间 Token 停用别的活动组织或执行其他跨租户管理。进一步复用现有 Owner/Admin 规则和安全校验，不接受客户端伪造的 actor。
 
 ## 同步与全量对账
 

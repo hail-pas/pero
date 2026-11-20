@@ -9,7 +9,12 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-async fn actor(s: &AppState, h: &HeaderMap, tenant: Option<Uuid>) -> Result<Uuid, Response> {
+async fn actor(
+    s: &AppState,
+    h: &HeaderMap,
+    tenant: Option<Uuid>,
+    allow_disabled_recovery: bool,
+) -> Result<Uuid, Response> {
     let token = h
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -37,12 +42,23 @@ async fn actor(s: &AppState, h: &HeaderMap, tenant: Option<Uuid>) -> Result<Uuid
             .and_then(|v| Uuid::parse_str(v).ok())
             != Some(id)
     {
-        return Err(StatusCode::FORBIDDEN.into_response());
+        // A disabled organization cannot issue new tenant-bound tokens.
+        // Only its owner may recover it using a valid personal-workspace token.
+        if !allow_disabled_recovery || claims.tenant_kind.as_deref() != Some("personal") {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
+        match svc::get(&s.db, user.id, id).await {
+            Ok(space) if space.status == "disabled" && space.role == "owner" => {}
+            Ok(_) | Err(crate::service::ManagementError::Invalid(_)) => {
+                return Err(StatusCode::FORBIDDEN.into_response());
+            }
+            Err(error) => return Err(util::management_response(Err(error))),
+        }
     }
     Ok(user.id)
 }
 pub async fn list(State(s): State<AppState>, h: HeaderMap) -> Response {
-    let user = match actor(&s, &h, None).await {
+    let user = match actor(&s, &h, None, false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -57,7 +73,7 @@ pub struct Create {
     slug: String,
 }
 pub async fn create(State(s): State<AppState>, h: HeaderMap, Json(f): Json<Create>) -> Response {
-    let user = match actor(&s, &h, None).await {
+    let user = match actor(&s, &h, None, false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -67,7 +83,7 @@ pub async fn create(State(s): State<AppState>, h: HeaderMap, Json(f): Json<Creat
     }
 }
 pub async fn detail(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -77,7 +93,7 @@ pub async fn detail(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid
     }
 }
 pub async fn members(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -96,7 +112,7 @@ pub async fn update_member(
     Path((id, target)): Path<(Uuid, Uuid)>,
     Json(f): Json<MemberChange>,
 ) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -113,7 +129,7 @@ pub async fn invite(
     Path(id): Path<Uuid>,
     Json(f): Json<Invite>,
 ) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -129,21 +145,21 @@ pub async fn rename(
     Path(id): Path<Uuid>,
     Json(f): Json<Rename>,
 ) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
     util::management_response(svc::rename(&s.db, user, id, &f.name).await)
 }
 pub async fn leave(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
     util::management_response(svc::leave(&s.db, user, id).await)
 }
 pub async fn toggle(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), true).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -159,7 +175,7 @@ pub async fn delete(
     Path(id): Path<Uuid>,
     Json(f): Json<Delete>,
 ) -> Response {
-    let user = match actor(&s, &h, Some(id)).await {
+    let user = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
