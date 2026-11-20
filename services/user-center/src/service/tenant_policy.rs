@@ -121,7 +121,12 @@ pub async fn authorize_members<C: ConnectionTrait>(db: &C, creator: Option<Uuid>
 /// Called while holding the creator policy row; any simultaneous creation or
 /// invitation acceptance uses the same row lock. Delete newest empty spaces first.
 /// Exactly one ACTIVE owner and no other ACTIVE member is an empty organization.
-pub async fn prune_excess(txn: &DatabaseTransaction, creator: Uuid, actor: Uuid) -> Result<u64> {
+pub async fn prune_excess(
+    txn: &DatabaseTransaction,
+    creator: Uuid,
+    actor: Uuid,
+    only_tenant: Option<Uuid>,
+) -> Result<u64> {
     let policy = PolicyRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT enabled,max_tenants FROM tenant_creation_policies WHERE user_id=$1",
@@ -143,6 +148,10 @@ pub async fn prune_excess(txn: &DatabaseTransaction, creator: Uuid, actor: Uuid)
     .await?;
     let mut deleted = 0;
     for candidate in candidates {
+        // Member management must never delete a different organization.
+        if only_tenant.is_some_and(|id| id != candidate.id) {
+            continue;
+        }
         if excess == 0 {
             break;
         }
@@ -222,7 +231,7 @@ pub async fn update(
     txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "UPDATE tenant_creation_policies SET enabled=$2,max_tenants=$3,updated_by=$4,updated_at=now() WHERE user_id=$1",
         [user.into(),enabled.into(),max_tenants.into(),actor.session.user_id.into()])).await?;
-    let removed = prune_excess(&txn, user, actor.session.user_id).await?;
+    let removed = prune_excess(&txn, user, actor.session.user_id, None).await?;
     let details = serde_json::json!({"enabled":enabled,"max_tenants":max_tenants,"removed_empty_tenants":removed});
     txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status,details) SELECT id,username,'tenant.creation.policy.updated',$2,'success',200,$3 FROM users WHERE id=$1",

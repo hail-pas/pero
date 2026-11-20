@@ -254,7 +254,7 @@ pub async fn update_member(
     }
     if action == "remove" {
         if let Some(creator) = creator {
-            super::tenant_policy::prune_excess(&txn, creator, actor).await?;
+            super::tenant_policy::prune_excess(&txn, creator, actor, Some(tenant)).await?;
         }
     }
     audit(
@@ -288,6 +288,8 @@ pub async fn invite(
         return Err(Error::Invalid("notification_disabled"));
     }
     let txn = state.db.begin().await?;
+    // Reject unrelated callers before acquiring the creator's quota lock.
+    governance(&txn, user, id).await?;
     let creator = super::tenant_policy::creator(&txn, id).await?;
     super::tenant_policy::authorize_members(&txn, creator).await?;
     lock_organization(&txn, id).await?;
