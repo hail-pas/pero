@@ -60,7 +60,7 @@ async fn client(
         .one(&s.db)
         .await
         .map_err(crate::web::util::dependency_error)?;
-    if !app.is_some_and(|a| !a.system) {
+    if app.is_none_or(|a| a.system) {
         return Err(StatusCode::FORBIDDEN.into_response());
     }
     Ok(c)

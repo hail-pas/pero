@@ -9,13 +9,13 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-fn bearer(h: &HeaderMap) -> Result<&str, Response> {
+fn bearer(h: &HeaderMap) -> Result<&str, StatusCode> {
     h.get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split_once(' '))
         .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("Bearer").then_some(value))
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())
+        .ok_or(StatusCode::UNAUTHORIZED)
 }
 
 async fn actor(
@@ -24,7 +24,7 @@ async fn actor(
     tenant: Option<Uuid>,
     allow_disabled_recovery: bool,
 ) -> Result<Uuid, Response> {
-    let token = bearer(h)?;
+    let token = bearer(h).map_err(IntoResponse::into_response)?;
     let (claims, user, _client) = match crate::service::token_status::active_access(s, token).await
     {
         Ok(Some(v)) => v,
@@ -64,7 +64,7 @@ async fn actor(
 pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
     let token = match bearer(&h) {
         Ok(token) => token,
-        Err(error) => return error,
+        Err(error) => return error.into_response(),
     };
     let validated = crate::service::token_status::active_access(&s, token).await;
     let (claims, user, client) = match validated {
