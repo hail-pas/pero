@@ -41,7 +41,7 @@ pub async fn snapshot(
         return StatusCode::FORBIDDEN.into_response();
     }
     // Keep the original Account Sync boundary: system clients cannot read tenant membership.
-    let app = match crate::db::entity::apps::Entity::find_by_id(client.app_id)
+    let _app = match crate::db::entity::apps::Entity::find_by_id(client.app_id)
         .one(&s.db)
         .await
     {
@@ -49,9 +49,6 @@ pub async fn snapshot(
         Ok(_) => return StatusCode::FORBIDDEN.into_response(),
         Err(error) => return crate::web::util::dependency_error(error),
     };
-    if app.status != crate::db::enums::CommonStatus::Active {
-        return StatusCode::FORBIDDEN.into_response();
-    }
     // A previously admitted user remains queryable after revocation, so a
     // downstream client can reconcile the former relationship as inactive.
     let access = match crate::db::entity::user_app_access::Entity::find_by_id((f.sub, client.app_id))

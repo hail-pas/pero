@@ -86,5 +86,5 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 - **首次接入**：业务系统通过 confidential client 凭据（`client_secret_basic` 或 `client_secret_post`）调用 `POST /api/accounts/sync/list`、`POST /api/tenants/list` 和 `POST /api/tenants/membership/list` 建立本地投影。每个请求使用 `application/x-www-form-urlencoded`，这三种列表使用各自独立的游标。
 - **日常更新**：校验签名的 `tenant.membership.changed` 事件仅提示变化（携带 `sub` 和 `tenant_id`），先调用 `POST /api/tenants/membership/sync` 查询最新成员状态；再视需要调用 `POST /api/tenants/sync` 更新组织目录。应用成员资格授予/撤销同样会产生有关历史租户关系的变更通知。账户事件仍通过 `POST /api/accounts/sync` 获取最新状态。
 - **断线恢复**：使用三个列表重复全量对账，保留并重放对账期间的增量事件。历史关系可能变为 `active=false`，不能因为记录仍在列表中就继续授予访问，也不应因为某页缺行就直接删除业务历史数据。
-- **接入范围**：所有服务端同步接口都要求**非系统应用的、已配置 Account Sync URI 的 confidential OAuth 客户端**。目录及成员列表以该应用历史有准入关系的用户为边界，并非平台全部组织的全局枚举接口。未关联用户的组织不会出现在目录中。
+- **接入范围**：所有服务端同步接口都要求**非系统应用的、已配置 Account Sync URI 的 confidential OAuth 客户端**。目录及成员列表以该应用历史有准入关系的用户为边界，并非平台全部组织的全局枚举接口。未关联用户的组织不会出现在目录中。应用整体停用后，仍允许有效的 confidential 客户端凭据读取历史投影以完成撤权对账，投影中的 `app_allowed` / `active` 将为 `false`；停用不会允许用户继续以该应用获得访问令牌。
 - **字段语义**：`app_allowed` 反映该应用当前模式、状态及组织准入条件；`active` 反映当前是否有效。成员列表的 `active` 还要求账户、应用账户准入和组织成员关系均有效。历史记录和租户 tombstone 仅供同步与审计；业务数据是否清理由业务系统自行决定。
