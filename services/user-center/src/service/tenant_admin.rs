@@ -68,7 +68,7 @@ pub async fn list<C: ConnectionTrait>(db: &C, input: &Filter) -> Result<Listing>
     Ok(Listing {
         rows,
         page,
-        total_pages: ((total.max(0) as u64) + 19) / 20,
+        total_pages: (total.max(0) as u64).div_ceil(20),
         q,
         status,
     })
@@ -125,7 +125,7 @@ pub async fn members<C: ConnectionTrait>(
     Ok(Members {
         rows,
         page,
-        total_pages: ((count.max(0) as u64) + 19) / 20,
+        total_pages: (count.max(0) as u64).div_ceil(20),
         q,
     })
 }
@@ -170,9 +170,9 @@ pub async fn promote_owner(
     let changed=txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "UPDATE tenant_members m SET role='owner',auth_version=auth_version+1,updated_at=now() FROM users u WHERE m.tenant_id=$1 AND m.user_id=$2 AND u.id=m.user_id AND u.status='active' AND u.deleted_at IS NULL AND m.status='active' AND m.role<>'owner'",
         [tenant.into(),user.into()])).await?.rows_affected();
-    if changed==0 && !txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+    if changed==0 && txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT 1 FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id=$2 AND m.status='active' AND m.role='owner' AND u.status='active' AND u.deleted_at IS NULL",
-        [tenant.into(),user.into()])).await?.is_some(){return Err(Error::Invalid("not_found"));}
+        [tenant.into(),user.into()])).await?.is_none(){return Err(Error::Invalid("not_found"));}
     audit(
         &txn,
         actor.session.user_id,
