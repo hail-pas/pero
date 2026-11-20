@@ -61,7 +61,10 @@ pub async fn create(State(s): State<AppState>, h: HeaderMap, Json(f): Json<Creat
         Ok(v) => v,
         Err(e) => return e,
     };
-    util::management_response(svc::create(&s.db, user, &f.name, &f.slug).await)
+    match svc::create(&s.db, user, &f.name, &f.slug).await {
+        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({"id":id}))).into_response(),
+        Err(error) => util::management_response(Err(error)),
+    }
 }
 pub async fn detail(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
     let user = match actor(&s, &h, Some(id)).await {

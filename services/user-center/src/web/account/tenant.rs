@@ -73,7 +73,10 @@ pub async fn create(
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
-    util::management_response(svc::create(&s.db, a.user.id, &f.name, &f.slug).await)
+    match svc::create(&s.db, a.user.id, &f.name, &f.slug).await {
+        Ok(id) => axum::Json(serde_json::json!({"redirect":format!("/account/tenants/{id}")})).into_response(),
+        Err(error) => util::management_response(Err(error)),
+    }
 }
 pub async fn detail(
     State(s): State<AppState>,

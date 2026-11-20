@@ -145,7 +145,7 @@ pub(super) async fn ensure_other_active_owner(
     Ok(())
 }
 
-pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str) -> Result<()> {
+pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str) -> Result<Uuid> {
     let name = name.trim();
     let slug = slug.trim().to_lowercase();
     if name.is_empty()
@@ -192,7 +192,7 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
     .await?;
     audit(&txn, user, "tenant.created", &id.to_string()).await?;
     txn.commit().await?;
-    Ok(())
+    Ok(id)
 }
 pub async fn rename(db: &DatabaseConnection, user: Uuid, id: Uuid, name: &str) -> Result<()> {
     let name = name.trim();

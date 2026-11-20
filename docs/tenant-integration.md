@@ -37,7 +37,7 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 
 | 方法 | 地址 | 操作 |
 | --- | --- | --- |
-| GET / POST | `/tenants` | 列出自己的空间 / 按个人创建额度创建组织 |
+| GET / POST | `/tenants` | 列出自己的空间 / 按个人创建额度创建组织；创建成功返回 HTTP 201 和 `{"id":"<tenant-uuid>"}` |
 | GET | `/tenants/{id}` | 获取当前组织信息 |
 | GET | `/tenants/{id}/members` | 列出成员 |
 | POST | `/tenants/{id}/invitations` | 邀请成员：`{email,role}` |
