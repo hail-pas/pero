@@ -119,7 +119,9 @@ pub async fn update(
 
     let old = editable(&txn, id).await?;
     if (old.tenant_mode != input.tenant_mode
-        || old.organization_access != input.organization_access) && !access.super_admin {
+        || old.organization_access != input.organization_access)
+        && !access.super_admin
+    {
         return Err(ManagementError::Invalid("forbidden"));
     }
     let changed = old.tenant_mode != input.tenant_mode

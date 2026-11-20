@@ -67,9 +67,9 @@ pub async fn snapshot(
             Ok(v) => v,
             Err(e) => return crate::web::util::dependency_error(e),
         };
-    let active = current
-        .as_ref()
-        .is_some_and(|v| v.tenant_status == "active" && v.membership_status == "active" && v.app_allowed);
+    let active = current.as_ref().is_some_and(|v| {
+        v.tenant_status == "active" && v.membership_status == "active" && v.app_allowed
+    });
     let response = serde_json::json!({
         "sub": f.sub,
         "tenant_id": f.tenant_id,

@@ -498,7 +498,12 @@ async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uu
 
 /// Explicit, irreversible organization closure. Retain the ID and membership history so
 /// downstream applications can reconcile, and never infer emptiness from membership count.
-pub async fn delete(db: &DatabaseConnection, actor: Uuid, id: Uuid, confirmation: &str) -> Result<()> {
+pub async fn delete(
+    db: &DatabaseConnection,
+    actor: Uuid,
+    id: Uuid,
+    confirmation: &str,
+) -> Result<()> {
     let txn = db.begin().await?;
     lock_organization(&txn, id).await?;
     let space = get(&txn, actor, id).await?;
@@ -516,9 +521,19 @@ pub async fn delete(db: &DatabaseConnection, actor: Uuid, id: Uuid, confirmation
     }
     // Keep the tenant row and ID as a tombstone; 'deleted' cannot be toggled back.
     exec(&txn, "UPDATE tenants SET status='deleted',slug=NULL,auth_version=auth_version+1,updated_at=now() WHERE id=$1",vec![id.into()]).await?;
-    exec(&txn, "UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND status='pending'",vec![id.into()]).await?;
+    exec(
+        &txn,
+        "UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND status='pending'",
+        vec![id.into()],
+    )
+    .await?;
     exec(&txn, "UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,now()),revoke_reason=COALESCE(revoke_reason,'tenant_deleted') WHERE tenant_id=$1",vec![id.into()]).await?;
-    exec(&txn, "DELETE FROM authorization_codes WHERE tenant_id=$1 AND consumed_at IS NULL",vec![id.into()]).await?;
+    exec(
+        &txn,
+        "DELETE FROM authorization_codes WHERE tenant_id=$1 AND consumed_at IS NULL",
+        vec![id.into()],
+    )
+    .await?;
     exec(&txn, "UPDATE authorization_requests SET completed_at=now() WHERE tenant_id=$1 AND completed_at IS NULL",vec![id.into()]).await?;
     audit(&txn, actor, "tenant.deleted", &id.to_string()).await?;
     txn.commit().await?;

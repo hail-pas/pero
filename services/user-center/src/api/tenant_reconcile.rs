@@ -1,51 +1,81 @@
 //! Scope-bounded reconciliation for clients with Account Sync enabled.
-use axum::{Form,extract::State,http::{HeaderMap,StatusCode,header},response::{IntoResponse,Response}};
-use sea_orm::{DbBackend,EntityTrait,FromQueryResult,Statement};
-use serde::{Deserialize,Serialize};
-use uuid::Uuid;
 use crate::state::app::AppState;
+use axum::{
+    Form,
+    extract::State,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use sea_orm::{DbBackend, EntityTrait, FromQueryResult, Statement};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct Request {
-    #[serde(default)]client_id:String,
-    client_secret:Option<String>,
-    after_tenant_id:Option<Uuid>,
-    after_user_id:Option<Uuid>,
+    #[serde(default)]
+    client_id: String,
+    client_secret: Option<String>,
+    after_tenant_id: Option<Uuid>,
+    after_user_id: Option<Uuid>,
 }
-#[derive(FromQueryResult,Serialize)]
+#[derive(FromQueryResult, Serialize)]
 pub struct MemberRow {
-    pub tenant_id:Uuid,
-    pub sub:Uuid,
-    pub tenant_kind:String,
-    pub tenant_status:String,
-    pub membership_status:String,
-    pub tenant_version:i64,
-    pub membership_version:i64,
-    pub active:bool,
+    pub tenant_id: Uuid,
+    pub sub: Uuid,
+    pub tenant_kind: String,
+    pub tenant_status: String,
+    pub membership_status: String,
+    pub tenant_version: i64,
+    pub membership_version: i64,
+    pub active: bool,
 }
 #[derive(Serialize)]
-struct Cursor {tenant_id:Uuid,user_id:Uuid}
-async fn client(s:&AppState,source:&pero_api_axum::extractor::ClientIp,headers:&HeaderMap,f:&mut Request)
-    ->Result<crate::db::entity::oauth_clients::Model,Response>{
-    let c=super::client_auth::authenticate(s,headers,&mut f.client_id,&mut f.client_secret,
-        &format!("reconcile:{}",source.for_rate_limit())).await?;
-    if c.r#type!=crate::db::enums::OauthClientType::Confidential || c.account_sync_uri.is_none(){
+struct Cursor {
+    tenant_id: Uuid,
+    user_id: Uuid,
+}
+async fn client(
+    s: &AppState,
+    source: &pero_api_axum::extractor::ClientIp,
+    headers: &HeaderMap,
+    f: &mut Request,
+) -> Result<crate::db::entity::oauth_clients::Model, Response> {
+    let c = super::client_auth::authenticate(
+        s,
+        headers,
+        &mut f.client_id,
+        &mut f.client_secret,
+        &format!("reconcile:{}", source.for_rate_limit()),
+    )
+    .await?;
+    if c.r#type != crate::db::enums::OauthClientType::Confidential || c.account_sync_uri.is_none() {
         return Err(StatusCode::FORBIDDEN.into_response());
     }
-    let app=crate::db::entity::apps::Entity::find_by_id(c.app_id).one(&s.db).await
+    let app = crate::db::entity::apps::Entity::find_by_id(c.app_id)
+        .one(&s.db)
+        .await
         .map_err(crate::web::util::dependency_error)?;
-    if !app.is_some_and(|a|!a.system && a.status==crate::db::enums::CommonStatus::Active){
+    if !app.is_some_and(|a| !a.system && a.status == crate::db::enums::CommonStatus::Active) {
         return Err(StatusCode::FORBIDDEN.into_response());
     }
     Ok(c)
 }
-fn no_cache(mut response:Response)->Response{
-    response.headers_mut().insert(header::CACHE_CONTROL,header::HeaderValue::from_static("no-store"));
-    response.headers_mut().insert(header::PRAGMA,header::HeaderValue::from_static("no-cache"));
+fn no_cache(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+        .headers_mut()
+        .insert(header::PRAGMA, header::HeaderValue::from_static("no-cache"));
     response
 }
-pub async fn memberships(State(s):State<AppState>,source:pero_api_axum::extractor::ClientIp,
-    headers:HeaderMap,Form(mut f):Form<Request>)->Response{
+pub async fn memberships(
+    State(s): State<AppState>,
+    source: pero_api_axum::extractor::ClientIp,
+    headers: HeaderMap,
+    Form(mut f): Form<Request>,
+) -> Response {
     let result=async {
         if f.after_tenant_id.is_some()!=f.after_user_id.is_some(){
             return Err(StatusCode::BAD_REQUEST.into_response());
@@ -60,11 +90,18 @@ pub async fn memberships(State(s):State<AppState>,source:pero_api_axum::extracto
         let next=if more{rows.last().map(|r|Cursor{tenant_id:r.tenant_id,user_id:r.sub})}else{None};
         Ok(axum::Json(serde_json::json!({"rows":rows,"next":next})).into_response())
     }.await;
-    no_cache(result.unwrap_or_else(|e|e))
+    no_cache(result.unwrap_or_else(|e| e))
 }
-#[derive(FromQueryResult)]struct AccountId{user_id:Uuid}
-pub async fn accounts(State(s):State<AppState>,source:pero_api_axum::extractor::ClientIp,
-    headers:HeaderMap,Form(mut f):Form<Request>)->Response{
+#[derive(FromQueryResult)]
+struct AccountId {
+    user_id: Uuid,
+}
+pub async fn accounts(
+    State(s): State<AppState>,
+    source: pero_api_axum::extractor::ClientIp,
+    headers: HeaderMap,
+    Form(mut f): Form<Request>,
+) -> Response {
     let result=async {
         if f.after_tenant_id.is_some(){return Err(StatusCode::BAD_REQUEST.into_response());}
         let c=client(&s,&source,&headers,&mut f).await?;
@@ -83,5 +120,5 @@ pub async fn accounts(State(s):State<AppState>,source:pero_api_axum::extractor::
         let next=if more{ids.last().map(|r|r.user_id)}else{None};
         Ok(axum::Json(serde_json::json!({"rows":rows,"next":next})).into_response())
     }.await;
-    no_cache(result.unwrap_or_else(|e|e))
+    no_cache(result.unwrap_or_else(|e| e))
 }

@@ -1,6 +1,8 @@
 //! Organization creation quotas govern creation only, never an existing organization's membership.
 use super::ManagementError as Error;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait,
+};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -73,11 +75,14 @@ pub async fn update(
     }
     let txn = db.begin().await?;
     super::permissions::require_super(&txn, actor).await?;
-    let valid = txn.query_one_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL",
-        [user.into()],
-    )).await?.is_some();
+    let valid = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL",
+            [user.into()],
+        ))
+        .await?
+        .is_some();
     if !valid {
         return Err(Error::Invalid("not_found"));
     }
@@ -85,13 +90,14 @@ pub async fn update(
         DbBackend::Postgres,
         "INSERT INTO tenant_creation_policies(user_id) VALUES($1) ON CONFLICT DO NOTHING",
         [user.into()],
-    )).await?;
+    ))
+    .await?;
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE tenant_creation_policies SET enabled=$2,max_tenants=$3,updated_by=$4,updated_at=now() WHERE user_id=$1",
         [user.into(),enabled.into(),max_tenants.into(),actor.session.user_id.into()],
     )).await?;
-    let details=serde_json::json!({"enabled":enabled,"max_tenants":max_tenants});
+    let details = serde_json::json!({"enabled":enabled,"max_tenants":max_tenants});
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status,details) SELECT id,username,'tenant.creation.policy.updated',$2,'success',200,$3 FROM users WHERE id=$1",
