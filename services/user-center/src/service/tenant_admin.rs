@@ -183,7 +183,12 @@ pub async fn promote_owner(
     txn.commit().await?;
     Ok(())
 }
-async fn audit<C: ConnectionTrait>(db: &C, actor: Uuid, action: &str, target: impl ToString) -> Result<()> {
+async fn audit<C: ConnectionTrait>(
+    db: &C,
+    actor: Uuid,
+    action: &str,
+    target: impl ToString,
+) -> Result<()> {
     db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,$2,$3,'success',200 FROM users WHERE id=$1",
         [actor.into(),action.into(),target.to_string().into()])).await?;
