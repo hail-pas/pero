@@ -178,10 +178,10 @@ pub async fn prune_excess(
             "UPDATE authorization_codes SET tenant_id=NULL,consumed_at=COALESCE(consumed_at,now()) WHERE tenant_id=$1",[tenant.into()])).await?;
         txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
             "UPDATE authorization_requests SET tenant_id=NULL,completed_at=COALESCE(completed_at,now()) WHERE tenant_id=$1",[tenant.into()])).await?;
-        // A tenant-scoped sync delivery is cascaded on deletion; a user-level
-        // resync survives and lets receiving apps reconcile removed memberships.
+        // The tenant identity must survive deletion in the outbox so clients
+        // can query its now-inactive membership, not merely resync the user.
         txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-            "INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint) SELECT c.id,m.user_id,'sync.requested',c.account_sync_uri FROM tenant_members m JOIN user_app_access a ON a.user_id=m.user_id AND a.status='active' JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=app.id WHERE m.tenant_id=$1 AND m.status='active' AND c.status='active' AND c.account_sync_uri IS NOT NULL AND (app.tenant_mode='both' OR app.tenant_mode='organization')",[tenant.into()])).await?;
+            "INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint) SELECT c.id,m.user_id,$1,'tenant.membership.changed',c.account_sync_uri FROM tenant_members m JOIN user_app_access a ON a.user_id=m.user_id AND a.status='active' JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=app.id WHERE m.tenant_id=$1 AND m.status='active' AND c.status='active' AND c.account_sync_uri IS NOT NULL AND (app.tenant_mode='both' OR app.tenant_mode='organization')",[tenant.into()])).await?;
         txn.execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "DELETE FROM tenants WHERE id=$1",
