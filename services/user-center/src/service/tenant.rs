@@ -252,10 +252,8 @@ pub async fn update_member(
         )
         .await?;
     }
-    if action == "remove" {
-        if let Some(creator) = creator {
-            super::tenant_policy::prune_excess(&txn, creator, actor, Some(tenant)).await?;
-        }
+    if action == "remove" && let Some(creator) = creator {
+        super::tenant_policy::prune_excess(&txn, creator, actor, Some(tenant)).await?;
     }
     audit(
         &txn,
