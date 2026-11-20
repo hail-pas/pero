@@ -65,7 +65,7 @@ export function Tenants({
               <Stack key={row.id} direction={{ xs: "column", sm: "row" }} spacing={2}
                 sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}>
                 <Box>
-                  <Typography fontWeight={600}>{row.name} ({row.slug || "—"})</Typography>
+                  <Typography sx={{ fontWeight: 600 }}>{row.name} ({row.slug || "—"})</Typography>
                   <Typography color="text.secondary" variant="body2">
                     {t("所有者")}：{row.owner_name || "—"} · {row.members}/{row.max_members} {t("名成员")} · {row.status}
                   </Typography>
@@ -97,7 +97,7 @@ export function Tenants({
         <Heading title={tenant.name} back="/dashboard/tenants"
           description={`${tenant.slug || "—"} · ${tenant.status} · ${t("所有者")}：${tenant.owner_name || "—"}`} />
         <Panel title={t("组织设置")}>
-          <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={2}>
+          <Stack direction={{ xs: "column", sm: "row" }} sx={{ alignItems: { sm: "center" } }} spacing={2}>
             <Typography>{t("成员")}：{tenant.members}/{tenant.max_members}</Typography>
             {tenant.status !== "deleted" && (
               <Button variant="outlined" onClick={() => editor(t("设置成员上限"),
@@ -123,8 +123,7 @@ export function Tenants({
           </Typography>
           <Stack spacing={1.5}>
             {apps.map(app => (
-              <Stack key={app.id} direction={{ xs:"column",sm:"row" }} alignItems={{ sm:"center" }}
-                justifyContent="space-between" spacing={1}>
+              <Stack key={app.id} direction={{ xs:"column",sm:"row" }} sx={{ alignItems: { sm:"center" }, justifyContent:"space-between" }} spacing={1}>
                 <Box><Typography>{app.name} ({app.code})</Typography>
                   <Typography variant="caption" color="text.secondary">
                     {app.organization_access === "open" ? t("允许所有组织") :
@@ -149,7 +148,7 @@ export function Tenants({
             }} sx={{ mb: 2 }} />
           <Stack spacing={2}>
             {members.rows.map(m => (
-              <Stack key={m.user_id} direction="row" alignItems="center" justifyContent="space-between">
+              <Stack key={m.user_id} direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
                 <Box><Typography>{m.name} ({m.username})</Typography>
                   <Typography color="text.secondary" variant="caption">{m.role}</Typography></Box>
                 {tenant.status !== "deleted" && m.role !== "owner" && (

@@ -74,6 +74,7 @@ pub async fn new_form(
         app_id: String::new(),
         form: AppFormData {
             tenant_mode: "personal".to_owned(),
+            organization_access: "open".to_owned(),
             ..Default::default()
         },
         error: String::new(),
