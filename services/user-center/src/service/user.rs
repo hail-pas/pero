@@ -104,7 +104,8 @@ pub async fn set_status(
     access.require_global(P::UsersStatusUpdate)?;
 
     if status != UserStatus::Active {
-        // Ensure active organizations retain an owner before disabling the account.
+        // Serialize creation before checking that no organization loses its last owner.
+        super::tenant_policy::lock_creator_creation(&txn, id).await?;
         super::tenant::ensure_other_active_owner(&txn, id).await?;
         super::admin::protect_last_super_admin(&txn, id).await?;
         super::enrollment::invalidate_sponsor(&txn, id).await?;

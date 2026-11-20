@@ -37,6 +37,18 @@ pub async fn read<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<TenantPolicy
     .ok_or(Error::Invalid("not_found"))
 }
 
+/// Serialize account closure or deactivation with organization creation without
+/// treating the creation quota as an organization governance permission.
+pub async fn lock_creator_creation<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<()> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT user_id FROM tenant_creation_policies WHERE user_id=$1 FOR UPDATE",
+        [user.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Lock the creator's policy before counting to serialize concurrent creations and quota updates.
 pub async fn authorize_create<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<()> {
     let policy = PolicyRow::find_by_statement(Statement::from_sql_and_values(
