@@ -4100,7 +4100,9 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
     let pending = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'quota-another@tenant.example','member',$2,$3,now()+interval '1 day')",
         vec![kept.id.into(),pero_utils::crypto::sha256_hex(&pending).into(),fixture.user.into()]).await;
-    crate::service::tenant::accept(db, another, &pending).await.unwrap();
+    crate::service::tenant::accept(db, another, &pending)
+        .await
+        .unwrap();
     // Nonempty organizations can still update their existing members and metadata.
     crate::service::tenant::rename(db, fixture.user, kept.id, "Still Managed")
         .await
@@ -4113,8 +4115,13 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
         .await
         .unwrap();
     assert_eq!(
-        crate::service::tenant::list(db, fixture.user).await.unwrap()
-            .iter().filter(|t| t.kind == "organization").count(), 3
+        crate::service::tenant::list(db, fixture.user)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|t| t.kind == "organization")
+            .count(),
+        3
     );
     fixture.cleanup().await;
 }

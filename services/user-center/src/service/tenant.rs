@@ -162,7 +162,7 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
     super::tenant_policy::authorize_create(&txn, user).await?;
     let verified = txn.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL AND (email_verified_at IS NOT NULL OR phone_verified_at IS NOT NULL)",
+        "SELECT id FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL AND (email_verified_at IS NOT NULL OR phone_verified_at IS NOT NULL) FOR SHARE",
         [user.into()],
     )).await?.is_some();
     if !verified {
