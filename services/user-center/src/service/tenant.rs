@@ -409,22 +409,20 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     let id: Uuid = row.try_get("", "id")?;
     let role: String = row.try_get("", "role")?;
     let status: String = row.try_get("", "status")?;
+    let joined = txn.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 AND status='active'",
+        [tenant.into(), user.into()],
+    )).await?.is_some();
     if status == "accepted" {
-        let joined = txn.query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 AND status='active'",
-            [tenant.into(), user.into()],
-        )).await?.is_some();
-        return if joined {
-            Ok(())
-        } else {
-            Err(Error::Invalid("invalid_invitation"))
-        };
+        return if joined { Ok(()) } else { Err(Error::Invalid("invalid_invitation")) };
     }
-    if !can_invite(&txn, tenant).await? {
-        return Err(Error::Invalid("tenant_member_limit"));
+    if !joined {
+        if !can_invite(&txn, tenant).await? {
+            return Err(Error::Invalid("tenant_member_limit"));
+        }
+        exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     }
-    exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=CASE WHEN tenant_members.status='active' THEN tenant_members.role ELSE EXCLUDED.role END,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     exec(
         &txn,
         "UPDATE tenant_invitations SET status='accepted',accepted_at=now() WHERE id=$1",

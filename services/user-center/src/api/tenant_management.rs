@@ -123,6 +123,29 @@ pub struct Invite {
     email: String,
     role: String,
 }
+pub async fn invitations(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
+    let user = match actor(&s, &h, Some(id), false).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match svc::invitations(&s.db, user, id).await {
+        Ok(rows) => Json(serde_json::json!({"rows":rows})).into_response(),
+        Err(e) => util::management_response(Err(e)),
+    }
+}
+
+pub async fn revoke_invitation(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path((id, invitation)): Path<(Uuid, Uuid)>,
+) -> Response {
+    let user = match actor(&s, &h, Some(id), false).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    util::management_response(svc::revoke_invite(&s.db, user, id, invitation).await)
+}
+
 pub async fn invite(
     State(s): State<AppState>,
     h: HeaderMap,

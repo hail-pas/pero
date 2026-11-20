@@ -29,6 +29,7 @@ pub struct MemberRow {
     pub membership_status: String,
     pub tenant_version: i64,
     pub membership_version: i64,
+    pub app_allowed: bool,
     pub active: bool,
 }
 #[derive(Serialize)]
@@ -40,13 +41,14 @@ async fn client(
     s: &AppState,
     source: &pero_api_axum::extractor::ClientIp,
     headers: &HeaderMap,
-    f: &mut Request,
+    client_id: &mut String,
+    client_secret: &mut Option<String>,
 ) -> Result<crate::db::entity::oauth_clients::Model, Response> {
     let c = super::client_auth::authenticate(
         s,
         headers,
-        &mut f.client_id,
-        &mut f.client_secret,
+        client_id,
+        client_secret,
         &format!("reconcile:{}", source.for_rate_limit()),
     )
     .await?;
@@ -82,9 +84,9 @@ pub async fn memberships(
         if f.after_tenant_id.is_some()!=f.after_user_id.is_some(){
             return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let c=client(&s,&source,&headers,&mut f).await?;
+        let c=client(&s,&source,&headers,&mut f.client_id,&mut f.client_secret).await?;
         let mut rows=MemberRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-            "SELECT m.tenant_id,m.user_id AS sub,t.name AS tenant_name,m.role AS membership_role,t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(m.status='active' AND t.status='active' AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND app.status='active' AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS active FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id JOIN users u ON u.id=m.user_id JOIN user_app_access a ON a.user_id=m.user_id JOIN apps app ON app.id=a.app_id WHERE a.app_id=$1 AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND ($2::uuid IS NULL OR (m.tenant_id,m.user_id)>($2::uuid,$3::uuid)) ORDER BY m.tenant_id,m.user_id LIMIT 101",
+            "SELECT m.tenant_id,m.user_id AS sub,t.name AS tenant_name,m.role AS membership_role,t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(app.status='active' AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS app_allowed,(m.status='active' AND t.status='active' AND u.status='active' AND u.deleted_at IS NULL AND a.status='active' AND app.status='active' AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS active FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id JOIN users u ON u.id=m.user_id JOIN user_app_access a ON a.user_id=m.user_id JOIN apps app ON app.id=a.app_id WHERE a.app_id=$1 AND ($2::uuid IS NULL OR (m.tenant_id,m.user_id)>($2::uuid,$3::uuid)) ORDER BY m.tenant_id,m.user_id LIMIT 101",
             [c.app_id.into(),f.after_tenant_id.into(),f.after_user_id.into()]))
             .all(&s.db).await.map_err(crate::web::util::dependency_error)?;
         let more=rows.len()>100;
@@ -106,7 +108,7 @@ pub async fn accounts(
 ) -> Response {
     let result=async {
         if f.after_tenant_id.is_some(){return Err(StatusCode::BAD_REQUEST.into_response());}
-        let c=client(&s,&source,&headers,&mut f).await?;
+        let c=client(&s,&source,&headers,&mut f.client_id,&mut f.client_secret).await?;
         let ids=AccountId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
             "SELECT user_id FROM user_app_access WHERE app_id=$1 AND ($2::uuid IS NULL OR user_id>$2::uuid) ORDER BY user_id LIMIT 101",
             [c.app_id.into(),f.after_user_id.into()])).all(&s.db).await
@@ -122,5 +124,81 @@ pub async fn accounts(
         let next=if more{ids.last().map(|r|r.user_id)}else{None};
         Ok(axum::Json(serde_json::json!({"rows":rows,"next":next})).into_response())
     }.await;
+    no_cache(result.unwrap_or_else(|e| e))
+}
+
+#[derive(Deserialize)]
+pub struct TenantInput {
+    #[serde(default)]
+    client_id: String,
+    client_secret: Option<String>,
+    tenant_id: Uuid,
+}
+
+#[derive(FromQueryResult, Serialize)]
+pub struct TenantRow {
+    pub tenant_id: Uuid,
+    pub tenant_kind: String,
+    pub tenant_name: String,
+    pub slug: Option<String>,
+    pub tenant_status: String,
+    pub max_members: i32,
+    pub member_count: i64,
+    pub app_allowed: bool,
+    pub active: bool,
+}
+
+// Historical tenants remain visible to a previously admitted application.
+// Changes in tenant mode and organization admission are reported as active=false.
+const TENANT_SELECT: &str = "SELECT t.id AS tenant_id,t.kind AS tenant_kind,t.name AS tenant_name,t.slug::text AS slug,t.status AS tenant_status,t.max_members,(SELECT count(*)::bigint FROM tenant_members m WHERE m.tenant_id=t.id AND m.status='active') AS member_count,(app.status='active' AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS app_allowed,(t.status='active' AND app.status='active' AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS active FROM tenants t JOIN apps app ON app.id=$1 WHERE EXISTS(SELECT 1 FROM tenant_members m JOIN user_app_access a ON a.user_id=m.user_id AND a.app_id=app.id WHERE m.tenant_id=t.id)";
+
+pub async fn tenant(
+    State(s): State<AppState>,
+    source: pero_api_axum::extractor::ClientIp,
+    headers: HeaderMap,
+    Form(mut f): Form<TenantInput>,
+) -> Response {
+    let result = async {
+        let c = client(&s, &source, &headers, &mut f.client_id, &mut f.client_secret).await?;
+        let row = TenantRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("{TENANT_SELECT} AND t.id=$2"),
+            [c.app_id.into(), f.tenant_id.into()],
+        ))
+        .one(&s.db)
+        .await
+        .map_err(crate::web::util::dependency_error)?
+        .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
+        Ok(axum::Json(row).into_response())
+    }
+    .await;
+    no_cache(result.unwrap_or_else(|e| e))
+}
+
+pub async fn tenants(
+    State(s): State<AppState>,
+    source: pero_api_axum::extractor::ClientIp,
+    headers: HeaderMap,
+    Form(mut f): Form<Request>,
+) -> Response {
+    let result = async {
+        if f.after_user_id.is_some() {
+            return Err(StatusCode::BAD_REQUEST.into_response());
+        }
+        let c = client(&s, &source, &headers, &mut f.client_id, &mut f.client_secret).await?;
+        let mut rows = TenantRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("{TENANT_SELECT} AND ($2::uuid IS NULL OR t.id>$2::uuid) ORDER BY t.id LIMIT 101"),
+            [c.app_id.into(), f.after_tenant_id.into()],
+        ))
+        .all(&s.db)
+        .await
+        .map_err(crate::web::util::dependency_error)?;
+        let more = rows.len() > 100;
+        rows.truncate(100);
+        let next = if more { rows.last().map(|row| row.tenant_id) } else { None };
+        Ok(axum::Json(serde_json::json!({"rows": rows, "next": next})).into_response())
+    }
+    .await;
     no_cache(result.unwrap_or_else(|e| e))
 }
