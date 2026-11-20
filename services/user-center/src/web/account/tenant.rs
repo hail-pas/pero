@@ -155,7 +155,10 @@ pub async fn leave(
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
-    util::management_response(svc::leave(&s.db, a.user.id, id).await)
+    match svc::leave(&s.db, a.user.id, id).await {
+        Ok(()) => axum::Json(serde_json::json!({"redirect": "/account/tenants"})).into_response(),
+        Err(error) => util::management_response(Err(error)),
+    }
 }
 pub async fn invite(
     State(s): State<AppState>,
@@ -260,7 +263,10 @@ pub async fn delete(
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
-    util::management_response(svc::delete(&s.db, a.user.id, id, &f.confirmation).await)
+    match svc::delete(&s.db, a.user.id, id, &f.confirmation).await {
+        Ok(()) => axum::Json(serde_json::json!({"redirect": "/account/tenants"})).into_response(),
+        Err(error) => util::management_response(Err(error)),
+    }
 }
 
 #[derive(Deserialize)]
