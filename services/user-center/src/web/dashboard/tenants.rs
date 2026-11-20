@@ -12,8 +12,9 @@ pub async fn list(State(s):State<AppState>,jar:CookieJar,admin:AdminContext,Quer
 pub async fn detail(State(s):State<AppState>,jar:CookieJar,admin:AdminContext,Path(id):Path<Uuid>,Query(filter):Query<svc::MemberFilter>)->Response{
     let tenant=match svc::get(&s.db,id).await{Ok(v)=>v,Err(e)=>return util::management_response(Err(e))};
     let members=match svc::members(&s.db,id,&filter).await{Ok(v)=>v,Err(e)=>return util::management_response(Err(e))};
+    let apps=match svc::apps(&s.db,id).await{Ok(v)=>v,Err(e)=>return util::management_response(Err(e))};
     let page=AdminPage::new(&s,jar,admin);
-    util::view_response("TenantAdminDetailView",serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"tenant":tenant,"members":members}),page.jar)
+    util::view_response("TenantAdminDetailView",serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"tenant":tenant,"members":members,"apps":apps}),page.jar)
 }
 #[derive(Deserialize)]pub struct Limit{csrf_token:String,max_members:i32}
 pub async fn member_limit(State(s):State<AppState>,jar:CookieJar,admin:AdminContext,Path(id):Path<Uuid>,Form(f):Form<Limit>)->Response{
@@ -27,4 +28,12 @@ pub async fn promote_owner(State(s):State<AppState>,jar:CookieJar,admin:AdminCon
 pub async fn toggle(State(s):State<AppState>,jar:CookieJar,admin:AdminContext,Path(id):Path<Uuid>,Form(f):Form<util::CsrfOnly>)->Response{
     if let Some(e)=util::verify_csrf_or_json_error(&jar,&f.csrf_token,&s){return e;}
     util::management_response(crate::service::tenant::toggle_status_admin(&s.db,&admin.actor(&s),id).await)
+}
+
+#[derive(Deserialize)]
+pub struct Grant {csrf_token:String,action:String}
+pub async fn app_grant(State(s):State<AppState>,jar:CookieJar,admin:AdminContext,Path((id,app)):Path<(Uuid,Uuid)>,Form(f):Form<Grant>)->Response{
+    if let Some(e)=util::verify_csrf_or_json_error(&jar,&f.csrf_token,&s){return e;}
+    let allow=match f.action.as_str(){"grant"=>true,"revoke"=>false,_=>return pero_api_axum::json_error("invalid_request")};
+    util::management_response(svc::set_app_grant(&s.db,&admin.actor(&s),id,app,allow).await)
 }

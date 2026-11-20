@@ -48,6 +48,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/dashboard/tenants", get(tenants::list))
         .route("/dashboard/tenants/{id}", get(tenants::detail))
         .route("/dashboard/tenants/{id}/member-limit", post(tenants::member_limit))
+        .route("/dashboard/tenants/{id}/apps/{app}", post(tenants::app_grant))
         .route("/dashboard/tenants/{id}/owner/{user}", post(tenants::promote_owner))
         .route("/dashboard/tenants/{id}/toggle", post(tenants::toggle))
         .route("/dashboard/audit", get(audit::list))

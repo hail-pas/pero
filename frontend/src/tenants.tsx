@@ -91,7 +91,7 @@ export function Tenants({
   }
 
   if (view === "TenantAdminDetailView") {
-    const { tenant, members } = data;
+    const { tenant, members, apps } = data;
     return (
       <>
         <Heading title={tenant.name} back="/dashboard/tenants"
@@ -116,6 +116,31 @@ export function Tenants({
           <Typography sx={{ mt: 2 }} color="text.secondary" variant="body2">
             {t("降低成员上限不会移除现有成员，达到上限后不再接受新成员。")}
           </Typography>
+        </Panel>
+        <Panel title={t("应用准入")}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {t("仅控制组织是否允许进入应用，业务权限与业务数据由应用自身管理。")}
+          </Typography>
+          <Stack spacing={1.5}>
+            {apps.map(app => (
+              <Stack key={app.id} direction={{ xs:"column",sm:"row" }} alignItems={{ sm:"center" }}
+                justifyContent="space-between" spacing={1}>
+                <Box><Typography>{app.name} ({app.code})</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {app.organization_access === "open" ? t("允许所有组织") :
+                      app.granted ? t("已开通") : t("未开通")} · {app.status}
+                  </Typography></Box>
+                {tenant.status !== "deleted" && app.organization_access === "restricted" &&
+                  <Button variant="outlined" color={app.granted ? "error" : "primary"}
+                    onClick={() => ask(t(app.granted ? "撤销应用准入" : "开通应用"),
+                      `/dashboard/tenants/${tenant.id}/apps/${app.id}`,
+                      {action:app.granted ? "revoke" : "grant"})}>
+                    {t(app.granted ? "撤销" : "开通")}
+                  </Button>}
+              </Stack>
+            ))}
+            {apps.length === 0 && <Typography color="text.secondary">{t("当前没有组织型应用")}</Typography>}
+          </Stack>
         </Panel>
         <Panel title={t("组织成员")}>
           <TextField size="small" label={t("搜索成员（回车）")} defaultValue={members.q}

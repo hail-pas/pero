@@ -83,3 +83,54 @@ async fn audit<C:ConnectionTrait>(db:&C,actor:Uuid,action:&str,tenant:Uuid)->Res
         [actor.into(),action.into(),tenant.to_string().into()])).await?;
     Ok(())
 }
+
+#[derive(FromQueryResult,Serialize)]
+pub struct AppAccess {
+    pub id:Uuid,
+    pub name:String,
+    pub code:String,
+    pub status:String,
+    pub organization_access:String,
+    pub granted:bool,
+}
+pub async fn apps<C:ConnectionTrait>(db:&C,tenant:Uuid)->Result<Vec<AppAccess>> {
+    Ok(AppAccess::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT a.id,a.name,a.code::text,a.status::text,a.organization_access,EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=$1 AND g.app_id=a.id) AS granted FROM apps a WHERE NOT a.system AND a.tenant_mode IN ('organization','both') ORDER BY a.name,a.id",
+        [tenant.into()])).all(db).await?)
+}
+
+/// The grant is organizational admission only. Changing it advances this tenant's
+/// authorization epoch so a previously revoked grant cannot revive old JWTs.
+pub async fn set_app_grant(db:&DatabaseConnection,actor:&super::permissions::Actor,tenant:Uuid,app:Uuid,allow:bool)->Result<()> {
+    let txn=db.begin().await?;
+    super::permissions::require_super(&txn,actor).await?;
+    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id FROM apps WHERE id=$1 AND NOT system AND tenant_mode IN ('organization','both') FOR SHARE",
+        [app.into()])).await?.ok_or(Error::Invalid("invalid_app"))?;
+    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status<>'deleted' FOR UPDATE",
+        [tenant.into()])).await?.ok_or(Error::Invalid("not_found"))?;
+    let changed=if allow {
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "INSERT INTO tenant_app_grants(tenant_id,app_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+            [tenant.into(),app.into()])).await?.rows_affected()
+    } else {
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "DELETE FROM tenant_app_grants WHERE tenant_id=$1 AND app_id=$2",
+            [tenant.into(),app.into()])).await?.rows_affected()
+    };
+    if changed>0 {
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE tenants SET auth_version=auth_version+1,updated_at=now() WHERE id=$1",
+            [tenant.into()])).await?;
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_app_admission_changed' WHERE tenant_id=$1 AND app_id=$2 AND revoked_at IS NULL",
+            [tenant.into(),app.into()])).await?;
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "DELETE FROM authorization_codes WHERE tenant_id=$1 AND app_id=$2 AND consumed_at IS NULL",
+            [tenant.into(),app.into()])).await?;
+    }
+    audit(&txn,actor.session.user_id,if allow{"tenant.app.granted"}else{"tenant.app.revoked"},tenant).await?;
+    txn.commit().await?;
+    Ok(())
+}
