@@ -1,5 +1,9 @@
 //! Basic organization governance. Business roles and data remain application-owned.
 use super::ManagementError as Error;
+use pero_cache_redis::{
+    rate_limit::{RateLimitError, enforce_rate_limit},
+    rate_limit_key::{rl_tenant_invite_actor, rl_tenant_invite_recipient},
+};
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement,
     TransactionTrait,
@@ -278,6 +282,20 @@ pub async fn invite(
     let actor_role = governance(&txn, user, id).await?;
     if role == "admin" && actor_role != "owner" {
         return Err(Error::Invalid("forbidden"));
+    }
+    // Bound notification abuse both per sender and recipient. Hash the email in cache keys.
+    let actor_key = rl_tenant_invite_actor
+        .key(&user.to_string())
+        .map_err(Error::Credential)?;
+    let recipient_key = rl_tenant_invite_recipient
+        .key(&pero_utils::crypto::sha256_hex(&email))
+        .map_err(Error::Credential)?;
+    for (key, limit) in [(&actor_key, 10), (&recipient_key, 3)] {
+        match enforce_rate_limit(&state.cache, key, limit).await {
+            Ok(()) => {}
+            Err(RateLimitError::Denied { .. }) => return Err(Error::Invalid("rate_limited")),
+            Err(RateLimitError::Redis(error)) => return Err(Error::Credential(error)),
+        }
     }
     let token = pero_utils::crypto::generate_token();
     let hash = pero_utils::crypto::sha256_hex(&token);
