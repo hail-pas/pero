@@ -112,7 +112,7 @@ FOR EACH ROW EXECUTE FUNCTION enqueue_tenant_status_sync();
 -- Existing application grants and newly configured sync receivers must also
 -- receive the tenant relationships already in place at the time of admission.
 -- Otherwise, only subsequent membership changes would be discoverable.
-CREATE OR REPLACE FUNCTION enqueue_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE OR REPLACE FUNCTION enqueue_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status THEN RETURN NEW; END IF;
     INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
@@ -132,9 +132,9 @@ BEGIN
           AND (app.tenant_mode='both' OR app.tenant_mode=t.kind);
     END IF;
     RETURN NEW;
-END $;
+END $$;
 
-CREATE OR REPLACE FUNCTION configure_account_sync() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE OR REPLACE FUNCTION configure_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='UPDATE' AND (OLD.account_sync_uri,OLD.scopes,OLD.status)
         IS NOT DISTINCT FROM (NEW.account_sync_uri,NEW.scopes,NEW.status) THEN RETURN NEW; END IF;
@@ -156,7 +156,7 @@ BEGIN
         END IF;
     END IF;
     RETURN NEW;
-END $;
+END $$;
 
 
 -- Tenant eligibility also changes when an application switches modes or is
