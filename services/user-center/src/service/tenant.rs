@@ -234,7 +234,7 @@ pub async fn update_member(
         // access immediately after removal. The tenant lock also serializes acceptance.
         exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND email=(SELECT email FROM users WHERE id=$2) AND status='pending'",vec![tenant.into(),target.into()]).await?;
         exec(&txn,"UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_member_removed' WHERE tenant_id=$1 AND user_id=$2 AND revoked_at IS NULL",vec![tenant.into(),target.into()]).await?;
-        exec(&txn,"UPDATE authorization_codes SET consumed_at=now() WHERE tenant_id=$1 AND user_id=$2 AND consumed_at IS NULL",vec![tenant.into(),target.into()]).await?;
+        exec(&txn,"DELETE FROM authorization_codes WHERE tenant_id=$1 AND user_id=$2 AND consumed_at IS NULL",vec![tenant.into(),target.into()]).await?;
     } else {
         exec(
             &txn,
@@ -434,7 +434,7 @@ async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uu
     .await?;
     exec(
         db,
-        "UPDATE authorization_codes SET consumed_at=now() WHERE tenant_id=$1 AND consumed_at IS NULL",
+        "DELETE FROM authorization_codes WHERE tenant_id=$1 AND consumed_at IS NULL",
         vec![tenant.into()],
     )
     .await?;
