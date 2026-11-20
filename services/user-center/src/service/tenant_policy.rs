@@ -87,8 +87,11 @@ pub async fn may_add_members<C: ConnectionTrait>(db: &C, tenant: Uuid) -> Result
     let Some(creator) = creator(db, tenant).await? else {
         return Ok(false);
     };
-    let policy = read(db, creator).await?;
-    Ok(policy.enabled && policy.tenant_count <= i64::from(policy.max_tenants))
+    match read(db, creator).await {
+        Ok(policy) => Ok(policy.enabled && policy.tenant_count <= i64::from(policy.max_tenants)),
+        Err(Error::Invalid("not_found")) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 pub async fn authorize_create<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<()> {
@@ -112,7 +115,14 @@ pub async fn authorize_members<C: ConnectionTrait>(db: &C, creator: Option<Uuid>
         .await?
         .filter(|p| p.enabled)
         .ok_or(Error::Invalid("tenant_expansion_disabled"))?;
-    if count(db, user).await? > i64::from(policy.max_tenants) {
+    // The creator may have been deleted since the policy was granted.
+    let current = read(db, user)
+        .await
+        .map_err(|error| match error {
+            Error::Invalid("not_found") => Error::Invalid("tenant_expansion_disabled"),
+            error => error,
+        })?;
+    if current.tenant_count > i64::from(policy.max_tenants) {
         return Err(Error::Invalid("tenant_creation_limit"));
     }
     Ok(())
