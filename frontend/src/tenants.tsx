@@ -5,7 +5,10 @@ import {
   CardContent,
   Chip,
   Divider,
+  MenuItem,
+  Pagination,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
@@ -16,6 +19,7 @@ import { t, useLocale } from "./i18n";
 
 type TenantPage = ViewEnvelope<
   | "TenantAdminView"
+  | "TenantAdminDetailView"
   | "TenantListView"
   | "TenantDetailView"
   | "TenantInvitationView"
@@ -31,46 +35,110 @@ export function Tenants({
   useLocale();
   const { view, data } = page;
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search: locationSearch } = useLocation();
+  function setQuery(key: string, value: string) {
+    const params = new URLSearchParams(locationSearch);
+    if (value) params.set(key, value); else params.delete(key);
+    if (key !== "page" && key !== "member_page") params.delete(key.startsWith("member_") ? "member_page" : "page");
+    navigate(`${pathname}?${params.toString()}`);
+  }
+
 
   if (view === "TenantAdminView") {
     return (
       <>
-        <Heading
-          title={t("租户管理")}
-          description={t("管理组织租户的基本状态；业务权限和资源由应用自行管理。")}
-        />
+        <Heading title={t("租户管理")} description={t("统一查看组织、调整成员上限与处理所有者问题")} />
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
+          <TextField size="small" label={t("搜索组织（回车）")} defaultValue={data.tenants.q}
+            key={data.tenants.q} onKeyDown={e => {
+              if (e.key === "Enter") setQuery("q", (e.target as HTMLInputElement).value);
+            }} />
+          <TextField select size="small" label={t("状态")} value={data.tenants.status}
+            onChange={e => setQuery("status",e.target.value)} sx={{ minWidth: 140 }}>
+            <MenuItem value="">{t("全部")}</MenuItem>
+            {["active","disabled","deleted"].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+          </TextField>
+        </Stack>
         <Panel title={t("组织租户")}>
           <Stack spacing={2}>
-            {data.tenants.map((row) => (
-              <Stack
-                key={row.id}
-                direction="row"
-                sx={{ alignItems: "center", justifyContent: "space-between" }}
-              >
+            {data.tenants.rows.map(row => (
+              <Stack key={row.id} direction={{ xs: "column", sm: "row" }} spacing={2}
+                sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}>
                 <Box>
-                  <Typography sx={{ fontWeight: 600 }}>
-                    {row.name} ({row.slug || "—"})
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {row.members} {t("名成员")} · {row.status}
+                  <Typography fontWeight={600}>{row.name} ({row.slug || "—"})</Typography>
+                  <Typography color="text.secondary" variant="body2">
+                    {t("所有者")}：{row.owner_name || "—"} · {row.members}/{row.max_members} {t("名成员")} · {row.status}
                   </Typography>
                 </Box>
-                <Button
-                  color={row.status === "active" ? "error" : "primary"}
-                  variant="outlined"
-                  onClick={() =>
-                    ask(
-                      t(row.status === "active" ? "停用组织" : "恢复组织"),
-                      `/dashboard/tenants/${row.id}/toggle`,
-                    )
-                  }
-                >
-                  {t(row.status === "active" ? "停用" : "恢复")}
-                </Button>
+                <Stack direction="row" spacing={1}>
+                  <Button component={RouterLink} to={`/dashboard/tenants/${row.id}`}>{t("详情")}</Button>
+                  {row.status !== "deleted" && <Button variant="outlined"
+                    color={row.status === "active" ? "error" : "primary"}
+                    onClick={() => ask(t(row.status === "active" ? "停用组织" : "恢复组织"),
+                      `/dashboard/tenants/${row.id}/toggle`)}>
+                    {t(row.status === "active" ? "停用" : "恢复")}
+                  </Button>}
+                </Stack>
               </Stack>
             ))}
+            {data.tenants.rows.length === 0 && <Typography color="text.secondary">{t("没有匹配的组织")}</Typography>}
           </Stack>
+        </Panel>
+        <Pagination count={Math.max(1, data.tenants.total_pages)} page={data.tenants.page}
+          onChange={(_e, p) => setQuery("page", String(p))} sx={{ mt: 2 }} />
+      </>
+    );
+  }
+
+  if (view === "TenantAdminDetailView") {
+    const { tenant, members } = data;
+    return (
+      <>
+        <Heading title={tenant.name} back="/dashboard/tenants"
+          description={`${tenant.slug || "—"} · ${tenant.status} · ${t("所有者")}：${tenant.owner_name || "—"}`} />
+        <Panel title={t("组织设置")}>
+          <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={2}>
+            <Typography>{t("成员")}：{tenant.members}/{tenant.max_members}</Typography>
+            {tenant.status !== "deleted" && (
+              <Button variant="outlined" onClick={() => editor(t("设置成员上限"),
+                `/dashboard/tenants/${tenant.id}/member-limit`, [
+                  { name:"max_members", label:t("成员上限"), type:"number", required:true },
+                ], { max_members:String(tenant.max_members) })}>{t("修改上限")}</Button>
+            )}
+            {tenant.status !== "deleted" && (
+              <Button color={tenant.status === "active" ? "error" : "primary"}
+                onClick={() => ask(t(tenant.status === "active" ? "停用组织" : "恢复组织"),
+                  `/dashboard/tenants/${tenant.id}/toggle`)}>
+                {t(tenant.status === "active" ? "停用" : "恢复")}
+              </Button>
+            )}
+          </Stack>
+          <Typography sx={{ mt: 2 }} color="text.secondary" variant="body2">
+            {t("降低成员上限不会移除现有成员，达到上限后不再接受新成员。")}
+          </Typography>
+        </Panel>
+        <Panel title={t("组织成员")}>
+          <TextField size="small" label={t("搜索成员（回车）")} defaultValue={members.q}
+            key={members.q} onKeyDown={e => {
+              if (e.key === "Enter") setQuery("member_q",(e.target as HTMLInputElement).value);
+            }} sx={{ mb: 2 }} />
+          <Stack spacing={2}>
+            {members.rows.map(m => (
+              <Stack key={m.user_id} direction="row" alignItems="center" justifyContent="space-between">
+                <Box><Typography>{m.name} ({m.username})</Typography>
+                  <Typography color="text.secondary" variant="caption">{m.role}</Typography></Box>
+                {tenant.status !== "deleted" && m.role !== "owner" && (
+                  <Button onClick={() => ask(t("设为组织所有者"),
+                    `/dashboard/tenants/${tenant.id}/owner/${m.user_id}`)}>
+                    {t("设为所有者")}
+                  </Button>
+                )}
+              </Stack>
+            ))}
+            {members.rows.length === 0 && <Typography color="text.secondary">{t("没有匹配的成员")}</Typography>}
+          </Stack>
+          <Pagination count={Math.max(1,members.total_pages)} page={members.page}
+            onChange={(_e,p) => setQuery("member_page",String(p))} sx={{ mt: 2 }}/>
         </Panel>
       </>
     );
@@ -206,6 +274,7 @@ export function Tenants({
         <Stack direction="row" spacing={2} sx={{ alignItems: "center", mb: 2 }}>
           <Chip label={tenant.role} />
           <Chip variant="outlined" label={tenant.status} />
+          {isOrganization && <Chip variant="outlined" label={`${t("成员上限")}：${members.length}/${tenant.max_members}`} />}
           {tenant.slug && (
             <Typography color="text.secondary">/{tenant.slug}</Typography>
           )}
@@ -297,7 +366,7 @@ export function Tenants({
         >
           {!can_invite && canManage && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {t("组织已停用，恢复后可以继续邀请成员。")}
+              {t("组织已停用或达到成员上限，无法继续邀请成员。")}
             </Typography>
           )}
           <Stack spacing={1.5}>
