@@ -279,6 +279,14 @@ pub async fn close_account(
         vec![user.id.into()],
     )
     .await?;
+    // A personal workspace is named from the user's username or nickname at registration.
+    // Scrub that copy too when closing the account; keep the tenant ID for referential integrity.
+    super::security::execute(
+        &txn,
+        "UPDATE tenants SET name='Deleted account',updated_at=now() WHERE kind='personal' AND owner_user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
     super::security::execute(
         &txn,
         "DELETE FROM user_consents WHERE user_id=$1",
