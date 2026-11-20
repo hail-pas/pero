@@ -9,7 +9,7 @@ const { chromium } = require("@playwright/test");
     const context = await browser.newContext({ locale: "zh-CN" });
     const page = await context.newPage();
     const login = async (username) => {
-      await page.goto(`${base}/account/login`);
+      await page.goto(`${base}/account/login?redirect=%2Faccount%2Fprofile`);
       await page.locator("[name=identifier]").fill(username);
       await page.locator("[name=password]").fill("BrowserTest123!");
       await Promise.all([
