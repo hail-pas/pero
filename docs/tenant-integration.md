@@ -1,37 +1,63 @@
-# Pero 多租户业务接入约定
+# Pero 用户、租户与应用接入
 
-## 认证与租户边界
+## 职责与权限边界
 
-Pero 负责统一用户身份、个人和组织租户及成员关系；业务应用自行维护资源隔离、业务角色和 ACL。所有业务记录使用非空 `tenant_id`，严禁直接信任未经 Access Token 比对的客户端 `X-Tenant-ID`。
+Pero 维护统一用户身份、登录与会话、个人/组织空间及 owner/admin/member 组织治理角色。业务资源、业务角色和数据 ACL **不在** Pero 维护。
 
-使用 OAuth2 Authorization Code + PKCE，`/oauth2/authorize` 接收可选 `tenant_id=<UUID>`。个人应用默认选个人空间；多组织应用在用户身份认证后选择租户，`prompt=none` 在上下文不唯一时返回 `interaction_required`。SSO 保持用户级，不把租户存进共享 SSO 会话。
+每个业务数据表独立保存非空 `tenant_id`，请求中的租户标识必须与已验证 Access Token 的 `tenant_id` 匹配。仅接受 `typ=at+jwt`、可信 `iss`、预期 `aud`、有效签名及 `exp` 的 Access Token；ID Token 不用于业务接口鉴权。需要即时撤销判断时调用 `POST /api/oauth2/introspect`，本地 JWT 校验无法保证实时失效。
 
-业务 API 必须检验 Access Token 签名、`typ=at+jwt`、`iss`、`aud`、`exp`，并将请求租户与可信 `tenant_id` 精确比对。ID Token 只供登录客户端使用，不能作为业务 API Bearer。Pero 的 owner/admin/member 仅表示组织治理角色，不是业务权限。跨组织切换应重新授权，不能凭 Refresh Token 修改租户。
+SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不能切换租户。个人空间随用户创建，无组织治理能力。非系统应用按照 `tenant_mode` 选择个人/组织/两者。
 
-```sql
--- 即使外部传入全局资源 UUID，读写也必须额外限定已验证租户
-SELECT id,title FROM documents WHERE tenant_id=$1 AND id=$2;
-UPDATE documents SET title=$3 WHERE tenant_id=$1 AND id=$2;
-```
+## 组织创建资格与成员上限
 
-## 在线撤权与同步
+平台超级管理员在用户详情管理是否允许创建组织、用户最多可创建多少个组织。配额只约束**新组织创建**，仅计算该用户已创建且未注销的组织；转让 Owner 或降低创建额度，均不影响已有组织的邀请、成员与应用接入。
 
-对即时撤权敏感的接口使用 `POST /api/oauth2/introspect` 查询当前 Token 有效性；离线 JWT 仅在过期前做签名校验，不能保证即时失效。成员移除、租户停用会使相应版本的凭据失效，不影响同一用户在其他租户的授权。
+每个组织有独立成员上限 `max_members`（初始值 100，平台超级管理员可设置 1–100000）。包含 Owner/Admin/Member 的**有效成员**；不把已移除成员计入。组织状态为 active 且有效成员数小于上限时才能邀请；接受邀请时在组织锁下再次校验，防止并发超额。降低上限不会删除或降级已有成员；超过上限只阻止新增成员，保留已有成员操作。已发送但未接受的邀请在名额用尽后不能使用，需释放名额或增加上限。
 
-仅限配置 Account Sync URI 的非系统应用 confidential 客户端，通过 `POST /api/tenants/membership/sync` 携带 `sub`、`tenant_id` 查询当前成员快照，返回 `active`、`tenant_kind`、`tenant_status`、`membership_status`、`tenant_version`、`membership_version`。不可查询其他用户在无关租户的成员信息。
+## 组织生命周期
 
-在现有签名 Account Sync 投递队列上新增 `tenant.membership.changed`，接收方需验证事件签名、aud、过期时间、jti 去重，并重新获取当前快照，不能依据消息送达顺序恢复旧状态。原 `membership.granted/revoked` 仍仅表示用户应用准入，不等于租户成员变更。
+- **active**：Owner/Admin 按其治理角色管理成员；Owner 可改名、停用与恢复组织。
+- **disabled**：保留组织及成员，拒绝新邀请、接受邀请和业务授权；可由 Owner 或平台超级管理员恢复，旧租户授权不会恢复。
+- **deleted**：只允许 Owner 通过组织标识确认主动解散，且组织已没有其他有效成员。解散后不可恢复；保留租户 ID、成员历史与审计记录以供下游对账，释放 slug；撤销租户令牌、待用授权码和未接受邀请，并发送状态变更事件。业务系统仍自行决定业务数据保留与清理。
+- 平台后台 `/dashboard/tenants` 提供分页搜索、状态过滤、成员检索、组织成员上限配置、所有者应急提升、组织应用准入和停用/恢复。平台管理员不因这些操作自动获得业务数据访问权。
 
-## 运维入口
+## 应用与组织准入
 
-- 用户个人/组织管理：`/account/tenants`；组织 owner 可停用和恢复组织，组织 admin 仅可管理普通成员和邀请。
-- 平台运维：`/dashboard/tenants`；超级管理员权限不会自动授予组织的业务数据权限。
-- 存量非系统应用的未绑定租户授权与刷新凭据在迁移时失效，需重新授权；系统应用登录仍保持无租户上下文。
+`apps.tenant_mode` 表示应用接受 personal、organization 或 both。`apps.organization_access` 表示组织准入方式：
 
-## 组织创建配额
+- `open`（默认）：满足应用准入资格的组织成员均可授权进入。
+- `restricted`：必须由平台超级管理员在组织详情显式授予应用准入；组织被移出准入列表时无法再通过该组织登录应用。
+- 个人空间不受 `organization_access` 限制，但仍需应用本身允许 personal 模式及用户具备应用访问资格。
 
-平台超级管理员在「用户详情 → 组织创建权限」开启用户创建组织的权限并设置非负整数上限。未配置时默认禁止创建。配额只统计该用户创建的组织（包括已停用组织），不统计个人空间；所有者转移不改变创建人和配额归属。
+准入关系仅回答“这个组织是否允许进入应用”，不授予具体业务权限。修改应用全局准入策略会撤销该应用原有授权；修改单个组织的应用准入，推进该组织的认证版本并撤销该组织在目标应用中的未失效刷新令牌，确保撤销后重授不能让旧 JWT 恢复；这也会使该组织的其他应用的旧租户版本失效，需要重新授权。
 
-新建组织必须具有权限且已创建数量小于上限。禁止权限或超出上限时，不得发出新邀请、接受尚未加入组织的邀请；已经加入的成员仍可变更角色、退出或被移除，组织更名与启停不受影响。正常达到上限时，只阻止新建组织，不阻止现有组织邀请成员。
+## 面向业务系统的管理 API
 
-管理员调低配额时，后台在同一事务中优先删除超出额度部分的空组织；空组织严格定义为**只有一位有效 owner 且不存在其他有效成员**，已移除的成员不计入。保留所有非空组织；若仍超额，停止扩张直至数量回落或管理员增额。删除前撤销租户相关授权，并向已配置 Account Sync 的下游发送携带被删 `tenant_id` 的 `tenant.membership.changed`，接收方查询当前状态应得到 `active=false`；操作写入审计。移除成员后如果一个超额组织变为空组织，也执行同样的清理。
+业务应用显式申请 `tenant.manage` scope，用户同意后持 Access Token 调用以下 JSON API（路径前缀 `/api`）：
+
+| 方法 | 地址 | 操作 |
+| --- | --- | --- |
+| GET / POST | `/tenants` | 列出自己的空间 / 按个人创建额度创建组织 |
+| GET | `/tenants/{id}` | 获取当前组织信息 |
+| GET | `/tenants/{id}/members` | 列出成员 |
+| POST | `/tenants/{id}/invitations` | 邀请成员：`{email,role}` |
+| POST | `/tenants/{id}/members/{user}` | 修改角色/移除：`{action}` |
+| POST | `/tenants/{id}/rename` | 修改组织名称：`{name}` |
+| POST | `/tenants/{id}/leave` | 退出组织 |
+| POST | `/tenants/{id}/toggle` | 停用/恢复组织 |
+| POST | `/tenants/{id}/delete` | 解散组织：`{confirmation:slug}` |
+
+所有操作从**已验证的 Access Token** 获取操作者；除列出及创建外，Token 的 `tenant_id` 必须与路径中的组织 ID 完全一致。进一步复用现有 Owner/Admin 规则和安全校验，不接受客户端伪造的 actor 或目标组织。跨租户需重新完成 OAuth 授权。
+
+## 同步与全量对账
+
+具有 Account Sync URI 的非系统应用 confidential 客户端，可通过 `client_secret_basic` 或 `client_secret_post` 调用：
+
+- `POST /api/accounts/sync`：已知 `sub` 的用户最新账户投影。
+- `POST /api/tenants/membership/sync`：已知 `sub,tenant_id` 的成员快照（包括 `app_allowed`）。
+- `POST /api/accounts/sync/list`：按 `user_id` 升序分页读取本应用有历史准入关系的用户账户投影，每页最多 100 条；可提交 `after_user_id`。
+- `POST /api/tenants/membership/list`：按 `(tenant_id,user_id)` 分页读取本应用可见租户类别下的历史关系及当前 `active`，每页最多 100 条；续页提交 `after_tenant_id` 与 `after_user_id`。
+
+分页响应均为 `{rows,next}`，`next=null` 表示结束；从 `next` 中取游标继续查询。所有响应不缓存。全量对账用于初次接入、事件过期后的恢复及主动核对；分页不是跨页一致性事务快照，对账时持续应用增量事件，并在必要时重新执行一轮对账。
+
+现有签名事件 `tenant.membership.changed` 保留 `tenant_id`；事件仅提示重新查询最新状态，接收端应校验签名、受众、时间、jti 并实现幂等，切勿按消息产生顺序直接覆盖业务侧状态。业务系统负责本地数据投影、资源 ACL 和业务数据生命周期。

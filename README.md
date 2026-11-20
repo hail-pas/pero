@@ -242,3 +242,12 @@ Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`
 ## 应用侧账户生命周期同步
 
 应用详情的 confidential 客户端支持配置账户同步 HTTPS 地址。用户资料、账户状态、成员加入/退出及账户注销与签名事件原子入队；应用收到事件后用客户端认证调用 `POST /api/accounts/sync` 获取本应用成员的当前状态，资料字段沿用客户端 scope 过滤。启用或更换地址会同步现有成员，投递失败自动重试，后台通知页可查看和重试。详见[账户生命周期同步与接收端示例](docs/account-lifecycle-sync.md)。
+
+
+## 多租户能力（feature/unified-tenancy）
+
+- 用户创建组织资格与现有组织成员治理独立；组织可设置独立成员上限（默认 100，平台配置），支持显式停用、恢复及解散墓碑。
+- 平台超级管理员可以在 `/dashboard/tenants` 搜索组织、维护成员额度、提升现有成员为 Owner、管理租户应用准入。
+- 应用支持 `organization_access=open|restricted`，并在组织详情维护显式准入关系；业务 ACL 仍在应用侧。
+- 应用可以经 `tenant.manage` OAuth scope 调用受用户授权的租户管理 JSON API；Account Sync confidential 客户端可以按游标全量对账用户与租户成员关系。
+- 接入契约及具体 API 见 [租户接入说明](docs/tenant-integration.md)。

@@ -94,3 +94,10 @@ flask --app examples/account-sync/app run --port 8091
 ## 租户成员状态通知
 
 租户成员加入/移除或租户状态切换时，复用当前签名投递队列发送 tenant.membership.changed。JWT 附带 tenant_id，不包含成员角色和用户资料。接收方验证签名、aud 与 tenant_id 后，使用 POST /api/tenants/membership/sync 查询当前状态，不按历史事件覆盖最新状态。
+
+
+## 组织准入与全量对账
+
+除增量事件外，配置 Account Sync URI 的非系统应用 confidential 客户端可以通过 `POST /api/accounts/sync/list`（`after_user_id`）和 `POST /api/tenants/membership/list`（`after_tenant_id`、`after_user_id`）进行每页 100 条的应用范围全量对账。沿用账号同步的客户端身份验证。租户快照新增 `app_allowed`，当组织尚未获应用准入或准入已撤销时 `active=false`。客户端应清理本地不再存在于当前完整快照中的条目；初始接入与事件过期恢复可通过分页对账补全。
+
+租户的创建额度仅限制创建新组织，组织成员上限由平台单独配置；组织解散使用不可恢复的 deleted 墓碑状态，不再因创建额度降低自动删除。
