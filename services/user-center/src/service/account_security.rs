@@ -230,7 +230,7 @@ pub async fn close_account(
     let lone_owner = txn
         .query_one_raw(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Postgres,
-            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND NOT EXISTS(SELECT 1 FROM tenant_members other WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active') LIMIT 1",
+            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND NOT EXISTS(SELECT 1 FROM tenant_members other JOIN users other_user ON other_user.id=other.user_id WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active' AND other_user.status='active' AND other_user.deleted_at IS NULL) LIMIT 1",
             [session.user_id.into()],
         ))
         .await?;
