@@ -169,6 +169,7 @@ pub async fn edit_form(
             homepage_url: app.homepage_url.unwrap_or_default(),
             logo_url: app.logo_url.unwrap_or_default(),
             tenant_mode: app.tenant_mode,
+            organization_access: app.organization_access,
         },
         error: String::new(),
     };
@@ -197,6 +198,7 @@ fn app_input(form: &AppFormData) -> AppUpdate {
         homepage_url: util::empty_or_opt(&form.homepage_url),
         logo_url: util::empty_or_opt(&form.logo_url),
         tenant_mode: form.tenant_mode.clone(),
+        organization_access: form.organization_access.clone(),
     }
 }
 

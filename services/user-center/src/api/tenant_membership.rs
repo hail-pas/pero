@@ -69,13 +69,14 @@ pub async fn snapshot(
         };
     let active = current
         .as_ref()
-        .is_some_and(|v| v.tenant_status == "active" && v.membership_status == "active");
+        .is_some_and(|v| v.tenant_status == "active" && v.membership_status == "active" && v.app_allowed);
     let response = serde_json::json!({
         "sub": f.sub,
         "tenant_id": f.tenant_id,
         "tenant_kind": current.as_ref().map(|v|v.tenant_kind.as_str()),
         "tenant_status": current.as_ref().map(|v|v.tenant_status.as_str()),
         "membership_status": current.as_ref().map(|v|v.membership_status.as_str()),
+        "app_allowed": current.as_ref().map(|v|v.app_allowed).unwrap_or(false),
         "tenant_version": current.as_ref().map(|v|v.tenant_version),
         "membership_version": current.as_ref().map(|v|v.membership_version),
         "active": active,

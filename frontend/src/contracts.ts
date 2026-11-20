@@ -35,6 +35,7 @@ export interface AppSummary {
   status: string;
   system: boolean;
   tenant_mode: string;
+  organization_access: string;
   created_at: DateValue;
 }
 export interface UserSummary {

@@ -22,6 +22,7 @@ pub struct Model {
     pub status: CommonStatus,
     pub system: bool,
     pub tenant_mode: String,
+    pub organization_access: String,
     pub created_at: TimeDateTimeWithTimeZone,
     pub updated_at: TimeDateTimeWithTimeZone,
 }

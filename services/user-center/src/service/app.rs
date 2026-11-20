@@ -13,6 +13,7 @@ pub struct AppUpdate {
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
     pub tenant_mode: String,
+    pub organization_access: String,
 }
 
 impl AppUpdate {
@@ -22,6 +23,9 @@ impl AppUpdate {
             "personal" | "organization" | "both"
         ) {
             return Err(ManagementError::Invalid("invalid_tenant_mode"));
+        }
+        if !matches!(self.organization_access.as_str(), "open" | "restricted") {
+            return Err(ManagementError::Invalid("invalid_organization_access"));
         }
         if self.name.trim().is_empty() {
             return Err(ManagementError::Invalid("name_required"));
@@ -34,6 +38,7 @@ impl AppUpdate {
     }
     fn apply(self, active: &mut apps::ActiveModel) {
         active.tenant_mode = Set(self.tenant_mode);
+        active.organization_access = Set(self.organization_access);
         active.name = Set(self.name);
         active.description = Set(self.description);
         active.homepage_url = Set(self.homepage_url);
@@ -113,10 +118,12 @@ pub async fn update(
     permissions::app(&txn, &access, id, P::AppsManage).await?;
 
     let old = editable(&txn, id).await?;
-    if old.tenant_mode != input.tenant_mode && !access.super_admin {
+    if (old.tenant_mode != input.tenant_mode
+        || old.organization_access != input.organization_access) && !access.super_admin {
         return Err(ManagementError::Invalid("forbidden"));
     }
-    let changed = old.tenant_mode != input.tenant_mode;
+    let changed = old.tenant_mode != input.tenant_mode
+        || old.organization_access != input.organization_access;
     let mut active: apps::ActiveModel = old.into();
     input.apply(&mut active);
     active.update(&txn).await?;

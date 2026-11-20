@@ -47,6 +47,11 @@ pub struct AppFormData {
     pub logo_url: String,
     #[serde(default = "default_tenant_mode")]
     pub tenant_mode: String,
+    #[serde(default = "default_organization_access")]
+    pub organization_access: String,
+}
+fn default_organization_access() -> String {
+    "open".to_owned()
 }
 fn default_tenant_mode() -> String {
     "personal".to_owned()
@@ -435,6 +440,7 @@ pub struct AppSummary {
     pub status: String,
     pub system: bool,
     pub tenant_mode: String,
+    pub organization_access: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
@@ -451,6 +457,7 @@ impl From<apps::Model> for AppSummary {
             status: model.status.to_string(),
             system: model.system,
             tenant_mode: model.tenant_mode,
+            organization_access: model.organization_access,
             created_at: model.created_at,
         }
     }
