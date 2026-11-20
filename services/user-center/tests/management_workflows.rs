@@ -1833,7 +1833,14 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
         StatusCode::FORBIDDEN
     );
     let (_, view, _) = call(&router, &cookies, "/dashboard/notifications", None).await;
-    assert_eq!(view["data"]["sync_rows"].as_array().unwrap().len(), 1);
+    let sync_rows = view["data"]["sync_rows"].as_array().unwrap();
+    assert_eq!(sync_rows.len(), 2);
+    assert!(sync_rows.iter().any(|row| row["kind"] == "sync.requested"));
+    assert!(
+        sync_rows
+            .iter()
+            .any(|row| row["kind"] == "tenant.membership.changed")
+    );
     // Public browser clients have no credentials for server-side provisioning.
     f.sql(
         "UPDATE oauth_clients SET account_sync_uri=NULL,type='public',secret_hash=NULL WHERE id=$1",
