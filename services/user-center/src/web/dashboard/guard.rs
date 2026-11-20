@@ -205,7 +205,7 @@ fn policy(path: &str, read: bool) -> Option<Policy> {
         | ("/dashboard/tenants/{id}/member-limit", false)
         | ("/dashboard/tenants/{id}/apps/{app}", false)
         | ("/dashboard/tenants/{id}/owner/{user}", false)
-        | ("/dashboard/tenants/{id}/toggle", false)
+        | ("/dashboard/tenants/{id}/status", false)
         | ("/dashboard/admins", _)
         | ("/dashboard/admins/users", true)
         | ("/dashboard/admins/permission-catalog", true)

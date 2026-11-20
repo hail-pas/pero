@@ -222,17 +222,22 @@ pub async fn accept(
     util::management_response(svc::accept(&s.db, a.user.id, &token).await)
 }
 
-pub async fn toggle_status(
+#[derive(Deserialize)]
+pub struct StatusChange {
+    csrf_token: String,
+    status: String,
+}
+pub async fn set_status(
     State(s): State<AppState>,
     jar: CookieJar,
     a: AccountContext,
     Path(id): Path<Uuid>,
-    Form(f): Form<OnlyCsrf>,
+    Form(f): Form<StatusChange>,
 ) -> Response {
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
-    util::management_response(svc::toggle_status(&s.db, a.user.id, id).await)
+    util::management_response(svc::set_status(&s.db, a.user.id, id, &f.status).await)
 }
 
 pub async fn members(

@@ -75,7 +75,8 @@ export function Tenants({
                   {row.status !== "deleted" && <Button variant="outlined"
                     color={row.status === "active" ? "error" : "primary"}
                     onClick={() => ask(t(row.status === "active" ? "停用组织" : "恢复组织"),
-                      `/dashboard/tenants/${row.id}/toggle`)}>
+                      `/dashboard/tenants/${row.id}/status`,
+                      { status: row.status === "active" ? "disabled" : "active" })}>
                     {t(row.status === "active" ? "停用" : "恢复")}
                   </Button>}
                 </Stack>
@@ -108,7 +109,8 @@ export function Tenants({
             {tenant.status !== "deleted" && (
               <Button color={tenant.status === "active" ? "error" : "primary"}
                 onClick={() => ask(t(tenant.status === "active" ? "停用组织" : "恢复组织"),
-                  `/dashboard/tenants/${tenant.id}/toggle`)}>
+                  `/dashboard/tenants/${tenant.id}/status`,
+                  { status: tenant.status === "active" ? "disabled" : "active" })}>
                 {t(tenant.status === "active" ? "停用" : "恢复")}
               </Button>
             )}
@@ -342,8 +344,8 @@ export function Tenants({
             onClick={() =>
               ask(
                 t(tenant.status === "active" ? "停用组织" : "恢复组织"),
-                `/account/tenants/${tenant.id}/toggle`,
-                {},
+                `/account/tenants/${tenant.id}/status`,
+                { status: tenant.status === "active" ? "disabled" : "active" },
                 t("组织状态更改会撤销原有租户授权令牌。"),
               )
             }

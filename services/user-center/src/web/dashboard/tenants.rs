@@ -87,18 +87,23 @@ pub async fn promote_owner(
     }
     util::management_response(svc::promote_owner(&s.db, &admin.actor(&s), id, user).await)
 }
-pub async fn toggle(
+#[derive(Deserialize)]
+pub struct StatusChange {
+    csrf_token: String,
+    status: String,
+}
+pub async fn set_status(
     State(s): State<AppState>,
     jar: CookieJar,
     admin: AdminContext,
     Path(id): Path<Uuid>,
-    Form(f): Form<util::CsrfOnly>,
+    Form(f): Form<StatusChange>,
 ) -> Response {
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &s) {
         return e;
     }
     util::management_response(
-        crate::service::tenant::toggle_status_admin(&s.db, &admin.actor(&s), id).await,
+        crate::service::tenant::set_status_admin(&s.db, &admin.actor(&s), id, &f.status).await,
     )
 }
 

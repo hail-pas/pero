@@ -181,12 +181,21 @@ pub async fn leave(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>
     };
     util::management_response(svc::leave(&s.db, user, id).await)
 }
-pub async fn toggle(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
+#[derive(Deserialize)]
+pub struct StatusChange {
+    status: String,
+}
+pub async fn set_status(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(f): Json<StatusChange>,
+) -> Response {
     let user = match actor(&s, &h, Some(id), true).await {
         Ok(v) => v,
         Err(e) => return e,
     };
-    util::management_response(svc::toggle_status(&s.db, user, id).await)
+    util::management_response(svc::set_status(&s.db, user, id, &f.status).await)
 }
 #[derive(Deserialize)]
 pub struct Delete {

@@ -59,7 +59,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/dashboard/tenants/{id}/owner/{user}",
             post(tenants::promote_owner),
         )
-        .route("/dashboard/tenants/{id}/toggle", post(tenants::toggle))
+        .route("/dashboard/tenants/{id}/status", post(tenants::set_status))
         .route("/dashboard/audit", get(audit::list))
         .route("/dashboard/audit/{id}", get(audit::detail))
         .route("/dashboard/notifications", get(notifications::list))

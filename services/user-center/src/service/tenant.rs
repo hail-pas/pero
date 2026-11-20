@@ -440,43 +440,62 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     Ok(())
 }
 
-/// An organization owner may change the status of their own organization.
-pub async fn toggle_status(db: &DatabaseConnection, actor: Uuid, tenant: Uuid) -> Result<()> {
+/// Set an explicit target state so client retries cannot accidentally restore access.
+pub async fn set_status(
+    db: &DatabaseConnection,
+    actor: Uuid,
+    tenant: Uuid,
+    status: &str,
+) -> Result<()> {
+    validate_status(status)?;
     let txn = db.begin().await?;
     lock_organization(&txn, tenant).await?;
     let space = get(&txn, actor, tenant).await?;
     if space.role != "owner" {
         return Err(Error::Invalid("forbidden"));
     }
-    apply_status_toggle(&txn, actor, tenant).await?;
+    apply_status(&txn, actor, tenant, status).await?;
     txn.commit().await?;
     Ok(())
 }
 
-/// Platform administration is a separate, re-authorized operation. Never trust
-/// a caller-provided flag to bypass tenant ownership checks.
-pub async fn toggle_status_admin(
+/// The platform super administrator can suspend or recover an organization.
+pub async fn set_status_admin(
     db: &DatabaseConnection,
     actor: &super::permissions::Actor,
     tenant: Uuid,
+    status: &str,
 ) -> Result<()> {
+    validate_status(status)?;
     let txn = db.begin().await?;
     super::permissions::require_super(&txn, actor).await?;
     lock_organization(&txn, tenant).await?;
-    apply_status_toggle(&txn, actor.session.user_id, tenant).await?;
+    apply_status(&txn, actor.session.user_id, tenant, status).await?;
     txn.commit().await?;
     Ok(())
 }
 
-async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uuid) -> Result<()> {
+fn validate_status(status: &str) -> Result<()> {
+    if !matches!(status, "active" | "disabled") {
+        return Err(Error::Invalid("invalid_tenant_status"));
+    }
+    Ok(())
+}
+
+async fn apply_status<C: ConnectionTrait>(
+    db: &C,
+    actor: Uuid,
+    tenant: Uuid,
+    status: &str,
+) -> Result<()> {
     let changed = exec(
         db,
-        "UPDATE tenants SET status=CASE status WHEN 'active' THEN 'disabled' ELSE 'active' END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization' AND status IN ('active','disabled')",
-        vec![tenant.into()],
+        "UPDATE tenants SET status=$2,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization' AND status IN ('active','disabled') AND status<>$2",
+        vec![tenant.into(), status.into()],
     )
     .await?;
-    if changed != 1 {
-        return Err(Error::Invalid("not_found"));
+    if changed == 0 {
+        return Ok(());
     }
     exec(
         db,
@@ -490,7 +509,15 @@ async fn apply_status_toggle<C: ConnectionTrait>(db: &C, actor: Uuid, tenant: Uu
         vec![tenant.into()],
     )
     .await?;
-    audit(db, actor, "tenant.status.toggled", &tenant.to_string()).await?;
+    if status == "disabled" {
+        exec(
+            db,
+            "UPDATE authorization_requests SET completed_at=now() WHERE tenant_id=$1 AND completed_at IS NULL",
+            vec![tenant.into()],
+        )
+        .await?;
+    }
+    audit(db, actor, "tenant.status.updated", &tenant.to_string()).await?;
     Ok(())
 }
 
