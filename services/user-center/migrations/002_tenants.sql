@@ -73,7 +73,7 @@ ALTER TABLE refresh_tokens ADD COLUMN tenant_member_version bigint;
 -- System application credentials carry no tenant context and remain valid.
 UPDATE authorization_requests SET completed_at=now()
 WHERE completed_at IS NULL AND app_id IN (SELECT id FROM apps WHERE NOT system);
-UPDATE authorization_codes SET consumed_at=now()
+DELETE FROM authorization_codes
 WHERE consumed_at IS NULL AND app_id IN (SELECT id FROM apps WHERE NOT system);
 UPDATE refresh_tokens SET revoked_at=now(),revoke_reason='tenant_context_migration'
 WHERE revoked_at IS NULL AND app_id IN (SELECT id FROM apps WHERE NOT system);
