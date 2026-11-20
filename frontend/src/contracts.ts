@@ -418,6 +418,7 @@ export interface ViewDataMap {
     error: string;
   };
   UserDetailView: AccountPage & {
+    tenant_creation_policy: TenantCreationPolicy | null;
     user: UserSummary;
     identities: {
       id: string;
@@ -436,8 +437,8 @@ export interface ViewDataMap {
     error: string;
   };
   TenantAdminView: AccountPage & {tenants: {id:string;name:string;slug:string|null;status:string;members:number}[]};
-  TenantListView: AccountPage & { tenants: TenantSummary[] };
-  TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string};
+  TenantListView: AccountPage & { tenants: TenantSummary[]; creation_policy: TenantCreationPolicy };
+  TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string;can_invite:boolean};
   TenantInvitationView: AccountPage & {invitation:{tenant_id:string;tenant_name:string;email:string;role:string};verified_email:boolean;user_email:string|null};
   TenantChoiceView: CsrfPage & {token:string;choices:{id:string;kind:string;name:string;role:string}[]};
   ProviderDetailView: AccountPage & {
@@ -447,6 +448,7 @@ export interface ViewDataMap {
     error: string;
   };
 }
+export type TenantCreationPolicy = { enabled: boolean; max_tenants: number; tenant_count: number };
 export type TenantSummary = {id:string;kind:string;name:string;slug:string|null;role:string;status:string};
 export type TenantMember = {user_id:string;username:string;name:string;role:string;status:string};
 export type TenantInvitation = {id:string;email:string;role:string;status:string;expires_at:string};

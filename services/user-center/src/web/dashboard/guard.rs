@@ -171,6 +171,7 @@ fn policy(path: &str, read: bool) -> Option<Policy> {
         }
         ("/dashboard/users/new", _) => Policy::Global(P::UsersCreate),
         ("/dashboard/users/{id}/edit", _) => Policy::UserEdit,
+        ("/dashboard/users/{id}/tenant-policy", false) => Policy::Super,
         ("/dashboard/users/{id}/set-status", false) => Policy::Global(P::UsersStatusUpdate),
         ("/dashboard/users/{id}/reset-password", false) => Policy::Global(P::UsersPasswordReset),
         ("/dashboard/users/{id}/grant-app", false)

@@ -38,7 +38,8 @@ BEGIN
         'identity_provider_keys', 'identity_providers', 'login_events', 'notification_deliveries',
         'notification_outbox', 'oauth_clients', 'oidc_rp_sessions', 'password_reset_tokens',
         'refresh_tokens', 'registration_policies', 'sso_sessions', 'user_app_access',
-        'user_consents', 'user_mfa', 'users', 'tenants', 'tenant_members', 'tenant_invitations'
+        'user_consents', 'user_mfa', 'users', 'tenants', 'tenant_members', 'tenant_invitations',
+        'tenant_creation_policies'
     ] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace
                        AND relname=object_name AND relkind='r') THEN
@@ -97,3 +98,6 @@ SELECT tenant_version,tenant_member_version FROM authorization_codes LIMIT 0;
 SELECT tenant_version,tenant_member_version FROM refresh_tokens LIMIT 0;
 
 SELECT tenant_id FROM account_sync_deliveries LIMIT 0;
+
+SELECT created_by FROM tenants LIMIT 0;
+SELECT user_id,enabled,max_tenants,updated_by,updated_at FROM tenant_creation_policies LIMIT 0;

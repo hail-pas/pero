@@ -53,10 +53,14 @@ pub async fn list(State(s): State<AppState>, jar: CookieJar, a: AccountContext) 
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
     };
+    let policy = match crate::service::tenant_policy::read(&s.db, a.user.id).await {
+        Ok(policy) => policy,
+        Err(error) => return util::management_response(Err(error)),
+    };
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantListView",
-        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenants":rows}),
+        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenants":rows,"creation_policy":policy}),
         jar,
     )
 }
@@ -102,10 +106,18 @@ pub async fn detail(
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
     };
+    let can_invite = if tenant.kind == "organization" {
+        match crate::service::tenant_policy::may_add_members(&s.db, id).await {
+            Ok(allowed) => allowed,
+            Err(error) => return util::management_response(Err(error)),
+        }
+    } else {
+        false
+    };
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantDetailView",
-        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenant":tenant,"members":members,"invitations":invitations,"current_user_id":a.user.id}),
+        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenant":tenant,"members":members,"invitations":invitations,"current_user_id":a.user.id,"can_invite":can_invite}),
         jar,
     )
 }

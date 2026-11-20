@@ -124,6 +124,7 @@ export function Tenants({
           action={
             <Button
               variant="contained"
+              disabled={!data.creation_policy.enabled || data.creation_policy.tenant_count >= data.creation_policy.max_tenants}
               onClick={() =>
                 editor(t("创建组织"), "/account/tenants", [
                   { name: "name", label: t("组织名称"), required: true },
@@ -135,6 +136,11 @@ export function Tenants({
             </Button>
           }
         />
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          {data.creation_policy.enabled
+            ? `${t("组织创建额度")}：${data.creation_policy.tenant_count} / ${data.creation_policy.max_tenants}`
+            : t("当前未获组织创建权限；已建立的组织仍可管理。")}
+        </Typography>
         <Panel title={t("已加入的工作空间")}>
           <Stack spacing={1}>
             {data.tenants.map((space) => (
@@ -184,7 +190,7 @@ export function Tenants({
     );
   }
 
-  const { tenant, members, invitations, current_user_id } = data;
+  const { tenant, members, invitations, current_user_id, can_invite } = data;
   const isOrganization = tenant.kind === "organization";
   const isOwner = tenant.role === "owner";
   const canManage = isOwner || tenant.role === "admin";
@@ -261,6 +267,7 @@ export function Tenants({
             canManage ? (
               <Button
                 variant="contained"
+                disabled={!can_invite}
                 onClick={() =>
                   editor(
                     t("邀请成员"),
@@ -288,6 +295,11 @@ export function Tenants({
             ) : undefined
           }
         >
+          {!can_invite && canManage && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              {t("当前组织已暂停扩张；已有成员仍可调整角色或移除。")}
+            </Typography>
+          )}
           <Stack spacing={1.5}>
             {members.map((member) => (
               <Box key={member.user_id}>

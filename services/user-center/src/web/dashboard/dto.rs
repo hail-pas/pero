@@ -202,6 +202,7 @@ pub struct UserIdentityRow {
 
 #[derive(Debug, serde::Serialize)]
 pub struct UserDetailView {
+    pub tenant_creation_policy: Option<crate::service::tenant_policy::TenantPolicy>,
     pub layout: DashboardLayout,
     pub csrf_token: String,
     pub user: UserSummary,

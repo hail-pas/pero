@@ -132,6 +132,7 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
+    super::tenant_policy::authorize_create(&txn, user).await?;
     let verified = txn.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL AND (email_verified_at IS NOT NULL OR phone_verified_at IS NOT NULL)",
@@ -143,8 +144,8 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
     let row = txn
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "INSERT INTO tenants(kind,name,slug) VALUES('organization',$1,$2) RETURNING id",
-            [name.into(), slug.into()],
+            "INSERT INTO tenants(kind,name,slug,created_by) VALUES('organization',$1,$2,$3) RETURNING id",
+            [name.into(), slug.into(), user.into()],
         ))
         .await
         .map_err(|error| {
@@ -195,7 +196,11 @@ pub async fn update_member(
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
-    // Serialize role changes and the last-owner check on the tenant row.
+    // Policy -> organization is the shared lock order for quota changes and membership mutations.
+    let creator = super::tenant_policy::creator(&txn, tenant).await?;
+    if action == "remove" {
+        super::tenant_policy::lock_if_present(&txn, creator).await?;
+    }
     lock_organization(&txn, tenant).await?;
     let actor_role = if action == "remove" && actor == target {
         let space = get(&txn, actor, tenant).await?;
@@ -247,6 +252,11 @@ pub async fn update_member(
         )
         .await?;
     }
+    if action == "remove" {
+        if let Some(creator) = creator {
+            super::tenant_policy::prune_excess(&txn, creator, actor).await?;
+        }
+    }
     audit(
         &txn,
         actor,
@@ -278,6 +288,8 @@ pub async fn invite(
         return Err(Error::Invalid("notification_disabled"));
     }
     let txn = state.db.begin().await?;
+    let creator = super::tenant_policy::creator(&txn, id).await?;
+    super::tenant_policy::authorize_members(&txn, creator).await?;
     lock_organization(&txn, id).await?;
     let actor_role = governance(&txn, user, id).await?;
     if role == "admin" && actor_role != "owner" {
@@ -362,13 +374,19 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     let invitation = txn
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT tenant_id FROM tenant_invitations WHERE token_hash=$1",
+            "SELECT tenant_id,status FROM tenant_invitations WHERE token_hash=$1",
             [hash.clone().into()],
         ))
         .await?
         .ok_or(Error::Invalid("invalid_invitation"))?;
     let tenant: Uuid = invitation.try_get("", "tenant_id")?;
-    // Match governance's tenant -> invitation/member lock order.
+    let prior_status: String = invitation.try_get("", "status")?;
+    // Already-accepted invitations may be retried without being a new membership.
+    // Pending invitations still require a fresh, locked expansion authorization.
+    if prior_status == "pending" {
+        let creator = super::tenant_policy::creator(&txn, tenant).await?;
+        super::tenant_policy::authorize_members(&txn, creator).await?;
+    }
     lock_organization(&txn, tenant).await?;
     let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL AND u.status='active' AND u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members inviter JOIN users issuer ON issuer.id=inviter.user_id WHERE inviter.tenant_id=i.tenant_id AND inviter.user_id=i.invited_by AND inviter.status='active' AND issuer.status='active' AND issuer.deleted_at IS NULL AND (inviter.role='owner' OR (inviter.role='admin' AND i.role='member'))) FOR UPDATE OF i",
