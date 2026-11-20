@@ -118,6 +118,32 @@ async fn lock_organization<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<()> {
     .ok_or(Error::Invalid("not_found"))?;
     Ok(())
 }
+
+/// Serialize account deactivation with owner changes so no organization loses
+/// its last active owner. The caller locks the user's creation policy first.
+pub(super) async fn ensure_other_active_owner(
+    db: &sea_orm::DatabaseTransaction,
+    user: Uuid,
+) -> Result<()> {
+    db.query_all_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT t.id FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' ORDER BY t.id FOR UPDATE OF t",
+        [user.into()],
+    ))
+    .await?;
+    let orphaned = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT m.tenant_id FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.role='owner' AND m.status='active' AND t.kind='organization' AND NOT EXISTS(SELECT 1 FROM tenant_members other JOIN users other_user ON other_user.id=other.user_id WHERE other.tenant_id=m.tenant_id AND other.user_id<>$1 AND other.role='owner' AND other.status='active' AND other_user.status='active' AND other_user.deleted_at IS NULL) LIMIT 1",
+            [user.into()],
+        ))
+        .await?;
+    if orphaned.is_some() {
+        return Err(Error::Invalid("last_tenant_owner"));
+    }
+    Ok(())
+}
+
 pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str) -> Result<()> {
     let name = name.trim();
     let slug = slug.trim().to_lowercase();
