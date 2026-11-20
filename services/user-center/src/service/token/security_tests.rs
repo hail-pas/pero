@@ -4007,7 +4007,6 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
     fixture.cleanup().await;
 }
 
-
 #[tokio::test]
 #[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
 async fn tenant_quota_prunes_empty_spaces_without_disrupting_existing_members() {
@@ -4021,9 +4020,11 @@ async fn tenant_quota_prunes_empty_spaces_without_disrupting_existing_members() 
     .await;
     // A missing policy must deny creation; all quota checks use persisted state.
     let name = format!("quota-{}", Uuid::now_v7().simple());
-    assert!(crate::service::tenant::create(db, fixture.user, "Blocked", &name)
-        .await
-        .is_err());
+    assert!(
+        crate::service::tenant::create(db, fixture.user, "Blocked", &name)
+            .await
+            .is_err()
+    );
     sql(
         db,
         "INSERT INTO tenant_creation_policies(user_id,enabled,max_tenants) VALUES($1,true,3)",
@@ -4056,7 +4057,9 @@ async fn tenant_quota_prunes_empty_spaces_without_disrupting_existing_members() 
         vec![kept.id.into(),pero_utils::crypto::sha256_hex(&invitation).into(),fixture.user.into()],
     )
     .await;
-    crate::service::tenant::accept(db, member, &invitation).await.unwrap();
+    crate::service::tenant::accept(db, member, &invitation)
+        .await
+        .unwrap();
 
     // Lower the quota while holding the same policy row used by creation and acceptance.
     let txn = db.begin().await.unwrap();
@@ -4064,21 +4067,38 @@ async fn tenant_quota_prunes_empty_spaces_without_disrupting_existing_members() 
         DbBackend::Postgres,
         "SELECT user_id FROM tenant_creation_policies WHERE user_id=$1 FOR UPDATE",
         [fixture.user.into()],
-    )).await.unwrap();
+    ))
+    .await
+    .unwrap();
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE tenant_creation_policies SET max_tenants=0 WHERE user_id=$1",
         [fixture.user.into()],
-    )).await.unwrap();
-    assert_eq!(crate::service::tenant_policy::prune_excess(&txn, fixture.user, fixture.user, None).await.unwrap(), 2);
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::service::tenant_policy::prune_excess(&txn, fixture.user, fixture.user, None)
+            .await
+            .unwrap(),
+        2
+    );
     txn.commit().await.unwrap();
 
     let organizations: Vec<_> = crate::service::tenant::list(db, fixture.user)
-        .await.unwrap().into_iter().filter(|t| t.kind == "organization").collect();
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.kind == "organization")
+        .collect();
     assert_eq!(organizations.len(), 1);
     assert_eq!(organizations[0].id, kept.id);
     let slug = format!("quota-{}", Uuid::now_v7().simple());
-    assert!(crate::service::tenant::create(db, fixture.user, "Excess", &slug).await.is_err());
+    assert!(
+        crate::service::tenant::create(db, fixture.user, "Excess", &slug)
+            .await
+            .is_err()
+    );
     // A pending invitation cannot become a new membership after a quota reduction.
     let another = Uuid::now_v7();
     sql(db,"INSERT INTO users(id,username,email,email_verified_at) VALUES($1,$2,'quota-another@tenant.example',now())",
@@ -4086,12 +4106,28 @@ async fn tenant_quota_prunes_empty_spaces_without_disrupting_existing_members() 
     let pending = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'quota-another@tenant.example','member',$2,$3,now()+interval '1 day')",
         vec![kept.id.into(),pero_utils::crypto::sha256_hex(&pending).into(),fixture.user.into()]).await;
-    assert!(crate::service::tenant::accept(db, another, &pending).await.is_err());
+    assert!(
+        crate::service::tenant::accept(db, another, &pending)
+            .await
+            .is_err()
+    );
     // Nonempty organizations can still update their existing members and metadata.
-    crate::service::tenant::rename(db, fixture.user, kept.id, "Still Managed").await.unwrap();
-    crate::service::tenant::update_member(db, fixture.user, kept.id, member, "admin").await.unwrap();
+    crate::service::tenant::rename(db, fixture.user, kept.id, "Still Managed")
+        .await
+        .unwrap();
+    crate::service::tenant::update_member(db, fixture.user, kept.id, member, "admin")
+        .await
+        .unwrap();
     // Removing the last additional member makes the excess tenant empty and eligible for deletion.
-    crate::service::tenant::update_member(db, fixture.user, kept.id, member, "remove").await.unwrap();
-    assert!(crate::service::tenant::list(db, fixture.user).await.unwrap().iter().all(|t|t.kind=="personal"));
+    crate::service::tenant::update_member(db, fixture.user, kept.id, member, "remove")
+        .await
+        .unwrap();
+    assert!(
+        crate::service::tenant::list(db, fixture.user)
+            .await
+            .unwrap()
+            .iter()
+            .all(|t| t.kind == "personal")
+    );
     fixture.cleanup().await;
 }
