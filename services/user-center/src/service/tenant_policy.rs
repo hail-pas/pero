@@ -116,12 +116,10 @@ pub async fn authorize_members<C: ConnectionTrait>(db: &C, creator: Option<Uuid>
         .filter(|p| p.enabled)
         .ok_or(Error::Invalid("tenant_expansion_disabled"))?;
     // The creator may have been deleted since the policy was granted.
-    let current = read(db, user)
-        .await
-        .map_err(|error| match error {
-            Error::Invalid("not_found") => Error::Invalid("tenant_expansion_disabled"),
-            error => error,
-        })?;
+    let current = read(db, user).await.map_err(|error| match error {
+        Error::Invalid("not_found") => Error::Invalid("tenant_expansion_disabled"),
+        error => error,
+    })?;
     if current.tenant_count > i64::from(policy.max_tenants) {
         return Err(Error::Invalid("tenant_creation_limit"));
     }
