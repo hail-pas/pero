@@ -177,16 +177,16 @@ pub async fn promote_owner(
         &txn,
         actor.session.user_id,
         "tenant.owner.recovered",
-        tenant,
+        format!("{tenant}/{user}"),
     )
     .await?;
     txn.commit().await?;
     Ok(())
 }
-async fn audit<C: ConnectionTrait>(db: &C, actor: Uuid, action: &str, tenant: Uuid) -> Result<()> {
+async fn audit<C: ConnectionTrait>(db: &C, actor: Uuid, action: &str, target: impl ToString) -> Result<()> {
     db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,$2,$3,'success',200 FROM users WHERE id=$1",
-        [actor.into(),action.into(),tenant.to_string().into()])).await?;
+        [actor.into(),action.into(),target.to_string().into()])).await?;
     Ok(())
 }
 
@@ -258,7 +258,7 @@ pub async fn set_app_grant(
         } else {
             "tenant.app.revoked"
         },
-        tenant,
+        format!("{tenant}/{app}"),
     )
     .await?;
     txn.commit().await?;
