@@ -158,3 +158,44 @@ BEGIN
     RETURN NEW;
 END $;
 
+
+-- Tenant eligibility also changes when an application switches modes or is
+-- re-enabled; publish both the old and new memberships so receivers can drop
+-- tenants which are no longer allowed.
+CREATE OR REPLACE FUNCTION enqueue_app_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+    SELECT c.id,a.user_id,'sync.requested',c.account_sync_uri
+    FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
+    WHERE a.app_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    IF NEW.status='active' THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+        SELECT c.id,a.user_id,t.id,'tenant.membership.changed',c.account_sync_uri
+        FROM user_app_access a
+        JOIN tenant_members m ON m.user_id=a.user_id AND m.status='active'
+        JOIN tenants t ON t.id=m.tenant_id AND t.status='active'
+        JOIN oauth_clients c ON c.app_id=a.app_id
+        WHERE a.app_id=NEW.id AND a.status='active' AND c.status='active'
+          AND c.account_sync_uri IS NOT NULL
+          AND (NEW.tenant_mode='both' OR NEW.tenant_mode=t.kind
+               OR OLD.tenant_mode='both' OR OLD.tenant_mode=t.kind);
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER app_account_sync ON apps;
+CREATE TRIGGER app_account_sync AFTER UPDATE OF status,tenant_mode ON apps
+FOR EACH ROW WHEN ((OLD.status,OLD.tenant_mode) IS DISTINCT FROM (NEW.status,NEW.tenant_mode))
+EXECUTE FUNCTION enqueue_app_account_sync();
+
+-- The member backfill above ran before the new membership triggers existed.
+-- Seed existing app clients with a one-time snapshot for each eligible tenant.
+INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+SELECT c.id,a.user_id,t.id,'tenant.membership.changed',c.account_sync_uri
+FROM user_app_access a
+JOIN apps app ON app.id=a.app_id
+JOIN tenant_members m ON m.user_id=a.user_id AND m.status='active'
+JOIN tenants t ON t.id=m.tenant_id AND t.status='active'
+JOIN oauth_clients c ON c.app_id=a.app_id
+WHERE a.status='active' AND app.status='active' AND c.status='active'
+  AND c.account_sync_uri IS NOT NULL
+  AND (app.tenant_mode='both' OR app.tenant_mode=t.kind);
