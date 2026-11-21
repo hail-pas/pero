@@ -275,13 +275,16 @@ def reconcile():
                 if url.startswith("/api/accounts"):
                     key = "pero-demo:account:" + row["sub"]
                 elif url.endswith("membership/list"):
-                    key = "pero-demo:membership:" + row["tenant_id"] + ":" + row["user_id"]
+                    key = "pero-demo:membership:" + row["tenant_id"] + ":" + row["sub"]
                 else:
                     key = "pero-demo:tenant:" + row["tenant_id"]
                 store.set(key, json.dumps(row))
             if not data["next"]:
                 break
-            params = {name: data["next"][name] for name in cursor}
+            params = ({cursor[0]: data["next"]} if len(cursor) == 1 else {
+                "after_tenant_id": data["next"]["tenant_id"],
+                "after_user_id": data["next"]["user_id"],
+            })
 
 
 if __name__ == "__main__":

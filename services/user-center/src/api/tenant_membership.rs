@@ -60,7 +60,6 @@ pub async fn snapshot(
             Ok(None) => return StatusCode::NOT_FOUND.into_response(),
             Err(e) => return crate::web::util::dependency_error(e),
         };
-    let app_access_active = access.status == crate::db::enums::CommonStatus::Active;
     let current =
         match crate::service::tenant_context::snapshot(&s.db, f.sub, client.app_id, f.tenant_id)
             .await
@@ -71,6 +70,13 @@ pub async fn snapshot(
     if current.is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let app_access_active = access.status == crate::db::enums::CommonStatus::Active
+        && current.as_ref().is_some_and(|v| {
+            access.admission_origin == "explicit"
+                || access.admission_origin == "organization"
+                    && _app.organization_auto_access
+                    && v.tenant_kind == "organization"
+        });
     let active = app_access_active
         && current.as_ref().is_some_and(|v| {
             v.user_active
