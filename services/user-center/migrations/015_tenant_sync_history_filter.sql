@@ -2,6 +2,10 @@
 -- actually been eligible to access. The history table retains revoked pairs
 -- so downstream clients still receive removal and policy-change hints.
 
+-- Tenant-scoped event lookup must not scan the growing admission history.
+CREATE INDEX ix_tenant_app_history_tenant_user
+    ON tenant_app_history(tenant_id,user_id,app_id);
+
 CREATE OR REPLACE FUNCTION enqueue_tenant_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='UPDATE' AND (OLD.status,OLD.auth_version)
