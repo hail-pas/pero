@@ -27,7 +27,7 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
     let mut resp = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
         .expect("user claims contain only JSON primitives");
     resp["sub"] = serde_json::json!(user.id.to_string());
-    if let Some(tenant_id) = claims.tenant_id {
+    if let Some(tenant_id) = claims.tenant_id.as_deref() {
         resp["tenant_id"] = serde_json::json!(tenant_id);
     }
     if let Some(id) = claims.tenant_id.as_deref().and_then(|id| uuid::Uuid::parse_str(id).ok()) {
