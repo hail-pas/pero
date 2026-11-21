@@ -39,7 +39,7 @@ BEGIN
         'notification_outbox', 'oauth_clients', 'oidc_rp_sessions', 'password_reset_tokens',
         'refresh_tokens', 'registration_policies', 'sso_sessions', 'user_app_access',
         'user_consents', 'user_mfa', 'users', 'tenants', 'tenant_members', 'tenant_invitations',
-        'tenant_creation_policies', 'tenant_app_grants'
+        'tenant_creation_policies', 'tenant_app_grants', 'tenant_app_history'
     ] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace
                        AND relname=object_name AND relkind='r') THEN
@@ -70,7 +70,10 @@ BEGIN
     FOREACH object_name IN ARRAY ARRAY['session_backchannel_logout','app_backchannel_logout',
                                       'client_backchannel_logout','notification_outbox_deleted',
                                       'user_account_sync','membership_account_sync','client_account_sync','app_account_sync',
-                                      'tg_pero_personal_tenant','tenant_membership_sync','tenant_status_sync'] LOOP
+                                      'tg_pero_personal_tenant','tenant_membership_sync','tenant_status_sync',
+                                      'aa_tenant_app_history_access','aa_tenant_app_history_member',
+                                      'aa_tenant_app_history_tenant','aa_tenant_app_history_app',
+                                      'aa_tenant_app_history_grant','aa_tenant_app_history_user'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
                        WHERE c.relnamespace=current_schema()::regnamespace AND t.tgname=object_name
                        AND t.tgenabled IN ('O','A')) THEN
@@ -102,3 +105,5 @@ SELECT tenant_id FROM account_sync_deliveries LIMIT 0;
 
 SELECT created_by FROM tenants LIMIT 0;
 SELECT user_id,enabled,max_tenants,updated_by,updated_at FROM tenant_creation_policies LIMIT 0;
+
+SELECT app_id,tenant_id,user_id FROM tenant_app_history LIMIT 0;

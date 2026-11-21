@@ -68,6 +68,9 @@ pub async fn snapshot(
             Ok(v) => v,
             Err(e) => return crate::web::util::dependency_error(e),
         };
+    if current.is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let active = app_access_active
         && current.as_ref().is_some_and(|v| {
             v.user_active
