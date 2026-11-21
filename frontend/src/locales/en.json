@@ -986,5 +986,9 @@
   "确认手机并继续": "Confirm phone and continue",
   "手机号已验证，等待管理员审批。审批后将收到短信。": "Phone verified. Awaiting approval; you'll receive an SMS when approved.",
   "验证手机或邮箱并完成账户注册。": "Verify your phone or email to complete registration.",
-  "申请已排队，请检查短信或邮件并继续。": "Your request has been queued. Check your SMS or email to continue."
+  "申请已排队，请检查短信或邮件并继续。": "Your request has been queued. Check your SMS or email to continue.",
+  "待审批的组织应用申请": "Pending organization application requests",
+  "申请人": "Requested by",
+  "处理申请": "Review request",
+  "重新认证身份": "Reauthenticate"
 }

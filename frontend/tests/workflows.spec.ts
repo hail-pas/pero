@@ -197,7 +197,7 @@ test("a closed application registration can exit the current flow", async ({
   await expect(page.getByText("注册已关闭", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "退出本次注册流程" }).click();
   await expect(
-    page.getByRole("textbox", { name: "邮箱", exact: true }),
+    page.getByRole("textbox", { name: "手机号（含国际区号，例如 +8613800000000）", exact: true }),
   ).toBeVisible();
 });
 

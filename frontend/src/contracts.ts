@@ -439,7 +439,7 @@ export interface ViewDataMap {
     all_apps: [string, string, string][];
     error: string;
   };
-  TenantAdminView: AccountPage & {tenants: TenantAdminList};
+  TenantAdminView: AccountPage & {tenants: TenantAdminList;pending_requests?:{tenant_id:string;tenant_name:string;app_id:string;app_name:string;requested_by:string}[]};
   TenantAdminDetailView: AccountPage & {tenant: TenantAdminRow;members: TenantAdminMembers;apps:TenantAdminApp[]};
   TenantListView: AccountPage & { tenants: TenantSummary[]; creation_policy: TenantCreationPolicy };
   TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string;can_invite:boolean;apps:TenantAdminApp[]};

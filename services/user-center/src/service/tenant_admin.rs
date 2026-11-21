@@ -304,3 +304,16 @@ pub async fn review_app_request(db: &DatabaseConnection, actor: &super::permissi
     txn.commit().await?;
     Ok(())
 }
+
+#[derive(FromQueryResult, Serialize)]
+pub struct PendingAppRequest {
+    pub tenant_id: Uuid,
+    pub tenant_name: String,
+    pub app_id: Uuid,
+    pub app_name: String,
+    pub requested_by: String,
+}
+pub async fn pending_app_requests<C: ConnectionTrait>(db: &C) -> Result<Vec<PendingAppRequest>> {
+    Ok(PendingAppRequest::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT r.tenant_id,t.name AS tenant_name,r.app_id,a.name AS app_name,u.username::text AS requested_by FROM tenant_app_requests r JOIN tenants t ON t.id=r.tenant_id JOIN apps a ON a.id=r.app_id JOIN users u ON u.id=r.requested_by WHERE r.status='pending' AND t.status='active' AND a.status='active' AND a.organization_access='restricted' ORDER BY r.updated_at ASC LIMIT 50",[])).all(db).await?)
+}

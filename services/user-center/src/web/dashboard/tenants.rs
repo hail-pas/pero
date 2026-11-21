@@ -25,10 +25,14 @@ pub async fn list(
         Ok(v) => v,
         Err(e) => return util::management_response(Err(e)),
     };
+    let pending = match svc::pending_app_requests(&s.db).await {
+        Ok(v) => v,
+        Err(e) => return util::management_response(Err(e)),
+    };
     let page = AdminPage::new(&s, jar, admin);
     util::view_response(
         "TenantAdminView",
-        serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"tenants":rows}),
+        serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"tenants":rows,"pending_requests":pending}),
         page.jar,
     )
 }

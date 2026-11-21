@@ -48,6 +48,17 @@ export function Tenants({
     return (
       <>
         <Heading title={t("租户管理")} description={t("统一查看组织、调整成员上限与处理所有者问题")} />
+        {(data.pending_requests?.length ?? 0) > 0 && <Panel title={t("待审批的组织应用申请")}>
+          <Stack spacing={1.5}>
+            {data.pending_requests?.map(item => (
+              <Stack key={`${item.tenant_id}:${item.app_id}`} direction={{xs:"column",sm:"row"}}
+                sx={{justifyContent:"space-between",alignItems:{sm:"center"}}} spacing={1}>
+                <Typography>{item.tenant_name} · {item.app_name} · {t("申请人")}：{item.requested_by}</Typography>
+                <Button component={RouterLink} to={`/dashboard/tenants/${item.tenant_id}`}>{t("处理申请")}</Button>
+              </Stack>
+            ))}
+          </Stack>
+        </Panel>}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
           <TextField size="small" label={t("搜索组织（回车）")} defaultValue={data.tenants.q}
             key={data.tenants.q} onKeyDown={e => {
@@ -530,11 +541,14 @@ export function Tenants({
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {t("解散将立即停止该组织访问所有应用，保留历史标识供业务系统对账；此操作不可恢复。")}
           </Typography>
+          <Stack spacing={1} alignItems="flex-start">
+          <Button component={RouterLink} to={`/account/reauth?redirect=${encodeURIComponent(`/account/tenants/${tenant.id}`)}`} variant="outlined">{t("重新认证身份")}</Button>
           <Button color="error" variant="outlined" onClick={() =>
             editor(t("确认解散组织"), `/account/tenants/${tenant.id}/delete`, [
               { name: "confirmation", label: t("输入组织标识以确认"), required: true },
             ])
           }>{t("解散组织")}</Button>
+          </Stack>
         </Panel>
       )}
 
