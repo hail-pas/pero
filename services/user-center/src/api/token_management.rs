@@ -99,13 +99,11 @@ async fn inspect(
             .tenant_id
             .as_deref()
             .and_then(|id| uuid::Uuid::parse_str(id).ok())
-        {
-            if let Some(context) =
+            && let Some(context) =
                 crate::service::tenant_context::active(&state.db, user.id, client.app_id, id)
                     .await?
-            {
-                response["membership_role"] = serde_json::json!(context.membership_role);
-            }
+        {
+            response["membership_role"] = serde_json::json!(context.membership_role);
         }
         let profile = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
             .expect("user claims contain only JSON primitives");
