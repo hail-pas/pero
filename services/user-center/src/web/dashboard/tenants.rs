@@ -140,10 +140,21 @@ pub struct Review {
     action: String,
 }
 pub async fn review_application(
-    State(s): State<AppState>, jar: CookieJar, admin: AdminContext,
-    Path((id,app)): Path<(Uuid,Uuid)>, Form(f): Form<Review>,
+    State(s): State<AppState>,
+    jar: CookieJar,
+    admin: AdminContext,
+    Path((id, app)): Path<(Uuid, Uuid)>,
+    Form(f): Form<Review>,
 ) -> Response {
-    if let Some(e) = util::verify_csrf_or_json_error(&jar,&f.csrf_token,&s) { return e; }
-    let approve = match f.action.as_str() { "approve"=>true, "reject"=>false, _=>return pero_api_axum::json_error("invalid_request") };
-    util::management_response(svc::review_app_request(&s.db,&admin.actor(&s),id,app,approve).await)
+    if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &s) {
+        return e;
+    }
+    let approve = match f.action.as_str() {
+        "approve" => true,
+        "reject" => false,
+        _ => return pero_api_axum::json_error("invalid_request"),
+    };
+    util::management_response(
+        svc::review_app_request(&s.db, &admin.actor(&s), id, app, approve).await,
+    )
 }

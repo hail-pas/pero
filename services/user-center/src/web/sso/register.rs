@@ -161,8 +161,14 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
                 p.mode
             },
             app_name,
-            email: row.as_ref().and_then(|r| r.email.clone()).unwrap_or_default(),
-            phone: row.as_ref().and_then(|r| r.phone.clone()).unwrap_or_default(),
+            email: row
+                .as_ref()
+                .and_then(|r| r.email.clone())
+                .unwrap_or_default(),
+            phone: row
+                .as_ref()
+                .and_then(|r| r.phone.clone())
+                .unwrap_or_default(),
             status: row.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
             reason: row.as_ref().map(|r| r.reason.clone()).unwrap_or_default(),
             social: row.as_ref().is_some_and(|r| r.provider_id.is_some()),
@@ -259,7 +265,7 @@ pub async fn post(
                 .await
             } else {
                 if !input.phone.trim().is_empty() {
-                    enrollment::start_phone(&state,&input.phone,input.app).await
+                    enrollment::start_phone(&state, &input.phone, input.app).await
                 } else {
                     enrollment::start(&state, &input.email, input.app, None).await
                 }

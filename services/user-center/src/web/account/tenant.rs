@@ -107,11 +107,16 @@ pub async fn detail(
             Vec::new()
         };
     let apps = if tenant.kind == "organization" && tenant.role == "owner" {
-        match crate::service::tenant_admin::apps(&s.db,id).await {
-            Ok(rows) => rows.into_iter().filter(|app| app.status == "active").collect::<Vec<_>>(),
+        match crate::service::tenant_admin::apps(&s.db, id).await {
+            Ok(rows) => rows
+                .into_iter()
+                .filter(|app| app.status == "active")
+                .collect::<Vec<_>>(),
             Err(e) => return util::management_response(Err(e)),
         }
-    } else { Vec::new() };
+    } else {
+        Vec::new()
+    };
     let layout = match AccountLayout::from_user(&s.db, &a.user).await {
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
@@ -278,9 +283,19 @@ pub async fn delete(
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
-    match crate::service::security::recent(&s.db, a.session.id, s.config.sso.session_idle_ttl_seconds).await {
+    match crate::service::security::recent(
+        &s.db,
+        a.session.id,
+        s.config.sso.session_idle_ttl_seconds,
+    )
+    .await
+    {
         Ok(true) => {}
-        Ok(false) => return util::management_response(Err(crate::service::ManagementError::Invalid("reauth_required"))),
+        Ok(false) => {
+            return util::management_response(Err(crate::service::ManagementError::Invalid(
+                "reauth_required",
+            )));
+        }
         Err(error) => return util::dependency_error(error),
     }
     match svc::delete(&s.db, a.user.id, id, &f.confirmation).await {
@@ -301,9 +316,16 @@ pub struct ApplicationAction {
     action: String,
 }
 pub async fn application(
-    State(s): State<AppState>, jar: CookieJar, a: AccountContext,
-    Path((id, app)): Path<(Uuid, Uuid)>, Form(f): Form<ApplicationAction>,
+    State(s): State<AppState>,
+    jar: CookieJar,
+    a: AccountContext,
+    Path((id, app)): Path<(Uuid, Uuid)>,
+    Form(f): Form<ApplicationAction>,
 ) -> Response {
-    if let Some(e) = checked(&jar, &f.csrf_token, &s) { return e; }
-    util::management_response(crate::service::tenant_application::change(&s.db,a.user.id,id,app,&f.action).await)
+    if let Some(e) = checked(&jar, &f.csrf_token, &s) {
+        return e;
+    }
+    util::management_response(
+        crate::service::tenant_application::change(&s.db, a.user.id, id, app, &f.action).await,
+    )
 }

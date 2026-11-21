@@ -1,7 +1,7 @@
 use super::permissions::{self, Actor, Permission as P};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QuerySelect, Set, TransactionTrait, DbBackend, Statement, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait, sea_query::Expr,
 };
 use uuid::Uuid;
 
@@ -65,7 +65,11 @@ async fn write_app_access<C: ConnectionTrait>(
     })
     .on_conflict(
         sea_orm::sea_query::OnConflict::columns([uaa::Column::UserId, uaa::Column::AppId])
-            .update_columns([uaa::Column::Status, uaa::Column::AdmissionOrigin, uaa::Column::UpdatedAt])
+            .update_columns([
+                uaa::Column::Status,
+                uaa::Column::AdmissionOrigin,
+                uaa::Column::UpdatedAt,
+            ])
             .to_owned(),
     )
     .exec(db)
@@ -87,7 +91,8 @@ pub async fn ensure_oauth_app_access(
     {
         return Ok(true);
     }
-    let super_admin = super::security::role(db, session.user_id).await?.as_deref() == Some("super_admin");
+    let super_admin =
+        super::security::role(db, session.user_id).await?.as_deref() == Some("super_admin");
     let txn = db.begin().await?;
     let app = apps_entity::Entity::find_by_id(app_id)
         .lock_shared()
@@ -117,7 +122,12 @@ pub async fn ensure_oauth_app_access(
         return Ok(false);
     }
     // Role and app membership are checked again inside the write transaction.
-    if super_admin && super::security::role(&txn, session.user_id).await?.as_deref() != Some("super_admin") {
+    if super_admin
+        && super::security::role(&txn, session.user_id)
+            .await?
+            .as_deref()
+            != Some("super_admin")
+    {
         return Ok(false);
     }
     let live_session = crate::db::helper::session::primary_query(
@@ -141,7 +151,9 @@ pub async fn ensure_oauth_app_access(
             [session.user_id.into(),app_id.into()])).await?;
     }
     txn.commit().await?;
-    Ok(active_app_access(db, session.user_id, app_id).await?.is_some())
+    Ok(active_app_access(db, session.user_id, app_id)
+        .await?
+        .is_some())
 }
 
 pub async fn revoke_app(

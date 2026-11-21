@@ -94,7 +94,10 @@ pub fn email(value: &str) -> Result<String, Error> {
 }
 pub fn phone(value: &str) -> Result<String, Error> {
     let value = value.trim();
-    if !value.starts_with('+') || !super::contact::ContactChannel::Phone.is_valid_format(value) || value.len() > 16 {
+    if !value.starts_with('+')
+        || !super::contact::ContactChannel::Phone.is_valid_format(value)
+        || value.len() > 16
+    {
         return Err(Error::Invalid("invalid_phone"));
     }
     Ok(value.to_owned())
@@ -106,7 +109,10 @@ fn eligible_phone(p: &Policy) -> Result<(), Error> {
     Ok(())
 }
 fn contact(row: &Enrollment) -> Result<&str, Error> {
-    row.email.as_deref().or(row.phone.as_deref()).ok_or_else(invalid)
+    row.email
+        .as_deref()
+        .or(row.phone.as_deref())
+        .ok_or_else(invalid)
 }
 pub async fn policy<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<Policy, Error> {
     if let Some(id) = app {
@@ -252,7 +258,7 @@ async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, E
         allow_social(db, id).await?;
     }
     if let Some(email) = row.email.as_deref() {
-        eligible(&p,email,row.invitation,row.domain_exception)?;
+        eligible(&p, email, row.invitation, row.domain_exception)?;
     } else {
         eligible_phone(&p)?;
     }
@@ -291,7 +297,11 @@ async fn send<C: ConnectionTrait>(
     token: &str,
     expires: OffsetDateTime,
 ) -> Result<(), Error> {
-    let channel = if address.starts_with('+') { "phone" } else { "email" };
+    let channel = if address.starts_with('+') {
+        "phone"
+    } else {
+        "email"
+    };
     if !state.config.notification.available(channel) {
         return Err(Error::Invalid("notification_disabled"));
     }
@@ -320,16 +330,22 @@ pub async fn start(
     invitation: Option<(&SsoSession, bool, &str)>,
 ) -> Result<(), Error> {
     let address = email(address)?;
-    start_contact(state,&address,app,invitation,false).await
+    start_contact(state, &address, app, invitation, false).await
 }
 
 pub async fn start_phone(state: &AppState, address: &str, app: Option<Uuid>) -> Result<(), Error> {
     let address = phone(address)?;
-    start_contact(state,&address,app,None,true).await
+    start_contact(state, &address, app, None, true).await
 }
 
-async fn start_contact(state: &AppState, address: &str, app: Option<Uuid>, invitation: Option<(&SsoSession,bool,&str)>, is_phone: bool) -> Result<(), Error> {
-    limit_email(state,address).await?;
+async fn start_contact(
+    state: &AppState,
+    address: &str,
+    app: Option<Uuid>,
+    invitation: Option<(&SsoSession, bool, &str)>,
+    is_phone: bool,
+) -> Result<(), Error> {
+    limit_email(state, address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     let (invited, actor, exception, reason) = if let Some((actor, exception, reason)) = invitation {
@@ -355,7 +371,7 @@ async fn start_contact(state: &AppState, address: &str, app: Option<Uuid>, invit
     if is_phone {
         eligible_phone(&p)?;
     } else {
-        eligible(&p,address,invited,exception)?;
+        eligible(&p, address, invited, exception)?;
     }
     execute(&txn,"UPDATE enrollments SET status='expired' WHERE expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')",vec![]).await?;
     let token = pero_utils::crypto::generate_token();
@@ -407,8 +423,16 @@ pub async fn manage(
                 .one(&txn)
                 .await?
                 .ok_or_else(invalid)?;
-            if own.email.as_deref().zip(row.email.as_deref()).is_some_and(|(a,b)| a.eq_ignore_ascii_case(b))
-                || own.phone.as_deref().zip(row.phone.as_deref()).is_some_and(|(a,b)| a == b)
+            if own
+                .email
+                .as_deref()
+                .zip(row.email.as_deref())
+                .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+                || own
+                    .phone
+                    .as_deref()
+                    .zip(row.phone.as_deref())
+                    .is_some_and(|(a, b)| a == b)
             {
                 return Err(Error::Invalid("forbidden"));
             }
@@ -427,7 +451,11 @@ pub async fn manage(
                     &txn,
                     id,
                     &super::notify::Notification {
-                        channel: if row.phone.is_some() { "phone" } else { "email" },
+                        channel: if row.phone.is_some() {
+                            "phone"
+                        } else {
+                            "email"
+                        },
                         kind: "enrollment_rejected",
                         to: contact(&row)?,
                         code: None,
@@ -484,7 +512,11 @@ pub async fn finalize(
 ) -> Result<(), Error> {
     let initial = lookup(&state.db, token).await?;
     let exists = users::Entity::find()
-        .filter(if let Some(email) = &initial.email { users::Column::Email.eq(email.clone()) } else { users::Column::Phone.eq(initial.phone.clone().ok_or_else(invalid)?) })
+        .filter(if let Some(email) = &initial.email {
+            users::Column::Email.eq(email.clone())
+        } else {
+            users::Column::Phone.eq(initial.phone.clone().ok_or_else(invalid)?)
+        })
         .one(&state.db)
         .await?
         .is_some();
@@ -527,7 +559,11 @@ pub async fn finalize(
     }
     let now = OffsetDateTime::now_utc();
     let existing = users::Entity::find()
-        .filter(if let Some(email) = &row.email { users::Column::Email.eq(email.clone()) } else { users::Column::Phone.eq(row.phone.clone().ok_or_else(invalid)?) })
+        .filter(if let Some(email) = &row.email {
+            users::Column::Email.eq(email.clone())
+        } else {
+            users::Column::Phone.eq(row.phone.clone().ok_or_else(invalid)?)
+        })
         .one(&txn)
         .await?;
     let user = if let Some(user) = existing {
@@ -540,7 +576,8 @@ pub async fn finalize(
             .await?
             .ok_or_else(invalid)?;
         let contact_matches = if let Some(email_address) = &row.email {
-            user.email.as_deref().and_then(|v| email(v).ok()).as_deref() == Some(email_address.as_str())
+            user.email.as_deref().and_then(|v| email(v).ok()).as_deref()
+                == Some(email_address.as_str())
         } else {
             user.phone.as_deref() == row.phone.as_deref()
         };
@@ -551,12 +588,19 @@ pub async fn finalize(
         {
             return Err(invalid());
         }
-        if row.email.is_some() && user.email_verified_at.is_none() || row.phone.is_some() && user.phone_verified_at.is_none() {
-            execute(&txn,if row.email.is_some() {
-                "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1"
-            } else {
-                "UPDATE users SET phone_verified_at=now(),updated_at=now() WHERE id=$1"
-            },vec![user.id.into()]).await?;
+        if row.email.is_some() && user.email_verified_at.is_none()
+            || row.phone.is_some() && user.phone_verified_at.is_none()
+        {
+            execute(
+                &txn,
+                if row.email.is_some() {
+                    "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1"
+                } else {
+                    "UPDATE users SET phone_verified_at=now(),updated_at=now() WHERE id=$1"
+                },
+                vec![user.id.into()],
+            )
+            .await?;
         }
         user
     } else {
@@ -791,8 +835,12 @@ pub async fn list(
         return Err(Error::Invalid("invalid_request"));
     }
     let page = query.page.unwrap_or(1).clamp(1, 1_000_000);
-    let address = owner.filter(|u| u.email_verified_at.is_some()).and_then(|u| u.email.clone());
-    let phone = owner.filter(|u| u.phone_verified_at.is_some()).and_then(|u| u.phone.clone());
+    let address = owner
+        .filter(|u| u.email_verified_at.is_some())
+        .and_then(|u| u.email.clone());
+    let phone = owner
+        .filter(|u| u.phone_verified_at.is_some())
+        .and_then(|u| u.phone.clone());
     let owner_id = owner.map(|u| u.id);
     let filter = "FROM (SELECT e.*, a.name AS app_name, CASE WHEN e.expires_at<=now() AND e.status IN ('pending_verification','pending_approval','ready') THEN 'expired' ELSE e.status END AS effective_status FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id) e WHERE ($1 OR app_id IS NOT DISTINCT FROM $2) AND ($3::uuid IS NULL OR completed_user_id=$3 OR email=$4::citext OR phone=$5::citext) AND ($6='' OR strpos(lower(COALESCE(email::text,phone::text)),lower($6))>0 OR strpos(lower(COALESCE(app_name,'')),lower($6))>0)";
     let mut values: Vec<sea_orm::Value> = vec![

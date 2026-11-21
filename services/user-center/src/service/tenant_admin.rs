@@ -251,7 +251,12 @@ pub async fn set_app_grant(
 }
 
 /// Called only after the caller locks app (shared) then organization (exclusive).
-async fn set_app_grant_locked(txn: &sea_orm::DatabaseTransaction, tenant: Uuid, app: Uuid, allow: bool) -> Result<()> {
+async fn set_app_grant_locked(
+    txn: &sea_orm::DatabaseTransaction,
+    tenant: Uuid,
+    app: Uuid,
+    allow: bool,
+) -> Result<()> {
     let changed =
         if allow {
             txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
@@ -283,24 +288,53 @@ async fn set_app_grant_locked(txn: &sea_orm::DatabaseTransaction, tenant: Uuid, 
     Ok(())
 }
 
-pub async fn review_app_request(db: &DatabaseConnection, actor: &super::permissions::Actor, tenant: Uuid, app: Uuid, approve: bool) -> Result<()> {
+pub async fn review_app_request(
+    db: &DatabaseConnection,
+    actor: &super::permissions::Actor,
+    tenant: Uuid,
+    app: Uuid,
+    approve: bool,
+) -> Result<()> {
     let txn = db.begin().await?;
     super::permissions::require_super(&txn, actor).await?;
     txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT id FROM apps WHERE id=$1 AND status='active' AND NOT system AND tenant_mode IN ('organization','both') AND organization_access='restricted' FOR SHARE",
         [app.into()])).await?.ok_or(Error::Invalid("invalid_app"))?;
-    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+    txn.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
         "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status='active' FOR UPDATE",
-        [tenant.into()])).await?.ok_or(Error::Invalid("not_found"))?;
-    let request = txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT status FROM tenant_app_requests WHERE tenant_id=$1 AND app_id=$2 FOR UPDATE",
-        [tenant.into(),app.into()])).await?.ok_or(Error::Invalid("not_found"))?;
-    if request.try_get::<String>("","status")? != "pending" { return Err(Error::Invalid("request_not_pending")); }
-    if approve { set_app_grant_locked(&txn, tenant, app, true).await?; }
+        [tenant.into()],
+    ))
+    .await?
+    .ok_or(Error::Invalid("not_found"))?;
+    let request = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT status FROM tenant_app_requests WHERE tenant_id=$1 AND app_id=$2 FOR UPDATE",
+            [tenant.into(), app.into()],
+        ))
+        .await?
+        .ok_or(Error::Invalid("not_found"))?;
+    if request.try_get::<String>("", "status")? != "pending" {
+        return Err(Error::Invalid("request_not_pending"));
+    }
+    if approve {
+        set_app_grant_locked(&txn, tenant, app, true).await?;
+    }
     txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "UPDATE tenant_app_requests SET status=$3,reviewed_by=$4,reviewed_at=now(),updated_at=now() WHERE tenant_id=$1 AND app_id=$2",
         [tenant.into(),app.into(),(if approve {"approved"} else {"rejected"}).into(),actor.session.user_id.into()])).await?;
-    audit(&txn,actor.session.user_id,if approve {"tenant.app.approved"} else {"tenant.app.rejected"},format!("{tenant}/{app}")).await?;
+    audit(
+        &txn,
+        actor.session.user_id,
+        if approve {
+            "tenant.app.approved"
+        } else {
+            "tenant.app.rejected"
+        },
+        format!("{tenant}/{app}"),
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }

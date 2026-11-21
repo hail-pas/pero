@@ -30,13 +30,19 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
     if let Some(tenant_id) = claims.tenant_id.as_deref() {
         resp["tenant_id"] = serde_json::json!(tenant_id);
     }
-    if let Some(id) = claims.tenant_id.as_deref().and_then(|id| uuid::Uuid::parse_str(id).ok()) {
+    if let Some(id) = claims
+        .tenant_id
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+    {
         match crate::service::tenant_context::active(&state.db, user.id, client.app_id, id).await {
             Ok(Some(context)) => {
                 resp["tenant_kind"] = serde_json::json!(context.tenant_kind);
                 resp["membership_role"] = serde_json::json!(context.membership_role);
             }
-            Ok(None) => return bearer_error_response(BearerError::invalid_token("Tenant is inactive")),
+            Ok(None) => {
+                return bearer_error_response(BearerError::invalid_token("Tenant is inactive"));
+            }
             Err(error) => return crate::web::util::dependency_error(error),
         }
     }

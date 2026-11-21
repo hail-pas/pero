@@ -95,8 +95,15 @@ async fn inspect(
             "is_superadmin":is_superadmin,
             "tenant_id":claims.tenant_id,"tenant_kind":claims.tenant_kind
         });
-        if let Some(id) = claims.tenant_id.as_deref().and_then(|id| uuid::Uuid::parse_str(id).ok()) {
-            if let Some(context) = crate::service::tenant_context::active(&state.db, user.id, client.app_id, id).await? {
+        if let Some(id) = claims
+            .tenant_id
+            .as_deref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        {
+            if let Some(context) =
+                crate::service::tenant_context::active(&state.db, user.id, client.app_id, id)
+                    .await?
+            {
                 response["membership_role"] = serde_json::json!(context.membership_role);
             }
         }

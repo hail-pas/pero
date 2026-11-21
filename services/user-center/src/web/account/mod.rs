@@ -24,7 +24,10 @@ pub fn routes() -> Router<AppState> {
         .route("/account/tenants/{id}/leave", post(tenant::leave))
         .route("/account/tenants/{id}/status", post(tenant::set_status))
         .route("/account/tenants/{id}/delete", post(tenant::delete))
-        .route("/account/tenants/{id}/applications/{app}",post(tenant::application))
+        .route(
+            "/account/tenants/{id}/applications/{app}",
+            post(tenant::application),
+        )
         .route(
             "/account/tenants/{id}/invitations",
             get(tenant::invitations).post(tenant::invite),
