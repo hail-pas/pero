@@ -106,6 +106,12 @@ pub async fn detail(
         } else {
             Vec::new()
         };
+    let apps = if tenant.kind == "organization" && tenant.role == "owner" {
+        match crate::service::tenant_admin::apps(&s.db,id).await {
+            Ok(rows) => rows.into_iter().filter(|app| app.status == "active").collect::<Vec<_>>(),
+            Err(e) => return util::management_response(Err(e)),
+        }
+    } else { Vec::new() };
     let layout = match AccountLayout::from_user(&s.db, &a.user).await {
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
@@ -121,7 +127,7 @@ pub async fn detail(
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantDetailView",
-        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenant":tenant,"members":members,"invitations":invitations,"current_user_id":a.user.id,"can_invite":can_invite}),
+        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenant":tenant,"members":members,"invitations":invitations,"current_user_id":a.user.id,"can_invite":can_invite,"apps":apps}),
         jar,
     )
 }
@@ -287,4 +293,17 @@ pub async fn delete(
 pub struct Delete {
     csrf_token: String,
     confirmation: String,
+}
+
+#[derive(Deserialize)]
+pub struct ApplicationAction {
+    csrf_token: String,
+    action: String,
+}
+pub async fn application(
+    State(s): State<AppState>, jar: CookieJar, a: AccountContext,
+    Path((id, app)): Path<(Uuid, Uuid)>, Form(f): Form<ApplicationAction>,
+) -> Response {
+    if let Some(e) = checked(&jar, &f.csrf_token, &s) { return e; }
+    util::management_response(crate::service::tenant_application::change(&s.db,a.user.id,id,app,&f.action).await)
 }

@@ -441,7 +441,7 @@ export interface ViewDataMap {
   TenantAdminView: AccountPage & {tenants: TenantAdminList};
   TenantAdminDetailView: AccountPage & {tenant: TenantAdminRow;members: TenantAdminMembers;apps:TenantAdminApp[]};
   TenantListView: AccountPage & { tenants: TenantSummary[]; creation_policy: TenantCreationPolicy };
-  TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string;can_invite:boolean};
+  TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string;can_invite:boolean;apps:TenantAdminApp[]};
   TenantInvitationView: AccountPage & {invitation:{tenant_id:string;tenant_name:string;email:string;role:string};verified_email:boolean;user_email:string|null};
   TenantChoiceView: CsrfPage & {token:string;choices:{id:string;kind:string;name:string;role:string}[]};
   ProviderDetailView: AccountPage & {
@@ -456,7 +456,7 @@ export type TenantSummary = {id:string;kind:string;name:string;slug:string|null;
 export type TenantAdminRow = {id:string;name:string;slug:string|null;status:string;platform_suspended:boolean;members:number;max_members:number;created_by:string|null;owner_name:string|null;created_at:string};
 export type TenantAdminList = {rows:TenantAdminRow[];page:number;total_pages:number;q:string;status:string};
 export type TenantAdminMembers = {rows:TenantMember[];page:number;total_pages:number;q:string};
-export type TenantAdminApp = {id:string;name:string;code:string;status:string;organization_access:string;granted:boolean};
+export type TenantAdminApp = {id:string;name:string;code:string;status:string;organization_access:string;granted:boolean;request_status:string|null};
 export type TenantMember = {user_id:string;username:string;name:string;role:string;status:string};
 export type TenantInvitation = {id:string;email:string;role:string;status:string;expires_at:string};
 export type ViewName = keyof ViewDataMap;

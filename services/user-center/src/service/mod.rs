@@ -50,6 +50,7 @@ impl From<sea_orm::DbErr> for ManagementError {
 
 pub mod tenant;
 pub mod tenant_admin;
+pub mod tenant_application;
 pub mod tenant_context;
 pub mod tenant_policy;
 pub mod token_status;

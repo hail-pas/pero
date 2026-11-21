@@ -39,7 +39,7 @@ BEGIN
         'notification_outbox', 'oauth_clients', 'oidc_rp_sessions', 'password_reset_tokens',
         'refresh_tokens', 'registration_policies', 'sso_sessions', 'user_app_access',
         'user_consents', 'user_mfa', 'users', 'tenants', 'tenant_members', 'tenant_invitations',
-        'tenant_creation_policies', 'tenant_app_grants', 'tenant_app_history'
+        'tenant_creation_policies', 'tenant_app_grants', 'tenant_app_history', 'tenant_app_requests'
     ] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace=current_schema()::regnamespace
                        AND relname=object_name AND relkind='r') THEN
@@ -108,3 +108,4 @@ SELECT created_by FROM tenants LIMIT 0;
 SELECT user_id,enabled,max_tenants,updated_by,updated_at FROM tenant_creation_policies LIMIT 0;
 
 SELECT app_id,tenant_id,user_id FROM tenant_app_history LIMIT 0;
+SELECT tenant_id,app_id,requested_by,status,reviewed_by FROM tenant_app_requests LIMIT 0;

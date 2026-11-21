@@ -204,10 +204,11 @@ pub struct AppAccess {
     pub status: String,
     pub organization_access: String,
     pub granted: bool,
+    pub request_status: Option<String>,
 }
 pub async fn apps<C: ConnectionTrait>(db: &C, tenant: Uuid) -> Result<Vec<AppAccess>> {
     Ok(AppAccess::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT a.id,a.name,a.code::text,a.status::text,a.organization_access,EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=$1 AND g.app_id=a.id) AS granted FROM apps a WHERE NOT a.system AND a.tenant_mode IN ('organization','both') ORDER BY a.name,a.id",
+        "SELECT a.id,a.name,a.code::text,a.status::text,a.organization_access,EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=$1 AND g.app_id=a.id) AS granted,(SELECT r.status FROM tenant_app_requests r WHERE r.tenant_id=$1 AND r.app_id=a.id) AS request_status FROM apps a WHERE NOT a.system AND a.tenant_mode IN ('organization','both') ORDER BY a.name,a.id",
         [tenant.into()])).all(db).await?)
 }
 
@@ -228,6 +229,29 @@ pub async fn set_app_grant(
     txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status<>'deleted' FOR UPDATE",
         [tenant.into()])).await?.ok_or(Error::Invalid("not_found"))?;
+    set_app_grant_locked(&txn, tenant, app, allow).await?;
+    if allow {
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE tenant_app_requests SET status='approved',reviewed_by=$3,reviewed_at=now(),updated_at=now() WHERE tenant_id=$1 AND app_id=$2 AND status='pending'",
+            [tenant.into(),app.into(),actor.session.user_id.into()])).await?;
+    }
+    audit(
+        &txn,
+        actor.session.user_id,
+        if allow {
+            "tenant.app.granted"
+        } else {
+            "tenant.app.revoked"
+        },
+        format!("{tenant}/{app}"),
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Called only after the caller locks app (shared) then organization (exclusive).
+async fn set_app_grant_locked(txn: &sea_orm::DatabaseTransaction, tenant: Uuid, app: Uuid, allow: bool) -> Result<()> {
     let changed =
         if allow {
             txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
@@ -256,17 +280,27 @@ pub async fn set_app_grant(
             "DELETE FROM authorization_codes WHERE tenant_id=$1 AND app_id=$2 AND consumed_at IS NULL",
             [tenant.into(),app.into()])).await?;
     }
-    audit(
-        &txn,
-        actor.session.user_id,
-        if allow {
-            "tenant.app.granted"
-        } else {
-            "tenant.app.revoked"
-        },
-        format!("{tenant}/{app}"),
-    )
-    .await?;
+    Ok(())
+}
+
+pub async fn review_app_request(db: &DatabaseConnection, actor: &super::permissions::Actor, tenant: Uuid, app: Uuid, approve: bool) -> Result<()> {
+    let txn = db.begin().await?;
+    super::permissions::require_super(&txn, actor).await?;
+    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id FROM apps WHERE id=$1 AND status='active' AND NOT system AND tenant_mode IN ('organization','both') AND organization_access='restricted' FOR SHARE",
+        [app.into()])).await?.ok_or(Error::Invalid("invalid_app"))?;
+    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status='active' FOR UPDATE",
+        [tenant.into()])).await?.ok_or(Error::Invalid("not_found"))?;
+    let request = txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT status FROM tenant_app_requests WHERE tenant_id=$1 AND app_id=$2 FOR UPDATE",
+        [tenant.into(),app.into()])).await?.ok_or(Error::Invalid("not_found"))?;
+    if request.try_get::<String>("","status")? != "pending" { return Err(Error::Invalid("request_not_pending")); }
+    if approve { set_app_grant_locked(&txn, tenant, app, true).await?; }
+    txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE tenant_app_requests SET status=$3,reviewed_by=$4,reviewed_at=now(),updated_at=now() WHERE tenant_id=$1 AND app_id=$2",
+        [tenant.into(),app.into(),(if approve {"approved"} else {"rejected"}).into(),actor.session.user_id.into()])).await?;
+    audit(&txn,actor.session.user_id,if approve {"tenant.app.approved"} else {"tenant.app.rejected"},format!("{tenant}/{app}")).await?;
     txn.commit().await?;
     Ok(())
 }

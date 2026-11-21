@@ -129,8 +129,12 @@ export function Tenants({
                 <Box><Typography>{app.name} ({app.code})</Typography>
                   <Typography variant="caption" color="text.secondary">
                     {app.organization_access === "open" ? t("允许所有组织") :
-                      app.granted ? t("已开通") : t("未开通")} · {app.status}
+                      app.granted ? t("已开通") : t("未开通")} · {app.status}{app.request_status === "pending" ? ` · ${t("待审批")}` : ""}
                   </Typography></Box>
+                {app.request_status === "pending" && !app.granted && tenant.status === "active" && <Stack direction="row" spacing={1}>
+                    <Button onClick={() => ask(t("批准应用申请"),`/dashboard/tenants/${tenant.id}/applications/${app.id}`,{action:"approve"})}>{t("批准")}</Button>
+                    <Button color="error" onClick={() => ask(t("拒绝应用申请"),`/dashboard/tenants/${tenant.id}/applications/${app.id}`,{action:"reject"})}>{t("拒绝")}</Button>
+                  </Stack>}
                 {tenant.status !== "deleted" && app.organization_access === "restricted" &&
                   <Button variant="outlined" color={app.granted ? "error" : "primary"}
                     onClick={() => ask(t(app.granted ? "撤销应用准入" : "开通应用"),
@@ -289,7 +293,7 @@ export function Tenants({
     );
   }
 
-  const { tenant, members, invitations, current_user_id, can_invite } = data;
+  const { tenant, members, invitations, current_user_id, can_invite, apps } = data;
   const isOrganization = tenant.kind === "organization";
   const isOwner = tenant.role === "owner";
   const canManage = isOwner || tenant.role === "admin";
@@ -365,6 +369,32 @@ export function Tenants({
           </Typography>
         )}
       </Panel>
+
+      {isOrganization && isOwner && (
+        <Panel title={t("组织应用")}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {t("申请组织使用应用的资格；具体成员访问与业务角色仍由应用自身控制。")}
+          </Typography>
+          <Stack spacing={1.5}>
+            {apps.map(app => (
+              <Stack key={app.id} direction={{xs:"column",sm:"row"}} spacing={1} sx={{alignItems:{sm:"center"},justifyContent:"space-between"}}>
+                <Box><Typography>{app.name}</Typography><Typography variant="caption" color="text.secondary">
+                  {app.organization_access === "open" ? t("所有组织可用") : app.granted ? t("已开通") : app.request_status === "pending" ? t("申请待审批") : t("需要申请")}
+                </Typography></Box>
+                {app.organization_access === "restricted" && !app.granted && tenant.status === "active" && (
+                  <Button variant="outlined" color={app.request_status === "pending" ? "warning" : "primary"}
+                    onClick={() => ask(t(app.request_status === "pending" ? "撤回申请" : "申请开通"),
+                      `/account/tenants/${tenant.id}/applications/${app.id}`,
+                      {action:app.request_status === "pending" ? "withdraw" : "request"})}>
+                    {t(app.request_status === "pending" ? "撤回申请" : "申请开通")}
+                  </Button>
+                )}
+              </Stack>
+            ))}
+            {apps.length === 0 && <Typography color="text.secondary">{t("暂无组织应用")}</Typography>}
+          </Stack>
+        </Panel>
+      )}
 
       {isOrganization && (
         <Panel
