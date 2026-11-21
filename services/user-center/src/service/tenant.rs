@@ -543,6 +543,10 @@ pub async fn delete(
     if space.kind != "organization" || space.role != "owner" {
         return Err(Error::Invalid("forbidden"));
     }
+    // Platform suspension takes precedence over owner-controlled closure.
+    if space.platform_suspended {
+        return Err(Error::Invalid("tenant_platform_suspended"));
+    }
     if space.slug.as_deref() != Some(confirmation.trim()) {
         return Err(Error::Invalid("tenant_confirmation_mismatch"));
     }

@@ -495,7 +495,7 @@ export function Tenants({
         </Panel>
       )}
 
-      {isOrganization && isOwner && members.length === 1 && (
+      {isOrganization && isOwner && !tenant.platform_suspended && members.length === 1 && (
         <Panel title={t("解散组织")}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {t("解散将立即停止该组织访问所有应用，保留历史标识供业务系统对账；此操作不可恢复。")}
