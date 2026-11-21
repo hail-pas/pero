@@ -97,34 +97,24 @@ pub async fn memberships(
     }.await;
     no_cache(result.unwrap_or_else(|e| e))
 }
-#[derive(FromQueryResult)]
-struct AccountId {
-    user_id: Uuid,
-}
 pub async fn accounts(
     State(s): State<AppState>,
     source: pero_api_axum::extractor::ClientIp,
     headers: HeaderMap,
     Form(mut f): Form<Request>,
 ) -> Response {
-    let result=async {
-        if f.after_tenant_id.is_some(){return Err(StatusCode::BAD_REQUEST.into_response());}
-        let c=client(&s,&source,&headers,&mut f.client_id,&mut f.client_secret).await?;
-        let ids=AccountId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-            "SELECT user_id FROM user_app_access WHERE app_id=$1 AND ($2::uuid IS NULL OR user_id>$2::uuid) ORDER BY user_id LIMIT 101",
-            [c.app_id.into(),f.after_user_id.into()])).all(&s.db).await
-            .map_err(crate::web::util::dependency_error)?;
-        let more=ids.len()>100;
-        let ids=ids.into_iter().take(100).collect::<Vec<_>>();
-        let mut rows=Vec::with_capacity(ids.len());
-        for id in &ids {
-            let projection=crate::service::account_sync::snapshot(&s.db,c.id,id.user_id).await
-                .map_err(crate::web::util::dependency_error)?;
-            if let Some(value)=projection{rows.push(value);}
+    let result = async {
+        if f.after_tenant_id.is_some() {
+            return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let next=if more{ids.last().map(|r|r.user_id)}else{None};
-        Ok(axum::Json(serde_json::json!({"rows":rows,"next":next})).into_response())
-    }.await;
+        let c = client(&s, &source, &headers, &mut f.client_id, &mut f.client_secret).await?;
+        let (rows, next) =
+            crate::service::account_sync::page(&s.db, c.id, f.after_user_id)
+                .await
+                .map_err(crate::web::util::dependency_error)?;
+        Ok(axum::Json(serde_json::json!({"rows": rows, "next": next})).into_response())
+    }
+    .await;
     no_cache(result.unwrap_or_else(|e| e))
 }
 
