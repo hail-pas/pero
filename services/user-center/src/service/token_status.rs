@@ -58,6 +58,30 @@ pub async fn active_access(
     if access.token_version != claims.access_version {
         return Ok(None);
     }
+    let app = crate::db::entity::apps::Entity::find_by_id(client.app_id)
+        .one(&state.db)
+        .await?;
+    let Some(app) = app else {
+        return Ok(None);
+    };
+    if let Some(raw) = claims.tenant_id.as_deref() {
+        let Ok(tenant_id) = uuid::Uuid::parse_str(raw) else {
+            return Ok(None);
+        };
+        let Some(ctx) =
+            super::tenant_context::active(&state.db, id, client.app_id, tenant_id).await?
+        else {
+            return Ok(None);
+        };
+        if Some(ctx.tenant_version) != claims.tenant_version
+            || Some(ctx.tenant_member_version) != claims.tenant_member_version
+            || Some(ctx.tenant_kind) != claims.tenant_kind
+        {
+            return Ok(None);
+        }
+    } else if !app.system {
+        return Ok(None);
+    }
     let Some(sid) = claims
         .sid
         .as_deref()

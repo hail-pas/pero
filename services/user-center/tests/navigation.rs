@@ -156,9 +156,17 @@ async fn navigation_and_dashboard_share_live_administrator_entitlement() {
     );
 
     // Failed permission lookup is an unavailable service, never an ordinary-user result.
-    db.execute_unprepared("ALTER TABLE admin_roles RENAME TO unavailable_admin_roles")
-        .await
-        .unwrap();
+    // Shadow the fallback public schema with a broken relation in this test schema.
+    // RENAME or DROP alone can resolve to public.admin_roles through search_path.
+    db.execute_unprepared(
+        "DROP TABLE admin_roles CASCADE;
+         CREATE FUNCTION test_admin_role_unavailable() RETURNS text LANGUAGE plpgsql
+         AS $$ BEGIN RAISE EXCEPTION 'administrative role store unavailable'; END $$;
+         CREATE VIEW admin_roles AS
+         SELECT id AS user_id, test_admin_role_unavailable() AS role FROM users",
+    )
+    .await
+    .unwrap();
     for path in ["/", "/account/profile", "/dashboard/apps"] {
         assert_eq!(
             get(&app, &admin_token, path).await.0,

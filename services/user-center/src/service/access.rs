@@ -1,7 +1,7 @@
 use super::permissions::{self, Actor, Permission as P};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QuerySelect, Set, TransactionTrait, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait, sea_query::Expr,
 };
 use uuid::Uuid;
 
@@ -58,13 +58,18 @@ async fn write_app_access<C: ConnectionTrait>(
         user_id: Set(user_id),
         app_id: Set(app_id),
         status: Set(CommonStatus::Active),
+        admission_origin: Set("explicit".to_owned()),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
     })
     .on_conflict(
         sea_orm::sea_query::OnConflict::columns([uaa::Column::UserId, uaa::Column::AppId])
-            .update_columns([uaa::Column::Status, uaa::Column::UpdatedAt])
+            .update_columns([
+                uaa::Column::Status,
+                uaa::Column::AdmissionOrigin,
+                uaa::Column::UpdatedAt,
+            ])
             .to_owned(),
     )
     .exec(db)
@@ -86,9 +91,8 @@ pub async fn ensure_oauth_app_access(
     {
         return Ok(true);
     }
-    if super::security::role(db, session.user_id).await?.as_deref() != Some("super_admin") {
-        return Ok(false);
-    }
+    let super_admin =
+        super::security::role(db, session.user_id).await?.as_deref() == Some("super_admin");
     let txn = db.begin().await?;
     let app = apps_entity::Entity::find_by_id(app_id)
         .lock_shared()
@@ -97,11 +101,17 @@ pub async fn ensure_oauth_app_access(
     if !app.is_some_and(|a| a.status == CommonStatus::Active) {
         return Ok(false);
     }
-    // Keep the app -> access -> user lock order used by token issuance.
-    uaa::Entity::find_by_id((session.user_id, app_id))
+    if !super_admin && !super::tenant_context::auto_eligible(&txn, session.user_id, app_id).await? {
+        return Ok(false);
+    }
+    // An explicit disabled admission is a deny: organization auto-admission must not restore it.
+    let existing = uaa::Entity::find_by_id((session.user_id, app_id))
         .lock_exclusive()
         .one(&txn)
         .await?;
+    if !super_admin && existing.is_some() {
+        return Ok(false);
+    }
     let user = users::Entity::find_by_id(session.user_id)
         .lock_shared()
         .one(&txn)
@@ -111,11 +121,12 @@ pub async fn ensure_oauth_app_access(
     {
         return Ok(false);
     }
-    // Role changes take the user's exclusive policy lock. Recheck under that lock.
-    if super::security::role(&txn, session.user_id)
-        .await?
-        .as_deref()
-        != Some("super_admin")
+    // Role and app membership are checked again inside the write transaction.
+    if super_admin
+        && super::security::role(&txn, session.user_id)
+            .await?
+            .as_deref()
+            != Some("super_admin")
     {
         return Ok(false);
     }
@@ -131,10 +142,18 @@ pub async fn ensure_oauth_app_access(
     if live_session.is_none() {
         return Ok(false);
     }
-    write_app_access(&txn, session.user_id, app_id).await?;
+    if super_admin {
+        write_app_access(&txn, session.user_id, app_id).await?;
+    } else {
+        // Never overwrite an explicit revocation or a grant racing with this insert.
+        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "INSERT INTO user_app_access(user_id,app_id,admission_origin) VALUES($1,$2,'organization') ON CONFLICT DO NOTHING",
+            [session.user_id.into(),app_id.into()])).await?;
+    }
     txn.commit().await?;
-    tracing::info!(user_id = %session.user_id, %app_id, "Automatically granted super administrator application access");
-    Ok(true)
+    Ok(active_app_access(db, session.user_id, app_id)
+        .await?
+        .is_some())
 }
 
 pub async fn revoke_app(

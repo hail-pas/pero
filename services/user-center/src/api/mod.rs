@@ -3,6 +3,9 @@ mod client_auth;
 pub mod health;
 pub mod jwks;
 pub mod providers;
+pub mod tenant_management;
+pub mod tenant_membership;
+pub mod tenant_reconcile;
 pub mod token;
 pub mod token_management;
 pub mod userinfo;
@@ -13,6 +16,39 @@ use axum::routing::{get, post};
 pub fn routes() -> Router<crate::state::app::AppState> {
     Router::new()
         .route("/accounts/sync", post(account_sync::snapshot))
+        .route(
+            "/tenants",
+            get(tenant_management::list).post(tenant_management::create),
+        )
+        .route("/tenants/choices", get(tenant_management::choices))
+        .route("/tenants/{id}", get(tenant_management::detail))
+        .route("/tenants/{id}/members", get(tenant_management::members))
+        .route(
+            "/tenants/{id}/members/{user}",
+            post(tenant_management::update_member),
+        )
+        .route(
+            "/tenants/{id}/invitations",
+            get(tenant_management::invitations).post(tenant_management::invite),
+        )
+        .route(
+            "/tenants/{id}/invitations/{invitation}/revoke",
+            post(tenant_management::revoke_invitation),
+        )
+        .route("/tenants/{id}/rename", post(tenant_management::rename))
+        .route("/tenants/{id}/leave", post(tenant_management::leave))
+        .route("/tenants/{id}/status", post(tenant_management::set_status))
+        .route("/accounts/sync/list", post(tenant_reconcile::accounts))
+        .route("/tenants/sync", post(tenant_reconcile::tenant))
+        .route("/tenants/list", post(tenant_reconcile::tenants))
+        .route(
+            "/tenants/membership/list",
+            post(tenant_reconcile::memberships),
+        )
+        .route(
+            "/tenants/membership/sync",
+            post(tenant_membership::snapshot),
+        )
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/oauth2/token", post(token::token))

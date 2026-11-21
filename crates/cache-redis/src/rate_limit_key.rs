@@ -49,6 +49,18 @@ cache_key_specs! {
         args: (client_id: &str),
     }
 
+    pub rl_tenant_invite_actor: RlTenantInviteActorKey => u64 {
+        pattern: "rl:tenant:invite:actor:{actor}",
+        ttl: 3600,
+        args: (actor: &str),
+    }
+
+    pub rl_tenant_invite_recipient: RlTenantInviteRecipientKey => u64 {
+        pattern: "rl:tenant:invite:recipient:{hash}",
+        ttl: 3600,
+        args: (hash: &str),
+    }
+
     pub rl_verify_send: RlVerifySendKey => u64 {
         pattern: "rl:verify_send:{user_id}:{change_type}",
         ttl: 300,

@@ -131,5 +131,18 @@
   "invalid_rotation_plan": "轮换计划无效，请检查密钥状态及有效期。",
   "invalid_logout_uri": "注销通知地址必须为公共 HTTPS 地址。",
   "permission_revision_conflict": "权限已被其他管理员修改，请刷新页面后重新比较。",
-  "invalid_permission_dependencies": "权限依赖不完整或作用域不正确。"
+  "invalid_permission_dependencies": "权限依赖不完整或作用域不正确。",
+  "tenant_slug_exists": "组织标识已被使用",
+  "last_tenant_owner": "请先指定另一位所有者，再移除当前所有者",
+  "invalid_invitation": "邀请已失效或与当前已验证邮箱不匹配",
+  "tenant_verified_contact_required": "请先验证邮箱或手机号，再创建组织。",
+  "tenant_creation_disabled": "未获得创建组织的权限，请联系平台管理员。",
+  "tenant_creation_limit": "组织创建数量已达到或超过允许的上限。",
+  "tenant_member_limit": "组织成员已达上限，无法接受新成员。",
+  "tenant_has_members": "请先移除其他成员再解散组织。",
+  "invalid_member_limit": "成员上限必须为 1–100000。",
+  "invalid_organization_access": "组织准入规则无效。",
+  "tenant_confirmation_mismatch": "组织标识不匹配，无法解散。",
+  "tenant_disabled": "组织已停用，无法邀请新成员。",
+  "tenant_platform_suspended": "组织已由平台停用，请联系平台管理员恢复。"
 }

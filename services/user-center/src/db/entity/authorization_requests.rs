@@ -12,6 +12,7 @@ pub struct Model {
     pub diagnostic_session_id: Option<Uuid>,
     pub client_id: Uuid,
     pub app_id: Uuid,
+    pub tenant_id: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
     pub redirect_uri: String,
     pub scopes: Vec<String>,

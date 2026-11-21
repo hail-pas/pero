@@ -5,6 +5,7 @@ import {
   AppMembers,
 } from "./enrollment";
 import { UserSecurity } from "./user-security";
+import { Tenants } from "./tenants";
 import { Integration } from "./integration";
 import { Notifications } from "./notifications";
 import { SecurityCenter, AdminRoles } from "./security-center";
@@ -37,6 +38,13 @@ export function PageContent({
   const { mutate } = actions;
   const { view, data } = page;
   switch (view) {
+    case "TenantAdminView":
+    case "TenantAdminDetailView":
+    case "TenantListView":
+    case "TenantDetailView":
+    case "TenantInvitationView":
+    case "TenantChoiceView":
+      return <Tenants page={page} {...actions} />;
     case "UserSecurityView":
       return <UserSecurity data={data} {...actions} />;
     case "IntegrationView":

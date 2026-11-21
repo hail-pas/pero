@@ -29,6 +29,37 @@ async fn sql(db: &sea_orm::DatabaseConnection, query: &str, values: Vec<sea_orm:
     .unwrap();
 }
 
+// Bind hand-built protocol fixtures to the same personal tenant as issued grants.
+async fn bind_test_grants(db: &sea_orm::DatabaseConnection, user: Uuid, app: Uuid) {
+    let ctx = crate::service::tenant_context::resolve(db, user, app, None)
+        .await
+        .unwrap()
+        .expect("personal tenant");
+    sql(
+        db,
+        "UPDATE authorization_requests SET tenant_id=$2 WHERE app_id=$1 AND tenant_id IS NULL",
+        vec![app.into(), ctx.tenant_id.into()],
+    )
+    .await;
+    for table in ["authorization_codes", "refresh_tokens"] {
+        let statement = format!(
+            "UPDATE {table} SET tenant_id=$3,tenant_version=$4,tenant_member_version=$5 WHERE user_id=$1 AND app_id=$2 AND tenant_id IS NULL"
+        );
+        sql(
+            db,
+            &statement,
+            vec![
+                user.into(),
+                app.into(),
+                ctx.tenant_id.into(),
+                ctx.tenant_version.into(),
+                ctx.tenant_member_version.into(),
+            ],
+        )
+        .await;
+    }
+}
+
 struct SecurityFixture {
     fixture: database::DatabaseFixture,
     guard: pero_db_seaorm::DatabaseGuard,
@@ -341,6 +372,7 @@ async fn refresh_downscoping() {
         .unwrap()
         .unwrap();
     sql(&db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid','email']::text[],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&downscope_raw).into(),user.into(),app.into(),client.into(),downscope_session.into()]).await;
+    bind_test_grants(&db, user, app).await;
     let mut request = refresh_form(client, &downscope_raw);
     request.scope = Some("admin".into());
     assert!(matches!(
@@ -409,6 +441,7 @@ async fn refresh_replay() {
     let raw = pero_utils::crypto::generate_token();
     let rt = Uuid::now_v7();
     sql(&db,"INSERT INTO refresh_tokens(id,token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,ARRAY['openid']::text[],now()+interval '1 day')",vec![rt.into(),pero_utils::crypto::sha256_hex(&raw).into(),user.into(),app.into(),client.into(),session.into()]).await;
+    bind_test_grants(&db, user, app).await;
     let result = service
         .handle_refresh_token(&refresh_form(client, &raw), &client_model)
         .await;
@@ -492,6 +525,7 @@ async fn refresh_concurrent_replay() {
         .unwrap();
     let raw = pero_utils::crypto::generate_token();
     sql(&db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid']::text[],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&raw).into(),user.into(),app.into(),client.into(),session.into()]).await;
+    bind_test_grants(&db, user, app).await;
     let request = refresh_form(client, &raw);
     let (first, second) = tokio::join!(
         service.handle_refresh_token(&request, &client_model),
@@ -596,6 +630,7 @@ async fn authorization_code_claims_and_scope() {
     let successful_code = pero_utils::crypto::generate_token();
     let pkce = pero_utils::oauth::pkce::PkcePair::generate();
     sql(&db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at,code_challenge,code_challenge_method) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes',$6,'S256')",vec![pero_utils::crypto::sha256_hex(&successful_code).into(),user.into(),app.into(),client.into(),authenticated_session.into(),pkce.code_challenge.into()]).await;
+    bind_test_grants(&db, user, app).await;
     let mut successful_form = TokenRequest {
         grant_type: "authorization_code".into(),
         code: Some(successful_code),
@@ -683,6 +718,7 @@ async fn authorization_code_claims_and_scope() {
         .unwrap();
     let code = pero_utils::crypto::generate_token();
     sql(&db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid','email']::text[],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&code).into(),user.into(),app.into(),client.into(),session.into()]).await;
+    bind_test_grants(&db, user, app).await;
     let code_form = TokenRequest {
         grant_type: "authorization_code".into(),
         code: Some(code),
@@ -1874,6 +1910,7 @@ async fn consent_submissions_bind_to_the_displayed_request_and_session() {
     for client in [fixture.client, client_b] {
         let id = Uuid::now_v7();
         sql(&state.db,"INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![id.into(),client.into(),fixture.app.into()]).await;
+        bind_test_grants(&state.db, fixture.user, fixture.app).await;
         let token = state
             .cookie_factory()
             .encode_auth_request(&AuthReqCookieValue {
@@ -2026,6 +2063,7 @@ async fn concurrent_first_consents_both_issue_codes() {
     for _ in 0..2 {
         let id = Uuid::now_v7();
         sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![id.into(),fixture.client.into(),fixture.app.into()]).await;
+        bind_test_grants(&fixture.state.db, fixture.user, fixture.app).await;
         requests.push(id);
     }
     let oauth = fixture.state.oauth_service();
@@ -2046,6 +2084,7 @@ async fn concurrent_first_consents_both_issue_codes() {
     use axum_extra::extract::cookie::{Cookie, CookieJar};
     let request = Uuid::now_v7();
     sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![request.into(),fixture.client.into(),fixture.app.into()]).await;
+    bind_test_grants(&fixture.state.db, fixture.user, fixture.app).await;
     let (raw, _) = fixture
         .state
         .session_service()
@@ -2155,6 +2194,7 @@ async fn client_revocation_precedes_authorization_request_locks() {
         .unwrap();
     let request = Uuid::now_v7();
     sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![request.into(),fixture.client.into(),fixture.app.into()]).await;
+    bind_test_grants(&fixture.state.db, fixture.user, fixture.app).await;
     let txn = fixture.state.db.begin().await.unwrap();
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -2222,6 +2262,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
             .unwrap();
         let code = pero_utils::crypto::generate_token();
         sql(&state.db, "INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes')", vec![pero_utils::crypto::sha256_hex(&code).into(),fixture.user.into(),fixture.app.into(),client_id.into(),session.into()]).await;
+        bind_test_grants(&state.db, fixture.user, fixture.app).await;
         let form = TokenRequest {
             grant_type: "authorization_code".into(),
             code: Some(code),
@@ -2633,8 +2674,12 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         vec![fixture.user.into(), fixture.client.into()],
     )
     .await;
+    let tenant = crate::service::tenant_context::resolve(db, fixture.user, fixture.app, None)
+        .await
+        .unwrap()
+        .expect("single personal workspace");
     let refresh_raw = pero_utils::crypto::generate_token();
-    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into()]).await;
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at,tenant_id,tenant_version,tenant_member_version) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day',$6,$7,$8)",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into(),tenant.tenant_id.into(),tenant.tenant_version.into(),tenant.tenant_member_version.into()]).await;
     let client = oauth_clients::Entity::find_by_id(fixture.client)
         .one(db)
         .await
@@ -2651,7 +2696,7 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         .await
         .unwrap();
     let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
-        .issue_access_token(fixture.user, "openid", Some(current), 0)
+        .issue_access_token(fixture.user, "openid", Some(current), 0, Some(&tenant))
         .unwrap();
     let userinfo = |token: String| {
         let state = state.clone();
@@ -3657,6 +3702,7 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
     let service = TokenService::new(state);
     let code = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&code).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),sid.into()]).await;
+    bind_test_grants(db, fixture.user, fixture.app).await;
     let request = TokenRequest {
         grant_type: "authorization_code".into(),
         code: Some(code),
@@ -3710,6 +3756,7 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
     ));
     let blocked_code = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&blocked_code).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),sid.into()]).await;
+    bind_test_grants(db, fixture.user, fixture.app).await;
     let blocked_request = TokenRequest {
         code: Some(blocked_code),
         ..request
@@ -3811,6 +3858,270 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
             .await
             .unwrap()
             .is_some()
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
+    let fixture = SecurityFixture::new().await;
+    let db = &fixture.state.db;
+    sql(
+        db,
+        "UPDATE users SET email='owner@tenant.example',email_verified_at=now() WHERE id=$1",
+        vec![fixture.user.into()],
+    )
+    .await;
+    sql(
+        db,
+        "INSERT INTO tenant_creation_policies(user_id,enabled,max_tenants) VALUES($1,true,1)",
+        vec![fixture.user.into()],
+    )
+    .await;
+    let slug = format!("org-{}", Uuid::now_v7().simple());
+    crate::service::tenant::create(db, fixture.user, "Integration Org", &slug)
+        .await
+        .unwrap();
+    let organization = crate::service::tenant::list(db, fixture.user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|tenant| tenant.kind == "organization")
+        .unwrap();
+
+    let member = Uuid::now_v7();
+    sql(
+        db,
+        "INSERT INTO users(id,username,email,email_verified_at) VALUES($1,$2,'member@tenant.example',now())",
+        vec![member.into(), member.to_string().into()],
+    )
+    .await;
+    sql(
+        db,
+        "UPDATE apps SET tenant_mode='both' WHERE id=$1",
+        vec![fixture.app.into()],
+    )
+    .await;
+    sql(
+        db,
+        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+        vec![member.into(), fixture.app.into()],
+    )
+    .await;
+    let invitation = pero_utils::crypto::generate_token();
+    sql(
+        db,
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'member@tenant.example','member',$2,$3,now()+interval '1 day')",
+        vec![
+            organization.id.into(),
+            pero_utils::crypto::sha256_hex(&invitation).into(),
+            fixture.user.into(),
+        ],
+    )
+    .await;
+    crate::service::tenant::accept(db, member, &invitation)
+        .await
+        .unwrap();
+    crate::service::tenant::accept(db, member, &invitation)
+        .await
+        .unwrap();
+
+    let personal = crate::service::tenant::list(db, member)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|tenant| tenant.kind == "personal")
+        .unwrap();
+    let individual = crate::service::tenant_context::active(db, member, fixture.app, personal.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let prior = crate::service::tenant_context::active(db, member, fixture.app, organization.id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    crate::service::tenant::update_member(db, fixture.user, organization.id, member, "admin")
+        .await
+        .unwrap();
+    assert_ne!(
+        crate::service::tenant_context::active(db, member, fixture.app, organization.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .tenant_member_version,
+        prior.tenant_member_version
+    );
+    assert_eq!(
+        crate::service::tenant_context::active(db, member, fixture.app, personal.id)
+            .await
+            .unwrap()
+            .map(|context| (context.tenant_version, context.tenant_member_version)),
+        Some((individual.tenant_version, individual.tenant_member_version))
+    );
+    assert!(
+        crate::service::tenant::update_member(db, member, organization.id, fixture.user, "remove",)
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        crate::service::tenant::leave(db, fixture.user, organization.id).await,
+        Err(crate::service::ManagementError::Invalid(
+            "last_tenant_owner"
+        ))
+    ));
+    // An unused invitation must never let a removed member restore their own access.
+    let stale_invite = pero_utils::crypto::generate_token();
+    sql(
+        db,
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'member@tenant.example','member',$2,$3,now()+interval '1 day')",
+        vec![
+            organization.id.into(),
+            pero_utils::crypto::sha256_hex(&stale_invite).into(),
+            fixture.user.into(),
+        ],
+    )
+    .await;
+    crate::service::tenant::update_member(db, fixture.user, organization.id, member, "remove")
+        .await
+        .unwrap();
+    assert!(
+        crate::service::tenant::accept(db, member, &stale_invite)
+            .await
+            .is_err()
+    );
+    assert!(
+        crate::service::tenant_context::active(db, member, fixture.app, organization.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        crate::service::tenant_context::active(db, member, fixture.app, personal.id)
+            .await
+            .unwrap()
+            .map(|context| (context.tenant_version, context.tenant_member_version)),
+        Some((individual.tenant_version, individual.tenant_member_version))
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn tenant_quota_reduction_preserves_organizations_and_membership() {
+    let fixture = SecurityFixture::new().await;
+    let db = &fixture.state.db;
+    sql(
+        db,
+        "UPDATE users SET email='quota-owner@tenant.example',email_verified_at=now() WHERE id=$1",
+        vec![fixture.user.into()],
+    )
+    .await;
+    // A missing policy must deny creation; all quota checks use persisted state.
+    let name = format!("quota-{}", Uuid::now_v7().simple());
+    assert!(
+        crate::service::tenant::create(db, fixture.user, "Blocked", &name)
+            .await
+            .is_err()
+    );
+    sql(
+        db,
+        "INSERT INTO tenant_creation_policies(user_id,enabled,max_tenants) VALUES($1,true,3)",
+        vec![fixture.user.into()],
+    )
+    .await;
+    for label in ["Empty A", "Kept", "Empty B"] {
+        let slug = format!("quota-{}", Uuid::now_v7().simple());
+        crate::service::tenant::create(db, fixture.user, label, &slug)
+            .await
+            .unwrap();
+    }
+    let kept = crate::service::tenant::list(db, fixture.user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.name == "Kept")
+        .unwrap();
+    let member = Uuid::now_v7();
+    sql(
+        db,
+        "INSERT INTO users(id,username,email,email_verified_at) VALUES($1,$2,'quota-member@tenant.example',now())",
+        vec![member.into(), member.to_string().into()],
+    )
+    .await;
+    let invitation = pero_utils::crypto::generate_token();
+    sql(
+        db,
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'quota-member@tenant.example','member',$2,$3,now()+interval '1 day')",
+        vec![kept.id.into(),pero_utils::crypto::sha256_hex(&invitation).into(),fixture.user.into()],
+    )
+    .await;
+    crate::service::tenant::accept(db, member, &invitation)
+        .await
+        .unwrap();
+
+    // Reducing creation quota never deletes an existing organization or blocks membership.
+    let txn = db.begin().await.unwrap();
+    txn.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT user_id FROM tenant_creation_policies WHERE user_id=$1 FOR UPDATE",
+        [fixture.user.into()],
+    ))
+    .await
+    .unwrap();
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE tenant_creation_policies SET max_tenants=0 WHERE user_id=$1",
+        [fixture.user.into()],
+    ))
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let organizations: Vec<_> = crate::service::tenant::list(db, fixture.user)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.kind == "organization")
+        .collect();
+    assert_eq!(organizations.len(), 3);
+    assert!(organizations.iter().any(|t| t.id == kept.id));
+    let slug = format!("quota-{}", Uuid::now_v7().simple());
+    assert!(
+        crate::service::tenant::create(db, fixture.user, "Excess", &slug)
+            .await
+            .is_err()
+    );
+    // A pending invitation remains valid despite a reduced creation quota.
+    let another = Uuid::now_v7();
+    sql(db,"INSERT INTO users(id,username,email,email_verified_at) VALUES($1,$2,'quota-another@tenant.example',now())",
+        vec![another.into(),another.to_string().into()]).await;
+    let pending = pero_utils::crypto::generate_token();
+    sql(db,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'quota-another@tenant.example','member',$2,$3,now()+interval '1 day')",
+        vec![kept.id.into(),pero_utils::crypto::sha256_hex(&pending).into(),fixture.user.into()]).await;
+    crate::service::tenant::accept(db, another, &pending)
+        .await
+        .unwrap();
+    // Nonempty organizations can still update their existing members and metadata.
+    crate::service::tenant::rename(db, fixture.user, kept.id, "Still Managed")
+        .await
+        .unwrap();
+    crate::service::tenant::update_member(db, fixture.user, kept.id, member, "admin")
+        .await
+        .unwrap();
+    // Removing a member must not delete an organization when its creator is above quota.
+    crate::service::tenant::update_member(db, fixture.user, kept.id, member, "remove")
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::service::tenant::list(db, fixture.user)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|t| t.kind == "organization")
+            .count(),
+        3
     );
     fixture.cleanup().await;
 }

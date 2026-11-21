@@ -8,6 +8,22 @@
       "kind": "osv_false_positive",
       "reason": "The maintainer advisory limits affected versions to >=0.11.0,<0.12.1. Version 0.10.4 stores pos separately from the block buffer and does not have the vulnerable inline cursor. The aggregated advisory incorrectly matches all versions below 0.12.1.",
       "source": "https://github.com/RustCrypto/utils/security/advisories/GHSA-qwgh-2vcv-g2f7"
+    },
+    {
+      "id": "RUSTSEC-2026-0543",
+      "package": "chrono",
+      "version": "0.4.45",
+      "kind": "accepted_risk",
+      "reason": "Unmaintained transitive dependency of SeaORM/Arrow; RustSec marks all chrono versions affected, with no patched release. No direct chrono dependency in this workspace. Track removal when upstream provides a supported alternative.",
+      "source": "https://rustsec.org/advisories/RUSTSEC-2026-0543.html"
+    },
+    {
+      "id": "RUSTSEC-2026-0459",
+      "package": "libsqlite3-sys",
+      "version": "0.37.0",
+      "kind": "accepted_risk",
+      "reason": "SQLx transitive lockfile entry only; workspace and SeaORM are configured for PostgreSQL, and the bundled SQLite feature is not enabled. This advisory concerns opening an untrusted SQLite database/WAL with affected bundled SQLite. Reassess if SQLite is enabled.",
+      "source": "https://rustsec.org/advisories/RUSTSEC-2026-0459.html"
     }
   ]
 }

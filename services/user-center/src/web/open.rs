@@ -54,7 +54,7 @@ pub async fn openid_configuration(State(state): State<AppState>) -> Response {
         response_types_supported: vec!["code"],
         subject_types_supported: vec!["public"],
         id_token_signing_alg_values_supported: vec!["RS256"],
-        scopes_supported: vec!["openid", "profile", "email", "phone"],
+        scopes_supported: vec!["openid", "profile", "email", "phone", "tenant.manage"],
         token_endpoint_auth_methods_supported: vec![
             "client_secret_basic",
             "client_secret_post",
@@ -77,6 +77,9 @@ pub async fn openid_configuration(State(state): State<AppState>) -> Response {
             "preferred_username",
             "picture",
             "sid",
+            "tenant_id",
+            "tenant_kind",
+            "membership_role",
         ],
         code_challenge_methods_supported: vec!["S256"],
         grant_types_supported: vec!["authorization_code", "refresh_token"],

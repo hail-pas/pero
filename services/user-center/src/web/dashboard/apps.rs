@@ -72,7 +72,11 @@ pub async fn new_form(
         csrf_token,
         mode: "create".to_owned(),
         app_id: String::new(),
-        form: AppFormData::default(),
+        form: AppFormData {
+            tenant_mode: "personal".to_owned(),
+            organization_access: "open".to_owned(),
+            ..Default::default()
+        },
         error: String::new(),
     };
     view_response("AppFormView", tpl, jar)
@@ -165,6 +169,9 @@ pub async fn edit_form(
             description: app.description.unwrap_or_default(),
             homepage_url: app.homepage_url.unwrap_or_default(),
             logo_url: app.logo_url.unwrap_or_default(),
+            tenant_mode: app.tenant_mode,
+            organization_access: app.organization_access,
+            organization_auto_access: app.organization_auto_access,
         },
         error: String::new(),
     };
@@ -192,6 +199,9 @@ fn app_input(form: &AppFormData) -> AppUpdate {
         description: util::empty_or_opt(&form.description),
         homepage_url: util::empty_or_opt(&form.homepage_url),
         logo_url: util::empty_or_opt(&form.logo_url),
+        tenant_mode: form.tenant_mode.clone(),
+        organization_access: form.organization_access.clone(),
+        organization_auto_access: form.organization_auto_access,
     }
 }
 
