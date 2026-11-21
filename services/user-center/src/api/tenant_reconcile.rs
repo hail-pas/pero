@@ -107,11 +107,17 @@ pub async fn accounts(
         if f.after_tenant_id.is_some() {
             return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let c = client(&s, &source, &headers, &mut f.client_id, &mut f.client_secret).await?;
-        let (rows, next) =
-            crate::service::account_sync::page(&s.db, c.id, f.after_user_id)
-                .await
-                .map_err(crate::web::util::dependency_error)?;
+        let c = client(
+            &s,
+            &source,
+            &headers,
+            &mut f.client_id,
+            &mut f.client_secret,
+        )
+        .await?;
+        let (rows, next) = crate::service::account_sync::page(&s.db, c.id, f.after_user_id)
+            .await
+            .map_err(crate::web::util::dependency_error)?;
         Ok(axum::Json(serde_json::json!({"rows": rows, "next": next})).into_response())
     }
     .await;
