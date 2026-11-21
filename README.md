@@ -251,3 +251,8 @@ Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`
 - 应用支持 `organization_access=open|restricted`，并在组织详情维护显式准入关系；业务 ACL 仍在应用侧。
 - 应用可以经 `tenant.manage` OAuth scope 调用受用户授权的租户管理 JSON API；Account Sync confidential 客户端可以按游标全量对账用户与租户成员关系。
 - 接入契约及具体 API 见 [租户接入说明](docs/tenant-integration.md)。
+
+
+## 可运行的租户业务应用接入模板
+
+查看 [examples/tenant-app](examples/tenant-app/README.md)，包含 OIDC BFF 登录、租户切换、Token 在线撤销、SSO 退出、账户及成员同步和全量对账。
