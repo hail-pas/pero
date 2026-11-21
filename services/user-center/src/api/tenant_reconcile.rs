@@ -151,7 +151,62 @@ pub struct TenantRow {
 
 // Historical tenants remain visible to a previously admitted application.
 // Changes in tenant mode and organization admission are reported as active=false.
-const TENANT_SELECT: &str = "SELECT t.id AS tenant_id,t.kind AS tenant_kind,t.name AS tenant_name,t.slug::text AS slug,t.status AS tenant_status,t.max_members,(SELECT count(*)::bigint FROM tenant_members m WHERE m.tenant_id=t.id AND m.status='active') AS member_count,(app.status='active' AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS app_allowed,(t.status='active' AND app.status='active' AND (app.tenant_mode='both' OR app.tenant_mode=t.kind) AND (t.kind='personal' OR app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))) AS active FROM tenants t JOIN apps app ON app.id=$1 WHERE EXISTS(SELECT 1 FROM tenant_app_history h WHERE h.tenant_id=t.id AND h.app_id=app.id)";
+const TENANT_SELECT: &str = r#"
+SELECT
+    t.id AS tenant_id,
+    t.kind AS tenant_kind,
+    t.name AS tenant_name,
+    t.slug::text AS slug,
+    t.status AS tenant_status,
+    t.max_members,
+    (
+        SELECT count(*)::bigint
+        FROM tenant_members m
+        WHERE m.tenant_id=t.id AND m.status='active'
+    ) AS member_count,
+    (
+        app.status='active'
+        AND (app.tenant_mode='both' OR app.tenant_mode=t.kind)
+        AND (
+            t.kind='personal' OR app.organization_access='open'
+            OR EXISTS (
+                SELECT 1 FROM tenant_app_grants g
+                WHERE g.tenant_id=t.id AND g.app_id=app.id
+            )
+        )
+    ) AS app_allowed,
+    (
+        t.status='active'
+        AND app.status='active'
+        AND (app.tenant_mode='both' OR app.tenant_mode=t.kind)
+        AND (
+            t.kind='personal' OR app.organization_access='open'
+            OR EXISTS (
+                SELECT 1 FROM tenant_app_grants g
+                WHERE g.tenant_id=t.id AND g.app_id=app.id
+            )
+        )
+        AND (
+            t.kind<>'personal'
+            OR EXISTS (
+                SELECT 1
+                FROM tenant_members m
+                JOIN users u ON u.id=m.user_id
+                WHERE m.tenant_id=t.id
+                  AND m.user_id=t.owner_user_id
+                  AND m.status='active'
+                  AND u.status='active'
+                  AND u.deleted_at IS NULL
+            )
+        )
+    ) AS active
+FROM tenants t
+JOIN apps app ON app.id=$1
+WHERE EXISTS (
+    SELECT 1 FROM tenant_app_history h
+    WHERE h.tenant_id=t.id AND h.app_id=app.id
+)
+"#;
 
 pub async fn tenant(
     State(s): State<AppState>,
