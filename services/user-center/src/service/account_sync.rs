@@ -73,19 +73,11 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// One query observes account, membership and client field policy in the same snapshot.
-pub async fn snapshot(
-    db: &sea_orm::DatabaseConnection,
-    client: Uuid,
-    user: Uuid,
-) -> Result<Option<serde_json::Value>, DbErr> {
-    let row = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT u.id,u.username::text,u.email::text,u.email_verified_at,u.phone::text,u.phone_verified_at,u.nickname,u.avatar_url,u.status,u.created_at,u.updated_at,u.deleted_at,a.status::text AS membership_status,app.status='active' AS app_active,c.scopes FROM users u JOIN user_app_access a ON a.user_id=u.id JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=a.app_id WHERE u.id=$2 AND c.id=$1 AND c.status='active' AND c.type='confidential' AND c.account_sync_uri IS NOT NULL AND NOT app.system",
-        [client.into(),user.into()])).await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let user = crate::db::entity::users::Model::from_query_result(&row, "")?;
+// Both point lookups and paginated reconciliation use the same account projection.
+const ACCOUNT_SELECT: &str = "SELECT u.id,u.username::text,u.email::text,u.email_verified_at,u.phone::text,u.phone_verified_at,u.nickname,u.avatar_url,u.status,u.created_at,u.updated_at,u.deleted_at,a.status::text AS membership_status,app.status='active' AS app_active,c.scopes FROM users u JOIN user_app_access a ON a.user_id=u.id JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=a.app_id WHERE c.id=$1 AND c.status='active' AND c.type='confidential' AND c.account_sync_uri IS NOT NULL AND NOT app.system";
+
+fn account_projection(row: &sea_orm::QueryResult) -> Result<serde_json::Value, DbErr> {
+    let user = crate::db::entity::users::Model::from_query_result(row, "")?;
     let membership: String = row.try_get("", "membership_status")?;
     let active = user.deleted_at.is_none()
         && user.status == crate::db::enums::UserStatus::Active
@@ -100,9 +92,50 @@ pub async fn snapshot(
     } else {
         serde_json::json!({})
     };
-    Ok(Some(serde_json::json!({
+    Ok(serde_json::json!({
         "sub": user.id, "active": active,
         "account_status": if user.deleted_at.is_some() { "deleted".to_owned() } else { user.status.to_string() },
         "membership_status": membership, "profile": profile,
-    })))
+    }))
+}
+
+/// Read an individual account using the same projection as batch reconciliation.
+pub async fn snapshot(
+    db: &sea_orm::DatabaseConnection,
+    client: Uuid,
+    user: Uuid,
+) -> Result<Option<serde_json::Value>, DbErr> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!("{ACCOUNT_SELECT} AND u.id=$2"),
+        [client.into(), user.into()],
+    ))
+    .await?
+    .as_ref()
+    .map(account_projection)
+    .transpose()
+}
+
+/// Keyset-paginated account reconciliation in one query rather than one per user.
+pub async fn page(
+    db: &sea_orm::DatabaseConnection,
+    client: Uuid,
+    after: Option<Uuid>,
+) -> Result<(Vec<serde_json::Value>, Option<Uuid>), DbErr> {
+    let mut rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("{ACCOUNT_SELECT} AND ($2::uuid IS NULL OR u.id>$2::uuid) ORDER BY u.id LIMIT 101"),
+            [client.into(), after.into()],
+        ))
+        .await?;
+    let more = rows.len() > 100;
+    rows.truncate(100);
+    let next = if more {
+        rows.last().map(|row| row.try_get::<Uuid>("", "id")).transpose()?
+    } else {
+        None
+    };
+    let accounts = rows.iter().map(account_projection).collect::<Result<Vec<_>, _>>()?;
+    Ok((accounts, next))
 }
