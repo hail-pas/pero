@@ -23,6 +23,7 @@ pub struct Model {
     pub system: bool,
     pub tenant_mode: String,
     pub organization_access: String,
+    pub organization_auto_access: bool,
     pub created_at: TimeDateTimeWithTimeZone,
     pub updated_at: TimeDateTimeWithTimeZone,
 }

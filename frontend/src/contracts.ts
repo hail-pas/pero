@@ -36,6 +36,7 @@ export interface AppSummary {
   system: boolean;
   tenant_mode: string;
   organization_access: string;
+  organization_auto_access: boolean;
   created_at: DateValue;
 }
 export interface UserSummary {

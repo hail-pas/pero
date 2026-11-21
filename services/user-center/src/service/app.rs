@@ -14,6 +14,7 @@ pub struct AppUpdate {
     pub logo_url: Option<String>,
     pub tenant_mode: String,
     pub organization_access: String,
+    pub organization_auto_access: bool,
 }
 
 impl AppUpdate {
@@ -39,6 +40,7 @@ impl AppUpdate {
     fn apply(self, active: &mut apps::ActiveModel) {
         active.tenant_mode = Set(self.tenant_mode);
         active.organization_access = Set(self.organization_access);
+        active.organization_auto_access = Set(self.organization_auto_access);
         active.name = Set(self.name);
         active.description = Set(self.description);
         active.homepage_url = Set(self.homepage_url);
@@ -119,13 +121,15 @@ pub async fn update(
 
     let old = editable(&txn, id).await?;
     if (old.tenant_mode != input.tenant_mode
-        || old.organization_access != input.organization_access)
+        || old.organization_access != input.organization_access
+        || old.organization_auto_access != input.organization_auto_access)
         && !access.super_admin
     {
         return Err(ManagementError::Invalid("forbidden"));
     }
     let changed = old.tenant_mode != input.tenant_mode
-        || old.organization_access != input.organization_access;
+        || old.organization_access != input.organization_access
+        || old.organization_auto_access != input.organization_auto_access;
     // Never let old restricted grants silently come back after the application
     // has been made open or personal-only and is later restricted again.
     let clear_grants =

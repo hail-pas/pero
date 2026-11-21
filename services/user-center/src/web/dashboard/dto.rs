@@ -49,6 +49,8 @@ pub struct AppFormData {
     pub tenant_mode: String,
     #[serde(default = "default_organization_access")]
     pub organization_access: String,
+    #[serde(default)]
+    pub organization_auto_access: bool,
 }
 fn default_organization_access() -> String {
     "open".to_owned()
@@ -441,6 +443,7 @@ pub struct AppSummary {
     pub system: bool,
     pub tenant_mode: String,
     pub organization_access: String,
+    pub organization_auto_access: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
@@ -458,6 +461,7 @@ impl From<apps::Model> for AppSummary {
             system: model.system,
             tenant_mode: model.tenant_mode,
             organization_access: model.organization_access,
+            organization_auto_access: model.organization_auto_access,
             created_at: model.created_at,
         }
     }

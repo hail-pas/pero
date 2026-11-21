@@ -400,6 +400,8 @@ export const appFields: Field[] = [
   {name:"organization_access",label:"组织准入规则",required:true,
     options:[["open","所有符合条件的组织"],["restricted","仅明确授权的组织"]],
     default:"open",hint:"仅控制组织是否能进入该应用，业务角色与数据权限仍由业务系统管理。"},
+  {name:"organization_auto_access",label:"组织成员首次登录自动开通应用资格",type:"checkbox",default:false,
+    hint:"仅对有效组织成员生效；不会赋予个人空间访问资格。管理员明确撤销的用户仍需人工恢复。"},
   text("homepage_url", "应用主页"),
   text("logo_url", "Logo URL"),
   { ...text("description", "应用说明"), multiline: true },
