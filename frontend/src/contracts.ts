@@ -320,6 +320,7 @@ export interface ViewDataMap {
     mode: string;
     app: string | null;
     email: string;
+    phone: string;
     app_name: string;
     status: string;
     reason: string;

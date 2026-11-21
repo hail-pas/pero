@@ -1,4 +1,4 @@
-//! Registration and application admission share one email-proved request lifecycle.
+//! Registration and application admission share one verified-contact lifecycle.
 use super::{ManagementError as Error, password::PasswordIdentityService, security::execute};
 use crate::{
     db::{
@@ -49,7 +49,8 @@ impl SocialProof {
 pub struct Enrollment {
     pub id: Uuid,
     pub app_id: Option<Uuid>,
-    pub email: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
     pub invitation: bool,
     pub invited_by: Option<Uuid>,
     pub domain_exception: bool,
@@ -90,6 +91,22 @@ pub fn email(value: &str) -> Result<String, Error> {
         local.to_lowercase(),
         domain.to_lowercase()
     ))
+}
+pub fn phone(value: &str) -> Result<String, Error> {
+    let value = value.trim();
+    if !value.starts_with('+') || !super::contact::ContactChannel::Phone.is_valid_format(value) || value.len() > 16 {
+        return Err(Error::Invalid("invalid_phone"));
+    }
+    Ok(value.to_owned())
+}
+fn eligible_phone(p: &Policy) -> Result<(), Error> {
+    if p.emergency_stop || p.mode != "self_service" || !p.domains.is_empty() {
+        return Err(Error::Invalid("registration_closed"));
+    }
+    Ok(())
+}
+fn contact(row: &Enrollment) -> Result<&str, Error> {
+    row.email.as_deref().or(row.phone.as_deref()).ok_or_else(invalid)
 }
 pub async fn policy<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<Policy, Error> {
     if let Some(id) = app {
@@ -234,7 +251,11 @@ async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, E
     if let Some(id) = row.provider_id {
         allow_social(db, id).await?;
     }
-    eligible(&p, &row.email, row.invitation, row.domain_exception)?;
+    if let Some(email) = row.email.as_deref() {
+        eligible(&p,email,row.invitation,row.domain_exception)?;
+    } else {
+        eligible_phone(&p)?;
+    }
     if let Some(actor) = row.invited_by {
         let user = users::Entity::find_by_id(actor)
             .one(db)
@@ -270,7 +291,8 @@ async fn send<C: ConnectionTrait>(
     token: &str,
     expires: OffsetDateTime,
 ) -> Result<(), Error> {
-    if !state.config.notification.available("email") {
+    let channel = if address.starts_with('+') { "phone" } else { "email" };
+    if !state.config.notification.available(channel) {
         return Err(Error::Invalid("notification_disabled"));
     }
     let mut link =
@@ -280,7 +302,7 @@ async fn send<C: ConnectionTrait>(
         db,
         id,
         &super::notify::Notification {
-            channel: "email",
+            channel,
             kind: "enrollment",
             to: address,
             code: None,
@@ -298,7 +320,16 @@ pub async fn start(
     invitation: Option<(&SsoSession, bool, &str)>,
 ) -> Result<(), Error> {
     let address = email(address)?;
-    limit_email(state, &address).await?;
+    start_contact(state,&address,app,invitation,false).await
+}
+
+pub async fn start_phone(state: &AppState, address: &str, app: Option<Uuid>) -> Result<(), Error> {
+    let address = phone(address)?;
+    start_contact(state,&address,app,None,true).await
+}
+
+async fn start_contact(state: &AppState, address: &str, app: Option<Uuid>, invitation: Option<(&SsoSession,bool,&str)>, is_phone: bool) -> Result<(), Error> {
+    limit_email(state,address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     let (invited, actor, exception, reason) = if let Some((actor, exception, reason)) = invitation {
@@ -320,13 +351,18 @@ pub async fn start(
     } else {
         (false, None, false, "")
     };
-    eligible(&policy(&txn, app).await?, &address, invited, exception)?;
+    let p = policy(&txn, app).await?;
+    if is_phone {
+        eligible_phone(&p)?;
+    } else {
+        eligible(&p,address,invited,exception)?;
+    }
     execute(&txn,"UPDATE enrollments SET status='expired' WHERE expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')",vec![]).await?;
     let token = pero_utils::crypto::generate_token();
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });
-    execute(&txn,"INSERT INTO enrollments(id,app_id,email,invitation,invited_by,domain_exception,reason,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",vec![id.into(),app.into(),address.clone().into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into()]).await?;
-    send(&txn, state, id, &address, &token, expiry).await?;
+    execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into()]).await?;
+    send(&txn, state, id, address, &token, expiry).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -371,10 +407,8 @@ pub async fn manage(
                 .one(&txn)
                 .await?
                 .ok_or_else(invalid)?;
-            if own
-                .email
-                .as_deref()
-                .is_some_and(|e| e.eq_ignore_ascii_case(&row.email))
+            if own.email.as_deref().zip(row.email.as_deref()).is_some_and(|(a,b)| a.eq_ignore_ascii_case(b))
+                || own.phone.as_deref().zip(row.phone.as_deref()).is_some_and(|(a,b)| a == b)
             {
                 return Err(Error::Invalid("forbidden"));
             }
@@ -382,7 +416,7 @@ pub async fn manage(
             execute(&txn,"UPDATE enrollments SET status=$2,approved_by=$3,approved_at=now(),reason=$4,token_hash=$5,last_sent_at=now() WHERE id=$1",vec![id.into(),(if action=="approve" {"ready"} else {"rejected"}).into(),actor.user_id.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into()]).await?;
             cancel_notifications(&txn, id).await?;
             if action == "approve" {
-                send(&txn, state, id, &row.email, &token, row.expires_at).await?;
+                send(&txn, state, id, contact(&row)?, &token, row.expires_at).await?;
             } else {
                 let mut link = pero_utils::oauth::url::issuer_endpoint(
                     &state.config.sso.base_url,
@@ -393,9 +427,9 @@ pub async fn manage(
                     &txn,
                     id,
                     &super::notify::Notification {
-                        channel: "email",
+                        channel: if row.phone.is_some() { "phone" } else { "email" },
                         kind: "enrollment_rejected",
-                        to: &row.email,
+                        to: contact(&row)?,
                         code: None,
                         link: &link,
                     },
@@ -423,7 +457,7 @@ pub async fn manage(
             )
             .await?;
             cancel_notifications(&txn, id).await?;
-            send(&txn, state, id, &row.email, &token, row.expires_at).await?;
+            send(&txn, state, id, contact(&row)?, &token, row.expires_at).await?;
         }
         _ => return Err(invalid()),
     }
@@ -450,7 +484,7 @@ pub async fn finalize(
 ) -> Result<(), Error> {
     let initial = lookup(&state.db, token).await?;
     let exists = users::Entity::find()
-        .filter(users::Column::Email.eq(initial.email.clone()))
+        .filter(if let Some(email) = &initial.email { users::Column::Email.eq(email.clone()) } else { users::Column::Phone.eq(initial.phone.clone().ok_or_else(invalid)?) })
         .one(&state.db)
         .await?
         .is_some();
@@ -493,7 +527,7 @@ pub async fn finalize(
     }
     let now = OffsetDateTime::now_utc();
     let existing = users::Entity::find()
-        .filter(users::Column::Email.eq(row.email.clone()))
+        .filter(if let Some(email) = &row.email { users::Column::Email.eq(email.clone()) } else { users::Column::Phone.eq(row.phone.clone().ok_or_else(invalid)?) })
         .one(&txn)
         .await?;
     let user = if let Some(user) = existing {
@@ -505,28 +539,34 @@ pub async fn finalize(
             .one(&txn)
             .await?
             .ok_or_else(invalid)?;
-        if user.email.as_deref().and_then(|v| email(v).ok()).as_deref() != Some(&row.email)
+        let contact_matches = if let Some(email_address) = &row.email {
+            user.email.as_deref().and_then(|v| email(v).ok()).as_deref() == Some(email_address.as_str())
+        } else {
+            user.phone.as_deref() == row.phone.as_deref()
+        };
+        if !contact_matches
             || user.status != UserStatus::Active
             || user.deleted_at.is_some()
             || super::security::role(&txn, user.id).await?.is_some()
         {
             return Err(invalid());
         }
-        if user.email_verified_at.is_none() {
-            execute(
-                &txn,
-                "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1",
-                vec![user.id.into()],
-            )
-            .await?;
+        if row.email.is_some() && user.email_verified_at.is_none() || row.phone.is_some() && user.phone_verified_at.is_none() {
+            execute(&txn,if row.email.is_some() {
+                "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1"
+            } else {
+                "UPDATE users SET phone_verified_at=now(),updated_at=now() WHERE id=$1"
+            },vec![user.id.into()]).await?;
         }
         user
     } else {
         let user = users::ActiveModel {
             id: Set(Uuid::now_v7()),
             username: Set(username.trim().to_owned()),
-            email: Set(Some(row.email.clone())),
-            email_verified_at: Set(Some(now)),
+            email: Set(row.email.clone()),
+            email_verified_at: Set(row.email.as_ref().map(|_| now)),
+            phone: Set(row.phone.clone()),
+            phone_verified_at: Set(row.phone.as_ref().map(|_| now)),
             status: Set(UserStatus::Active),
             created_at: Set(now),
             updated_at: Set(now),
@@ -751,16 +791,16 @@ pub async fn list(
         return Err(Error::Invalid("invalid_request"));
     }
     let page = query.page.unwrap_or(1).clamp(1, 1_000_000);
-    let address = owner
-        .filter(|u| u.email_verified_at.is_some())
-        .and_then(|u| u.email.clone());
+    let address = owner.filter(|u| u.email_verified_at.is_some()).and_then(|u| u.email.clone());
+    let phone = owner.filter(|u| u.phone_verified_at.is_some()).and_then(|u| u.phone.clone());
     let owner_id = owner.map(|u| u.id);
-    let filter = "FROM (SELECT e.*, a.name AS app_name, CASE WHEN e.expires_at<=now() AND e.status IN ('pending_verification','pending_approval','ready') THEN 'expired' ELSE e.status END AS effective_status FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id) e WHERE ($1 OR app_id IS NOT DISTINCT FROM $2) AND ($3::uuid IS NULL OR completed_user_id=$3 OR email=$4::citext) AND ($5='' OR strpos(lower(email::text),lower($5))>0 OR strpos(lower(COALESCE(app_name,'')),lower($5))>0)";
+    let filter = "FROM (SELECT e.*, a.name AS app_name, CASE WHEN e.expires_at<=now() AND e.status IN ('pending_verification','pending_approval','ready') THEN 'expired' ELSE e.status END AS effective_status FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id) e WHERE ($1 OR app_id IS NOT DISTINCT FROM $2) AND ($3::uuid IS NULL OR completed_user_id=$3 OR email=$4::citext OR phone=$5::citext) AND ($6='' OR strpos(lower(COALESCE(email::text,phone::text)),lower($6))>0 OR strpos(lower(COALESCE(app_name,'')),lower($6))>0)";
     let mut values: Vec<sea_orm::Value> = vec![
         (owner.is_some() || query.all_apps.unwrap_or(query.app.is_none())).into(),
         query.app.into(),
         owner_id.into(),
         address.into(),
+        phone.into(),
         query.q.trim().into(),
     ];
     #[derive(FromQueryResult)]
@@ -768,7 +808,7 @@ pub async fn list(
         total: i64,
         pending: i64,
     }
-    let counts=Counts::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT count(*) FILTER (WHERE $6='' OR effective_status=$6) AS total, count(*) FILTER (WHERE effective_status='pending_approval') AS pending {filter}"), {
+    let counts=Counts::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT count(*) FILTER (WHERE $7='' OR effective_status=$7) AS total, count(*) FILTER (WHERE effective_status='pending_approval') AS pending {filter}"), {
         let mut v=values.clone(); v.push(query.status.clone().into()); v
     })).one(db).await?.ok_or_else(invalid)?;
     values.extend([
@@ -776,7 +816,7 @@ pub async fn list(
         (crate::config::DASHBOARD_PAGE_SIZE as i64).into(),
         (((page - 1) * crate::config::DASHBOARD_PAGE_SIZE) as i64).into(),
     ]);
-    let rows=ProgressRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT id,app_id,app_name,email::text,invitation,effective_status AS status,reason,created_at,expires_at {filter} AND ($6='' OR effective_status=$6) ORDER BY (effective_status='pending_approval') DESC,created_at DESC,id DESC LIMIT $7 OFFSET $8"),values)).all(db).await?;
+    let rows=ProgressRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT id,app_id,app_name,COALESCE(email::text,phone::text) AS email,invitation,effective_status AS status,reason,created_at,expires_at {filter} AND ($7='' OR effective_status=$7) ORDER BY (effective_status='pending_approval') DESC,created_at DESC,id DESC LIMIT $8 OFFSET $9"),values)).all(db).await?;
     Ok(ProgressList {
         rows,
         page,
@@ -799,7 +839,7 @@ pub async fn owner_action(
         .one(&txn)
         .await?
         .ok_or_else(invalid)?;
-    let row=Enrollment::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT * FROM enrollments WHERE id=$1 AND email=$2::citext AND expires_at>now() AND status IN ('pending_verification','pending_approval','ready')",[id.into(),user.email.clone().filter(|_| user.email_verified_at.is_some()).into()])).one(&txn).await?.ok_or_else(invalid)?;
+    let row=Enrollment::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT * FROM enrollments WHERE id=$1 AND (email=$2::citext OR phone=$3::citext) AND expires_at>now() AND status IN ('pending_verification','pending_approval','ready')",[id.into(),user.email.clone().filter(|_| user.email_verified_at.is_some()).into(),user.phone.clone().filter(|_| user.phone_verified_at.is_some()).into()])).one(&txn).await?.ok_or_else(invalid)?;
     let token = match action {
         "withdraw" => {
             execute(
@@ -827,7 +867,7 @@ pub async fn owner_action(
             .await?;
             cancel_notifications(&txn, id).await?;
             if action == "resend" {
-                send(&txn, state, id, &row.email, &token, row.expires_at).await?;
+                send(&txn, state, id, contact(&row)?, &token, row.expires_at).await?;
                 None
             } else {
                 Some(token)
