@@ -14,13 +14,9 @@ BEGIN
     INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
     SELECT c.id,NEW.user_id,NEW.tenant_id,'tenant.membership.changed',c.account_sync_uri
     FROM tenant_app_history h
-    JOIN user_app_access a ON a.user_id=h.user_id AND a.app_id=h.app_id
-    JOIN apps app ON app.id=h.app_id
     JOIN oauth_clients c ON c.app_id=h.app_id
-    JOIN tenants t ON t.id=h.tenant_id
     WHERE h.user_id=NEW.user_id AND h.tenant_id=NEW.tenant_id
-      AND a.status='active' AND c.status='active' AND c.account_sync_uri IS NOT NULL
-      AND (app.tenant_mode='both' OR app.tenant_mode=t.kind);
+      AND c.status='active' AND c.account_sync_uri IS NOT NULL;
     RETURN NEW;
 END $$;
 
@@ -33,13 +29,9 @@ BEGIN
     INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
     SELECT c.id,h.user_id,NEW.id,'tenant.membership.changed',c.account_sync_uri
     FROM tenant_app_history h
-    JOIN tenant_members m ON m.tenant_id=h.tenant_id AND m.user_id=h.user_id
-    JOIN user_app_access a ON a.user_id=h.user_id AND a.app_id=h.app_id
-    JOIN apps app ON app.id=h.app_id
     JOIN oauth_clients c ON c.app_id=h.app_id
-    WHERE h.tenant_id=NEW.id AND m.status='active' AND a.status='active'
-      AND c.status='active' AND c.account_sync_uri IS NOT NULL
-      AND (app.tenant_mode='both' OR app.tenant_mode=NEW.kind);
+    WHERE h.tenant_id=NEW.id AND c.status='active'
+      AND c.account_sync_uri IS NOT NULL;
     RETURN NEW;
 END $$;
 
