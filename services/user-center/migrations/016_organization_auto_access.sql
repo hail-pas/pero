@@ -36,3 +36,43 @@ DROP TRIGGER aa_tenant_app_history_app ON apps;
 CREATE TRIGGER aa_tenant_app_history_app
     AFTER INSERT OR UPDATE OF status,tenant_mode,organization_access,organization_auto_access ON apps
     FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+-- Notify downstream projections whenever auto admission or explicit admission changes.
+CREATE OR REPLACE FUNCTION enqueue_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='UPDATE' AND (OLD.status,OLD.admission_origin)
+        IS NOT DISTINCT FROM (NEW.status,NEW.admission_origin) THEN
+        RETURN NEW;
+    END IF;
+    INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+    SELECT c.id,NEW.user_id,
+           CASE WHEN TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status
+                THEN 'sync.requested'
+                WHEN NEW.status='active' THEN 'membership.granted'
+                ELSE 'membership.revoked' END,
+           c.account_sync_uri
+    FROM oauth_clients c
+    WHERE c.app_id=NEW.app_id AND c.account_sync_uri IS NOT NULL;
+
+    INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+    SELECT c.id,NEW.user_id,h.tenant_id,'tenant.membership.changed',c.account_sync_uri
+    FROM tenant_app_history h
+    JOIN oauth_clients c ON c.app_id=h.app_id
+    WHERE h.app_id=NEW.app_id AND h.user_id=NEW.user_id
+      AND c.status='active' AND c.account_sync_uri IS NOT NULL;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER membership_account_sync ON user_app_access;
+CREATE TRIGGER membership_account_sync
+    AFTER INSERT OR UPDATE OF status,admission_origin ON user_app_access
+    FOR EACH ROW EXECUTE FUNCTION enqueue_membership_sync();
+
+DROP TRIGGER app_account_sync ON apps;
+CREATE TRIGGER app_account_sync
+    AFTER UPDATE OF status,tenant_mode,organization_access,organization_auto_access ON apps
+    FOR EACH ROW
+    WHEN ((OLD.status,OLD.tenant_mode,OLD.organization_access,OLD.organization_auto_access)
+          IS DISTINCT FROM
+          (NEW.status,NEW.tenant_mode,NEW.organization_access,NEW.organization_auto_access))
+    EXECUTE FUNCTION enqueue_app_account_sync();
