@@ -102,6 +102,10 @@ def start_login(tenant=None):
 
 @app.get("/login")
 def login():
+    # Cross-site navigation to /login must not replace an active tenant session.
+    _sid, data, _status = verified()
+    if data:
+        return redirect("/")
     return start_login()
 
 
