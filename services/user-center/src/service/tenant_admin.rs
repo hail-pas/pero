@@ -19,6 +19,7 @@ pub struct Summary {
     pub name: String,
     pub slug: Option<String>,
     pub status: String,
+    pub platform_suspended: bool,
     pub created_by: Option<Uuid>,
     pub created_at: time::OffsetDateTime,
     pub max_members: i32,
@@ -33,7 +34,7 @@ pub struct Listing {
     pub q: String,
     pub status: String,
 }
-const SELECT: &str = "SELECT t.id,t.name,t.slug::text,t.status,t.created_by,t.created_at,t.max_members,(SELECT count(*)::bigint FROM tenant_members m WHERE m.tenant_id=t.id AND m.status='active') AS members,(SELECT u.username::text FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=t.id AND m.role='owner' AND m.status='active' AND u.deleted_at IS NULL ORDER BY m.joined_at LIMIT 1) AS owner_name FROM tenants t WHERE t.kind='organization'";
+const SELECT: &str = "SELECT t.id,t.name,t.slug::text,t.status,t.platform_suspended,t.created_by,t.created_at,t.max_members,(SELECT count(*)::bigint FROM tenant_members m WHERE m.tenant_id=t.id AND m.status='active') AS members,(SELECT u.username::text FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=t.id AND m.role='owner' AND m.status='active' AND u.deleted_at IS NULL ORDER BY m.joined_at LIMIT 1) AS owner_name FROM tenants t WHERE t.kind='organization'";
 pub async fn list<C: ConnectionTrait>(db: &C, input: &Filter) -> Result<Listing> {
     let page = input.page.unwrap_or(1).clamp(1, 1_000_000);
     let q = input

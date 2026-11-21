@@ -19,6 +19,7 @@ pub struct Tenant {
     pub name: String,
     pub slug: Option<String>,
     pub status: String,
+    pub platform_suspended: bool,
     pub role: String,
     pub max_members: i32,
 }
@@ -68,13 +69,13 @@ async fn audit<C: ConnectionTrait>(
 }
 pub async fn list<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Vec<Tenant>> {
     Ok(Tenant::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role,t.max_members FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' AND t.status<>'deleted' ORDER BY (t.kind='personal') DESC,t.name",
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,t.platform_suspended,m.role,t.max_members FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE m.user_id=$1 AND m.status='active' AND t.status<>'deleted' ORDER BY (t.kind='personal') DESC,t.name",
         [user.into()])).all(db).await?)
 }
 pub async fn get<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Tenant> {
     Tenant::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,m.role,t.max_members FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND t.status<>'deleted' AND m.user_id=$2 AND m.status='active'",
+        "SELECT t.id,t.kind,t.name,t.slug::text,t.status,t.platform_suspended,m.role,t.max_members FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id WHERE t.id=$1 AND t.status<>'deleted' AND m.user_id=$2 AND m.status='active'",
         [id.into(), user.into()],
     ))
     .one(db)
@@ -458,7 +459,10 @@ pub async fn set_status(
     if space.role != "owner" {
         return Err(Error::Invalid("forbidden"));
     }
-    apply_status(&txn, actor, tenant, status).await?;
+    if status == "active" && space.platform_suspended {
+        return Err(Error::Invalid("tenant_platform_suspended"));
+    }
+    apply_status(&txn, actor, tenant, status, false).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -474,7 +478,7 @@ pub async fn set_status_admin(
     let txn = db.begin().await?;
     super::permissions::require_super(&txn, actor).await?;
     lock_organization(&txn, tenant).await?;
-    apply_status(&txn, actor.session.user_id, tenant, status).await?;
+    apply_status(&txn, actor.session.user_id, tenant, status, true).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -491,11 +495,12 @@ async fn apply_status<C: ConnectionTrait>(
     actor: Uuid,
     tenant: Uuid,
     status: &str,
+    platform_action: bool,
 ) -> Result<()> {
     let changed = exec(
         db,
-        "UPDATE tenants SET status=$2,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization' AND status IN ('active','disabled') AND status<>$2",
-        vec![tenant.into(), status.into()],
+        "UPDATE tenants SET status=$2,platform_suspended=CASE WHEN $3 THEN $2='disabled' ELSE platform_suspended END,auth_version=auth_version+1,updated_at=now() WHERE id=$1 AND kind='organization' AND status IN ('active','disabled') AND (status<>$2 OR ($3 AND platform_suspended<>($2='disabled')))",
+        vec![tenant.into(), status.into(), platform_action.into()],
     )
     .await?;
     if changed == 0 {

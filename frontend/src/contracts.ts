@@ -451,8 +451,8 @@ export interface ViewDataMap {
   };
 }
 export type TenantCreationPolicy = { enabled: boolean; max_tenants: number; tenant_count: number };
-export type TenantSummary = {id:string;kind:string;name:string;slug:string|null;role:string;status:string;max_members:number};
-export type TenantAdminRow = {id:string;name:string;slug:string|null;status:string;members:number;max_members:number;created_by:string|null;owner_name:string|null;created_at:string};
+export type TenantSummary = {id:string;kind:string;name:string;slug:string|null;role:string;status:string;platform_suspended:boolean;max_members:number};
+export type TenantAdminRow = {id:string;name:string;slug:string|null;status:string;platform_suspended:boolean;members:number;max_members:number;created_by:string|null;owner_name:string|null;created_at:string};
 export type TenantAdminList = {rows:TenantAdminRow[];page:number;total_pages:number;q:string;status:string};
 export type TenantAdminMembers = {rows:TenantMember[];page:number;total_pages:number;q:string};
 export type TenantAdminApp = {id:string;name:string;code:string;status:string;organization_access:string;granted:boolean};

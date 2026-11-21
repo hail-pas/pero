@@ -946,6 +946,8 @@
   "设为组织所有者": "Make organization owner",
   "没有匹配的成员": "No matching members",
   "组织已停用或达到成员上限，无法继续邀请成员。": "This organization is disabled or has reached its member limit.",
+  "平台停用": "Suspended by platform",
+  "组织已由平台停用，请联系平台管理员恢复。": "The organization was suspended by the platform. Contact a platform administrator to restore it.",
   "解散组织": "Dissolve organization",
   "解散将立即停止该组织访问所有应用，保留历史标识供业务系统对账；此操作不可恢复。": "Dissolving this organization revokes its application access while retaining its ID for synchronization. This cannot be undone.",
   "确认解散组织": "Confirm organization dissolution",

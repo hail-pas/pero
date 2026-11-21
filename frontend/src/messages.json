@@ -143,5 +143,6 @@
   "invalid_member_limit": "成员上限必须为 1–100000。",
   "invalid_organization_access": "组织准入规则无效。",
   "tenant_confirmation_mismatch": "组织标识不匹配，无法解散。",
-  "tenant_disabled": "组织已停用，无法邀请新成员。"
+  "tenant_disabled": "组织已停用，无法邀请新成员。",
+  "tenant_platform_suspended": "组织已被平台停用，请联系平台管理员恢复。"
 }
