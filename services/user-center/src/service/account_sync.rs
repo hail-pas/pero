@@ -125,17 +125,24 @@ pub async fn page(
     let mut rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{ACCOUNT_SELECT} AND ($2::uuid IS NULL OR u.id>$2::uuid) ORDER BY u.id LIMIT 101"),
+            format!(
+                "{ACCOUNT_SELECT} AND ($2::uuid IS NULL OR u.id>$2::uuid) ORDER BY u.id LIMIT 101"
+            ),
             [client.into(), after.into()],
         ))
         .await?;
     let more = rows.len() > 100;
     rows.truncate(100);
     let next = if more {
-        rows.last().map(|row| row.try_get::<Uuid>("", "id")).transpose()?
+        rows.last()
+            .map(|row| row.try_get::<Uuid>("", "id"))
+            .transpose()?
     } else {
         None
     };
-    let accounts = rows.iter().map(account_projection).collect::<Result<Vec<_>, _>>()?;
+    let accounts = rows
+        .iter()
+        .map(account_projection)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok((accounts, next))
 }
