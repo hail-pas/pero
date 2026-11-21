@@ -396,13 +396,12 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     let invitation = txn
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT tenant_id,status FROM tenant_invitations WHERE token_hash=$1",
+            "SELECT tenant_id FROM tenant_invitations WHERE token_hash=$1",
             [hash.clone().into()],
         ))
         .await?
         .ok_or(Error::Invalid("invalid_invitation"))?;
     let tenant: Uuid = invitation.try_get("", "tenant_id")?;
-    let _prior_status: String = invitation.try_get("", "status")?;
     lock_organization(&txn, tenant).await?;
     let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL AND u.status='active' AND u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members inviter JOIN users issuer ON issuer.id=inviter.user_id WHERE inviter.tenant_id=i.tenant_id AND inviter.user_id=i.invited_by AND inviter.status='active' AND issuer.status='active' AND issuer.deleted_at IS NULL AND (inviter.role='owner' OR (inviter.role='admin' AND i.role='member'))) FOR UPDATE OF i",
