@@ -24,7 +24,7 @@ python examples/tenant-app/app.py
 ## 集成契约
 
 - **登录**：从中心取得 code、校验一次性 state、PKCE、OIDC ID Token 的签名/iss/aud/nonce，然后使用 introspection 在线验证 Access Token 和实际租户上下文。
-- **租户切换**：使用 Bearer Token 查询 `/api/tenants/choices`，再发起全新的授权码流程。不要修改现有 Token 的 `tenant_id`。
+- **租户切换**：使用 Bearer Token 查询 `/api/tenants/choices`，通过携带 CSRF Token 的 POST 表单发起全新的授权码流程。每次登录生成新的随机业务会话 ID，成功切换后清理旧会话；不要修改现有 Token 的 `tenant_id`。
 - **受保护请求**：调用 introspection 校验 `active`、`sub`、`tenant_id`；依赖返回 503 时不当作用户已注销。真实应用还需基于当前租户强制校验其业务资源的数据隔离。
 - **退出**：携带 CSRF，撤销本客户端授权并引导浏览器退出中心 SSO。RP 回调地址与 Logout URI 请按正式环境配置。
 - **同步**：可在 `/account-sync` 接收 JWT 签名事件，通过服务端客户端认证查询账户或租户成员的当前状态；`python examples/tenant-app/app.py reconcile` 可以遍历三个游标接口执行初始/断线全量对账。Redis 投影仅演示，不代替生产业务库、事务和完整的幂等事件处理。
