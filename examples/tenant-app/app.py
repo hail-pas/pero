@@ -79,13 +79,14 @@ def introspect(data):
 
 
 def start_login(tenant=None):
-    sid = cookie_id() or secrets.token_urlsafe(32)
+    previous_sid = cookie_id()
+    sid = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
     challenge = __import__("base64").urlsafe_b64encode(
         hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     store.setex("pero-demo:flow:" + state, 600, json.dumps(
-        {"sid": sid, "verifier": verifier, "nonce": nonce}))
+        {"sid": sid, "previous_sid": previous_sid, "verifier": verifier, "nonce": nonce}))
     params = {
         "client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI, "response_type": "code",
         "scope": SCOPES, "state": state, "nonce": nonce,
@@ -140,6 +141,9 @@ def callback():
         "csrf": secrets.token_urlsafe(32),
     }
     save_session(flow["sid"], session)
+    previous_sid = flow.get("previous_sid")
+    if previous_sid and previous_sid != flow["sid"]:
+        store.delete(session_key(previous_sid))
     return redirect("/")
 
 
@@ -175,19 +179,26 @@ def home():
     body += "<p>Current tenant: " + escape(status["tenant_id"]) + "</p>"
     body += "<p>Tenant kind: " + escape(str(status.get("tenant_kind", ""))) + "</p>"
     body += "<p>Membership role: " + escape(str(status.get("membership_role", ""))) + "</p>"
-    body += "<h2>Switch workspace</h2><ul>"
+    body += "<h2>Switch workspace</h2>"
     for row in rows:
-        body += '<li><a href="/switch/' + escape(row["id"]) + '">' + escape(row["name"]) + "</a></li>"
-    body += "</ul>"
+        body += (
+            '<form method="post" action="/switch">'
+            '<input type="hidden" name="csrf" value="' + escape(data["csrf"]) + '">'
+            '<input type="hidden" name="tenant" value="' + escape(row["id"]) + '">'
+            '<button type="submit">' + escape(row["name"]) + '</button></form>'
+        )
     body += '<form method="post" action="/logout"><input type="hidden" name="csrf" value="' + escape(data["csrf"]) + '"><button>Sign out</button></form>'
     return body
 
 
-@app.get("/switch/<tenant>")
-def switch(tenant):
+@app.post("/switch")
+def switch():
     _sid, data, _status = verified()
     if not data:
         return redirect("/login")
+    if not secrets.compare_digest(request.form.get("csrf", ""), data["csrf"]):
+        abort(403)
+    tenant = request.form.get("tenant", "")
     if not re.fullmatch(r"[a-f0-9-]{36}", tenant):
         abort(400)
     result = http.get(ISSUER + "/api/tenants/choices",
