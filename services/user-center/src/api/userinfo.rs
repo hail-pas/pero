@@ -12,7 +12,7 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
         None => return bearer_error_response(BearerError::invalid_token("Missing Bearer token")),
     };
 
-    let (claims, user, _client) = match crate::service::token_status::active_access(&state, token)
+    let (claims, user, client) = match crate::service::token_status::active_access(&state, token)
         .await
     {
         Ok(Some(value)) => value,
@@ -29,6 +29,16 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
     resp["sub"] = serde_json::json!(user.id.to_string());
     if let Some(tenant_id) = claims.tenant_id {
         resp["tenant_id"] = serde_json::json!(tenant_id);
+    }
+    if let Some(id) = claims.tenant_id.as_deref().and_then(|id| uuid::Uuid::parse_str(id).ok()) {
+        match crate::service::tenant_context::active(&state.db, user.id, client.app_id, id).await {
+            Ok(Some(context)) => {
+                resp["tenant_kind"] = serde_json::json!(context.tenant_kind);
+                resp["membership_role"] = serde_json::json!(context.membership_role);
+            }
+            Ok(None) => return bearer_error_response(BearerError::invalid_token("Tenant is inactive")),
+            Err(error) => return crate::web::util::dependency_error(error),
+        }
     }
     if crate::service::scope::contains(&scopes, "profile") {
         resp["updated_at"] = serde_json::json!(user.updated_at.unix_timestamp());

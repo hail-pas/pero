@@ -46,9 +46,12 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 | POST | `/tenants/{id}/rename` | 修改组织名称：`{name}` |
 | POST | `/tenants/{id}/leave` | 退出组织 |
 | POST | `/tenants/{id}/status` | 设置组织状态：`{status:"active"|"disabled"}`；相同状态重复提交无副作用 |
-| POST | `/tenants/{id}/delete` | 解散组织：`{confirmation:slug}` |
 
 所有操作从**已验证的 Access Token** 获取操作者；除列出及创建外，Token 的 `tenant_id` 必须与路径中的组织 ID 完全一致。**唯一例外**：组织已停用且无法再为该组织签发 Token 时，其当前 Owner 可使用具有 `tenant.manage` 的**个人空间** Access Token 调用 `POST /tenants/{id}/status` 并提交 `{status:"active"}` 以恢复自行停用的组织。该例外只允许恢复已停用且未被平台锁定的组织，不能用个人空间 Token 停用别的活动组织或执行其他跨租户管理。进一步复用现有 Owner/Admin 规则和安全校验，不接受客户端伪造的 actor。
+
+组织解散是不可逆高风险操作，**不通过业务 API 委托**。Owner 必须在 Pero 的 `/account/tenants/{id}` 页面完成近期再认证后输入组织 slug 解散。
+
+UserInfo 与 Access Token introspection 返回当前 `tenant_id`、`tenant_kind` 和实时 `membership_role`；后者只代表组织治理身份，不替代业务系统 ACL。
 
 ## 同步与全量对账
 

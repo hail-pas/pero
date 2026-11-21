@@ -272,6 +272,11 @@ pub async fn delete(
     if let Some(e) = checked(&jar, &f.csrf_token, &s) {
         return e;
     }
+    match crate::service::security::recent(&s.db, a.session.id, s.config.sso.session_idle_ttl_seconds).await {
+        Ok(true) => {}
+        Ok(false) => return util::management_response(Err(crate::service::ManagementError::Invalid("reauth_required"))),
+        Err(error) => return util::dependency_error(error),
+    }
     match svc::delete(&s.db, a.user.id, id, &f.confirmation).await {
         Ok(()) => axum::Json(serde_json::json!({"redirect": "/account/tenants"})).into_response(),
         Err(error) => util::management_response(Err(error)),

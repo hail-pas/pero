@@ -38,7 +38,6 @@ pub fn routes() -> Router<crate::state::app::AppState> {
         .route("/tenants/{id}/rename", post(tenant_management::rename))
         .route("/tenants/{id}/leave", post(tenant_management::leave))
         .route("/tenants/{id}/status", post(tenant_management::set_status))
-        .route("/tenants/{id}/delete", post(tenant_management::delete))
         .route("/accounts/sync/list", post(tenant_reconcile::accounts))
         .route("/tenants/sync", post(tenant_reconcile::tenant))
         .route("/tenants/list", post(tenant_reconcile::tenants))

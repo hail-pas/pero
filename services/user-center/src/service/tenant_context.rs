@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct TenantContext {
     pub tenant_id: Uuid,
     pub tenant_kind: String,
+    pub membership_role: String,
     pub tenant_version: i64,
     pub tenant_member_version: i64,
 }
@@ -33,7 +34,7 @@ pub async fn active<C: ConnectionTrait>(
     tenant: Uuid,
 ) -> Result<Option<TenantContext>, DbErr> {
     TenantContext::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id AS tenant_id,t.kind AS tenant_kind,t.auth_version AS tenant_version,m.auth_version AS tenant_member_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3 JOIN users u ON u.id=m.user_id WHERE t.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.user_id=$2 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) AND (t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id))",
+        "SELECT t.id AS tenant_id,t.kind AS tenant_kind,m.role AS membership_role,t.auth_version AS tenant_version,m.auth_version AS tenant_member_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3 JOIN users u ON u.id=m.user_id WHERE t.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.user_id=$2 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) AND (t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id))",
         [tenant.into(),user.into(),app.into()])).one(db).await
 }
 pub async fn resolve<C: ConnectionTrait>(

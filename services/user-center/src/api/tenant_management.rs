@@ -233,19 +233,3 @@ pub async fn set_status(
     };
     util::management_response(svc::set_status(&s.db, user, id, &f.status).await)
 }
-#[derive(Deserialize)]
-pub struct Delete {
-    confirmation: String,
-}
-pub async fn delete(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(f): Json<Delete>,
-) -> Response {
-    let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    util::management_response(svc::delete(&s.db, user, id, &f.confirmation).await)
-}
