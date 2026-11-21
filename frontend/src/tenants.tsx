@@ -541,7 +541,7 @@ export function Tenants({
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {t("解散将立即停止该组织访问所有应用，保留历史标识供业务系统对账；此操作不可恢复。")}
           </Typography>
-          <Stack spacing={1} alignItems="flex-start">
+          <Stack spacing={1} sx={{alignItems:"flex-start"}}>
           <Button component={RouterLink} to={`/account/reauth?redirect=${encodeURIComponent(`/account/tenants/${tenant.id}`)}`} variant="outlined">{t("重新认证身份")}</Button>
           <Button color="error" variant="outlined" onClick={() =>
             editor(t("确认解散组织"), `/account/tenants/${tenant.id}/delete`, [

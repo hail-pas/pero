@@ -671,6 +671,13 @@ pub async fn finalize(
             }
             .insert(&txn)
             .await?;
+        } else if let Some(access) = existing.filter(|a| a.admission_origin == "organization") {
+            // A verified application enrollment is an explicit grant, even when the
+            // user previously entered the app through an organization.
+            let mut active: user_app_access::ActiveModel = access.into();
+            active.admission_origin = Set("explicit".to_owned());
+            active.updated_at = Set(now);
+            active.update(&txn).await?;
         }
     }
     execute(

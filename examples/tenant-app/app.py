@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 import jwt
 import redis
 import requests
-from flask import Flask, Response, abort, make_response, redirect, request
+from flask import Flask, abort, redirect, request
 from jwt import PyJWKClient
 
 ISSUER = os.environ["PERO_ISSUER"].rstrip("/")
@@ -159,7 +159,7 @@ def verified():
 
 @app.get("/")
 def home():
-    sid, data, status = verified()
+    _sid, data, status = verified()
     if not data:
         return '<a href="/login">Sign in with Pero</a>'
     try:
