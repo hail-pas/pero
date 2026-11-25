@@ -302,9 +302,9 @@ impl<'a> SessionService<'a> {
             }
         })
         .await?;
-        let codes = codes::Entity::delete_many()
-            .filter(codes::Column::AppId.eq(app_id))
-            .filter(codes::Column::ConsumedAt.is_null());
+        // Retire consumed codes too: their replay must not revoke the shared SSO
+        // session after an app grant has been withdrawn and later restored.
+        let codes = codes::Entity::delete_many().filter(codes::Column::AppId.eq(app_id));
         let codes = match user_id {
             Some(user) => codes.filter(codes::Column::UserId.eq(user)),
             None => codes,
@@ -331,9 +331,9 @@ impl<'a> SessionService<'a> {
             query.filter(refresh_tokens::Column::ClientId.eq(client_id))
         })
         .await?;
+        // A client policy change also retires its replay evidence.
         codes::Entity::delete_many()
             .filter(codes::Column::ClientId.eq(client_id))
-            .filter(codes::Column::ConsumedAt.is_null())
             .exec(db)
             .await?;
         requests::Entity::delete_many()

@@ -2265,7 +2265,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
         bind_test_grants(&state.db, fixture.user, fixture.app).await;
         let form = TokenRequest {
             grant_type: "authorization_code".into(),
-            code: Some(code),
+            code: Some(code.clone()),
             redirect_uri: Some("https://client.example.test/callback".into()),
             ..refresh_form(client_id, "")
         };
@@ -2275,7 +2275,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
         else {
             panic!("valid code exchange failed");
         };
-        tokens
+        (tokens, code)
     };
     let status = async |token: &str| {
         let mut headers = http::HeaderMap::new();
@@ -2284,7 +2284,37 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
             .await
             .status()
     };
-    let original = issue(fixture.client).await;
+    let replay = async |code: &str| {
+        let client = oauth_clients::Entity::find_by_id(fixture.client)
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let form = TokenRequest {
+            grant_type: "authorization_code".into(),
+            code: Some(code.to_owned()),
+            redirect_uri: Some("https://client.example.test/callback".into()),
+            ..refresh_form(fixture.client, "")
+        };
+        assert!(matches!(
+            TokenService::new(state)
+                .handle_authorization_code(&form, &client)
+                .await,
+            TokenEndpointResult::Error {
+                code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
+                ..
+            }
+        ));
+        assert!(
+            state
+                .session_service()
+                .validate(&raw_session)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    };
+    let (original, original_code) = issue(fixture.client).await;
     assert_eq!(status(&original.access_token).await, http::StatusCode::OK);
     crate::service::access::revoke_app(
         &state.db,
@@ -2307,11 +2337,12 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
         http::StatusCode::UNAUTHORIZED
     );
 
-    let regranted = issue(fixture.client).await;
+    replay(&original_code).await;
+    let (regranted, regranted_code) = issue(fixture.client).await;
     assert_eq!(status(&regranted.access_token).await, http::StatusCode::OK);
     let sibling = Uuid::now_v7();
     sql(&state.db, "INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'test-hash',ARRAY['https://client.example.test/callback'],ARRAY['openid']::text[],false)", vec![sibling.into(),fixture.app.into(),sibling.to_string().into()]).await;
-    let sibling_tokens = issue(sibling).await;
+    let (sibling_tokens, _) = issue(sibling).await;
     crate::service::client::reset_secret(
         &state.db,
         &database::management_actor(&state.db).await,
@@ -2329,7 +2360,9 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
         http::StatusCode::OK
     );
 
-    let rotated = issue(fixture.client).await;
+    replay(&regranted_code).await;
+    assert_eq!(status(&sibling_tokens.access_token).await, http::StatusCode::OK);
+    let (rotated, _) = issue(fixture.client).await;
     assert_eq!(status(&rotated.access_token).await, http::StatusCode::OK);
     // Refresh issuance also binds the current versions, without revoking its previous AT.
     let client = oauth_clients::Entity::find_by_id(fixture.client)
@@ -2376,7 +2409,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
     );
 
     // Application disablement must persist its revocation after re-enabling too.
-    let enabled = issue(fixture.client).await;
+    let (enabled, enabled_code) = issue(fixture.client).await;
     crate::service::app::toggle_status(
         &state.db,
         &database::management_actor(&state.db).await,
@@ -2399,8 +2432,9 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
         status(&sibling_tokens.access_token).await,
         http::StatusCode::UNAUTHORIZED
     );
+    replay(&enabled_code).await;
     assert_eq!(
-        status(&issue(fixture.client).await.access_token).await,
+        status(&issue(fixture.client).await.0.access_token).await,
         http::StatusCode::OK
     );
     assert!(
