@@ -20,7 +20,7 @@
 
 - `web/dashboard/guard.rs` 与导航共用 `admin::can_access_dashboard`，放行 `super_admin` 和 `admin`，两者均要求完成 MFA；非管理员拒绝访问。首页、个人中心和后台共用 `can_access_dashboard` 导航字段，细分菜单与操作授权尚未实现。
 - `web/dashboard/mod.rs` 集中注册后台路由，适合显式绑定操作权限。
-- `web/security_gate.rs` 已对后台写操作要求近期认证；继续复用 MFA、CSRF 和五分钟内认证。
+- `web/security_gate.rs` 已对后台写操作要求近期认证；继续复用 MFA、CSRF 和15 分钟内认证。
 - `service/admin.rs` 已有角色变更、策略事务锁、最后一个超级管理员保护及目标会话撤销。
 - `web/dashboard/audit.rs` 已有后台 POST 的 pending/结果审计，但授权变更需要补充结构化差异。
 - `DashboardLayout` 和前端菜单目前没有细分权限；应用、用户和提供方详情还会聚合其他模块数据，必须同时调整响应内容。
