@@ -224,6 +224,11 @@ pub async fn update_member(
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
+    if action == "owner" {
+        // Serialize new owners with account deactivation/closure, which only
+        // locks organizations the target already owns.
+        super::admin::lock_policy(&txn).await?;
+    }
     lock_organization(&txn, tenant).await?;
     let actor_role = if action == "remove" && actor == target {
         let space = get(&txn, actor, tenant).await?;
@@ -251,6 +256,19 @@ pub async fn update_member(
         || (actor == target && action != "remove" && actor_role != "owner")
     {
         return Err(Error::Invalid("forbidden"));
+    }
+    if action == "owner" {
+        let active = txn
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 FROM users WHERE id=$1 AND status='active' AND deleted_at IS NULL",
+                [target.into()],
+            ))
+            .await?
+            .is_some();
+        if !active {
+            return Err(Error::Invalid("not_found"));
+        }
     }
     if role == "owner" && action != "owner" {
         let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,

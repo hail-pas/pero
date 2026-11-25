@@ -4000,6 +4000,25 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .unwrap()
         .unwrap();
 
+    // A disabled account must not acquire organization ownership.
+    sql(
+        db,
+        "UPDATE users SET status='disabled' WHERE id=$1",
+        vec![member.into()],
+    )
+    .await;
+    assert!(matches!(
+        crate::service::tenant::update_member(db, fixture.user, organization.id, member, "owner")
+            .await,
+        Err(crate::service::ManagementError::Invalid("not_found"))
+    ));
+    sql(
+        db,
+        "UPDATE users SET status='active' WHERE id=$1",
+        vec![member.into()],
+    )
+    .await;
+
     // Replayed credentials from an old tenant grant cannot revoke the shared SSO session.
     let (session_token, session) = fixture
         .state
