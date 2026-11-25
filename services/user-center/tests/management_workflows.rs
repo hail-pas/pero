@@ -462,6 +462,69 @@ async fn call(
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn enrollment_approval_tracks_effective_policy() {
+    use user_center::service::enrollment;
+
+    let f = Fixture::new().await;
+    let actor = database::management_actor(&f.state.db).await;
+    let platform_token = pero_utils::crypto::generate_token();
+    let app_token = pero_utils::crypto::generate_token();
+    for (app, token) in [(None, &platform_token), (Some(f.app), &app_token)] {
+        f.sql(
+            "INSERT INTO enrollments(id,app_id,email,token_hash,status,verified_at,expires_at) VALUES($1,$2,'applicant@example.test',$3,'ready',now(),now()+interval '1 day')",
+            vec![Uuid::now_v7().into(), app.into(), pero_utils::crypto::sha256_hex(token).into()],
+        )
+        .await;
+    }
+
+    let mut platform = enrollment::policy(&f.state.db, None).await.unwrap();
+    platform.approval_required = true;
+    enrollment::save_policy(&f.state, &actor.session, platform, false)
+        .await
+        .unwrap();
+    for token in [&platform_token, &app_token] {
+        let row = enrollment::lookup(&f.state.db, token).await.unwrap();
+        assert_eq!(row.status, "pending_approval");
+    }
+
+    let mut app = enrollment::policy(&f.state.db, Some(f.app)).await.unwrap();
+    app.app_id = Some(f.app);
+    app.approval_required = false;
+    enrollment::save_policy(&f.state, &actor.session, app.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        enrollment::lookup(&f.state.db, &app_token).await.unwrap().status,
+        "ready"
+    );
+    assert_eq!(
+        enrollment::lookup(&f.state.db, &platform_token).await.unwrap().status,
+        "pending_approval"
+    );
+
+    enrollment::save_policy(&f.state, &actor.session, app, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        enrollment::lookup(&f.state.db, &app_token).await.unwrap().status,
+        "pending_approval"
+    );
+
+    let mut platform = enrollment::policy(&f.state.db, None).await.unwrap();
+    platform.approval_required = false;
+    enrollment::save_policy(&f.state, &actor.session, platform, false)
+        .await
+        .unwrap();
+    for token in [&platform_token, &app_token] {
+        let row = enrollment::lookup(&f.state.db, token).await.unwrap();
+        assert_eq!(row.status, "ready");
+        assert!(row.approved_by.is_none());
+    }
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn approval_progress_members_and_audit_share_existing_security() {
     let f = Fixture::new().await;
     let (admin, csrf) = f.admin_login().await;

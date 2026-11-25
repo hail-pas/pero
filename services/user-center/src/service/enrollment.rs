@@ -215,9 +215,18 @@ pub async fn save_policy(
         }
     }
     let effective = policy(&txn, input.app_id).await?;
-    if effective.approval_required {
-        execute(&txn,"UPDATE enrollments e SET status='pending_approval' WHERE status='ready' AND NOT invitation AND approved_by IS NULL AND (($1::uuid IS NULL AND (e.app_id IS NULL OR NOT EXISTS(SELECT 1 FROM registration_policies p WHERE p.app_id=e.app_id))) OR e.app_id=$1)",vec![input.app_id.into()]).await?;
-    }
+    // Reconcile verified applications in both directions when the effective policy changes.
+    let (from, to) = if effective.approval_required {
+        ("ready", "pending_approval")
+    } else {
+        ("pending_approval", "ready")
+    };
+    execute(
+        &txn,
+        "UPDATE enrollments e SET status=$3 WHERE status=$2 AND NOT invitation AND approved_by IS NULL AND verified_at IS NOT NULL AND expires_at>now() AND (($1::uuid IS NULL AND (e.app_id IS NULL OR NOT EXISTS(SELECT 1 FROM registration_policies p WHERE p.app_id=e.app_id))) OR e.app_id=$1)",
+        vec![input.app_id.into(), from.into(), to.into()],
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }
