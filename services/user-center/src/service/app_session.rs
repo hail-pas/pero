@@ -88,7 +88,32 @@ pub async fn admit<C: ConnectionTrait>(
     if current.as_ref().map(|d| d.id) != code.admission_session_id
         || current.as_ref().is_some_and(|d| d.revoked) != code.admission_revoked
     {
-        return Ok(None);
+        // Concurrent first authorizations from one browser may share the initial
+        // device. Never allow a pre-revocation code to bind to a replacement.
+        let Some(device) = current.as_ref().filter(|d| !d.revoked) else {
+            return Ok(None);
+        };
+        if code.admission_session_id.is_some() || code.admission_revoked {
+            return Ok(None);
+        }
+        let first = db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT NOT EXISTS (SELECT 1 FROM app_sessions
+                 WHERE user_id=$1 AND app_id=$2 AND sso_session_id=$3 AND id<>$4) AS first",
+                [
+                    access.user.id.into(),
+                    access.app.id.into(),
+                    sso.into(),
+                    device.id.into(),
+                ],
+            ))
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound("device history".into()))?
+            .try_get::<bool>("", "first")?;
+        if !first {
+            return Ok(None);
+        }
     }
     let app_session = if let Some(device) = current.filter(|d| !d.revoked) {
         // Device rows were locked before the authorization code.
@@ -176,7 +201,7 @@ pub async fn prune<C: ConnectionTrait>(
          (PARTITION BY d.user_id ORDER BY d.created_at DESC,d.id DESC) AS rank
          FROM app_sessions d JOIN sso_sessions s ON s.id=d.sso_session_id
          WHERE d.app_id=$1 AND d.revoked_at IS NULL AND s.revoked_at IS NULL
-           AND s.expires_at>now() AND s.last_seen_at>$2) ranked WHERE rank>$3)",
+           AND NOT s.recovery_pending AND s.expires_at>now() AND s.last_seen_at>$2) ranked WHERE rank>$3)",
         [app.into(), cutoff(idle_ttl).into(), i64::from(limit).into()],
     ))
     .await?;

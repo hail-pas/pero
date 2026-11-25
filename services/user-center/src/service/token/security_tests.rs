@@ -2095,9 +2095,9 @@ async fn concurrent_first_consents_both_issue_codes() {
         oauth.issue_auth_code_with_consent(requests[0], &session, true, false),
         oauth.issue_auth_code_with_consent(requests[1], &session, true, false),
     );
-    assert!(first.is_ok());
-    assert!(second.is_ok());
-    assert_ne!(first.unwrap(), second.unwrap());
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_ne!(first, second);
     let grants = crate::db::entity::user_consents::Entity::find()
         .all(&fixture.state.db)
         .await
@@ -2111,6 +2111,42 @@ async fn concurrent_first_consents_both_issue_codes() {
     assert_eq!(codes.len(), 2);
     assert!(codes.iter().any(|code| code.scopes == vec!["openid"]));
     assert!(codes.iter().any(|code| code.scopes == vec!["profile"]));
+
+    // Both codes were issued before this browser had an application device.
+    // Their parallel exchanges must reuse one device and one RP session.
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(&fixture.state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let exchange = |code| TokenRequest {
+        grant_type: "authorization_code".into(),
+        code: Some(code),
+        redirect_uri: Some("https://client.example.test/callback".into()),
+        ..refresh_form(fixture.client, "")
+    };
+    let first = exchange(first);
+    let second = exchange(second);
+    let service = TokenService::new(&fixture.state);
+    let (first, second) = tokio::join!(
+        service.handle_authorization_code(&first, &client),
+        service.handle_authorization_code(&second, &client),
+    );
+    let (TokenEndpointResult::Success(first), TokenEndpointResult::Success(second)) =
+        (first, second)
+    else {
+        panic!("concurrent same-device grants must both succeed");
+    };
+    let first = crate::service::token_status::active_access(&fixture.state, &first.access_token)
+        .await
+        .unwrap()
+        .unwrap();
+    let second = crate::service::token_status::active_access(&fixture.state, &second.access_token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.claims.sid, second.claims.sid);
+
     // A denial that already passed the HTTP precheck must not overwrite a
     // completion committed while its UPDATE was waiting for the request lock.
     use axum_extra::extract::cookie::{Cookie, CookieJar};
