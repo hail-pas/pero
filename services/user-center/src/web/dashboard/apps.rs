@@ -73,6 +73,7 @@ pub async fn new_form(
         mode: "create".to_owned(),
         app_id: String::new(),
         form: AppFormData {
+            max_sessions: 1,
             tenant_mode: "personal".to_owned(),
             organization_access: "open".to_owned(),
             ..Default::default()
@@ -172,6 +173,7 @@ pub async fn edit_form(
             tenant_mode: app.tenant_mode,
             organization_access: app.organization_access,
             organization_auto_access: app.organization_auto_access,
+            max_sessions: app.max_sessions,
         },
         error: String::new(),
     };
@@ -189,7 +191,7 @@ pub async fn update(
         return response;
     }
     util::management_response(
-        app::update(&state.db, &admin.actor(&state), id, app_input(&form)).await,
+        app::update(&state.db, &admin.actor(&state), id, app_input(&form), state.config.sso.session_idle_ttl_seconds).await,
     )
 }
 
@@ -202,6 +204,7 @@ fn app_input(form: &AppFormData) -> AppUpdate {
         tenant_mode: form.tenant_mode.clone(),
         organization_access: form.organization_access.clone(),
         organization_auto_access: form.organization_auto_access,
+        max_sessions: form.max_sessions,
     }
 }
 

@@ -319,6 +319,13 @@ impl<'a> OAuthService<'a> {
         if auth_request.tenant_id != tenant.as_ref().map(|c| c.tenant_id) {
             return Err(OAuthError::AccessDenied);
         }
+        let takeover_allowed = grant_consent && !has_prompt(auth_request.prompt.as_deref(), "none");
+        if !takeover_allowed && super::app_session::needs_confirmation(
+            &txn, session.user_id, auth_request.app_id, session.id,
+            self.sso_config.session_idle_ttl_seconds,
+        ).await.map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))? {
+            return Err(OAuthError::AccessDenied);
+        }
         auth_code::create(
             &txn,
             auth_code::CreateParams {
@@ -329,6 +336,7 @@ impl<'a> OAuthService<'a> {
                 tenant,
                 client_id: auth_request.client_id,
                 session_id: session.id,
+                takeover_allowed,
                 redirect_uri: auth_request.redirect_uri.clone(),
                 scopes: auth_request.scopes.clone(),
                 nonce: auth_request.nonce.clone(),

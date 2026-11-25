@@ -19,6 +19,7 @@ pub struct CreateParams {
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<CodeChallengeMethod>,
     pub expires_at: OffsetDateTime,
+    pub takeover_allowed: bool,
 }
 
 pub async fn create<C>(
@@ -29,6 +30,7 @@ where
     C: ConnectionTrait,
 {
     let now = OffsetDateTime::now_utc();
+    let admission = crate::service::app_session::latest(db, params.user_id, params.app_id, params.session_id).await?;
     let model = authorization_codes::ActiveModel {
         id: Set(Uuid::now_v7()),
         code_hash: Set(params.code_hash),
@@ -40,6 +42,10 @@ where
         tenant_member_version: Set(params.tenant.as_ref().map(|c| c.tenant_member_version)),
         client_id: Set(params.client_id),
         session_id: Set(Some(params.session_id)),
+        admission_session_id: Set(admission.as_ref().map(|d| d.id)),
+        admission_revoked: Set(admission.is_some_and(|d| d.revoked)),
+        takeover_allowed: Set(params.takeover_allowed),
+        client_session_id: Set(None),
         redirect_uri: Set(params.redirect_uri),
         scopes: Set(params.scopes),
         nonce: Set(params.nonce),

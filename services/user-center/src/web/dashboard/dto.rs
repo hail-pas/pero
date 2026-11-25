@@ -51,6 +51,11 @@ pub struct AppFormData {
     pub organization_access: String,
     #[serde(default)]
     pub organization_auto_access: bool,
+    #[serde(default = "default_max_sessions")]
+    pub max_sessions: i32,
+}
+fn default_max_sessions() -> i32 {
+    1
 }
 fn default_organization_access() -> String {
     "open".to_owned()
@@ -444,6 +449,7 @@ pub struct AppSummary {
     pub tenant_mode: String,
     pub organization_access: String,
     pub organization_auto_access: bool,
+    pub max_sessions: i32,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
@@ -462,6 +468,7 @@ impl From<apps::Model> for AppSummary {
             tenant_mode: model.tenant_mode,
             organization_access: model.organization_access,
             organization_auto_access: model.organization_auto_access,
+            max_sessions: model.max_sessions,
             created_at: model.created_at,
         }
     }
