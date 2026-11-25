@@ -388,6 +388,36 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
             .redirect,
         "/dashboard"
     );
+    // The pending link must not be usable in a browser that did not complete OAuth.
+    use user_center::web::sso::{dto::SocialLinkForm, social};
+    let (jar, csrf) = state.web_security().ensure_csrf(CookieJar::new());
+    let response = social::link_post(
+        State(state.clone()),
+        jar.clone(),
+        pero_api_axum::extractor::ClientIp(None),
+        axum::http::HeaderMap::new(),
+        Form(SocialLinkForm {
+            csrf_token: csrf,
+            nonce: pending.clone(),
+            password: "OriginalPass123!".into(),
+        }),
+    )
+    .await;
+    assert_eq!(
+        response.headers()["location"],
+        "/sso/login?error=social_link_expired"
+    );
+    let response = social::link_get(State(state.clone()), jar).await;
+    assert_eq!(
+        response.headers()["location"],
+        "/sso/login?error=social_link_expired"
+    );
+    let jar = CookieJar::new().add(state.cookie_factory().build_short_lived_cookie(
+        "pero_social_link",
+        &pending,
+        state.config.oauth2.auth_code_ttl_seconds,
+    ));
+    assert_eq!(social::link_get(State(state.clone()), jar).await.status(), 200);
     service.delete_social_link_cache(&pending).await;
 
     user_center::service::provider::toggle_enabled(

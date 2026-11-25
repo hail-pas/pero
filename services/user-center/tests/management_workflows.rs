@@ -243,15 +243,38 @@ async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
     )
     .await;
     let (_, _, _, raw) = f.login(f.user).await;
-    let session = f.state.session_service().validate(&raw).await.unwrap().unwrap();
-    assert!(tenant_context::auto_eligible(db, f.user, f.app).await.unwrap());
-    assert!(access::active_app_access(db, f.user, f.app).await.unwrap().is_none());
+    let session = f
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        tenant_context::auto_eligible(db, f.user, f.app)
+            .await
+            .unwrap()
+    );
+    assert!(
+        access::active_app_access(db, f.user, f.app)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     access::revoke_app(db, &actor, f.user, f.app).await.unwrap();
-    assert!(!access::ensure_oauth_app_access(db, &session, f.app, 3600).await.unwrap());
+    assert!(
+        !access::ensure_oauth_app_access(db, &session, f.app, 3600)
+            .await
+            .unwrap()
+    );
 
     access::grant_app(db, &actor, f.user, f.app).await.unwrap();
-    assert!(access::ensure_oauth_app_access(db, &session, f.app, 3600).await.unwrap());
+    assert!(
+        access::ensure_oauth_app_access(db, &session, f.app, 3600)
+            .await
+            .unwrap()
+    );
     f.cleanup().await;
 }
 

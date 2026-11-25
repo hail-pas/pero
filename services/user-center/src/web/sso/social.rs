@@ -306,10 +306,7 @@ pub async fn callback(
     }
 }
 
-pub async fn link_get(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Response {
+pub async fn link_get(State(state): State<AppState>, jar: CookieJar) -> Response {
     let Some(nonce) = jar.get(SOCIAL_LINK_COOKIE).map(|c| c.value().to_owned()) else {
         return Redirect::to(&login_error_url("social_link_expired")).into_response();
     };
