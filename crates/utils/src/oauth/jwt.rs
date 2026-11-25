@@ -403,9 +403,13 @@ mod tests {
         let expired_id = sign(&expired, "JWT");
         assert!(verify_id_token(&expired_id, "issuer", "client", PUBLIC).is_err());
         assert!(verify_logout_hint(&expired_id, "issuer", "client", PUBLIC).is_ok());
-        access["exp"] = (now - 5).into();
-        access["iat"] = (now - 65).into();
-        assert!(verify_access_token(&sign(&access, "at+jwt"), "issuer", "client", PUBLIC).is_err());
+        let mut expired_access = access.clone();
+        expired_access["exp"] = (now - 5).into();
+        expired_access["iat"] = (now - 65).into();
+        assert!(
+            verify_access_token(&sign(&expired_access, "at+jwt"), "issuer", "client", PUBLIC)
+                .is_err()
+        );
         access["scope"] = serde_json::Value::Null;
         let malformed = sign(&access, "JWT");
         assert!(verify_id_token(&malformed, "issuer", "client", PUBLIC).is_err());
