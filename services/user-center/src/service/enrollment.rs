@@ -759,7 +759,9 @@ pub async fn finalize(
     .await?;
     cancel_notifications(&txn, row.id).await?;
     audit(&txn, &user, "enrollment_completed", row.id).await?;
-    let tenant_id = if row.client_id.is_some() {
+    // Only a newly created personal account has an implicit workspace choice.
+    // Existing accounts retain the original OAuth tenant selection.
+    let tenant_id = if row.client_id.is_some() && identity.is_some() {
         use crate::db::entity::tenants;
         tenants::Entity::find()
             .filter(tenants::Column::OwnerUserId.eq(user.id))

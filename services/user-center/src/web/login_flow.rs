@@ -227,9 +227,22 @@ pub async fn finish_enrollment(
     } else {
         jar
     };
-    if let Some(pending) = request
+    // Enrollment may outlive its short-lived OAuth request. Recheck the
+    // browser nonce and request after committing registration and creating the session.
+    let pending = if let Some(request) = request
         .filter(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id)
     {
+        match crate::web::sso::register::active_request(state, &jar).await {
+            Ok(current) => current.filter(|r| r.id == request.id && r.client_id == request.client_id),
+            Err(error) => {
+                tracing::error!(%error, "Registration authorization lookup failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(pending) = pending {
         let resume = match (pending.tenant_id, result.tenant_id) {
             (None, Some(tenant)) => {
                 match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant)
