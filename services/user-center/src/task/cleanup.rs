@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::RetentionConfig;
 use crate::db::helper::cleanup::{
-    clean_expired_authorization_codes, clean_expired_authorization_requests,
+    CLEANUP_PASS_LIMIT, clean_expired_authorization_codes, clean_expired_authorization_requests,
     clean_expired_contact_change_requests, clean_expired_password_reset_tokens,
     clean_expired_refresh_tokens, clean_expired_sso_sessions,
 };
@@ -17,21 +17,16 @@ pub fn start_cleanup_task(
     retention: RetentionConfig,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
-        interval.tick().await;
-
-        tracing::info!(
-            interval_secs,
-            "periodic cleanup task started, first run in {interval_secs}s"
-        );
+        tracing::info!(interval_secs, "periodic cleanup task started");
 
         loop {
-            interval.tick().await;
             tracing::debug!("running periodic cleanup");
-            match run_cleanup(&db, idle_ttl_seconds, retention).await {
-                Ok(()) => tracing::debug!("periodic cleanup completed"),
-                Err(e) => tracing::error!(error = %e, "periodic cleanup error"),
-            }
+            let backlog = run_cleanup(&db, idle_ttl_seconds, retention).await;
+            // Drain saturated batches without waiting for the full cleanup interval.
+            // Keep a short pause to leave capacity for foreground requests.
+            let delay = if backlog { 1 } else { interval_secs };
+            tracing::debug!(backlog, "periodic cleanup completed");
+            tokio::time::sleep(Duration::from_secs(delay)).await;
         }
     })
 }
@@ -40,11 +35,13 @@ async fn run_cleanup(
     db: &DatabaseConnection,
     idle_ttl_seconds: u64,
     retention: RetentionConfig,
-) -> Result<(), sea_orm::DbErr> {
+) -> bool {
+    let mut backlog = false;
     macro_rules! do_clean {
         ($label:expr, $func:path $(, $arg:expr)*) => {
             match $func(db $(, $arg)*).await {
                 Ok(n) => {
+                    backlog |= n >= CLEANUP_PASS_LIMIT;
                     if n > 0 {
                         tracing::info!(table = $label, rows = n, "cleaned expired rows");
                     }
@@ -101,5 +98,5 @@ async fn run_cleanup(
         crate::db::helper::cleanup::clean_audit_events,
         retention.audit_event_days
     );
-    Ok(())
+    backlog
 }

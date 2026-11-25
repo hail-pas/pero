@@ -10,6 +10,7 @@ use sea_orm::QueryOrder;
 
 const BATCH_SIZE: u64 = 500;
 const MAX_BATCHES: usize = 20;
+pub(crate) const CLEANUP_PASS_LIMIT: u64 = BATCH_SIZE * MAX_BATCHES as u64;
 
 async fn execute_batches(db: &DatabaseConnection, sql: &str) -> Result<u64, sea_orm::DbErr> {
     execute_batches_at(db, sql, OffsetDateTime::now_utc()).await

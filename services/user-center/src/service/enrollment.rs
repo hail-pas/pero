@@ -964,7 +964,7 @@ pub async fn list(
         .filter(|u| u.phone_verified_at.is_some())
         .and_then(|u| u.phone.clone());
     let owner_id = owner.map(|u| u.id);
-    let filter = "FROM (SELECT e.*, a.name AS app_name, CASE WHEN e.expires_at<=now() AND e.status IN ('pending_verification','pending_approval','ready') THEN 'expired' ELSE e.status END AS effective_status FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id) e WHERE ($1 OR app_id IS NOT DISTINCT FROM $2) AND ($3::uuid IS NULL OR completed_user_id=$3 OR email=$4::citext OR phone=$5::citext) AND ($6='' OR strpos(lower(COALESCE(email::text,phone::text)),lower($6))>0 OR strpos(lower(COALESCE(app_name,'')),lower($6))>0)";
+    let filter = "FROM (SELECT e.*, a.name AS app_name, CASE WHEN e.expires_at<=now() AND e.status IN ('pending_verification','pending_approval','ready') THEN 'expired' ELSE e.status END AS effective_status FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id) e WHERE ($1 OR app_id=$2 OR ($2::uuid IS NULL AND app_id IS NULL)) AND ($3::uuid IS NULL OR completed_user_id=$3 OR email=$4::citext OR phone=$5::citext) AND ($6='' OR strpos(lower(COALESCE(email::text,phone::text)),lower($6))>0 OR strpos(lower(COALESCE(app_name,'')),lower($6))>0)";
     let mut values: Vec<sea_orm::Value> = vec![
         (owner.is_some() || query.all_apps.unwrap_or(query.app.is_none())).into(),
         query.app.into(),
