@@ -313,6 +313,14 @@ async fn organization_auto_admission_changes_resync_account_projection() {
         vec![f.client.into()],
     )
     .await;
+    let (_, _, _, raw) = f.login(f.user).await;
+    let session = f
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
     for (sql, values, active) in [
         (
             "UPDATE tenant_members SET status='removed',auth_version=auth_version+1 WHERE tenant_id=$1 AND user_id=$2",
@@ -351,6 +359,14 @@ async fn organization_auto_admission_changes_resync_account_projection() {
             .unwrap()
             .unwrap();
         assert_eq!(snapshot["active"], active);
+        assert_eq!(
+            user_center::service::access::ensure_oauth_app_access(
+                &f.state.db, &session, f.app, 3600,
+            )
+            .await
+            .unwrap(),
+            active
+        );
         let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT count(*)::bigint AS count FROM account_sync_deliveries WHERE client_id=$1 AND user_id=$2 AND kind='sync.requested' AND tenant_id IS NULL",

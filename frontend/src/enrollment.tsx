@@ -428,6 +428,20 @@ export function Admission({
                 {r.name} ·{" "}
                 {r.status ? admissionStatus(r.status) : t("尚未加入")}
               </Typography>
+              {r.status === "active" && r.organization_admission && (
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    run(() =>
+                      mutate(`/account/applications/${r.id}`, {
+                        action: "join",
+                      }),
+                    )
+                  }
+                >
+                  {t("申请独立准入（联系方式验证）")}
+                </Button>
+              )}
               {r.status === "active" ? (
                 <Button
                   color="error"

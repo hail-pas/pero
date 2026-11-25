@@ -14,6 +14,7 @@ struct AppRow {
     id: Uuid,
     name: String,
     status: Option<String>,
+    organization_admission: bool,
     code: String,
     description: Option<String>,
     homepage_url: Option<String>,
@@ -26,7 +27,14 @@ pub async fn get(
     account: AccountContext,
     Query(query): Query<crate::service::enrollment::ListQuery>,
 ) -> Response {
-    let rows=AppRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,COALESCE(u.require_mfa,false) AS require_mfa,u.status::text AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name",[account.user.id.into()])).all(&state.db).await;
+    let eligibility = crate::service::tenant_context::AUTO_ELIGIBILITY;
+    let rows = AppRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!("SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,COALESCE(u.require_mfa,false) AS require_mfa,COALESCE(u.admission_origin='organization',false) AS organization_admission,CASE WHEN u.status='active' AND u.admission_origin='organization' AND NOT ({eligibility}) THEN NULL ELSE u.status::text END AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name"),
+        [account.user.id.into()],
+    ))
+    .all(&state.db)
+    .await;
     match rows {
         Ok(rows) => {
             let progress = match crate::service::enrollment::list(

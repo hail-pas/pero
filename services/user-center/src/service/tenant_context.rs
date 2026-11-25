@@ -59,6 +59,10 @@ pub(crate) async fn grant_context_is_current<C: ConnectionTrait>(
         .is_some_and(|app| app.system))
 }
 
+// Shared by OAuth admission and the account application list.
+// The outer query uses the app alias a and binds the user ID as $1.
+pub(crate) const AUTO_ELIGIBILITY: &str = "a.organization_auto_access AND a.tenant_mode IN ('organization','both') AND EXISTS (SELECT 1 FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=$1 AND m.status='active' AND t.kind='organization' AND t.status='active' AND (a.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id)))";
+
 /// Whether the user belongs to any currently admitted organization for this app.
 /// Explicitly disabled user-app grants are still authoritative.
 pub async fn auto_eligible<C: ConnectionTrait>(
@@ -67,7 +71,7 @@ pub async fn auto_eligible<C: ConnectionTrait>(
     app: Uuid,
 ) -> Result<bool, DbErr> {
     let row = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT EXISTS(SELECT 1 FROM apps a JOIN tenant_members m ON m.user_id=$1 AND m.status='active' JOIN tenants t ON t.id=m.tenant_id AND t.kind='organization' AND t.status='active' WHERE a.id=$2 AND a.status='active' AND a.organization_auto_access AND a.tenant_mode IN ('organization','both') AND (a.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id))) AS eligible",
+        format!("SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=$2 AND a.status='active' AND {AUTO_ELIGIBILITY}) AS eligible"),
         [user.into(),app.into()])).await?;
     row.ok_or(DbErr::Custom("missing eligibility result".into()))?
         .try_get("", "eligible")

@@ -562,6 +562,7 @@
   "尚未加入": "Not joined",
   "请联系管理员重新授权": "Contact an administrator to restore access",
   "申请加入（联系方式验证）": "Request admission (contact verification)",
+  "申请独立准入（联系方式验证）": "Request independent admission (contact verification)",
   "请先绑定邮箱或手机号再申请应用。": "Add an email address or phone number before requesting application access.",
   "注销账户": "Close account",
   "此操作不可恢复。所有应用资格和登录凭据将被撤销；管理员须先移除管理员身份。": "This cannot be undone. All application access and credentials will be revoked. Administrators must first have their administrator role removed.",

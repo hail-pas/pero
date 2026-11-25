@@ -78,17 +78,29 @@ async fn write_app_access<C: ConnectionTrait>(
     Ok(())
 }
 
+async fn current_admission<C: ConnectionTrait>(
+    db: &C,
+    access: &uaa::Model,
+) -> Result<bool, sea_orm::DbErr> {
+    if access.status != CommonStatus::Active {
+        return Ok(false);
+    }
+    if access.admission_origin == "explicit" {
+        return Ok(true);
+    }
+    super::tenant_context::auto_eligible(db, access.user_id, access.app_id).await
+}
+
 /// OAuth may provision a super administrator's own entitlement before MFA/consent.
-/// Ordinary administrators and users still require explicit application admission.
+/// Ordinary users require explicit admission or current organization eligibility.
 pub async fn ensure_oauth_app_access(
     db: &DatabaseConnection,
     session: &crate::state::session::SsoSession,
     app_id: Uuid,
     idle_ttl_seconds: u64,
 ) -> Result<bool, sea_orm::DbErr> {
-    if active_app_access(db, session.user_id, app_id)
-        .await?
-        .is_some()
+    if let Some(access) = active_app_access(db, session.user_id, app_id).await?
+        && current_admission(db, &access).await?
     {
         return Ok(true);
     }
@@ -108,9 +120,8 @@ pub async fn ensure_oauth_app_access(
         .lock_exclusive()
         .one(&txn)
         .await?;
-    if existing
-        .as_ref()
-        .is_some_and(|access| access.status == CommonStatus::Active)
+    if let Some(access) = existing.as_ref()
+        && current_admission(&txn, access).await?
     {
         return Ok(true);
     }
@@ -160,9 +171,10 @@ pub async fn ensure_oauth_app_access(
             [session.user_id.into(),app_id.into()])).await?;
     }
     txn.commit().await?;
-    Ok(active_app_access(db, session.user_id, app_id)
-        .await?
-        .is_some())
+    match active_app_access(db, session.user_id, app_id).await? {
+        Some(access) => current_admission(db, &access).await,
+        None => Ok(false),
+    }
 }
 
 pub async fn revoke_app(

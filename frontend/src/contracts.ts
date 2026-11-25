@@ -352,6 +352,7 @@ export interface ViewDataMap {
       homepage_url: string | null;
       logo_url: string | null;
       status: string | null;
+      organization_admission: boolean;
       require_mfa: boolean;
     }[];
   };
