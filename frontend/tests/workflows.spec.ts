@@ -180,7 +180,7 @@ test("a closed application registration can exit the current flow", async ({
         csrf_token: "csrf-test",
       });
       activeFlow = false;
-      return route.fulfill({ json: { redirect: "/sso/register" } });
+      return route.fulfill({ json: { redirect: "/account/applications" } });
     }
     return route.fulfill({
       json: {
@@ -196,9 +196,7 @@ test("a closed application registration can exit the current flow", async ({
   await page.goto("/sso/register");
   await expect(page.getByText("注册已关闭", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "退出本次注册流程" }).click();
-  await expect(
-    page.getByRole("textbox", { name: "手机号（含国际区号，例如 +8613800000000）", exact: true }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/account\/applications$/);
 });
 
 async function mock(page: Page, responses: Record<string, unknown>) {
