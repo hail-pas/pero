@@ -26,7 +26,7 @@ struct Delivery {
 pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
     let lease = Uuid::now_v7();
     let job=Delivery::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "WITH claimed AS (UPDATE backchannel_logout_deliveries SET lease_id=$1,leased_until=now()+interval '120 seconds',attempts=attempts+1 WHERE id=(SELECT id FROM backchannel_logout_deliveries WHERE delivered_at IS NULL AND expires_at>now() AND next_attempt_at<=now() AND (leased_until IS NULL OR leased_until<=now()) ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *) SELECT d.id,d.session_id,d.user_id,d.endpoint,c.identifier::text FROM claimed d JOIN oauth_clients c ON c.id=d.client_id",[lease.into()])).one(&state.db).await?;
+        "WITH claimed AS (UPDATE backchannel_logout_deliveries SET lease_id=$1,leased_until=now()+interval '120 seconds',attempts=attempts+1 WHERE id=(SELECT d.id FROM backchannel_logout_deliveries d JOIN oauth_clients c ON c.id=d.client_id WHERE d.delivered_at IS NULL AND d.expires_at>now() AND d.next_attempt_at<=now() AND (d.leased_until IS NULL OR d.leased_until<=now()) AND c.backchannel_logout_uri=d.endpoint ORDER BY d.next_attempt_at FOR UPDATE OF d SKIP LOCKED LIMIT 1) RETURNING *) SELECT d.id,d.session_id,d.user_id,d.endpoint,c.identifier::text FROM claimed d JOIN oauth_clients c ON c.id=d.client_id",[lease.into()])).one(&state.db).await?;
     let Some(job) = job else {
         return Ok(false);
     };

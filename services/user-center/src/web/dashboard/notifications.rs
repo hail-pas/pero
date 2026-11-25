@@ -117,7 +117,7 @@ pub async fn list(
         Vec::new()
     } else {
         match LogoutRow::find_by_statement(Statement::from_string(DbBackend::Postgres,
-        "SELECT d.id,c.identifier::text,d.attempts,d.last_error,d.created_at,CASE WHEN d.delivered_at IS NOT NULL THEN 'delivered' WHEN d.expires_at<=now() THEN 'expired' WHEN d.attempts>0 THEN 'retrying' ELSE 'queued' END AS status,(d.delivered_at IS NULL AND d.expires_at>now() AND (d.leased_until IS NULL OR d.leased_until<=now())) AS can_retry FROM backchannel_logout_deliveries d JOIN oauth_clients c ON c.id=d.client_id ORDER BY d.created_at DESC LIMIT 100".to_owned())).all(&state.db).await { Ok(rows)=>rows,Err(e)=>return util::dependency_error(e) }
+        "SELECT d.id,c.identifier::text,d.attempts,d.last_error,d.created_at,CASE WHEN d.delivered_at IS NOT NULL THEN 'delivered' WHEN c.backchannel_logout_uri IS DISTINCT FROM d.endpoint THEN 'cancelled' WHEN d.expires_at<=now() THEN 'expired' WHEN d.attempts>0 THEN 'retrying' ELSE 'queued' END AS status,(d.delivered_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri IS NOT DISTINCT FROM d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())) AS can_retry FROM backchannel_logout_deliveries d JOIN oauth_clients c ON c.id=d.client_id ORDER BY d.created_at DESC LIMIT 100".to_owned())).all(&state.db).await { Ok(rows)=>rows,Err(e)=>return util::dependency_error(e) }
     };
     let sync_rows = if !super_admin {
         Vec::new()
@@ -176,7 +176,7 @@ pub async fn retry_logout(
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    match state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE backchannel_logout_deliveries SET next_attempt_at=now() WHERE id=$1 AND delivered_at IS NULL AND expires_at>now() AND (leased_until IS NULL OR leased_until<=now())",[id.into()])).await {
+    match state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE backchannel_logout_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())",[id.into()])).await {
         Ok(r) if r.rows_affected()>0=>pero_api_axum::json_ok(),Ok(_)=>pero_api_axum::json_error("notification_not_retryable"),Err(e)=>util::dependency_error(e)
     }
 }

@@ -3437,6 +3437,27 @@ async fn lifecycle_guards_and_transactional_logout() {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut delivery_state = fixture.state.clone();
     delivery_state.http_client = std::sync::Arc::new(LogoutReceiver { seen: seen.clone() });
+    // Removing or changing the receiver must prevent delivery to a stale endpoint.
+    for endpoint in [None, Some("https://rp.example.test/replacement")] {
+        sql(
+            db,
+            "UPDATE oauth_clients SET backchannel_logout_uri=$2 WHERE id=$1",
+            vec![fixture.client.into(), endpoint.map(str::to_owned).into()],
+        )
+        .await;
+        assert!(
+            !crate::service::backchannel::deliver_one(&delivery_state)
+                .await
+                .unwrap()
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    sql(
+        db,
+        "UPDATE oauth_clients SET backchannel_logout_uri='https://rp.example.test/session' WHERE id=$1",
+        vec![fixture.client.into()],
+    )
+    .await;
     assert!(
         crate::service::backchannel::deliver_one(&delivery_state)
             .await

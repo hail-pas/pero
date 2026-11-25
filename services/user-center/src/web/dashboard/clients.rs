@@ -172,19 +172,18 @@ pub async fn logout_settings(
     let expected = client.clone();
     let mut active: crate::db::entity::oauth_clients::ActiveModel = client.into();
     active.backchannel_logout_uri = Set(endpoint);
-    match client::save_security_change(
-        &state.db,
-        &admin.actor(&state),
-        crate::service::permissions::Permission::ClientsManage,
-        &expected,
-        active,
-        None,
+    active.updated_at = Set(time::OffsetDateTime::now_utc());
+    util::management_response(
+        client::save_security_change(
+            &state.db,
+            &admin.actor(&state),
+            crate::service::permissions::Permission::ClientsManage,
+            &expected,
+            active,
+            None,
+        )
+        .await,
     )
-    .await
-    {
-        Ok(_) => json_ok(),
-        Err(e) => util::dependency_error(e),
-    }
 }
 
 #[derive(serde::Deserialize)]
