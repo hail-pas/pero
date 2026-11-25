@@ -270,7 +270,7 @@ pub async fn progress_by_token<C: ConnectionTrait>(
 }
 async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, Error> {
     let p = policy(db, row.app_id).await?;
-    if !row.invitation && row.client_id.is_some() {
+    if !row.invitation {
         require_personal_app(db, row.app_id).await?;
     }
     if let Some(id) = row.provider_id {
@@ -399,7 +399,6 @@ async fn start_contact(
     let (invitation, request, social) = match kind {
         StartKind::Portal(invitation) => (invitation, None, None),
         StartKind::SelfService { request, social } => {
-            require_personal_app(&txn, app).await?;
             if let Some(request) = request {
                 if Some(request.app_id) != app {
                     return Err(invalid());
@@ -439,6 +438,9 @@ async fn start_contact(
     } else {
         (false, None, false, "")
     };
+    if !invited {
+        require_personal_app(&txn, app).await?;
+    }
     if let Some((provider, _)) = social {
         allow_social(&txn, provider).await?;
     }
@@ -627,13 +629,6 @@ pub async fn finalize(
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     let row = lookup(&txn, token).await?;
-    let p = check(&txn, &row).await?;
-    if row.status != "ready"
-        || row.verified_at.is_none()
-        || (!row.invitation && p.approval_required && row.approved_by.is_none())
-    {
-        return Err(Error::Invalid("approval_required"));
-    }
     if let Some(app) = row.app_id {
         use sea_orm::QuerySelect;
         apps::Entity::find_by_id(app)
@@ -647,6 +642,13 @@ pub async fn finalize(
                 .one(&txn)
                 .await?;
         }
+    }
+    let p = check(&txn, &row).await?;
+    if row.status != "ready"
+        || row.verified_at.is_none()
+        || (!row.invitation && p.approval_required && row.approved_by.is_none())
+    {
+        return Err(Error::Invalid("approval_required"));
     }
     let now = OffsetDateTime::now_utc();
     let existing = users::Entity::find()
@@ -696,9 +698,6 @@ pub async fn finalize(
         }
         user
     } else {
-        if !row.invitation {
-            require_personal_app(&txn, row.app_id).await?;
-        }
         use super::user::RegistrationCredential;
         let credential = if let Some(provider_id) = row.provider_id {
             if !social_proof.is_some_and(|proof| proof.matches(&row)) {

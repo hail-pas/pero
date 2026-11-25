@@ -354,6 +354,7 @@ export interface ViewDataMap {
       logo_url: string | null;
       status: string | null;
       organization_admission: boolean;
+      organization_only: boolean;
       require_mfa: boolean;
     }[];
   };

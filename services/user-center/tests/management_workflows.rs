@@ -679,6 +679,42 @@ async fn expired_application_registration_returns_to_initiating_client() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn organization_only_apps_reject_self_service_enrollment_from_the_portal() {
+    use user_center::service::{ManagementError, enrollment};
+
+    let f = Fixture::new().await;
+    f.sql(
+        "UPDATE apps SET tenant_mode='organization' WHERE id=$1",
+        vec![f.app.into()],
+    )
+    .await;
+    let token = pero_utils::crypto::generate_token();
+    f.sql(
+        "INSERT INTO enrollments(id,app_id,email,token_hash,status,verified_at,expires_at) VALUES($1,$2,'member@example.test',$3,'ready',now(),now()+interval '1 day')",
+        vec![Uuid::now_v7().into(), f.app.into(), pero_utils::crypto::sha256_hex(&token).into()],
+    )
+    .await;
+    let (_, _, _, raw) = f.login(f.user).await;
+    let session = f
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        enrollment::start(&f.state, "member@example.test", Some(f.app), None).await,
+        Err(ManagementError::Invalid("enrollment_unavailable"))
+    ));
+    assert!(matches!(
+        enrollment::finalize(&f.state, &token, "", "", Some(&session), None).await,
+        Err(ManagementError::Invalid("enrollment_unavailable"))
+    ));
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn enrollment_approval_tracks_effective_policy() {
     use user_center::service::enrollment;
 

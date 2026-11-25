@@ -458,7 +458,7 @@ export function Admission({
                 {r.name} ·{" "}
                 {r.status ? admissionStatus(r.status) : t("尚未加入")}
               </Typography>
-              {r.status === "active" && r.organization_admission && (
+              {r.status === "active" && r.organization_admission && !r.organization_only && (
                 <Button
                   disabled={busy}
                   onClick={() =>
@@ -485,6 +485,8 @@ export function Admission({
                 </Button>
               ) : r.status === "disabled" ? (
                 <Typography>{t("请联系管理员重新授权")}</Typography>
+              ) : r.organization_only ? (
+                <Typography>{t("仅限邀请注册，请联系管理员获取邀请。")}</Typography>
               ) : (
                 <Button
                   disabled={busy}
