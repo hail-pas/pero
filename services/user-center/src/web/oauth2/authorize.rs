@@ -87,6 +87,12 @@ impl AuthorizeQuery {
         }
 
         if let Some(method) = &self.code_challenge_method {
+            if self.code_challenge.is_none() {
+                return Err(self.redirect_err(
+                    "invalid_request",
+                    Some("code_challenge is required when code_challenge_method is provided"),
+                ));
+            }
             if method != "S256" {
                 return Err(self.redirect_err(
                     "invalid_request",
@@ -118,7 +124,7 @@ impl AuthorizeQuery {
         OAuthError::redirect(&self.redirect_uri, error, desc, self.state.as_deref())
     }
 
-    /// 将 code_challenge_method 字符串映射为枚举（只接受 S256/plain）
+    /// 将 code_challenge_method 字符串映射为枚举（只接受 S256）
     pub fn challenge_method(&self) -> Option<CodeChallengeMethod> {
         self.code_challenge_method.as_deref().and_then(|m| match m {
             "S256" => Some(CodeChallengeMethod::S256),
@@ -610,12 +616,13 @@ mod tests {
         };
         assert!(query.validate_redirectable_oauth().is_ok());
         for challenge in [
-            "".into(),
-            "short".into(),
-            format!("{valid}="),
-            "a".repeat(43),
+            None,
+            Some("".into()),
+            Some("short".into()),
+            Some(format!("{valid}=")),
+            Some("a".repeat(43)),
         ] {
-            query.code_challenge = Some(challenge);
+            query.code_challenge = challenge;
             let error = query.validate_redirectable_oauth().unwrap_err();
             assert!(matches!(
                 error,
@@ -623,5 +630,10 @@ mod tests {
                     if error == "invalid_request" && state == "request-state"
             ));
         }
+        query.code_challenge = Some(valid);
+        query.code_challenge_method = None;
+        assert!(query.validate_redirectable_oauth().is_err());
+        query.code_challenge = None;
+        assert!(query.validate_redirectable_oauth().is_ok());
     }
 }
