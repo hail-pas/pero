@@ -11,10 +11,9 @@ use crate::service::login::LoginService;
 use crate::service::social::{IdentityResolution, SocialLinkError, SocialLoginError};
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, verify_password_for_user};
+use crate::web::security::SOCIAL_LINK_COOKIE;
 use crate::web::sso::dto::{SocialLinkForm, SocialLinkView};
 use crate::web::sso::utility::resolve_auth_request_id;
-
-const SOCIAL_LINK_COOKIE: &str = "pero_social_link";
 
 #[derive(serde::Deserialize)]
 pub struct LoginQuery {

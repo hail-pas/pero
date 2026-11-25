@@ -106,9 +106,8 @@ pub async fn close(
         .await
     {
         Ok(()) => {
-            let cookies = state.cookie_factory();
             (
-                jar.add(cookies.clear_cookie(cookies.session_cookie_name())),
+                state.web_security().clear_login_cookies(jar),
                 Redirect::to("/account/login?closed=1"),
             )
                 .into_response()

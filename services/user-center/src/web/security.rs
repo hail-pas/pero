@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::SsoConfig;
 
+pub(crate) const SOCIAL_LINK_COOKIE: &str = "pero_social_link";
+
 #[derive(Clone, Copy)]
 pub struct SsoCookieFactory<'a> {
     sso: &'a SsoConfig,
@@ -131,6 +133,16 @@ impl<'a> SsoWebSecurity<'a> {
 
     pub fn csrf_cookie_name(&self) -> &'static str {
         pero_api_axum::csrf::DEFAULT_CSRF_COOKIE_NAME
+    }
+
+    pub(crate) fn clear_login_cookies(&self, jar: CookieJar) -> CookieJar {
+        let cookies = self.cookies();
+        jar.add(cookies.clear_cookie(cookies.session_cookie_name()))
+            .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()))
+            .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+            .add(cookies.clear_cookie(&cookies.social_state_cookie_name()))
+            .add(cookies.clear_cookie(SOCIAL_LINK_COOKIE))
+            .add(cookies.clear_cookie(self.csrf_cookie_name()))
     }
 
     pub fn ensure_csrf(&self, jar: CookieJar) -> (CookieJar, String) {

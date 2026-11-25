@@ -1,8 +1,9 @@
 use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::cookie::CookieJar;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 
+use crate::db::{entity::users, enums::UserStatus};
 use crate::state::app::AppState;
 use crate::web::account::dto::{ProfileForm, ProfileUser, ProfileView};
 use crate::web::session::extract_session;
@@ -127,17 +128,10 @@ pub async fn post(
         Err(status) => return status.into_response(),
     };
 
-    let user = match crate::db::entity::users::Entity::find_by_id(session.user_id)
-        .one(&state.db)
-        .await
-    {
-        Ok(Some(u)) => u,
-        Ok(None) => return axum::Json(serde_json::json!({"error": "not_found"})).into_response(),
-        Err(error) => return crate::web::util::dependency_error(error),
+    let mut active = users::ActiveModel {
+        updated_at: Set(time::OffsetDateTime::now_utc()),
+        ..Default::default()
     };
-
-    let mut active: crate::db::entity::users::ActiveModel = user.into();
-    active.updated_at = Set(time::OffsetDateTime::now_utc());
 
     if let Some(nickname) = &form.nickname {
         active.nickname = Set(if nickname.is_empty() {
@@ -174,14 +168,30 @@ pub async fn post(
         });
     }
 
-    if let Err(e) = active.update(&state.db).await {
-        tracing::error!("Profile update: {e}");
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({"error": "update_failed"})),
+    // Check account state in the write itself so a concurrent closure cannot restore PII.
+    match users::Entity::update_many()
+        .set(active)
+        .filter(users::Column::Id.eq(session.user_id))
+        .filter(users::Column::DeletedAt.is_null())
+        .filter(users::Column::Status.eq(UserStatus::Active))
+        .exec(&state.db)
+        .await
+    {
+        Ok(result) if result.rows_affected == 1 => {
+            axum::Json(serde_json::json!({"code": 0, "message": "ok"})).into_response()
+        }
+        Ok(_) => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error": "unauthorized"})),
         )
-            .into_response();
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Profile update: {e}");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error": "update_failed"})),
+            )
+                .into_response()
+        }
     }
-
-    axum::Json(serde_json::json!({"code": 0, "message": "ok"})).into_response()
 }

@@ -177,14 +177,7 @@ async fn handle(
         )
         .await;
     }
-    let security = state.web_security();
-    let cookies = security.cookies();
-    let jar = jar
-        .add(cookies.clear_cookie(cookies.session_cookie_name()))
-        .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()))
-        .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
-        .add(cookies.clear_cookie(&cookies.social_state_cookie_name()))
-        .add(cookies.clear_cookie(security.csrf_cookie_name()));
+    let jar = state.web_security().clear_login_cookies(jar);
     if let Some(target) = plan.redirect {
         return (jar, Redirect::to(&target)).into_response();
     }
