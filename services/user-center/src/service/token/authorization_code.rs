@@ -132,6 +132,21 @@ impl TokenService<'_> {
         // Only a replay with the correct client, redirect URI and PKCE proof may revoke
         // the login session. Release issuance locks before using the shared revocation path.
         if auth_code.consumed_at.is_some() {
+            // A consumed code from a withdrawn tenant grant cannot revoke SSO.
+            match crate::service::tenant_context::grant_context_is_current(
+                &txn,
+                auth_code.user_id,
+                auth_code.app_id,
+                auth_code.tenant_id,
+                auth_code.tenant_version,
+                auth_code.tenant_member_version,
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            }
             if let Err(error) = txn.rollback().await {
                 tracing::error!(%error, "Authorization code replay rollback failed");
                 return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);

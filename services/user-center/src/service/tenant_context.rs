@@ -38,20 +38,22 @@ pub async fn active<C: ConnectionTrait>(
         [tenant.into(),user.into(),app.into()])).one(db).await
 }
 /// A stale tenant grant must not trigger session-wide or app-wide revocation.
-pub(crate) async fn refresh_token_context_is_current<C: ConnectionTrait>(
+pub(crate) async fn grant_context_is_current<C: ConnectionTrait>(
     db: &C,
-    token: &crate::db::entity::refresh_tokens::Model,
+    user: Uuid,
+    app: Uuid,
+    tenant: Option<Uuid>,
+    tenant_version: Option<i64>,
+    member_version: Option<i64>,
 ) -> Result<bool, DbErr> {
-    if let Some(tenant) = token.tenant_id {
-        return Ok(active(db, token.user_id, token.app_id, tenant)
-            .await?
-            .is_some_and(|ctx| {
-                Some(ctx.tenant_version) == token.tenant_version
-                    && Some(ctx.tenant_member_version) == token.tenant_member_version
-            }));
+    if let Some(tenant) = tenant {
+        return Ok(active(db, user, app, tenant).await?.is_some_and(|ctx| {
+            Some(ctx.tenant_version) == tenant_version
+                && Some(ctx.tenant_member_version) == member_version
+        }));
     }
     use sea_orm::EntityTrait;
-    Ok(crate::db::entity::apps::Entity::find_by_id(token.app_id)
+    Ok(crate::db::entity::apps::Entity::find_by_id(app)
         .one(db)
         .await?
         .is_some_and(|app| app.system))

@@ -103,9 +103,16 @@ impl TokenService<'_> {
                 );
             }
             // Tenant policy changes also invalidate rotation predecessors. Do not
-            // turn a withdrawn tenant grant into a logout of unrelated sessions/apps.
-            match crate::service::tenant_context::refresh_token_context_is_current(&txn, &existing)
-                .await
+            // turn a withdrawn tenant grant into a logout across applications.
+            match crate::service::tenant_context::grant_context_is_current(
+                &txn,
+                existing.user_id,
+                existing.app_id,
+                existing.tenant_id,
+                existing.tenant_version,
+                existing.tenant_member_version,
+            )
+            .await
             {
                 Ok(true) => {}
                 Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),

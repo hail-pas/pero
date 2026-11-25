@@ -3942,7 +3942,7 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .unwrap()
         .unwrap();
 
-    // A rotation predecessor from the old tenant grant cannot revoke the shared SSO session.
+    // Replayed credentials from an old tenant grant cannot revoke the shared SSO session.
     let (session_token, session) = fixture
         .state
         .session_service()
@@ -3962,12 +3962,28 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         service.handle_refresh_token(&request, &client).await,
         TokenEndpointResult::Success(_)
     ));
+    let code = pero_utils::crypto::generate_token();
+    sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,redirect_uri,scopes,expires_at,consumed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes',now())",vec![pero_utils::crypto::sha256_hex(&code).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into()]).await;
+    let code_request = TokenRequest {
+        grant_type: "authorization_code".into(),
+        code: Some(code),
+        redirect_uri: Some("https://client.example.test/callback".into()),
+        refresh_token: None,
+        ..refresh_form(fixture.client, &raw)
+    };
 
     crate::service::tenant::update_member(db, fixture.user, organization.id, member, "admin")
         .await
         .unwrap();
     assert!(matches!(
         service.handle_refresh_token(&request, &client).await,
+        TokenEndpointResult::Error {
+            code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    assert!(matches!(
+        service.handle_authorization_code(&code_request, &client).await,
         TokenEndpointResult::Error {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
