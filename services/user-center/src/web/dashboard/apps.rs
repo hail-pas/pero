@@ -191,7 +191,14 @@ pub async fn update(
         return response;
     }
     util::management_response(
-        app::update(&state.db, &admin.actor(&state), id, app_input(&form), state.config.sso.session_idle_ttl_seconds).await,
+        app::update(
+            &state.db,
+            &admin.actor(&state),
+            id,
+            app_input(&form),
+            state.config.sso.session_idle_ttl_seconds,
+        )
+        .await,
     )
 }
 

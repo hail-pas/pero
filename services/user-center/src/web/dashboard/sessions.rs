@@ -2,7 +2,10 @@ use super::guard::{AdminContext, AdminPage};
 use crate::{
     db::entity::sso_sessions,
     state::app::AppState,
-    web::{account::security::{SessionRow, session_rows}, util},
+    web::{
+        account::security::{SessionRow, session_rows},
+        util,
+    },
 };
 use axum::{
     Form,
@@ -60,7 +63,13 @@ pub async fn get(
         .order_by_desc(sso_sessions::Column::Id)
         .paginate(&state.db, crate::config::DASHBOARD_PAGE_SIZE);
         let total_pages = pages.num_pages().await?;
-        let rows = session_rows(&state, id, pages.fetch_page(page - 1).await?, admin.session.id).await?;
+        let rows = session_rows(
+            &state,
+            id,
+            pages.fetch_page(page - 1).await?,
+            admin.session.id,
+        )
+        .await?;
         let AdminPage {
             layout,
             csrf_token,

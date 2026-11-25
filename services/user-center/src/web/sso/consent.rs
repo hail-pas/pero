@@ -123,9 +123,14 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
     let session_takeover = match crate::service::app_session::needs_confirmation(
-        &state.db, session.user_id, ctx.auth_request.app_id, session.id,
+        &state.db,
+        session.user_id,
+        ctx.auth_request.app_id,
+        session.id,
         state.config.sso.session_idle_ttl_seconds,
-    ).await {
+    )
+    .await
+    {
         Ok(value) => value,
         Err(error) => return crate::web::util::dependency_error(error),
     };

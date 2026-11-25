@@ -303,9 +303,15 @@ async fn authorize_request(
             .await?;
 
         if crate::service::app_session::needs_confirmation(
-            &state.db, session.user_id, client.app_id, session.id,
+            &state.db,
+            session.user_id,
+            client.app_id,
+            session.id,
             state.config.sso.session_idle_ttl_seconds,
-        ).await.map_err(|_| OAuthError::Unavailable)? {
+        )
+        .await
+        .map_err(|_| OAuthError::Unavailable)?
+        {
             return Err(params.redirect_err("interaction_required", None));
         }
         let code = oauth
@@ -506,10 +512,15 @@ pub(crate) async fn resolve_authorization(
     // prompt=consent 强制展示 consent 页面，忽略已有 consent 记录
     let force_consent =
         crate::service::oauth::has_prompt(auth_request.prompt.as_deref(), "consent")
-        || crate::service::app_session::needs_confirmation(
-            &state.db, session.user_id, auth_request.app_id, session.id,
-            state.config.sso.session_idle_ttl_seconds,
-        ).await.map_err(|_| OAuthError::Unavailable)?;
+            || crate::service::app_session::needs_confirmation(
+                &state.db,
+                session.user_id,
+                auth_request.app_id,
+                session.id,
+                state.config.sso.session_idle_ttl_seconds,
+            )
+            .await
+            .map_err(|_| OAuthError::Unavailable)?;
     let has_consent = if force_consent {
         false
     } else {

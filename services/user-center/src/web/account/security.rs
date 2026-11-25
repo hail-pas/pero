@@ -159,13 +159,19 @@ pub(crate) async fn session_rows(
     let devices = crate::service::app_session::devices(&state.db, user, ids).await?;
     let mut grouped = std::collections::HashMap::<Uuid, Vec<_>>::new();
     for device in devices {
-        grouped.entry(device.sso_session_id).or_default().push(device);
+        grouped
+            .entry(device.sso_session_id)
+            .or_default()
+            .push(device);
     }
-    Ok(sessions.into_iter().map(|s| {
-        let mut row = SessionRow::new(s, current);
-        row.app_sessions = grouped.remove(&row.id).unwrap_or_default();
-        row
-    }).collect())
+    Ok(sessions
+        .into_iter()
+        .map(|s| {
+            let mut row = SessionRow::new(s, current);
+            row.app_sessions = grouped.remove(&row.id).unwrap_or_default();
+            row
+        })
+        .collect())
 }
 
 pub async fn sessions(
@@ -234,8 +240,13 @@ pub async fn revoke_sessions(
         };
         return util::management_response(
             crate::service::account_security::revoke_account_app_sessions(
-                &state.db, &account.session, &state.config.sso, device, app,
-            ).await,
+                &state.db,
+                &account.session,
+                &state.config.sso,
+                device,
+                app,
+            )
+            .await,
         );
     }
     let (selection, logout) = match form.scope.as_str() {

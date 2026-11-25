@@ -1513,7 +1513,8 @@ async fn session_touch_and_bounded_cleanup() {
         vec![fixture.client.into()],
     )
     .await;
-    sql(&db, "INSERT INTO oidc_rp_sessions(session_id,client_id,user_id) SELECT id,$1,user_id FROM sso_sessions WHERE token_hash IN ('expired-1','idle-expired') OR id=$2", vec![fixture.client.into(),live.into()]).await;
+    sql(&db, "INSERT INTO app_sessions(user_id,app_id,sso_session_id) SELECT user_id,$1,id FROM sso_sessions WHERE token_hash IN ('expired-1','idle-expired') OR id=$2", vec![fixture.app.into(),live.into()]).await;
+    sql(&db, "INSERT INTO client_sessions(app_session_id,client_id) SELECT id,$1 FROM app_sessions", vec![fixture.client.into()]).await;
     assert_eq!(
         crate::db::helper::cleanup::clean_expired_sso_sessions(
             &db,
@@ -2381,7 +2382,10 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
     );
 
     replay(&regranted_code).await;
-    assert_eq!(status(&sibling_tokens.access_token).await, http::StatusCode::OK);
+    assert_eq!(
+        status(&sibling_tokens.access_token).await,
+        http::StatusCode::OK
+    );
     let (rotated, _) = issue(fixture.client).await;
     assert_eq!(status(&rotated.access_token).await, http::StatusCode::OK);
     // Refresh issuance also binds the current versions, without revoking its previous AT.
@@ -2746,9 +2750,12 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
     else {
         panic!("valid refresh must rotate before consent withdrawal");
     };
-    let signing = crate::db::helper::signing_key::require_active_signing_key(db, i64::from(client.access_token_ttl_seconds))
-        .await
-        .unwrap();
+    let signing = crate::db::helper::signing_key::require_active_signing_key(
+        db,
+        i64::from(client.access_token_ttl_seconds),
+    )
+    .await
+    .unwrap();
     let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
         .issue_access_token(fixture.user, "openid", Some(current), 0, Some(&tenant))
         .unwrap();
@@ -3321,9 +3328,8 @@ async fn lifecycle_guards_and_transactional_logout() {
         .await
         .unwrap();
     sql(db,"UPDATE oauth_clients SET backchannel_logout_uri='https://rp.example.test/logout' WHERE id=$1",vec![fixture.client.into()]).await;
-    crate::service::backchannel::remember(db, sid, fixture.client, fixture.user)
-        .await
-        .unwrap();
+    sql(db, "INSERT INTO app_sessions(user_id,app_id,sso_session_id) VALUES($1,$2,$3)", vec![fixture.user.into(),fixture.app.into(),sid.into()]).await;
+    sql(db, "INSERT INTO client_sessions(id,app_session_id,client_id) SELECT $1,id,$2 FROM app_sessions WHERE sso_session_id=$3", vec![Uuid::now_v7().into(),fixture.client.into(),sid.into()]).await;
     let txn = db.begin().await.unwrap();
     crate::db::helper::session::revoke(&txn, sid, Some("test".into()))
         .await
@@ -4077,7 +4083,9 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         }
     ));
     assert!(matches!(
-        service.handle_authorization_code(&code_request, &client).await,
+        service
+            .handle_authorization_code(&code_request, &client)
+            .await,
         TokenEndpointResult::Error {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
