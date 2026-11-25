@@ -20,7 +20,7 @@ pub struct AppConfig {
 
 impl ParseConfigurable for AppConfig {
     fn env_list_parse_keys() -> &'static [&'static str] {
-        &[]
+        &["oauth2.scopes"]
     }
 }
 
@@ -68,12 +68,23 @@ impl Validatable for OAuth2Config {
         pero_validate_core::not_blank(&self.issuer, "oauth2.issuer")?;
         pero_validate_core::not_blank(&self.client_id, "oauth2.client_id")?;
         pero_validate_core::ensure(
-            !self.client_secret.is_empty(),
+            !self.client_secret.expose_secret().trim().is_empty()
+                && self.client_secret.expose_secret() != "CHANGE_ME",
             "oauth2.client_secret",
             "required",
-            "oauth2.client_secret is required",
+            "oauth2.client_secret must be configured with the registered client secret",
         )?;
         pero_validate_core::not_blank(&self.redirect_uri, "oauth2.redirect_uri")?;
+        pero_validate_core::not_blank(
+            &self.post_logout_redirect_uri,
+            "oauth2.post_logout_redirect_uri",
+        )?;
+        pero_validate_core::ensure(
+            self.scopes.iter().any(|scope| scope == "openid"),
+            "oauth2.scopes",
+            "required",
+            "oauth2.scopes must include openid",
+        )?;
         pero_validate_core::min(
             self.jwks_cache_ttl_seconds,
             60,

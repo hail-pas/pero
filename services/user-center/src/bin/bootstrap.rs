@@ -198,14 +198,14 @@ async fn insert_signing_key(
     Ok(())
 }
 
-fn validate_admin(a: &AdminConfig) -> Result<(), String> {
+fn validate_admin(a: &AdminConfig, password_policy: &config::PasswordConfig) -> Result<(), String> {
     let username = a.username.trim();
     if username.len() < 3 || username.len() > 64 {
         return Err("admin.username 需要 3-64 个字符".into());
     }
-    if a.password.len() < 8 {
-        return Err("admin.password 至少 8 个字符".into());
-    }
+    password_policy
+        .validate_password(&a.password)
+        .map_err(|error| format!("admin.password: {error}"))?;
     if let Some(email) = &a.email
         && (!email.contains('@') || email.trim().is_empty())
     {
@@ -276,7 +276,6 @@ async fn run_admin(
     db: &sea_orm::DatabaseConnection,
     cfg: &AdminConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    validate_admin(cfg)?;
     let system_app = find_system_app(db).await?;
     let txn = db.begin().await?;
 
@@ -370,6 +369,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_config = pero_config::ConfigLoader::new()
         .config_dir(&cli.config_dir)
         .load::<config::AppConfig>()?;
+    if tasks.iter().any(|task| task == "admin")
+        && let Some(cfg) = &bootstrap_cfg.admin
+    {
+        validate_admin(cfg, &app_config.password)?;
+    }
     let (db, _guard) = init_db(&app_config).await?;
     let oidc_issuer = app_config.oidc.issuer.clone();
     tracing::info!("数据库连接成功");

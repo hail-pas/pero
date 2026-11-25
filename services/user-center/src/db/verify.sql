@@ -109,4 +109,4 @@ SELECT created_by FROM tenants LIMIT 0;
 SELECT user_id,enabled,max_tenants,updated_by,updated_at FROM tenant_creation_policies LIMIT 0;
 
 SELECT app_id,tenant_id,user_id FROM tenant_app_history LIMIT 0;
-SELECT tenant_id,app_id,requested_by,status,reviewed_by FROM tenant_app_requests LIMIT 0;
+SELECT tenant_id,app_id,requested_by,status,reviewed_by,reviewed_at,created_at,updated_at FROM tenant_app_requests LIMIT 0;
