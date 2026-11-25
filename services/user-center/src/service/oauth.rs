@@ -1,8 +1,8 @@
 use pero_cache_redis::RedisCacheStore;
 use pero_error::AppError;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
 };
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -341,24 +341,24 @@ impl<'a> OAuthService<'a> {
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
 
         if grant_consent && auth_request.diagnostic_session_id.is_none() {
-            user_consents::Entity::insert(user_consents::ActiveModel {
-                user_id: Set(session.user_id),
-                client_id: Set(auth_request.client_id),
-                scopes: Set(auth_request.scopes.clone()),
-                granted_at: Set(now),
-            })
-            .on_conflict(
-                sea_orm::sea_query::OnConflict::columns([
-                    user_consents::Column::UserId,
-                    user_consents::Column::ClientId,
-                ])
-                .update_columns([
-                    user_consents::Column::Scopes,
-                    user_consents::Column::GrantedAt,
-                ])
-                .to_owned(),
-            )
-            .exec(&txn)
+            // A new approval adds consent, not an implicit withdrawal. Merge under
+            // the conflict row lock so concurrent approvals cannot lose scopes.
+            // The client policy is locked above; never retain disallowed scopes.
+            txn.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO user_consents(user_id,client_id,scopes,granted_at) VALUES($1,$2,$3,$4)
+                 ON CONFLICT(user_id,client_id) DO UPDATE SET
+                 scopes=ARRAY(SELECT DISTINCT scope FROM unnest(user_consents.scopes || EXCLUDED.scopes) AS granted(scope)
+                              WHERE scope=ANY($5::text[]) ORDER BY scope),
+                 granted_at=EXCLUDED.granted_at",
+                [
+                    session.user_id.into(),
+                    auth_request.client_id.into(),
+                    auth_request.scopes.clone().into(),
+                    now.into(),
+                    client.scopes.clone().into(),
+                ],
+            ))
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
         }

@@ -2034,6 +2034,12 @@ async fn consent_submissions_bind_to_the_displayed_request_and_session() {
 #[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
 async fn concurrent_first_consents_both_issue_codes() {
     let fixture = SecurityFixture::new().await;
+    sql(
+        &fixture.state.db,
+        "UPDATE oauth_clients SET scopes=ARRAY['openid','profile'] WHERE id=$1",
+        vec![fixture.client.into()],
+    )
+    .await;
     let (_, session_id) = fixture
         .state
         .session_service()
@@ -2049,9 +2055,9 @@ async fn concurrent_first_consents_both_issue_codes() {
         authenticated_at: now,
     };
     let mut requests = Vec::new();
-    for _ in 0..2 {
+    for scope in ["openid", "profile"] {
         let id = Uuid::now_v7();
-        sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')", vec![id.into(),fixture.client.into(),fixture.app.into()]).await;
+        sql(&fixture.state.db, "INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY[$4::text],now()+interval '5 minutes')", vec![id.into(),fixture.client.into(),fixture.app.into(),scope.into()]).await;
         bind_test_grants(&fixture.state.db, fixture.user, fixture.app).await;
         requests.push(id);
     }
@@ -2068,6 +2074,14 @@ async fn concurrent_first_consents_both_issue_codes() {
         .await
         .unwrap();
     assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].scopes, vec!["openid", "profile"]);
+    let codes = crate::db::entity::authorization_codes::Entity::find()
+        .all(&fixture.state.db)
+        .await
+        .unwrap();
+    assert_eq!(codes.len(), 2);
+    assert!(codes.iter().any(|code| code.scopes == vec!["openid"]));
+    assert!(codes.iter().any(|code| code.scopes == vec!["profile"]));
     // A denial that already passed the HTTP precheck must not overwrite a
     // completion committed while its UPDATE was waiting for the request lock.
     use axum_extra::extract::cookie::{Cookie, CookieJar};
