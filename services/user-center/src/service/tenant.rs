@@ -8,7 +8,7 @@ use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement,
     TransactionTrait,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 type Result<T> = std::result::Result<T, Error>;
 
@@ -82,15 +82,83 @@ pub async fn get<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Ten
     .await?
     .ok_or(Error::Invalid("not_found"))
 }
-pub async fn members<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Vec<Member>> {
+/// Membership is checked before exposing the organization roster.
+pub async fn members<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+    id: Uuid,
+    input: &MemberFilter,
+) -> Result<Members> {
     let t = get(db, user, id).await?;
     if t.kind != "organization" {
         return Err(Error::Invalid("forbidden"));
     }
-    Ok(Member::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT m.user_id,u.username::text,COALESCE(u.nickname,u.username::text) AS name,m.role,m.status FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.status='active' ORDER BY (m.role='owner') DESC,m.joined_at",
-        [id.into()])).all(db).await?)
+    list_members(db, id, input).await
 }
+
+#[derive(Default, Deserialize)]
+pub struct MemberFilter {
+    pub member_page: Option<u64>,
+    pub member_q: Option<String>,
+}
+#[derive(Default, Serialize)]
+pub struct Members {
+    pub rows: Vec<Member>,
+    pub total: i64,
+    pub page: u64,
+    pub total_pages: u64,
+    pub q: String,
+}
+
+/// Shared roster query; callers must authorize access to the organization first.
+pub async fn list_members<C: ConnectionTrait>(
+    db: &C,
+    tenant: Uuid,
+    input: &MemberFilter,
+) -> Result<Members> {
+    let page = input.member_page.unwrap_or(1).clamp(1, 1_000_000);
+    let q = input
+        .member_q
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(100)
+        .collect::<String>();
+    let from = " FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.status='active' AND ($2='' OR u.username::text ILIKE '%'||$2||'%' OR u.nickname ILIKE '%'||$2||'%')";
+    let count_query = if q.is_empty() {
+        Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*)::bigint AS n FROM tenant_members WHERE tenant_id=$1 AND status='active'",
+            [tenant.into()],
+        )
+    } else {
+        Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("SELECT count(*)::bigint AS n{from}"),
+            [tenant.into(), q.clone().into()],
+        )
+    };
+    let total: i64 = db
+        .query_one_raw(count_query)
+        .await?
+        .ok_or(Error::Invalid("not_found"))?
+        .try_get("", "n")?;
+    let total_pages = (total.max(0) as u64).div_ceil(20);
+    let page = page.min(total_pages.max(1));
+    let rows = Member::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!("SELECT m.user_id,u.username::text,COALESCE(u.nickname,u.username::text) AS name,m.role,m.status{from} ORDER BY (m.role='owner') DESC,m.joined_at,m.user_id LIMIT 20 OFFSET $3"),
+        [tenant.into(),q.clone().into(),(((page-1)*20) as i64).into()])).all(db).await?;
+    Ok(Members {
+        rows,
+        total,
+        page,
+        total_pages,
+        q,
+    })
+}
+
 pub async fn invitations<C: ConnectionTrait>(
     db: &C,
     user: Uuid,
@@ -759,6 +827,10 @@ pub async fn delete(
 
 /// Checks organization membership capacity; callers performing admission hold the tenant row lock.
 pub async fn can_invite<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<bool> {
+    Ok(membership_capacity(db, id).await?.1)
+}
+
+pub async fn membership_capacity<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<(i64, bool)> {
     let row = db.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT t.status,t.max_members,(SELECT count(*)::bigint FROM tenant_members m WHERE m.tenant_id=t.id AND m.status='active') AS member_count FROM tenants t WHERE t.id=$1 AND t.kind='organization'",
@@ -767,5 +839,8 @@ pub async fn can_invite<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<bool> {
     let status: String = row.try_get("", "status")?;
     let max_members: i32 = row.try_get("", "max_members")?;
     let member_count: i64 = row.try_get("", "member_count")?;
-    Ok(status == "active" && member_count < i64::from(max_members))
+    Ok((
+        member_count,
+        status == "active" && member_count < i64::from(max_members),
+    ))
 }

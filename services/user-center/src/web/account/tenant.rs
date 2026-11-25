@@ -9,7 +9,7 @@ use crate::{
 };
 use axum::{
     Form,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
@@ -84,18 +84,19 @@ pub async fn detail(
     jar: CookieJar,
     a: AccountContext,
     Path(id): Path<Uuid>,
+    Query(filter): Query<svc::MemberFilter>,
 ) -> Response {
     let tenant = match svc::get(&s.db, a.user.id, id).await {
         Ok(v) => v,
         Err(e) => return util::management_response(Err(e)),
     };
     let members = if tenant.kind == "organization" {
-        match svc::members(&s.db, a.user.id, id).await {
+        match svc::list_members(&s.db, id, &filter).await {
             Ok(v) => v,
             Err(e) => return util::management_response(Err(e)),
         }
     } else {
-        Vec::new()
+        svc::Members::default()
     };
     let invitations =
         if matches!(tenant.role.as_str(), "owner" | "admin") && tenant.kind == "organization" {
@@ -121,18 +122,23 @@ pub async fn detail(
         Ok(v) => v,
         Err(e) => return util::dependency_error(e),
     };
-    let can_invite = if tenant.kind == "organization" {
-        match svc::can_invite(&s.db, id).await {
+    let (member_count, can_invite) = if tenant.kind != "organization" {
+        (0, false)
+    } else if members.q.is_empty() {
+        (
+            members.total,
+            tenant.status == "active" && members.total < i64::from(tenant.max_members),
+        )
+    } else {
+        match svc::membership_capacity(&s.db, id).await {
             Ok(v) => v,
             Err(e) => return util::management_response(Err(e)),
         }
-    } else {
-        false
     };
     let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
     util::view_response(
         "TenantDetailView",
-        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenant":tenant,"members":members,"invitations":invitations,"current_user_id":a.user.id,"can_invite":can_invite,"apps":apps}),
+        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"tenant":tenant,"members":members,"member_count":member_count,"invitations":invitations,"current_user_id":a.user.id,"can_invite":can_invite,"apps":apps}),
         jar,
     )
 }
@@ -221,9 +227,10 @@ pub async fn members(
     State(s): State<AppState>,
     a: AccountContext,
     Path(id): Path<Uuid>,
+    Query(filter): Query<svc::MemberFilter>,
 ) -> Response {
-    match svc::members(&s.db, a.user.id, id).await {
-        Ok(rows) => axum::Json(serde_json::json!({"rows":rows})).into_response(),
+    match svc::members(&s.db, a.user.id, id, &filter).await {
+        Ok(rows) => axum::Json(rows).into_response(),
         Err(error) => util::management_response(Err(error)),
     }
 }

@@ -274,7 +274,7 @@ export function Tenants({
     );
   }
 
-  const { tenant, members, invitations, current_user_id, can_invite, apps } = data;
+  const { tenant, members, member_count, invitations, current_user_id, can_invite, apps } = data;
   const isOrganization = tenant.kind === "organization";
   const isOwner = tenant.role === "owner";
   const canManage = isOwner || tenant.role === "admin";
@@ -290,7 +290,7 @@ export function Tenants({
         <Stack direction="row" spacing={2} sx={{ alignItems: "center", mb: 2 }}>
           <Chip label={tenant.role} />
           <Chip variant="outlined" label={tenant.status} />
-          {isOrganization && <Chip variant="outlined" label={`${t("成员上限")}：${members.length}/${tenant.max_members}`} />}
+          {isOrganization && <Chip variant="outlined" label={`${t("成员上限")}：${member_count}/${tenant.max_members}`} />}
           {tenant.slug && (
             <Typography color="text.secondary">/{tenant.slug}</Typography>
           )}
@@ -417,8 +417,12 @@ export function Tenants({
               {t("组织已停用或达到成员上限，无法继续邀请成员。")}
             </Typography>
           )}
+          <TextField size="small" label={t("搜索成员（回车）")} defaultValue={members.q}
+            key={members.q} onKeyDown={e => {
+              if (e.key === "Enter") setQuery("member_q",(e.target as HTMLInputElement).value);
+            }} sx={{ mb: 2 }} />
           <Stack spacing={1.5}>
-            {members.map((member) => (
+            {members.rows.map((member) => (
               <Box key={member.user_id}>
                 <Stack
                   direction={{ xs: "column", sm: "row" }}
@@ -502,11 +506,14 @@ export function Tenants({
                 <Divider sx={{ mt: 1 }} />
               </Box>
             ))}
+            {members.rows.length === 0 && <Typography color="text.secondary">{t("没有匹配的成员")}</Typography>}
           </Stack>
+          <Pagination count={Math.max(1,members.total_pages)} page={members.page}
+            onChange={(_e,p) => setQuery("member_page",String(p))} sx={{ mt: 2 }}/>
         </Panel>
       )}
 
-      {isOrganization && isOwner && !tenant.platform_suspended && members.length === 1 && (
+      {isOrganization && isOwner && !tenant.platform_suspended && member_count === 1 && (
         <Panel title={t("解散组织")}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {t("解散将立即停止该组织访问所有应用，保留历史标识供业务系统对账；此操作不可恢复。")}

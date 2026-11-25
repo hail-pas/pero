@@ -1,5 +1,6 @@
 //! Platform-only organization governance; never administer business resources here.
 use super::ManagementError as Error;
+pub use super::tenant::{MemberFilter, list_members as members};
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait,
 };
@@ -83,52 +84,6 @@ pub async fn get<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Summary> {
     .one(db)
     .await?
     .ok_or(Error::Invalid("not_found"))
-}
-#[derive(Default, Deserialize)]
-pub struct MemberFilter {
-    pub member_page: Option<u64>,
-    pub member_q: Option<String>,
-}
-#[derive(Serialize)]
-pub struct Members {
-    pub rows: Vec<super::tenant::Member>,
-    pub page: u64,
-    pub total_pages: u64,
-    pub q: String,
-}
-pub async fn members<C: ConnectionTrait>(
-    db: &C,
-    tenant: Uuid,
-    input: &MemberFilter,
-) -> Result<Members> {
-    let page = input.member_page.unwrap_or(1).clamp(1, 1_000_000);
-    let q = input
-        .member_q
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .take(100)
-        .collect::<String>();
-    let from = " FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.status='active' AND ($2='' OR u.username::text ILIKE '%'||$2||'%' OR u.nickname ILIKE '%'||$2||'%')";
-    let count: i64 = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            format!("SELECT count(*)::bigint AS n{from}"),
-            [tenant.into(), q.clone().into()],
-        ))
-        .await?
-        .ok_or(Error::Invalid("not_found"))?
-        .try_get("", "n")?;
-    let rows=super::tenant::Member::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        format!("SELECT m.user_id,u.username::text,COALESCE(u.nickname,u.username::text) AS name,m.role,m.status{from} ORDER BY (m.role='owner') DESC,m.joined_at LIMIT 20 OFFSET $3"),
-        [tenant.into(),q.clone().into(),(((page-1)*20) as i64).into()])).all(db).await?;
-    Ok(Members {
-        rows,
-        page,
-        total_pages: (count.max(0) as u64).div_ceil(20),
-        q,
-    })
 }
 pub async fn set_limit(
     db: &DatabaseConnection,

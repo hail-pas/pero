@@ -167,6 +167,9 @@ CREATE TABLE tenant_members (
     PRIMARY KEY (tenant_id,user_id)
 );
 CREATE INDEX ix_tenant_members_user_active ON tenant_members(user_id, tenant_id) WHERE status='active';
+CREATE INDEX ix_tenant_members_active_roster
+    ON tenant_members(tenant_id, (role='owner') DESC, joined_at, user_id)
+    WHERE status='active';
 CREATE TABLE tenant_invitations (
     id uuid PRIMARY KEY DEFAULT uuidv7(),
     tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
