@@ -25,7 +25,7 @@ pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let claims = serde_json::json!({
         "iss": state.config.oidc.issuer, "aud": job.identifier,
-        "sub": job.user_id, "iat": now, "exp": now+120, "jti": job.id,
+        "sub": job.user_id, "iat": now, "exp": now+super::backchannel::EVENT_TOKEN_TTL_SECONDS, "jti": job.id,
         "event": job.kind, "tenant_id":job.tenant_id, "occurred_at": job.created_at.unix_timestamp(),
     });
     let result = tokio::time::timeout(

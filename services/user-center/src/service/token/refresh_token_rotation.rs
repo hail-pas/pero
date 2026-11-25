@@ -207,7 +207,7 @@ impl TokenService<'_> {
             };
         let scopes_str = requested.join(" ");
         let session_id = Some(session_id);
-        let signing = match require_active_signing_key(&txn).await {
+        let signing = match require_active_signing_key(&txn, i64::from(client.access_token_ttl_seconds)).await {
             Ok(k) => k,
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };

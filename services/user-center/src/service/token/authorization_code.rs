@@ -251,11 +251,6 @@ impl TokenService<'_> {
         if !access.app.system && tenant.is_none() {
             return Err(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant));
         }
-        let signing = match require_active_signing_key(db).await {
-            Ok(k) => k,
-            Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
-        };
-
         if !crate::service::scope::allowed(&auth_code.scopes, &client.scopes)
             || !client.redirect_uris.contains(&auth_code.redirect_uri)
         {
@@ -264,6 +259,16 @@ impl TokenService<'_> {
                 "Authorization policy changed",
             ));
         }
+        let openid = crate::service::scope::contains(&auth_code.scopes, "openid");
+        let ttl = if openid {
+            client.access_token_ttl_seconds.max(client.id_token_ttl_seconds)
+        } else {
+            client.access_token_ttl_seconds
+        };
+        let signing = match require_active_signing_key(db, i64::from(ttl)).await {
+            Ok(k) => k,
+            Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
+        };
         let scopes_str = auth_code.scopes.join(" ");
         let issuer = TokenIssuer::new(self.state, client, &signing);
         let access_token = match issuer.issue_access_token(
@@ -281,7 +286,7 @@ impl TokenService<'_> {
         };
 
         let mut id_token = None;
-        if crate::service::scope::contains(&auth_code.scopes, "openid") {
+        if openid {
             id_token = match issuer.issue_id_token(
                 user,
                 &auth_code.scopes,

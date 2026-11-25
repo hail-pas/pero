@@ -77,7 +77,10 @@ where
     .await
 }
 
-pub async fn require_active_signing_key<C>(db: &C) -> Result<SigningKeyMaterial, DbErr>
+pub async fn require_active_signing_key<C>(
+    db: &C,
+    ttl_seconds: i64,
+) -> Result<SigningKeyMaterial, DbErr>
 where
     C: ConnectionTrait,
 {
@@ -88,10 +91,10 @@ where
         .private_key_pem
         .ok_or_else(|| DbErr::Custom("private key decrypt returned null".into()))?;
     // Issuance holds this row lock until commit; rotation/revocation cannot race it.
-    // Include ID/access-token lifetime, logout-token lifetime and clock skew.
+    // Track this issuance's lifetime plus clock skew, not unrelated client policies.
     db.execute_raw(sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Postgres,
-        "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,now()+make_interval(secs=>GREATEST(120,COALESCE((SELECT max(GREATEST(access_token_ttl_seconds,id_token_ttl_seconds)) FROM oauth_clients),0))+300)) WHERE id=$1",
-        [row.key.id.into()])).await?;
+        "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,clock_timestamp()+make_interval(secs=>$2::bigint+300)) WHERE id=$1",
+        [row.key.id.into(), ttl_seconds.into()])).await?;
     Ok(SigningKeyMaterial {
         kid: row.key.kid,
         private_key,

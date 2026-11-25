@@ -4,6 +4,8 @@ use pero_http_client_core::HttpClientExt;
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement, TransactionTrait};
 use uuid::Uuid;
 
+pub(super) const EVENT_TOKEN_TTL_SECONDS: i64 = 120;
+
 pub async fn remember<C: ConnectionTrait>(
     db: &C,
     session: Uuid,
@@ -46,7 +48,7 @@ pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
 }
 async fn send(state: &AppState, job: &Delivery) -> Result<(), &'static str> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let claims = serde_json::json!({"iss":state.config.oidc.issuer,"aud":job.identifier,"sub":job.user_id.to_string(),"sid":job.session_id.to_string(),"iat":now,"exp":now+120,"jti":job.id.to_string(),"events":{"http://schemas.openid.net/event/backchannel-logout":{}}});
+    let claims = serde_json::json!({"iss":state.config.oidc.issuer,"aud":job.identifier,"sub":job.user_id.to_string(),"sid":job.session_id.to_string(),"iat":now,"exp":now+EVENT_TOKEN_TTL_SECONDS,"jti":job.id.to_string(),"events":{"http://schemas.openid.net/event/backchannel-logout":{}}});
     send_signed(state, &job.endpoint, "logout+jwt", "logout_token", &claims).await
 }
 
@@ -60,7 +62,7 @@ pub(super) async fn send_signed(
     pero_utils::redirect::validate_provider_endpoint_uri(endpoint)
         .map_err(|_| "invalid_endpoint")?;
     let txn = state.db.begin().await.map_err(|_| "database_error")?;
-    let key = crate::db::helper::signing_key::require_active_signing_key(&txn)
+    let key = crate::db::helper::signing_key::require_active_signing_key(&txn, EVENT_TOKEN_TTL_SECONDS)
         .await
         .map_err(|_| "signing_unavailable")?;
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
