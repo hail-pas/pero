@@ -7,7 +7,6 @@ use sea_orm::{
 use super::token_issuer::TokenIssuer;
 use super::{TokenEndpointResult, TokenRequest, TokenService};
 use crate::db::entity::oauth_clients as oc;
-use crate::db::enums::UserStatus;
 
 use crate::db::helper::signing_key::require_active_signing_key;
 
@@ -30,12 +29,6 @@ impl TokenService<'_> {
         };
 
         let rt_hash = pero_utils::crypto::sha256_hex(&rt_raw);
-
-        let now = time::OffsetDateTime::now_utc();
-        let rt_raw_new = pero_utils::crypto::generate_token();
-        let rt_hash_new = pero_utils::crypto::sha256_hex(&rt_raw_new);
-        let rt_expires = now + time::Duration::seconds(client.refresh_token_ttl_seconds as i64);
-        let new_rt_id = uuid::Uuid::now_v7();
 
         let txn = match self.state.db.begin().await {
             Ok(txn) => txn,
@@ -161,6 +154,7 @@ impl TokenService<'_> {
                 "Refresh token revoked",
             );
         }
+        let now = time::OffsetDateTime::now_utc();
         if existing.expires_at <= now {
             return TokenEndpointResult::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
@@ -185,23 +179,7 @@ impl TokenService<'_> {
             );
         }
 
-        let user = match crate::db::entity::users::Entity::find_by_id(existing.user_id)
-            .one(&txn)
-            .await
-        {
-            Ok(Some(u)) if u.deleted_at.is_none() && u.status == UserStatus::Active => u,
-            Ok(_) => {
-                return TokenEndpointResult::error_desc(
-                    OAuth2ErrorCode::InvalidGrant,
-                    "User not found",
-                );
-            }
-            Err(e) => {
-                tracing::error!("RT user lookup: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
-            }
-        };
-
+        let user = &access.user;
         let tenant = if let Some(id) = existing.tenant_id {
             let ctx = match crate::service::tenant_context::active(&txn, user.id, client.app_id, id)
                 .await
@@ -219,10 +197,7 @@ impl TokenService<'_> {
         } else {
             None
         };
-        let app = crate::db::entity::apps::Entity::find_by_id(client.app_id)
-            .one(&txn)
-            .await;
-        if !app.ok().flatten().is_some_and(|a| a.system) && tenant.is_none() {
+        if !access.app.system && tenant.is_none() {
             return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
         }
         let requested =
@@ -252,6 +227,18 @@ impl TokenService<'_> {
             }
         };
 
+        // Recheck expiry after policy and signing-key lookups, using the rotation time.
+        let now = time::OffsetDateTime::now_utc();
+        if existing.expires_at <= now {
+            return TokenEndpointResult::error_desc(
+                OAuth2ErrorCode::InvalidGrant,
+                "Refresh token expired",
+            );
+        }
+        let rt_raw_new = pero_utils::crypto::generate_token();
+        let rt_hash_new = pero_utils::crypto::sha256_hex(&rt_raw_new);
+        let rt_expires = now + time::Duration::seconds(client.refresh_token_ttl_seconds as i64);
+        let new_rt_id = uuid::Uuid::now_v7();
         let new_rt = rt::ActiveModel {
             id: Set(new_rt_id),
             token_hash: Set(rt_hash_new),

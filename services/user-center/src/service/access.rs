@@ -203,20 +203,26 @@ pub async fn active_app_access<C: ConnectionTrait>(
         .await
 }
 
+pub(crate) struct GrantAccess {
+    pub user: users::Model,
+    pub app: apps_entity::Model,
+    pub token_version: i64,
+}
+
 /// Lock policy rows before a grant row so revocation cannot miss a concurrent issuance.
-pub async fn lock_grant_access<C: ConnectionTrait>(
+pub(crate) async fn lock_grant_access<C: ConnectionTrait>(
     db: &C,
     user_id: Uuid,
     app_id: Uuid,
-) -> Result<Option<uaa::Model>, sea_orm::DbErr> {
+) -> Result<Option<GrantAccess>, sea_orm::DbErr> {
     use crate::db::enums::UserStatus;
     let app = apps_entity::Entity::find_by_id(app_id)
         .lock_shared()
         .one(db)
         .await?;
-    if !app.is_some_and(|app| app.status == CommonStatus::Active) {
+    let Some(app) = app.filter(|app| app.status == CommonStatus::Active) else {
         return Ok(None);
-    }
+    };
     let access = uaa::Entity::find_by_id((user_id, app_id))
         .lock_shared()
         .one(db)
@@ -230,5 +236,9 @@ pub async fn lock_grant_access<C: ConnectionTrait>(
         .await?;
     Ok(user
         .filter(|user| user.deleted_at.is_none() && user.status == UserStatus::Active)
-        .map(|_| access))
+        .map(|user| GrantAccess {
+            user,
+            app,
+            token_version: access.token_version,
+        }))
 }

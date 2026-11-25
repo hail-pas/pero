@@ -8,7 +8,8 @@ use sea_orm::{
 use super::token_issuer::TokenIssuer;
 use super::{TokenEndpointResult, TokenRequest, TokenService};
 use crate::db::entity::oauth_clients as oc;
-use crate::db::enums::{CodeChallengeMethod, UserStatus};
+use crate::db::enums::CodeChallengeMethod;
+use crate::service::access::GrantAccess;
 
 use crate::db::helper::signing_key::require_active_signing_key;
 
@@ -40,7 +41,6 @@ impl TokenService<'_> {
         };
 
         let code_hash = pero_utils::crypto::sha256_hex(code);
-        let now = time::OffsetDateTime::now_utc();
         let txn = match self.state.db.begin().await {
             Ok(txn) => txn,
             Err(e) => {
@@ -189,7 +189,7 @@ impl TokenService<'_> {
             );
         }
 
-        if auth_code.expires_at <= now {
+        if auth_code.expires_at <= time::OffsetDateTime::now_utc() {
             return TokenEndpointResult::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Authorization code expired",
@@ -202,7 +202,7 @@ impl TokenService<'_> {
                 client,
                 &auth_code,
                 code,
-                access.token_version,
+                &access,
                 &active_session,
             )
             .await
@@ -225,31 +225,13 @@ impl TokenService<'_> {
         client: &oc::Model,
         auth_code: &crate::db::entity::authorization_codes::Model,
         raw_code: &str,
-        access_version: i64,
+        access: &GrantAccess,
         active_session: &crate::db::entity::sso_sessions::Model,
     ) -> Result<TokenSuccessBody, TokenEndpointResult>
     where
         C: ConnectionTrait,
     {
-        let user = match crate::db::entity::users::Entity::find_by_id(auth_code.user_id)
-            .one(db)
-            .await
-        {
-            Ok(Some(u)) if u.deleted_at.is_none() && u.status == UserStatus::Active => u,
-            Ok(_) => {
-                return Err(TokenEndpointResult::error_desc(
-                    OAuth2ErrorCode::InvalidGrant,
-                    "User not found",
-                ));
-            }
-            Err(error) => {
-                tracing::error!(%error, "Authorization code user lookup failed");
-                return Err(TokenEndpointResult::error(
-                    OAuth2ErrorCode::TemporarilyUnavailable,
-                ));
-            }
-        };
-
+        let user = &access.user;
         let session_id = active_session.id;
 
         let tenant = if let Some(id) = auth_code.tenant_id {
@@ -266,12 +248,7 @@ impl TokenService<'_> {
         } else {
             None
         };
-        let app = crate::db::entity::apps::Entity::find_by_id(client.app_id)
-            .one(db)
-            .await
-            .map_err(|_| TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?
-            .ok_or(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant))?;
-        if !app.system && tenant.is_none() {
+        if !access.app.system && tenant.is_none() {
             return Err(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant));
         }
         let signing = match require_active_signing_key(db).await {
@@ -293,7 +270,7 @@ impl TokenService<'_> {
             user.id,
             &scopes_str,
             Some(session_id),
-            access_version,
+            access.token_version,
             tenant.as_ref(),
         ) {
             Ok(t) => t,
@@ -306,7 +283,7 @@ impl TokenService<'_> {
         let mut id_token = None;
         if crate::service::scope::contains(&auth_code.scopes, "openid") {
             id_token = match issuer.issue_id_token(
-                &user,
+                user,
                 &auth_code.scopes,
                 auth_code.nonce.as_deref(),
                 active_session,
