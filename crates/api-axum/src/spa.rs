@@ -49,11 +49,15 @@ pub async fn serve_page(req: Request<Body>, next: Next, directory: PathBuf) -> R
 }
 
 pub async fn serve(req: Request<Body>, next: Next, directory: PathBuf) -> Response {
+    let path = req.uri().path();
+    if matches!(path, "/health" | "/ready" | "/api")
+        || path.starts_with("/api/")
+        || path.starts_with("/.well-known/")
+    {
+        return next.run(req).await;
+    }
     let json = accepts(&req, "application/json");
     let navigation = is_navigation(&req);
-    let is_protocol = req.uri().path().starts_with("/api/")
-        || req.uri().path().starts_with("/.well-known/")
-        || req.uri().path() == "/ready";
     let is_asset = req.uri().path().starts_with("/static/assets/");
     let mut response = next.run(req).await;
     if json && response.status().is_redirection() {
@@ -75,7 +79,6 @@ pub async fn serve(req: Request<Body>, next: Next, directory: PathBuf) -> Respon
             }
         }
     } else if navigation
-        && !is_protocol
         && response
             .headers()
             .get(header::CONTENT_TYPE)
@@ -93,16 +96,14 @@ pub async fn serve(req: Request<Body>, next: Next, directory: PathBuf) -> Respon
         );
         response.headers_mut().remove(header::CONTENT_LENGTH);
     }
-    if !is_protocol {
-        let cache = if is_asset && response.status().is_success() {
-            "public, max-age=31536000, immutable"
-        } else {
-            "no-store"
-        };
-        response.headers_mut().insert(
-            header::CACHE_CONTROL,
-            header::HeaderValue::from_static(cache),
-        );
-    }
+    let cache = if is_asset && response.status().is_success() {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static(cache),
+    );
     response
 }

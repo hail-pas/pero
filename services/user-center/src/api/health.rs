@@ -17,11 +17,15 @@ pub struct HealthStatus {
     pub version: String,
 }
 
-pub async fn health() -> ApiResponse<HealthStatus> {
-    ApiResponse::success(HealthStatus {
-        status: "ok".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
-    })
+pub async fn health() -> Response {
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::Json(ApiResponse::success(HealthStatus {
+            status: "ok".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        })),
+    )
+        .into_response()
 }
 
 #[derive(Serialize)]

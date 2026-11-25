@@ -43,6 +43,14 @@ async fn navigation_and_json_requests_share_authorization_and_preserve_cookies()
             }),
         )
         .route(
+            "/health",
+            get(|| async { axum::Json(serde_json::json!({"status":"ok"})) }),
+        )
+        .route(
+            "/ready",
+            get(|| async { axum::Json(serde_json::json!({"status":"ok"})) }),
+        )
+        .route(
             "/static/assets/app-hash.js",
             get(|| async { "export default 1" }),
         )
@@ -146,6 +154,23 @@ async fn navigation_and_json_requests_share_authorization_and_preserve_cookies()
             .unwrap();
         assert_eq!(response.status(), status);
         assert_eq!(response.headers()["cache-control"], cache);
+    }
+    for path in ["/health", "/ready"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .header("accept", "text/html")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let data: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1024).await.unwrap()).unwrap();
+        assert_eq!(data["status"], "ok");
     }
     let redirect = app
         .oneshot(
