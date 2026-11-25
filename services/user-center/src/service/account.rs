@@ -45,7 +45,7 @@ impl<'a> AccountService<'a> {
         confirm_password: &str,
     ) -> Result<(), super::ManagementError> {
         use super::ManagementError;
-        use crate::db::entity::{identities, sso_sessions};
+        use crate::db::entity::identities;
         use pero_cache_redis::{
             RateLimitError, enforce_rate_limit, rate_limit_key::rl_change_password,
         };
@@ -88,15 +88,21 @@ impl<'a> AccountService<'a> {
         let password_hash = PasswordIdentityService::hash_password(new_password).await?;
         let txn = self.state.db.begin().await?;
         let user = PasswordIdentityService::lock_user(&txn, session.user_id).await?;
-        let active_session = crate::db::helper::session::active_query(
-            time::OffsetDateTime::now_utc(),
-            self.state.config.sso.session_idle_ttl_seconds,
-        )
-        .filter(sso_sessions::Column::Id.eq(session.id))
-        .one(&txn)
-        .await?;
-        if user.status != UserStatus::Active || active_session.is_none() {
+        let idle_ttl = self.state.config.sso.session_idle_ttl_seconds;
+        if user.status != UserStatus::Active
+            || crate::db::helper::session::lock_active(
+                &txn,
+                session.id,
+                session.user_id,
+                idle_ttl,
+            )
+            .await?
+            .is_none()
+        {
             return Err(ManagementError::Invalid("unauthorized"));
+        }
+        if !super::security::recent(&txn, session.id, idle_ttl).await? {
+            return Err(ManagementError::Invalid("reauth_required"));
         }
         let now = time::OffsetDateTime::now_utc();
         if let Some(identity) = verified {
@@ -185,7 +191,6 @@ impl<'a> AccountService<'a> {
 
         self.ensure_active_user(user_id).await?;
 
-        let now = time::OffsetDateTime::now_utc();
         let token_hash = pero_utils::crypto::sha256_hex(token);
 
         use crate::db::entity::password_reset_tokens as prt;
@@ -209,6 +214,8 @@ impl<'a> AccountService<'a> {
             return Err(PasswordResetError::InvalidToken);
         }
 
+        // Check expiry after the password hash and user lock, not at request start.
+        let now = time::OffsetDateTime::now_utc();
         let _reset_token = match prt::Entity::find()
             .filter(prt::Column::TokenHash.eq(&token_hash))
             .filter(prt::Column::UserId.eq(user_id))
