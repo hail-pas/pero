@@ -268,9 +268,16 @@ async fn organization_invitation_creates_account_and_membership_once() {
         assert_eq!(row.try_get::<i64>("", column).unwrap(), 1);
     }
     assert!(
-        tenant::finalize_invitation(&f.state, &token, "duplicate", "Invited-Password-123!", None, None)
-            .await
-            .is_err()
+        tenant::finalize_invitation(
+            &f.state,
+            &token,
+            "duplicate",
+            "Invited-Password-123!",
+            None,
+            None
+        )
+        .await
+        .is_err()
     );
     f.cleanup().await;
 }
