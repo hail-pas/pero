@@ -110,6 +110,8 @@
   "enrollment_unavailable": "注册申请或邀请已失效，请重新发起。",
   "registration_closed": "此入口暂未开放注册，请联系管理员。",
   "invalid_email": "请输入有效的邮箱。",
+  "invalid_phone": "请输入有效的手机号",
+  "enrollment_contact_required": "请先绑定邮箱或手机号再申请应用。",
   "email_domain_not_allowed": "此邮箱域名不符合准入要求。",
   "approval_required": "申请需要管理员审批。",
   "existing_account_login_required": "此邮箱已有账户，请先登录该账户再继续。",

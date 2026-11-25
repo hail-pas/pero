@@ -452,7 +452,7 @@ export function Admission({
                     )
                   }
                 >
-                  {t("申请加入（邮件验证）")}
+                  {t("申请加入（联系方式验证）")}
                 </Button>
               )}
             </Stack>

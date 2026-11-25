@@ -76,16 +76,20 @@ pub async fn app(
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
         return e;
     }
-    let result = if f.action == "leave" {
-        crate::service::account_security::leave_app(&state, &account.session, id).await
-    } else {
-        crate::service::enrollment::start(
-            &state,
-            account.user.email.as_deref().unwrap_or(""),
-            Some(id),
-            None,
-        )
-        .await
+    let result = match f.action.as_str() {
+        "leave" => {
+            crate::service::account_security::leave_app(&state, &account.session, id).await
+        }
+        "join" => {
+            if let Some(email) = account.user.email.as_deref() {
+                crate::service::enrollment::start(&state, email, Some(id), None).await
+            } else if let Some(phone) = account.user.phone.as_deref() {
+                crate::service::enrollment::start_phone(&state, phone, Some(id)).await
+            } else {
+                Err(crate::service::ManagementError::Invalid("enrollment_contact_required"))
+            }
+        }
+        _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
     };
     util::management_response(result)
 }
