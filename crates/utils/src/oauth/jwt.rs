@@ -14,6 +14,14 @@ pub struct AccessTokenClaims {
     pub scope: String,
     pub client_version: i64,
     pub access_version: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_version: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_member_version: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sid: Option<String>,
 }
@@ -26,6 +34,7 @@ pub struct IdTokenClaims {
     pub exp: i64,
     pub iat: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
     pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_time: Option<i64>,
@@ -87,8 +96,12 @@ pub struct AccessTokenParams<'a> {
     pub scopes: &'a str,
     pub client_version: i64,
     pub access_version: i64,
+    pub tenant_kind: Option<String>,
+    pub tenant_version: Option<i64>,
+    pub tenant_member_version: Option<i64>,
     pub ttl_seconds: i64,
     pub session_id: Option<&'a str>,
+    pub tenant_id: Option<&'a str>,
     pub kid: Option<&'a str>,
 }
 
@@ -106,6 +119,10 @@ pub fn sign_access_token_with_key(
         scope: params.scopes.to_owned(),
         client_version: params.client_version,
         access_version: params.access_version,
+        tenant_id: params.tenant_id.map(str::to_owned),
+        tenant_kind: params.tenant_kind.clone(),
+        tenant_version: params.tenant_version,
+        tenant_member_version: params.tenant_member_version,
         sid: params.session_id.map(|s| s.to_owned()),
     };
 
@@ -122,6 +139,7 @@ pub struct IdTokenParams<'a> {
     pub issuer: &'a str,
     pub user_id: &'a str,
     pub client_identifier: &'a str,
+    pub tenant_id: Option<&'a str>,
     pub nonce: Option<&'a str>,
     pub auth_time: Option<i64>,
     pub at_hash: Option<&'a str>,
@@ -150,6 +168,7 @@ pub fn sign_id_token_with_key(
         aud: params.client_identifier.to_owned(),
         exp: now + params.ttl_seconds,
         iat: now,
+        tenant_id: params.tenant_id.map(str::to_owned),
         nonce: params.nonce.map(|s| s.to_owned()),
         auth_time: params.auth_time,
         at_hash: params.at_hash.map(|s| s.to_owned()),

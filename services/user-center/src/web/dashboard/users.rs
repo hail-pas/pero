@@ -193,7 +193,16 @@ pub async fn detail(
             Err(error) => return util::dependency_error(error),
         };
 
+    let tenant_creation_policy = if access.super_admin {
+        match crate::service::tenant_policy::read(&state.db, id).await {
+            Ok(policy) => Some(policy),
+            Err(error) => return util::management_response(Err(error)),
+        }
+    } else {
+        None
+    };
     let tpl = UserDetailView {
+        tenant_creation_policy,
         layout,
         csrf_token,
         user: super::dto::UserSummary::from_authorized(user, &access),
@@ -354,6 +363,36 @@ pub async fn revoke_app(
     };
     util::management_response(
         crate::service::access::revoke_app(&state.db, &admin.actor(&state), id, app_id).await,
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TenantPolicyInput {
+    csrf_token: String,
+    enabled: bool,
+    max_tenants: i32,
+}
+
+pub async fn tenant_policy(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    admin: AdminContext,
+    Path(id): Path<uuid::Uuid>,
+    axum::Form(form): axum::Form<TenantPolicyInput>,
+) -> Response {
+    if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
+        return response;
+    }
+    util::management_response(
+        crate::service::tenant_policy::update(
+            &state.db,
+            &admin.actor(&state),
+            id,
+            form.enabled,
+            form.max_tenants,
+        )
+        .await,
     )
 }
 

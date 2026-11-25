@@ -27,6 +27,8 @@ pub struct Input {
     #[serde(default)]
     pub email: String,
     #[serde(default)]
+    pub phone: String,
+    #[serde(default)]
     pub username: String,
     #[serde(default)]
     pub password: String,
@@ -38,6 +40,7 @@ struct View {
     mode: String,
     app: Option<Uuid>,
     email: String,
+    phone: String,
     app_name: String,
     status: String,
     reason: String,
@@ -158,7 +161,14 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
                 p.mode
             },
             app_name,
-            email: row.as_ref().map(|r| r.email.clone()).unwrap_or_default(),
+            email: row
+                .as_ref()
+                .and_then(|r| r.email.clone())
+                .unwrap_or_default(),
+            phone: row
+                .as_ref()
+                .and_then(|r| r.phone.clone())
+                .unwrap_or_default(),
             status: row.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
             reason: row.as_ref().map(|r| r.reason.clone()).unwrap_or_default(),
             social: row.as_ref().is_some_and(|r| r.provider_id.is_some()),
@@ -254,7 +264,11 @@ pub async fn post(
                 )
                 .await
             } else {
-                enrollment::start(&state, &input.email, input.app, None).await
+                if !input.phone.trim().is_empty() {
+                    enrollment::start_phone(&state, &input.phone, input.app).await
+                } else {
+                    enrollment::start(&state, &input.email, input.app, None).await
+                }
             }
         }
         _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
@@ -331,7 +345,7 @@ pub async fn social(
                 ));
             }
             if let Some(address) = info.email.as_deref()
-                && enrollment::email(address)? != row.email
+                && Some(enrollment::email(address)?) != row.email
             {
                 return Err(crate::service::ManagementError::Invalid("invalid_email"));
             }

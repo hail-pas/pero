@@ -12,6 +12,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub app_id: Uuid,
     pub status: CommonStatus,
+    pub admission_origin: String,
     pub token_version: i64,
     #[serde(default)]
     pub require_mfa: bool,

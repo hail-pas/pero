@@ -96,6 +96,7 @@ export function Layout({
     ? ([
         ["/dashboard/admins", t("管理员"), <AdminPanelSettingsOutlined />],
         ["/dashboard/apps", t("应用管理"), <GridViewOutlined />],
+        ["/dashboard/tenants", t("租户管理"), <PeopleOutlined />],
         ["/dashboard/users", t("用户管理"), <PeopleOutlined />],
         ["/dashboard/providers", t("身份提供方"), <FingerprintOutlined />],
         ["/dashboard/events", t("登录记录"), <HistoryOutlined />],
@@ -105,6 +106,7 @@ export function Layout({
       ] as const)
     : ([
         ["/account/profile", t("个人资料"), <PersonOutlined />],
+        ["/account/tenants", t("我的空间与组织"), <PeopleOutlined />],
         ["/account/security", t("账户安全"), <ShieldOutlined />],
         ["/account/sessions", t("登录设备"), <DevicesOutlined />],
         ["/account/activity", t("登录记录"), <HistoryOutlined />],
@@ -116,6 +118,7 @@ export function Layout({
     ? links.filter(([path]) => {
         if (!layout?.can_access_dashboard) return false;
         if (isSuper(layout)) return true;
+        if (path === "/dashboard/tenants") return false;
         if (path === "/dashboard/apps")
           return Object.values(layout.admin_access?.app_grants || {}).some(
             (p) => p.includes("apps.read"),

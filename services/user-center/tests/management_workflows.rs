@@ -317,10 +317,20 @@ impl Fixture {
         .await;
         (cookies, csrf)
     }
-    fn token(&self, sid: Uuid) -> String {
-        self.token_for(sid, &self.client.to_string())
+    async fn token(&self, sid: Uuid) -> String {
+        self.token_for(sid, &self.client.to_string()).await
     }
-    fn token_for(&self, sid: Uuid, client_identifier: &str) -> String {
+    async fn token_for(&self, sid: Uuid, client_identifier: &str) -> String {
+        let tenant = user_center::service::tenant_context::resolve(
+            &self.state.db,
+            self.user,
+            self.app,
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("user has one personal workspace");
+        let tenant_id = tenant.tenant_id.to_string();
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
             "../../../tests/fixtures/rsa-private.pem"
         ))
@@ -333,6 +343,10 @@ impl Fixture {
                 scopes: "openid",
                 client_version: 0,
                 access_version: 0,
+                tenant_id: Some(&tenant_id),
+                tenant_kind: Some(tenant.tenant_kind),
+                tenant_version: Some(tenant.tenant_version),
+                tenant_member_version: Some(tenant.tenant_member_version),
                 ttl_seconds: 3600,
                 session_id: Some(&sid.to_string()),
                 kid: Some("workflow-key"),
@@ -558,7 +572,7 @@ async fn rotation_and_revocation_are_visible_to_online_clients() {
     .await
     .unwrap();
     let (_, _, sid, raw) = f.login(f.user).await;
-    let at = f.token(sid);
+    let at = f.token(sid).await;
     let router = user_center::router::build(f.state.clone());
     let rotated = user_center::service::client::rotate_secret(
         &f.state.db,
@@ -1819,7 +1833,14 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
         StatusCode::FORBIDDEN
     );
     let (_, view, _) = call(&router, &cookies, "/dashboard/notifications", None).await;
-    assert_eq!(view["data"]["sync_rows"].as_array().unwrap().len(), 1);
+    let sync_rows = view["data"]["sync_rows"].as_array().unwrap();
+    assert_eq!(sync_rows.len(), 2);
+    assert!(sync_rows.iter().any(|row| row["kind"] == "sync.requested"));
+    assert!(
+        sync_rows
+            .iter()
+            .any(|row| row["kind"] == "tenant.membership.changed")
+    );
     // Public browser clients have no credentials for server-side provisioning.
     f.sql(
         "UPDATE oauth_clients SET account_sync_uri=NULL,type='public',secret_hash=NULL WHERE id=$1",
@@ -1882,7 +1903,7 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     }
     f.sql("INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'private-sibling-hash','confidential',ARRAY['https://sibling.example.test/callback'],ARRAY['openid']::text[],false)", vec![sibling.into(),f.app.into(),sibling.to_string().into()]).await;
     let (_, _, sid, raw) = f.login(f.user).await;
-    let token = f.token_for(sid, &native.to_string());
+    let token = f.token_for(sid, &native.to_string()).await;
     let router = user_center::router::build(f.state.clone());
     let backend = f.client.to_string();
     let inspect = async |token: &str| {
@@ -1906,7 +1927,7 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     assert_eq!(result["sub"], f.user.to_string());
     assert_eq!(result["is_superadmin"], false);
     assert_eq!(headers["cache-control"], "no-store");
-    assert_eq!(inspect(&f.token(sid)).await.1["active"], true);
+    assert_eq!(inspect(&f.token(sid).await).await.1["active"], true);
 
     // The native refresh token is still private to its original client.
     let refresh = "native-refresh-token";
@@ -1935,7 +1956,9 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
 
     for client in [foreign_native, sibling] {
         assert_eq!(
-            inspect(&f.token_for(sid, &client.to_string())).await.1,
+            inspect(&f.token_for(sid, &client.to_string()).await)
+                .await
+                .1,
             json!({"active":false})
         );
     }

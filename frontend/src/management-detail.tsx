@@ -91,6 +91,40 @@ export function ManagementDetail({
           {errorText(data.error)}
         </Alert>
       )}
+      {isUser && superAdmin && data.tenant_creation_policy && (
+        <Panel
+          title={t("组织创建权限")}
+          action={
+            <Button
+              onClick={() =>
+                editor(
+                  t("调整组织创建权限"),
+                  `${base}/tenant-policy`,
+                  [
+                    { name: "enabled", label: t("允许创建组织"), type: "checkbox" },
+                    { name: "max_tenants", label: t("最多创建组织数"), type: "number", required: true },
+                  ],
+                  {
+                    enabled: data.tenant_creation_policy!.enabled,
+                    max_tenants: data.tenant_creation_policy!.max_tenants,
+                  },
+                )
+              }
+            >
+              {t("调整权限")}
+            </Button>
+          }
+        >
+          <Typography variant="body2">
+            {data.tenant_creation_policy.enabled ? t("已开启") : t("已禁用")}
+            {" · "}{t("已创建")} {data.tenant_creation_policy.tenant_count}
+            {" / "}{data.tenant_creation_policy.max_tenants}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            {t("关闭创建权限只阻止新建组织；降低额度不会影响或删除已创建的组织，成员管理独立受组织成员上限约束。")}
+          </Typography>
+        </Panel>
+      )}
       {isUser && superAdmin && (
         <Button component={RouterLink} to={`${base}/security`} sx={{ mb: 2 }}>
           {t("会话与登录锁定")}

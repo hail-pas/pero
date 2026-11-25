@@ -217,6 +217,9 @@ pub async fn close_account(
 ) -> Result<(), ManagementError> {
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
+    // A concurrent organization creation must commit before the last-owner check.
+    super::tenant_policy::lock_creator_creation(&txn, session.user_id).await?;
+    super::tenant::ensure_other_active_owner(&txn, session.user_id).await?;
     let access = user_app_access::Entity::find()
         .filter(user_app_access::Column::UserId.eq(session.user_id))
         .all(&txn)
@@ -253,6 +256,20 @@ pub async fn close_account(
     super::security::execute(&txn,"DELETE FROM notification_outbox WHERE user_id=$1 OR enrollment_id IN (SELECT id FROM enrollments WHERE email=$2)",vec![user.id.into(),user.email.clone().into()]).await?;
     super::security::execute(&txn,"UPDATE enrollments SET status='revoked' WHERE email=$1 AND status IN ('pending_verification','pending_approval','ready')",vec![user.email.clone().into()]).await?;
     super::security::execute(&txn,"UPDATE user_app_access SET status='disabled',token_version=token_version+1,updated_at=now() WHERE user_id=$1",vec![user.id.into()]).await?;
+    super::security::execute(
+        &txn,
+        "UPDATE tenant_members SET status='removed',auth_version=auth_version+1,updated_at=now() WHERE user_id=$1 AND status='active'",
+        vec![user.id.into()],
+    )
+    .await?;
+    // A personal workspace is named from the user's username or nickname at registration.
+    // Scrub that copy too when closing the account; keep the tenant ID for referential integrity.
+    super::security::execute(
+        &txn,
+        "UPDATE tenants SET name='Deleted account',updated_at=now() WHERE kind='personal' AND owner_user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
     super::security::execute(
         &txn,
         "DELETE FROM user_consents WHERE user_id=$1",

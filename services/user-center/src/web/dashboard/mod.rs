@@ -11,6 +11,7 @@ pub mod members;
 pub mod notifications;
 pub mod providers;
 pub mod sessions;
+pub mod tenants;
 pub mod users;
 
 use axum::Router;
@@ -44,6 +45,25 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(admins::permissions),
         )
         .route("/dashboard/admins", get(admins::list).post(admins::update))
+        .route("/dashboard/tenants", get(tenants::list))
+        .route("/dashboard/tenants/{id}", get(tenants::detail))
+        .route(
+            "/dashboard/tenants/{id}/member-limit",
+            post(tenants::member_limit),
+        )
+        .route(
+            "/dashboard/tenants/{id}/apps/{app}",
+            post(tenants::app_grant),
+        )
+        .route(
+            "/dashboard/tenants/{id}/owner/{user}",
+            post(tenants::promote_owner),
+        )
+        .route("/dashboard/tenants/{id}/status", post(tenants::set_status))
+        .route(
+            "/dashboard/tenants/{id}/applications/{app}",
+            post(tenants::review_application),
+        )
         .route("/dashboard/audit", get(audit::list))
         .route("/dashboard/audit/{id}", get(audit::detail))
         .route("/dashboard/notifications", get(notifications::list))
@@ -107,6 +127,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(users::new_form).post(users::create),
         )
         .route("/dashboard/users/{id}", get(users::detail))
+        .route(
+            "/dashboard/users/{id}/tenant-policy",
+            post(users::tenant_policy),
+        )
         .route(
             "/dashboard/users/{id}/security",
             get(sessions::get).post(sessions::post),

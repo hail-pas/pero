@@ -3,8 +3,8 @@ use super::permissions::{self, Actor, Permission as P};
 use super::ManagementError;
 use crate::db::{entity::apps, enums::CommonStatus};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
 };
 
 pub struct AppUpdate {
@@ -12,10 +12,22 @@ pub struct AppUpdate {
     pub description: Option<String>,
     pub homepage_url: Option<String>,
     pub logo_url: Option<String>,
+    pub tenant_mode: String,
+    pub organization_access: String,
+    pub organization_auto_access: bool,
 }
 
 impl AppUpdate {
     fn validate(&self) -> Result<(), ManagementError> {
+        if !matches!(
+            self.tenant_mode.as_str(),
+            "personal" | "organization" | "both"
+        ) {
+            return Err(ManagementError::Invalid("invalid_tenant_mode"));
+        }
+        if !matches!(self.organization_access.as_str(), "open" | "restricted") {
+            return Err(ManagementError::Invalid("invalid_organization_access"));
+        }
         if self.name.trim().is_empty() {
             return Err(ManagementError::Invalid("name_required"));
         }
@@ -26,6 +38,9 @@ impl AppUpdate {
         Ok(())
     }
     fn apply(self, active: &mut apps::ActiveModel) {
+        active.tenant_mode = Set(self.tenant_mode);
+        active.organization_access = Set(self.organization_access);
+        active.organization_auto_access = Set(self.organization_auto_access);
         active.name = Set(self.name);
         active.description = Set(self.description);
         active.homepage_url = Set(self.homepage_url);
@@ -104,9 +119,36 @@ pub async fn update(
     let access = permissions::authorize(&txn, actor).await?;
     permissions::app(&txn, &access, id, P::AppsManage).await?;
 
-    let mut active: apps::ActiveModel = editable(&txn, id).await?.into();
+    let old = editable(&txn, id).await?;
+    if (old.tenant_mode != input.tenant_mode
+        || old.organization_access != input.organization_access
+        || old.organization_auto_access != input.organization_auto_access)
+        && !access.super_admin
+    {
+        return Err(ManagementError::Invalid("forbidden"));
+    }
+    let changed = old.tenant_mode != input.tenant_mode
+        || old.organization_access != input.organization_access
+        || old.organization_auto_access != input.organization_auto_access;
+    // Never let old restricted grants silently come back after the application
+    // has been made open or personal-only and is later restricted again.
+    let clear_grants =
+        changed && (input.organization_access == "open" || input.tenant_mode == "personal");
+    let mut active: apps::ActiveModel = old.into();
     input.apply(&mut active);
     active.update(&txn).await?;
+    if clear_grants {
+        txn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM tenant_app_grants WHERE app_id=$1",
+            [id.into()],
+        ))
+        .await?;
+    }
+    if changed {
+        super::session::SessionService::revoke_app_grants(&txn, id, None, "tenant_mode_changed")
+            .await?;
+    }
     txn.commit().await?;
     Ok(())
 }

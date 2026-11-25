@@ -43,6 +43,7 @@ export function Enrollment({
 }) {
   const { error: failure, busy, run, clearError } = useAction();
   const [formBusy, setFormBusy] = useState(false);
+  const [channel, setChannel] = useState<"phone" | "email">("phone");
   return (
     <Container
       component="main"
@@ -66,7 +67,7 @@ export function Enrollment({
         description={
           data.app
             ? t("完成此应用的准入要求后获得访问资格。")
-            : t("验证邮箱并完成账户注册。")
+            : t("验证手机或邮箱并完成账户注册。")
         }
       />
       <Panel title={t("注册进度")}>
@@ -104,13 +105,13 @@ export function Enrollment({
         ) : data.status ? (
           <Stack spacing={3}>
             <Typography>
-              {data.email}
+              {data.phone || data.email}
               {data.app_name && ` · ${data.app_name}`}
             </Typography>
             {data.status === "pending_verification" && (
               <>
                 <Alert severity="info">
-                  {t("请确认验证此邮箱。邀请仅授予邮件所指定的应用资格。")}
+                  {data.phone ? t("请确认从短信验证链接进入此页面。") : t("请确认验证此邮箱。邀请仅授予邮件所指定的应用资格。")}
                 </Alert>
                 <Button
                   disabled={busy || formBusy}
@@ -118,13 +119,13 @@ export function Enrollment({
                     run(() => mutate("/sso/register", { action: "verify" }))
                   }
                 >
-                  {t("确认邮箱并继续")}
+                  {t(data.phone ? "确认手机并继续" : "确认邮箱并继续")}
                 </Button>
               </>
             )}
             {data.status === "pending_approval" && (
               <Alert severity="info">
-                {t("邮箱已验证，等待管理员审批。审批后将收到邮件。")}
+                {t(data.phone ? "手机号已验证，等待管理员审批。审批后将收到短信。" : "邮箱已验证，等待管理员审批。审批后将收到邮件。")}
               </Alert>
             )}
             {data.status === "ready" && (
@@ -183,25 +184,29 @@ export function Enrollment({
           </Stack>
         ) : data.sent ? (
           <Alert severity="success">
-            {t("申请已排队，请检查邮件并继续。")}
+            {t("申请已排队，请检查短信或邮件并继续。")}
           </Alert>
         ) : data.mode === "invite_only" ? (
           <Alert severity="info">
             {t("仅限邀请注册，请联系管理员获取邀请。")}
           </Alert>
         ) : (
-          <FieldsForm
-            fields={[
-              {
-                name: "email",
-                label: t("邮箱"),
-                type: "email",
-                required: true,
-              },
-            ]}
-            submit={(v) => mutate("/sso/register", { ...v, app: data.app })}
-            label={t("发送验证邮件")}
-          />
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={1}>
+              <Button variant={channel === "phone" ? "contained" : "outlined"} onClick={() => setChannel("phone")}>{t("手机号注册")}</Button>
+              <Button variant={channel === "email" ? "contained" : "outlined"} onClick={() => setChannel("email")}>{t("邮箱注册")}</Button>
+            </Stack>
+            <FieldsForm
+              key={channel}
+              fields={[channel === "phone" ? {
+                name:"phone",label:t("手机号（含国际区号，例如 +8613800000000）"),required:true,
+              } : {
+                name:"email",label:t("邮箱"),type:"email",required:true,
+              }]}
+              submit={(v) => mutate("/sso/register", { ...v, app:data.app })}
+              label={t(channel === "phone" ? "发送验证短信" : "发送验证邮件")}
+            />
+          </Stack>
         )}
       </Panel>
     </Container>

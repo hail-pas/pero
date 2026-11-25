@@ -7,6 +7,7 @@ pub mod logout;
 pub mod mfa;
 pub mod profile;
 pub mod security;
+pub mod tenant;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -15,6 +16,30 @@ use crate::state::app::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/account/tenants", get(tenant::list).post(tenant::create))
+        .route("/account/tenants/{id}", get(tenant::detail))
+        .route("/account/tenants/{id}/edit", post(tenant::rename))
+        .route("/account/tenants/{id}/members", get(tenant::members))
+        .route("/account/tenants/{id}/members/{user}", post(tenant::member))
+        .route("/account/tenants/{id}/leave", post(tenant::leave))
+        .route("/account/tenants/{id}/status", post(tenant::set_status))
+        .route("/account/tenants/{id}/delete", post(tenant::delete))
+        .route(
+            "/account/tenants/{id}/applications/{app}",
+            post(tenant::application),
+        )
+        .route(
+            "/account/tenants/{id}/invitations",
+            get(tenant::invitations).post(tenant::invite),
+        )
+        .route(
+            "/account/tenants/{id}/invitations/{invitation}",
+            post(tenant::revoke_invite),
+        )
+        .route(
+            "/account/invitations/{token}",
+            get(tenant::invitation).post(tenant::accept),
+        )
         .route("/account/applications", get(admission::get))
         .route(
             "/account/enrollments/{id}",

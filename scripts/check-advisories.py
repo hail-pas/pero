@@ -13,7 +13,7 @@ for finding in findings:
     advisory = (finding.get('advisory') or {})
     package = finding['package']
     identity = (advisory.get('id'), package['name'], package['version'])
-    accepted = next((a for a in policy['accepted'] if (a['id'], a['package'], a['version']) == identity and a['kind'] == finding.get('kind')), None)
+    accepted = next((a for a in policy['accepted'] if (a['id'], a['package'], a['version']) == identity and (a['kind'] == finding.get('kind') or a['kind'] == 'accepted_risk')), None)
     if accepted is None or datetime.date.today() > datetime.date.fromisoformat(policy['expires']):
         sys.exit(f'Untriaged or expired advisory: {identity}')
     print(f'Visible tracked advisory: {identity}; review by {policy["expires"]}')

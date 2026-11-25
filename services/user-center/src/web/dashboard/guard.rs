@@ -171,6 +171,7 @@ fn policy(path: &str, read: bool) -> Option<Policy> {
         }
         ("/dashboard/users/new", _) => Policy::Global(P::UsersCreate),
         ("/dashboard/users/{id}/edit", _) => Policy::UserEdit,
+        ("/dashboard/users/{id}/tenant-policy", false) => Policy::Super,
         ("/dashboard/users/{id}/set-status", false) => Policy::Global(P::UsersStatusUpdate),
         ("/dashboard/users/{id}/reset-password", false) => Policy::Global(P::UsersPasswordReset),
         ("/dashboard/users/{id}/grant-app", false)
@@ -199,7 +200,14 @@ fn policy(path: &str, read: bool) -> Option<Policy> {
         }
         ("/dashboard/notifications", true) => Policy::Global(P::NotificationsRead),
         ("/dashboard/notifications/{id}/retry", false) => Policy::Global(P::NotificationsRetry),
-        ("/dashboard/admins", _)
+        ("/dashboard/tenants", true)
+        | ("/dashboard/tenants/{id}", true)
+        | ("/dashboard/tenants/{id}/member-limit", false)
+        | ("/dashboard/tenants/{id}/apps/{app}", false)
+        | ("/dashboard/tenants/{id}/applications/{app}", false)
+        | ("/dashboard/tenants/{id}/owner/{user}", false)
+        | ("/dashboard/tenants/{id}/status", false)
+        | ("/dashboard/admins", _)
         | ("/dashboard/admins/users", true)
         | ("/dashboard/admins/permission-catalog", true)
         | ("/dashboard/admins/{id}/permissions", false)

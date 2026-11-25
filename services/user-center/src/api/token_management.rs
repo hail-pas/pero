@@ -92,8 +92,19 @@ async fn inspect(
         let mut response = serde_json::json!({
             "active":true,"client_id":owner.identifier,"sub":claims.sub,"scope":claims.scope,
             "exp":claims.exp,"iat":claims.iat,"iss":claims.iss,"aud":claims.aud,"sid":claims.sid,"token_type":"Bearer",
-            "is_superadmin":is_superadmin
+            "is_superadmin":is_superadmin,
+            "tenant_id":claims.tenant_id,"tenant_kind":claims.tenant_kind
         });
+        if let Some(id) = claims
+            .tenant_id
+            .as_deref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            && let Some(context) =
+                crate::service::tenant_context::active(&state.db, user.id, client.app_id, id)
+                    .await?
+        {
+            response["membership_role"] = serde_json::json!(context.membership_role);
+        }
         let profile = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
             .expect("user claims contain only JSON primitives");
         response
@@ -115,6 +126,28 @@ async fn inspect(
     {
         return Ok(serde_json::json!({"active":false}));
     }
+    let mut tenant_context = None;
+    if let Some(id) = rt.tenant_id {
+        let Some(ctx) =
+            crate::service::tenant_context::active(&state.db, rt.user_id, client.app_id, id)
+                .await?
+        else {
+            return Ok(serde_json::json!({"active":false}));
+        };
+        if Some(ctx.tenant_version) != rt.tenant_version
+            || Some(ctx.tenant_member_version) != rt.tenant_member_version
+        {
+            return Ok(serde_json::json!({"active":false}));
+        }
+        tenant_context = Some(ctx);
+    } else {
+        let app = apps::Entity::find_by_id(client.app_id)
+            .one(&state.db)
+            .await?;
+        if !app.is_some_and(|a| a.system) {
+            return Ok(serde_json::json!({"active":false}));
+        }
+    }
     let session = crate::db::helper::session::app_query(
         now,
         state.config.sso.session_idle_ttl_seconds,
@@ -134,9 +167,12 @@ async fn inspect(
     {
         return Ok(serde_json::json!({"active":false}));
     }
-    Ok(
-        serde_json::json!({"active":true,"client_id":client.identifier,"sub":rt.user_id,"scope":rt.scopes.join(" "),"exp":rt.expires_at.unix_timestamp(),"iat":rt.created_at.unix_timestamp()}),
-    )
+    let mut response = serde_json::json!({"active":true,"client_id":client.identifier,"sub":rt.user_id,"scope":rt.scopes.join(" "),"exp":rt.expires_at.unix_timestamp(),"iat":rt.created_at.unix_timestamp(),"tenant_id":rt.tenant_id});
+    if let Some(context) = tenant_context {
+        response["tenant_kind"] = serde_json::json!(context.tenant_kind);
+        response["membership_role"] = serde_json::json!(context.membership_role);
+    }
+    Ok(response)
 }
 pub async fn revoke(
     State(state): State<AppState>,
