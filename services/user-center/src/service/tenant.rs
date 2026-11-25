@@ -370,7 +370,7 @@ pub async fn invite(
     exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND email=$2 AND status='pending'",vec![id.into(),email.clone().into()]).await?;
     exec(&txn,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,$2,$3,$4,$5,$6)",vec![id.into(),email.clone().into(),role.into(),hash.into(),user.into(),expiry.into()]).await?;
     let mut link =
-        pero_utils::oauth::url::issuer_endpoint(&state.config.oidc.issuer, "account/invitations");
+        pero_utils::oauth::url::issuer_endpoint(&state.config.sso.base_url, "account/invitations");
     link.push('/');
     link.push_str(&token);
     super::notify::enqueue(
