@@ -9,7 +9,11 @@ use crate::db::helper::cleanup::{
     clean_expired_refresh_tokens, clean_expired_sso_sessions,
 };
 
-pub fn start_cleanup_task(db: DatabaseConnection, interval_secs: u64) -> JoinHandle<()> {
+pub fn start_cleanup_task(
+    db: DatabaseConnection,
+    interval_secs: u64,
+    idle_ttl_seconds: u64,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         interval.tick().await;
@@ -22,7 +26,7 @@ pub fn start_cleanup_task(db: DatabaseConnection, interval_secs: u64) -> JoinHan
         loop {
             interval.tick().await;
             tracing::debug!("running periodic cleanup");
-            match run_cleanup(&db).await {
+            match run_cleanup(&db, idle_ttl_seconds).await {
                 Ok(()) => tracing::debug!("periodic cleanup completed"),
                 Err(e) => tracing::error!(error = %e, "periodic cleanup error"),
             }
@@ -30,10 +34,13 @@ pub fn start_cleanup_task(db: DatabaseConnection, interval_secs: u64) -> JoinHan
     })
 }
 
-async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
+async fn run_cleanup(
+    db: &DatabaseConnection,
+    idle_ttl_seconds: u64,
+) -> Result<(), sea_orm::DbErr> {
     macro_rules! do_clean {
-        ($label:expr, $func:path) => {
-            match $func(db).await {
+        ($label:expr, $func:path $(, $arg:expr)*) => {
+            match $func(db $(, $arg)*).await {
                 Ok(n) => {
                     if n > 0 {
                         tracing::info!(table = $label, rows = n, "cleaned expired rows");
@@ -51,7 +58,7 @@ async fn run_cleanup(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
         clean_expired_authorization_requests
     );
     do_clean!("authorization_codes", clean_expired_authorization_codes);
-    do_clean!("sso_sessions", clean_expired_sso_sessions);
+    do_clean!("sso_sessions", clean_expired_sso_sessions, idle_ttl_seconds);
     do_clean!("refresh_tokens", clean_expired_refresh_tokens);
     do_clean!(
         "contact_change_requests",

@@ -45,7 +45,7 @@ SMTP 可使用无认证的可信 TLS 中继，此时留空 username/password。�
 
 在应用详情中为每个 OAuth 客户端设置“应用注销通知”的公共 HTTPS 接收地址。Discovery 提供 `backchannel_logout_supported` 和 `backchannel_logout_session_supported`；ID Token 中已有 `sid`。应用应按 `(iss, client_id, sid)` 建立中心会话与本地会话的映射。
 
-中心在成功签发 ID Token 的同一事务中记录 RP 会话。所有中心会话撤销（退出、账户关闭、密码/安全策略撤销等）通过数据库触发器原子入队；达到绝对有效期的会话在定时清理时同样先入队再删除。应用资格/授权撤销也通知对应应用。迁移可从已有刷新令牌补建关联；升级前没有刷新令牌的本地会话需重新登录以建立关联。
+中心在成功签发 ID Token 的同一事务中记录 RP 会话。所有中心会话撤销（退出、账户关闭、密码/安全策略撤销等）通过数据库触发器原子入队；达到绝对有效期或空闲超时的会话在定时清理时同样先入队再删除。应用资格/授权撤销也通知对应应用。迁移可从已有刷新令牌补建关联；升级前没有刷新令牌的本地会话需重新登录以建立关联。
 
 投递使用 HTTPS POST，`application/x-www-form-urlencoded` 中携带 `logout_token`。令牌用当前 RS256 密钥签名，包含 `iss/aud/sub/sid/iat/exp/jti/events`，不含 nonce，`typ=logout+jwt`，有效期 120 秒。单个事件重试保持 jti，重新签名刷新短期有效期。接收方应：
 

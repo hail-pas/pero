@@ -69,7 +69,11 @@ async fn main() -> ValidationResult {
     let cache = RedisCacheStore::from_config(&app_config.redis)?;
     let http_client = ReqwestHttpClient::from_public_config(&app_config.http_config)?;
 
-    let cleanup_handle = start_cleanup_task(db.clone(), app_config.server.cleanup_interval_secs);
+    let cleanup_handle = start_cleanup_task(
+        db.clone(),
+        app_config.server.cleanup_interval_secs,
+        app_config.sso.session_idle_ttl_seconds,
+    );
 
     let graceful_timeout = Duration::from_secs(app_config.server.graceful_shutdown_timeout_secs);
 

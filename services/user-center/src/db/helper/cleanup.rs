@@ -52,7 +52,10 @@ clean_expired!(
 );
 clean_expired!(clean_expired_authorization_codes, "authorization_codes");
 
-pub async fn clean_expired_sso_sessions(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+pub async fn clean_expired_sso_sessions(
+    db: &DatabaseConnection,
+    idle_ttl_seconds: u64,
+) -> Result<u64, sea_orm::DbErr> {
     let mut total = 0;
     for _ in 0..MAX_BATCHES {
         let txn = db.begin().await?;
@@ -60,7 +63,13 @@ pub async fn clean_expired_sso_sessions(db: &DatabaseConnection) -> Result<u64, 
         let ids: Vec<uuid::Uuid> = sso_sessions::Entity::find()
             .select_only()
             .column(sso_sessions::Column::Id)
-            .filter(sso_sessions::Column::ExpiresAt.lt(now))
+            .filter(
+                sea_orm::Condition::any()
+                    .add(sso_sessions::Column::ExpiresAt.lte(now))
+                    .add(sso_sessions::Column::LastSeenAt.lte(
+                        now - time::Duration::seconds(idle_ttl_seconds as i64),
+                    )),
+            )
             .order_by_asc(sso_sessions::Column::ExpiresAt)
             .order_by_asc(sso_sessions::Column::Id)
             // Match token issuance and logout: lock sessions before refresh grants.
