@@ -30,10 +30,17 @@ pub fn safe_site_redirect(raw: &str, default: &str) -> String {
     out
 }
 
+fn valid_raw_uri(uri: &str) -> bool {
+    uri.bytes().all(|b| b.is_ascii_graphic()) && !uri.contains('\\')
+}
+
 pub fn validate_oauth_redirect_uri(
     uri: &str,
     allow_private_scheme: bool,
 ) -> Result<(), RedirectUriError> {
+    if !valid_raw_uri(uri) {
+        return Err(RedirectUriError::Invalid);
+    }
     let parsed = url::Url::parse(uri).map_err(|_| RedirectUriError::Invalid)?;
     let scheme = parsed.scheme();
     if DEFAULT_ALLOWED_REDIRECT_SCHEMES.contains(&scheme) {
@@ -58,11 +65,7 @@ pub fn validate_oauth_redirect_uri(
         {
             return Err(RedirectUriError::InvalidScheme);
         }
-        if parsed.has_authority()
-            || !parsed.path().starts_with('/')
-            || !uri.bytes().all(|b| b.is_ascii_graphic())
-            || uri.contains('\\')
-        {
+        if parsed.has_authority() || !parsed.path().starts_with('/') {
             return Err(RedirectUriError::Invalid);
         }
     }
@@ -86,6 +89,9 @@ pub fn validate_oauth_redirect_uris(
 }
 
 pub fn validate_provider_endpoint_uri(uri: &str) -> Result<(), ProviderEndpointUriError> {
+    if !valid_raw_uri(uri) {
+        return Err(ProviderEndpointUriError::Invalid);
+    }
     let parsed = url::Url::parse(uri).map_err(|_| ProviderEndpointUriError::Invalid)?;
     if parsed.scheme() != "https" {
         return Err(ProviderEndpointUriError::InvalidScheme);
@@ -108,7 +114,7 @@ pub fn validate_provider_endpoint_uri(uri: &str) -> Result<(), ProviderEndpointU
 pub fn validate_optional_provider_endpoint_uri(
     uri: Option<&str>,
 ) -> Result<(), ProviderEndpointUriError> {
-    let Some(uri) = uri.map(str::trim).filter(|value| !value.is_empty()) else {
+    let Some(uri) = uri.filter(|value| !value.trim().is_empty()) else {
         return Ok(());
     };
     validate_provider_endpoint_uri(uri)
@@ -226,6 +232,9 @@ mod tests {
         }
         for uri in [
             "http://example.test/callback",
+            "https://example.test/call\tback",
+            "https://example.test/call back",
+            "https://example.test\\callback",
             "javascript:alert(1)",
             "myapp:/callback",
             "com..app:/callback",
@@ -236,6 +245,20 @@ mod tests {
         ] {
             assert!(validate(uri, true).is_err(), "{uri}");
         }
+    }
+
+    #[test]
+    fn provider_endpoints_reject_ambiguous_raw_urls() {
+        for uri in [
+            "https://example.test/call\tback",
+            "https://example.test/call back",
+            "https://example.test\\callback",
+            " https://example.test/callback",
+        ] {
+            assert!(super::validate_provider_endpoint_uri(uri).is_err());
+            assert!(super::validate_optional_provider_endpoint_uri(Some(uri)).is_err());
+        }
+        assert!(super::validate_provider_endpoint_uri("https://example.test/a%20b").is_ok());
     }
 
     #[test]

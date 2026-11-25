@@ -143,6 +143,24 @@ pub async fn authorize(
     source: pero_api_axum::extractor::ClientIp,
     Query(params): Query<AuthorizeQuery>,
 ) -> Result<(CookieJar, Response), OAuthError> {
+    authorize_request(state, jar, source, params).await
+}
+
+pub async fn authorize_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    source: pero_api_axum::extractor::ClientIp,
+    axum::Form(params): axum::Form<AuthorizeQuery>,
+) -> Result<(CookieJar, Response), OAuthError> {
+    authorize_request(state, jar, source, params).await
+}
+
+async fn authorize_request(
+    state: AppState,
+    jar: CookieJar,
+    source: pero_api_axum::extractor::ClientIp,
+    params: AuthorizeQuery,
+) -> Result<(CookieJar, Response), OAuthError> {
     params.validate_oauth()?;
     crate::web::login_flow::check_login_start_rate_limit(&state, source)
         .await

@@ -5,7 +5,7 @@ use pero_error::protocol::oauth::BearerError;
 
 use crate::state::app::AppState;
 
-/// GET /api/oauth2/userinfo
+/// GET or POST /api/oauth2/userinfo
 pub async fn userinfo(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Response {
     let token = match extract_bearer(&headers) {
         Some(t) => t,

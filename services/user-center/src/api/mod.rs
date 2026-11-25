@@ -55,6 +55,9 @@ pub fn routes() -> Router<crate::state::app::AppState> {
         .route("/oauth2/introspect", post(token_management::introspect))
         .route("/oauth2/revoke", post(token_management::revoke))
         .route("/oauth2/jwks", get(jwks::jwks))
-        .route("/oauth2/userinfo", get(userinfo::userinfo))
+        .route(
+            "/oauth2/userinfo",
+            get(userinfo::userinfo).post(userinfo::userinfo),
+        )
         .route("/providers", get(providers::providers))
 }

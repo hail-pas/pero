@@ -217,7 +217,8 @@ pub async fn update(
 }
 
 fn same_set(left: &[String], right: &[String]) -> bool {
-    left.len() == right.len() && left.iter().all(|value| right.contains(value))
+    left.iter().all(|value| right.contains(value))
+        && right.iter().all(|value| left.contains(value))
 }
 
 pub async fn reset_secret(
@@ -315,4 +316,22 @@ pub async fn retire_secret(
     active.updated_at = Set(time::OffsetDateTime::now_utc());
     save_security_change(db, actor, P::ClientsSecretRotate, &current, active, None).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_set;
+
+    #[test]
+    fn policy_sets_ignore_order_and_duplicates_but_detect_changes() {
+        let original = ["openid".to_owned(), "openid".to_owned()];
+        let changed = ["openid".to_owned(), "email".to_owned()];
+        assert!(!same_set(&original, &changed));
+        assert!(!same_set(&changed, &original));
+        assert!(same_set(&original, &["openid".to_owned()]));
+        assert!(same_set(
+            &changed,
+            &["email".to_owned(), "openid".to_owned()]
+        ));
+    }
 }

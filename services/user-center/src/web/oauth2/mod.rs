@@ -8,7 +8,10 @@ use axum::routing::get;
 
 pub fn routes() -> axum::Router<crate::state::app::AppState> {
     axum::Router::new()
-        .route("/oauth2/authorize", get(authorize::authorize))
+        .route(
+            "/oauth2/authorize",
+            get(authorize::authorize).post(authorize::authorize_post),
+        )
         .route(
             "/oauth2/diagnostic/authorize",
             get(crate::web::dashboard::integration::authorize),

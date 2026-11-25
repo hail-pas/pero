@@ -186,22 +186,34 @@ async fn authorization_and_recovery_regressions() {
         vec![client_b.into()],
     )
     .await;
+    let params = "client_id=other-client&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid";
+    for request in [
+        Request::get(format!("/oauth2/authorize?{params}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+        Request::post("/oauth2/authorize")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(axum::body::Body::from(params))
+            .unwrap(),
+    ] {
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert!(
+            response.headers()["location"]
+                .to_str()
+                .unwrap()
+                .starts_with("https://client.example.test/callback?error=invalid_request")
+        );
+    }
     let response = app
         .clone()
         .oneshot(
-            Request::builder()
-                .uri("/oauth2/authorize?client_id=other-client&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid")
+            Request::post("/api/oauth2/userinfo")
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert!(
-        response.headers()["location"]
-            .to_str()
-            .unwrap()
-            .starts_with("https://client.example.test/callback?error=invalid_request")
-    );
+    assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
     // Refuse disallowed grants before creating any authorization state or consent UI.
     sql(
         &db,
