@@ -58,6 +58,12 @@ async fn bind_test_grants(db: &sea_orm::DatabaseConnection, user: Uuid, app: Uui
         )
         .await;
     }
+    // Direct SQL fixtures bypass token issuance: give pending refresh grants their
+    // own RP session and snapshot the device for unconsumed authorization codes.
+    sql(db, "INSERT INTO app_sessions(user_id,app_id,sso_session_id) SELECT DISTINCT r.user_id,r.app_id,r.session_id FROM refresh_tokens r WHERE r.user_id=$1 AND r.app_id=$2 AND r.session_id IS NOT NULL AND r.client_session_id IS NULL AND r.revoked_at IS NULL ON CONFLICT(user_id,app_id,sso_session_id) WHERE revoked_at IS NULL DO NOTHING", vec![user.into(),app.into()]).await;
+    sql(db, "INSERT INTO client_sessions(app_session_id,client_id,tenant_id) SELECT DISTINCT a.id,r.client_id,r.tenant_id FROM refresh_tokens r JOIN app_sessions a ON a.user_id=r.user_id AND a.app_id=r.app_id AND a.sso_session_id=r.session_id AND a.revoked_at IS NULL WHERE r.user_id=$1 AND r.app_id=$2 AND r.client_session_id IS NULL AND r.revoked_at IS NULL ON CONFLICT(app_session_id,client_id,tenant_id) WHERE revoked_at IS NULL DO NOTHING", vec![user.into(),app.into()]).await;
+    sql(db, "UPDATE refresh_tokens r SET client_session_id=c.id FROM app_sessions a JOIN client_sessions c ON c.app_session_id=a.id WHERE r.user_id=$1 AND r.app_id=$2 AND r.user_id=a.user_id AND r.app_id=a.app_id AND r.session_id=a.sso_session_id AND r.client_id=c.client_id AND r.tenant_id IS NOT DISTINCT FROM c.tenant_id AND r.client_session_id IS NULL AND r.revoked_at IS NULL AND a.revoked_at IS NULL AND c.revoked_at IS NULL", vec![user.into(),app.into()]).await;
+    sql(db, "UPDATE authorization_codes k SET admission_session_id=a.id,admission_revoked=a.revoked_at IS NOT NULL,takeover_allowed=true FROM (SELECT DISTINCT ON (user_id,app_id,sso_session_id) id,user_id,app_id,sso_session_id,revoked_at FROM app_sessions ORDER BY user_id,app_id,sso_session_id,created_at DESC,id DESC) a WHERE k.user_id=$1 AND k.app_id=$2 AND k.user_id=a.user_id AND k.app_id=a.app_id AND k.session_id=a.sso_session_id AND k.consumed_at IS NULL AND k.admission_session_id IS NULL", vec![user.into(),app.into()]).await;
 }
 
 struct SecurityFixture {
@@ -450,7 +456,7 @@ async fn refresh_replay() {
         "valid refresh must work"
     );
     // Revocation failures must be retryable, rather than claiming replay handling completed.
-    db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON sso_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
+    db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON client_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
         .await.unwrap();
     assert!(matches!(
         service
@@ -473,7 +479,7 @@ async fn refresh_replay() {
         .unwrap();
     assert!(replacement.revoked_at.is_none());
     db.execute_unprepared(
-        "DROP TRIGGER fail_replay_revoke ON sso_sessions; DROP FUNCTION fail_replay_revoke()",
+        "DROP TRIGGER fail_replay_revoke ON client_sessions; DROP FUNCTION fail_replay_revoke()",
     )
     .await
     .unwrap();
@@ -3329,7 +3335,8 @@ async fn lifecycle_guards_and_transactional_logout() {
         .unwrap();
     sql(db,"UPDATE oauth_clients SET backchannel_logout_uri='https://rp.example.test/logout' WHERE id=$1",vec![fixture.client.into()]).await;
     sql(db, "INSERT INTO app_sessions(user_id,app_id,sso_session_id) VALUES($1,$2,$3)", vec![fixture.user.into(),fixture.app.into(),sid.into()]).await;
-    sql(db, "INSERT INTO client_sessions(id,app_session_id,client_id) SELECT $1,id,$2 FROM app_sessions WHERE sso_session_id=$3", vec![Uuid::now_v7().into(),fixture.client.into(),sid.into()]).await;
+    let rp_sid = Uuid::now_v7();
+    sql(db, "INSERT INTO client_sessions(id,app_session_id,client_id) SELECT $1,id,$2 FROM app_sessions WHERE sso_session_id=$3", vec![rp_sid.into(),fixture.client.into(),sid.into()]).await;
     let txn = db.begin().await.unwrap();
     crate::db::helper::session::revoke(&txn, sid, Some("test".into()))
         .await
@@ -3344,43 +3351,19 @@ async fn lifecycle_guards_and_transactional_logout() {
         .unwrap()
         .unwrap();
     assert_eq!(count.try_get::<i64>("", "n").unwrap(), 0);
-    // A later revocation must replace a previous delivery's endpoint snapshot.
+    // One immutable delivery belongs to the revoked RP session, not the SSO ID.
     sql(
         db,
-        "UPDATE user_app_access SET token_version=token_version+1 WHERE user_id=$1 AND app_id=$2",
-        vec![fixture.user.into(), fixture.app.into()],
+        "UPDATE oauth_clients SET backchannel_logout_uri='https://rp.example.test/session' WHERE id=$1",
+        vec![fixture.client.into()],
     )
     .await;
-    for (suffix, statement, values) in [
-        (
-            "app",
-            "UPDATE user_app_access SET token_version=token_version+1 WHERE user_id=$1 AND app_id=$2",
-            vec![fixture.user.into(), fixture.app.into()],
-        ),
-        (
-            "client",
-            "UPDATE oauth_clients SET token_version=token_version+1 WHERE id=$1",
-            vec![fixture.client.into()],
-        ),
-        (
-            "session",
-            "UPDATE sso_sessions SET revoked_at=now() WHERE id=$1",
-            vec![sid.into()],
-        ),
-    ] {
-        let endpoint = format!("https://rp.example.test/{suffix}");
-        sql(
-            db,
-            "UPDATE oauth_clients SET backchannel_logout_uri=$2 WHERE id=$1",
-            vec![fixture.client.into(), endpoint.clone().into()],
-        )
-        .await;
-        sql(db, statement, values).await;
-        let queued = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-            "SELECT endpoint FROM backchannel_logout_deliveries WHERE session_id=$1 AND client_id=$2",
-            [sid.into(), fixture.client.into()])).await.unwrap().unwrap();
-        assert_eq!(queued.try_get::<String>("", "endpoint").unwrap(), endpoint);
-    }
+    sql(
+        db,
+        "UPDATE sso_sessions SET revoked_at=now() WHERE id=$1",
+        vec![sid.into()],
+    )
+    .await;
     fixture
         .state
         .session_service()
@@ -3504,7 +3487,7 @@ async fn lifecycle_guards_and_transactional_logout() {
         let claims = seen.lock().unwrap();
         assert_eq!(claims.len(), 2);
         assert_eq!(claims[0]["jti"], claims[1]["jti"]);
-        assert_eq!(claims[0]["sid"], sid.to_string());
+        assert_eq!(claims[0]["sid"], rp_sid.to_string());
         assert_eq!(claims[0]["aud"], fixture.client.to_string());
     }
     let key = crate::db::helper::signing_key::require_active_signing_key(db, 120)
