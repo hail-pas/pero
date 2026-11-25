@@ -104,60 +104,53 @@ fn extract_from_forwarded_headers(
     }
 }
 
-fn resolve_forwarded_chain(ips: Vec<IpAddr>, trusted_proxies: &[IpNetwork]) -> Option<IpAddr> {
-    if ips.is_empty() {
-        return None;
+fn resolve_forwarded_chain(
+    ips: Vec<Option<IpAddr>>,
+    trusted_proxies: &[IpNetwork],
+) -> Option<IpAddr> {
+    let mut resolved = None;
+    for ip in ips.into_iter().rev() {
+        // An unknown hop breaks the trust chain. Never walk past it into
+        // potentially client-supplied addresses.
+        let ip = ip?;
+        resolved = Some(ip);
+        if !is_trusted_proxy(ip, trusted_proxies) {
+            break;
+        }
     }
-
-    // 从右向左找第一个“不可信代理”的地址。
-    // 这样可以避免直接信任 X-Forwarded-For 最左侧被客户端伪造的 IP。
-    ips.iter()
-        .rev()
-        .copied()
-        .find(|ip| !is_trusted_proxy(*ip, trusted_proxies))
-        .or_else(|| ips.first().copied())
+    resolved
 }
 
-fn forwarded_header_ips(headers: &HeaderMap) -> Vec<IpAddr> {
+fn forwarded_header_ips(headers: &HeaderMap) -> Vec<Option<IpAddr>> {
     let mut ips = Vec::new();
 
     for value in headers.get_all("forwarded") {
         let Ok(value) = value.to_str() else {
+            ips.push(None);
             continue;
         };
-
-        for forwarded_element in value.split(',') {
-            for pair in forwarded_element.split(';') {
-                let Some((name, value)) = pair.split_once('=') else {
-                    continue;
-                };
-
-                if name.trim().eq_ignore_ascii_case("for") {
-                    if let Some(ip) = parse_header_ip(value) {
-                        ips.push(ip);
-                    }
-                    break;
-                }
-            }
+        for element in value.split(',') {
+            let ip = element
+                .split(';')
+                .filter_map(|pair| pair.split_once('='))
+                .find(|(name, _)| name.trim().eq_ignore_ascii_case("for"))
+                .and_then(|(_, value)| parse_header_ip(value));
+            ips.push(ip);
         }
     }
 
     ips
 }
 
-fn x_forwarded_for_ips(headers: &HeaderMap) -> Vec<IpAddr> {
+fn x_forwarded_for_ips(headers: &HeaderMap) -> Vec<Option<IpAddr>> {
     let mut ips = Vec::new();
 
     for value in headers.get_all("x-forwarded-for") {
         let Ok(value) = value.to_str() else {
+            ips.push(None);
             continue;
         };
-
-        for part in value.split(',') {
-            if let Some(ip) = parse_header_ip(part) {
-                ips.push(ip);
-            }
-        }
+        ips.extend(value.split(',').map(parse_header_ip));
     }
 
     ips
@@ -214,6 +207,26 @@ fn ip_to_host_network(ip: IpAddr) -> IpNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unknown_forwarded_hops_break_the_trust_chain() {
+        let trusted = ["127.0.0.1/32".parse().unwrap()];
+        let request = Request::builder()
+            .header("forwarded", "for=192.0.2.1, for=unknown, for=127.0.0.1")
+            .header("x-forwarded-for", "192.0.2.1, unknown, 127.0.0.1")
+            .extension(ConnectInfo("127.0.0.1:80".parse::<SocketAddr>().unwrap()))
+            .body(())
+            .unwrap();
+        for header in [ClientIpHeader::Forwarded, ClientIpHeader::XForwardedFor] {
+            assert_eq!(
+                resolve_client_ip(&request, &trusted, header)
+                    .unwrap()
+                    .ip()
+                    .to_string(),
+                "127.0.0.1"
+            );
+        }
+    }
+
     #[test]
     fn only_the_configured_header_from_a_trusted_peer_is_used() {
         let trusted = ["127.0.0.1/32".parse().unwrap()];
