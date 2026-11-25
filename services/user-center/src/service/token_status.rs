@@ -14,6 +14,7 @@ pub struct ActiveAccess {
     pub user: users::Model,
     pub client: oauth_clients::Model,
     pub mfa_verified: bool,
+    pub sso_session_id: uuid::Uuid,
     pub tenant: Option<super::tenant_context::TenantContext>,
 }
 
@@ -135,6 +136,7 @@ pub async fn active_access(
         user,
         client,
         mfa_verified: session.mfa_verified_at.is_some(),
+        sso_session_id: session.id,
         tenant,
     }))
 }

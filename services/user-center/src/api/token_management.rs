@@ -78,6 +78,7 @@ async fn inspect(
         client: owner,
         mfa_verified,
         tenant,
+        ..
     }) = token_status::active_access(state, token).await?
         && (owner.id == client.id
             || owner.app_id == client.app_id
