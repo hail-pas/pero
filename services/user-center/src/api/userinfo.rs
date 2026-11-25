@@ -3,7 +3,10 @@ use axum::response::{IntoResponse, Response};
 use pero_api_axum::oauth::bearer_error_response;
 use pero_error::protocol::oauth::BearerError;
 
-use crate::state::app::AppState;
+use crate::{
+    service::token_status::{self, ActiveAccess},
+    state::app::AppState,
+};
 
 /// GET or POST /api/oauth2/userinfo
 pub async fn userinfo(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Response {
@@ -12,9 +15,12 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
         None => return bearer_error_response(BearerError::invalid_token("Missing Bearer token")),
     };
 
-    let crate::service::token_status::ActiveAccess { claims, user, tenant, .. } = match crate::service::token_status::active_access(&state, token)
-        .await
-    {
+    let ActiveAccess {
+        claims,
+        user,
+        tenant,
+        ..
+    } = match token_status::active_access(&state, token).await {
         Ok(Some(value)) => value,
         Ok(None) => return bearer_error_response(BearerError::invalid_token("Token is inactive")),
         Err(e) => return crate::web::util::dependency_error(e),

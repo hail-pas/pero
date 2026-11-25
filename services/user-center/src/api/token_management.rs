@@ -1,6 +1,6 @@
 use crate::{
     db::entity::{apps, oauth_clients, refresh_tokens, sso_sessions, user_app_access},
-    service::token_status,
+    service::token_status::{self, ActiveAccess},
     state::app::AppState,
 };
 use axum::{
@@ -72,8 +72,12 @@ async fn inspect(
     token: &str,
     client: &oauth_clients::Model,
 ) -> Result<serde_json::Value, sea_orm::DbErr> {
-    if let Some(token_status::ActiveAccess { claims, user, client: owner, tenant }) =
-        token_status::active_access(state, token).await?
+    if let Some(ActiveAccess {
+        claims,
+        user,
+        client: owner,
+        tenant,
+    }) = token_status::active_access(state, token).await?
         && (owner.id == client.id
             || owner.app_id == client.app_id
                 && owner.r#type == crate::db::enums::OauthClientType::Public)
