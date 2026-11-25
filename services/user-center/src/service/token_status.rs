@@ -9,10 +9,17 @@ use crate::{
 use pero_utils::oauth::jwt::{self, AccessTokenClaims};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
+pub struct ActiveAccess {
+    pub claims: AccessTokenClaims,
+    pub user: users::Model,
+    pub client: oauth_clients::Model,
+    pub tenant: Option<super::tenant_context::TenantContext>,
+}
+
 pub async fn active_access(
     state: &AppState,
     token: &str,
-) -> Result<Option<(AccessTokenClaims, users::Model, oauth_clients::Model)>, sea_orm::DbErr> {
+) -> Result<Option<ActiveAccess>, sea_orm::DbErr> {
     let Ok(kid) = jwt::decode_jwt_kid(token) else {
         return Ok(None);
     };
@@ -58,13 +65,7 @@ pub async fn active_access(
     if access.token_version != claims.access_version {
         return Ok(None);
     }
-    let app = crate::db::entity::apps::Entity::find_by_id(client.app_id)
-        .one(&state.db)
-        .await?;
-    let Some(app) = app else {
-        return Ok(None);
-    };
-    if let Some(raw) = claims.tenant_id.as_deref() {
+    let tenant = if let Some(raw) = claims.tenant_id.as_deref() {
         let Ok(tenant_id) = uuid::Uuid::parse_str(raw) else {
             return Ok(None);
         };
@@ -75,13 +76,20 @@ pub async fn active_access(
         };
         if Some(ctx.tenant_version) != claims.tenant_version
             || Some(ctx.tenant_member_version) != claims.tenant_member_version
-            || Some(ctx.tenant_kind) != claims.tenant_kind
+            || Some(ctx.tenant_kind.as_str()) != claims.tenant_kind.as_deref()
         {
             return Ok(None);
         }
-    } else if !app.system {
-        return Ok(None);
-    }
+        Some(ctx)
+    } else {
+        let app = crate::db::entity::apps::Entity::find_by_id(client.app_id)
+            .one(&state.db)
+            .await?;
+        if !app.is_some_and(|app| app.system) {
+            return Ok(None);
+        }
+        None
+    };
     let Some(sid) = claims
         .sid
         .as_deref()
@@ -110,5 +118,10 @@ pub async fn active_access(
     if !super::scope::allowed(&scopes, &client.scopes) {
         return Ok(None);
     }
-    Ok(Some((claims, user, client)))
+    Ok(Some(ActiveAccess {
+        claims,
+        user,
+        client,
+        tenant,
+    }))
 }

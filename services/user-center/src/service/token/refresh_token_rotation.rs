@@ -55,16 +55,38 @@ impl TokenService<'_> {
             .select_only()
             .column(rt::Column::UserId)
             .column(rt::Column::AppId)
-            .into_tuple::<(uuid::Uuid, uuid::Uuid)>()
+            .column(rt::Column::SessionId)
+            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>)>()
             .one(&txn)
             .await;
-        let (user_id, app_id) = match owner {
+        let (user_id, app_id, session_id) = match owner {
             Ok(Some(owner)) => owner,
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
         let access = match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
             Ok(Some(access)) => access,
+            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        };
+
+        // Lock the session before the grant row: logout updates the session first,
+        // then revokes refresh tokens and queues backchannel notifications.
+        let Some(session_id) = session_id else {
+            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+        };
+        let _active_session = match crate::db::helper::session::app_query(
+            time::OffsetDateTime::now_utc(),
+            self.state.config.sso.session_idle_ttl_seconds,
+            client.app_id,
+        )
+        .filter(crate::db::entity::sso_sessions::Column::Id.eq(session_id))
+        .filter(crate::db::entity::sso_sessions::Column::UserId.eq(user_id))
+        .lock_shared()
+        .one(&txn)
+        .await
+        {
+            Ok(Some(session)) => session,
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
@@ -163,35 +185,6 @@ impl TokenService<'_> {
             );
         }
 
-        let Some(session_id) = existing.session_id else {
-            return TokenEndpointResult::error_desc(
-                OAuth2ErrorCode::InvalidGrant,
-                "Session revoked",
-            );
-        };
-        let active_session = crate::db::helper::session::app_query(
-            now,
-            self.state.config.sso.session_idle_ttl_seconds,
-            client.app_id,
-        )
-        .filter(crate::db::entity::sso_sessions::Column::Id.eq(session_id))
-        .filter(crate::db::entity::sso_sessions::Column::UserId.eq(existing.user_id))
-        .one(&txn)
-        .await;
-        match active_session {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return TokenEndpointResult::error_desc(
-                    OAuth2ErrorCode::InvalidGrant,
-                    "Session revoked",
-                );
-            }
-            Err(e) => {
-                tracing::error!("RT session lookup: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
-            }
-        }
-
         let user = match crate::db::entity::users::Entity::find_by_id(existing.user_id)
             .one(&txn)
             .await
@@ -238,7 +231,7 @@ impl TokenService<'_> {
                 None => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidScope),
             };
         let scopes_str = requested.join(" ");
-        let session_id = existing.session_id;
+        let session_id = Some(session_id);
         let signing = match require_active_signing_key(&txn).await {
             Ok(k) => k,
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),

@@ -72,7 +72,8 @@ async fn inspect(
     token: &str,
     client: &oauth_clients::Model,
 ) -> Result<serde_json::Value, sea_orm::DbErr> {
-    if let Some((claims, user, owner)) = token_status::active_access(state, token).await?
+    if let Some(token_status::ActiveAccess { claims, user, client: owner, tenant }) =
+        token_status::active_access(state, token).await?
         && (owner.id == client.id
             || owner.app_id == client.app_id
                 && owner.r#type == crate::db::enums::OauthClientType::Public)
@@ -95,14 +96,7 @@ async fn inspect(
             "is_superadmin":is_superadmin,
             "tenant_id":claims.tenant_id,"tenant_kind":claims.tenant_kind
         });
-        if let Some(id) = claims
-            .tenant_id
-            .as_deref()
-            .and_then(|id| uuid::Uuid::parse_str(id).ok())
-            && let Some(context) =
-                crate::service::tenant_context::active(&state.db, user.id, client.app_id, id)
-                    .await?
-        {
+        if let Some(context) = tenant {
             response["membership_role"] = serde_json::json!(context.membership_role);
         }
         let profile = serde_json::to_value(crate::service::scope::user_claims(&user, &scopes))
@@ -214,8 +208,8 @@ pub async fn revoke(
         } else {
             token_status::active_access(&state, &input.token)
                 .await?
-                .filter(|(_, _, c)| c.id == client.id)
-                .map(|(_, u, _)| u.id)
+                .filter(|access| access.client.id == client.id)
+                .map(|access| access.user.id)
         };
         if let Some(user) = user {
             let txn = state.db.begin().await?;

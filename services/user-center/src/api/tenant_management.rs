@@ -25,7 +25,7 @@ async fn actor(
     allow_disabled_recovery: bool,
 ) -> Result<Uuid, Response> {
     let token = bearer(h).map_err(IntoResponse::into_response)?;
-    let (claims, user, _client) = match crate::service::token_status::active_access(s, token).await
+    let crate::service::token_status::ActiveAccess { claims, user, .. } = match crate::service::token_status::active_access(s, token).await
     {
         Ok(Some(v)) => v,
         Ok(None) => return Err(StatusCode::UNAUTHORIZED.into_response()),
@@ -67,7 +67,7 @@ pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
         Err(error) => return error.into_response(),
     };
     let validated = crate::service::token_status::active_access(&s, token).await;
-    let (claims, user, client) = match validated {
+    let crate::service::token_status::ActiveAccess { claims, user, client, .. } = match validated {
         Ok(Some(result)) => result,
         Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
         Err(error) => return util::dependency_error(error),
