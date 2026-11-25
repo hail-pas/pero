@@ -14,6 +14,8 @@ use crate::web::login_flow::{LoginFormError, verify_password_for_user};
 use crate::web::sso::dto::{SocialLinkForm, SocialLinkView};
 use crate::web::sso::utility::resolve_auth_request_id;
 
+const SOCIAL_LINK_COOKIE: &str = "pero_social_link";
+
 #[derive(serde::Deserialize)]
 pub struct LoginQuery {
     #[serde(default)]
@@ -269,7 +271,13 @@ pub async fn callback(
             .await
         }
         IdentityResolution::NeedsAccountLink { nonce } => {
-            (jar, Redirect::to(&social_link_url(&nonce))).into_response()
+            // Continue the verified callback only in the initiating browser.
+            let cookie = cookies.build_short_lived_cookie(
+                SOCIAL_LINK_COOKIE,
+                &nonce,
+                state.config.oauth2.auth_code_ttl_seconds,
+            );
+            (jar.add(cookie), Redirect::to("/sso/social/link")).into_response()
         }
         IdentityResolution::NeedsRegistration {
             info,
@@ -301,11 +309,9 @@ pub async fn callback(
 pub async fn link_get(
     State(state): State<AppState>,
     jar: CookieJar,
-    Query(query): Query<SocialLinkQuery>,
 ) -> Response {
-    let nonce = match query.nonce {
-        Some(n) if !n.is_empty() => n,
-        _ => return Redirect::to(&login_error_url("social_link_expired")).into_response(),
+    let Some(nonce) = jar.get(SOCIAL_LINK_COOKIE).map(|c| c.value().to_owned()) else {
+        return Redirect::to(&login_error_url("social_link_expired")).into_response();
     };
     render_social_link(&state, jar, &nonce, "").await
 }
@@ -317,6 +323,11 @@ pub async fn link_post(
     headers: axum::http::HeaderMap,
     Form(form): Form<SocialLinkForm>,
 ) -> Response {
+    if !jar.get(SOCIAL_LINK_COOKIE).is_some_and(|cookie| {
+        pero_utils::crypto::constant_time_eq(cookie.value().as_bytes(), form.nonce.as_bytes())
+    }) {
+        return Redirect::to(&login_error_url("social_link_expired")).into_response();
+    }
     let svc = state.social_service();
 
     let link = match svc.load_social_link(&form.nonce).await {
@@ -400,6 +411,7 @@ pub async fn link_post(
     };
 
     svc.delete_social_link_cache(&form.nonce).await;
+    let jar = jar.remove(state.cookie_factory().clear_cookie(SOCIAL_LINK_COOKIE));
 
     finish_social_login(
         &state,
@@ -423,11 +435,6 @@ pub struct CallbackParams {
     pub code: Option<String>,
     pub state: Option<String>,
     pub error: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SocialLinkQuery {
-    pub nonce: Option<String>,
 }
 
 struct SocialLoginContext {
@@ -514,12 +521,6 @@ async fn render_social_link(
         error: error.to_owned(),
     };
     (jar, pero_api_axum::form::view("SocialLinkView", tpl)).into_response()
-}
-
-fn social_link_url(nonce: &str) -> String {
-    let mut url = "/sso/social/link".to_owned();
-    pero_utils::encode::append_query_param(&mut url, "nonce", nonce);
-    url
 }
 
 fn login_error_url(error: &str) -> String {
