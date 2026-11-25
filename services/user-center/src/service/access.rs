@@ -1,7 +1,7 @@
 use super::permissions::{self, Actor, Permission as P};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait,
-    QueryFilter, QuerySelect, Set, Statement, TransactionTrait, sea_query::Expr,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -43,7 +43,7 @@ pub async fn grant_app(
     if user.status != crate::db::enums::UserStatus::Active {
         return Err(ManagementError::Invalid("not_found"));
     }
-    write_app_access(&txn, user_id, app_id).await?;
+    write_app_access(&txn, user_id, app_id, CommonStatus::Active).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -52,12 +52,13 @@ async fn write_app_access<C: ConnectionTrait>(
     db: &C,
     user_id: Uuid,
     app_id: Uuid,
+    status: CommonStatus,
 ) -> Result<(), sea_orm::DbErr> {
     let now = time::OffsetDateTime::now_utc();
     uaa::Entity::insert(uaa::ActiveModel {
         user_id: Set(user_id),
         app_id: Set(app_id),
-        status: Set(CommonStatus::Active),
+        status: Set(status),
         admission_origin: Set("explicit".to_owned()),
         created_at: Set(now),
         updated_at: Set(now),
@@ -143,7 +144,7 @@ pub async fn ensure_oauth_app_access(
         return Ok(false);
     }
     if super_admin {
-        write_app_access(&txn, session.user_id, app_id).await?;
+        write_app_access(&txn, session.user_id, app_id, CommonStatus::Active).await?;
     } else {
         // Never overwrite an explicit revocation or a grant racing with this insert.
         txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
@@ -168,16 +169,8 @@ pub async fn revoke_app(
     permissions::protect_user(&txn, &access, user_id).await?;
 
     lock_app_for_access_change(&txn, user_id, app_id).await?;
-    uaa::Entity::update_many()
-        .col_expr(uaa::Column::Status, Expr::value(CommonStatus::Disabled))
-        .col_expr(
-            uaa::Column::UpdatedAt,
-            Expr::value(time::OffsetDateTime::now_utc()),
-        )
-        .filter(uaa::Column::UserId.eq(user_id))
-        .filter(uaa::Column::AppId.eq(app_id))
-        .exec(&txn)
-        .await?;
+    // Persist explicit denial even before the first organization auto-admission.
+    write_app_access(&txn, user_id, app_id, CommonStatus::Disabled).await?;
     super::session::SessionService::revoke_app_grants(
         &txn,
         app_id,
