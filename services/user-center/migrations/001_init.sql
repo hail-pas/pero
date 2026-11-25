@@ -211,6 +211,7 @@ CREATE TABLE apps (
 
     status common_status NOT NULL DEFAULT 'active',
     system boolean NOT NULL DEFAULT false,
+    max_sessions integer NOT NULL DEFAULT 1 CHECK (max_sessions >= 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     tenant_mode text NOT NULL DEFAULT 'personal'
@@ -1458,12 +1459,45 @@ ALTER TABLE user_mfa ADD CONSTRAINT assisted_recovery_pair CHECK (
 ALTER TABLE authorization_requests ADD COLUMN diagnostic_session_id uuid
     REFERENCES sso_sessions(id) ON DELETE CASCADE;
 
-CREATE TABLE oidc_rp_sessions (
-    session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
-    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+CREATE TABLE app_sessions (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    PRIMARY KEY(session_id, client_id)
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    sso_session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    revoked_at timestamptz,
+    revoke_reason text
 );
+CREATE UNIQUE INDEX ux_app_sessions_active ON app_sessions(user_id,app_id,sso_session_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX ix_app_sessions_active_user ON app_sessions(app_id,user_id,created_at,id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX ix_app_sessions_sso ON app_sessions(sso_session_id);
+
+CREATE TABLE client_sessions (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    app_session_id uuid NOT NULL REFERENCES app_sessions(id) ON DELETE CASCADE,
+    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    revoked_at timestamptz,
+    revoke_reason text
+);
+CREATE UNIQUE INDEX ux_client_sessions_active ON client_sessions(app_session_id,client_id,tenant_id)
+    NULLS NOT DISTINCT WHERE revoked_at IS NULL;
+CREATE INDEX ix_client_sessions_client ON client_sessions(client_id) WHERE revoked_at IS NULL;
+CREATE INDEX ix_client_sessions_parent ON client_sessions(app_session_id);
+CREATE INDEX ix_client_sessions_tenant ON client_sessions(tenant_id) WHERE revoked_at IS NULL;
+
+ALTER TABLE authorization_codes
+    ADD COLUMN admission_session_id uuid REFERENCES app_sessions(id) ON DELETE SET NULL,
+    ADD COLUMN admission_revoked boolean NOT NULL DEFAULT false,
+    ADD COLUMN takeover_allowed boolean NOT NULL DEFAULT false,
+    ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE SET NULL;
+ALTER TABLE refresh_tokens
+    ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE CASCADE;
+CREATE INDEX ix_refresh_tokens_client_session ON refresh_tokens(client_session_id);
+CREATE INDEX ix_authorization_codes_device ON authorization_codes(user_id,app_id,session_id);
 CREATE TABLE backchannel_logout_deliveries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id uuid NOT NULL,
@@ -1481,75 +1515,100 @@ CREATE TABLE backchannel_logout_deliveries (
     UNIQUE(session_id, client_id)
 );
 CREATE INDEX ON backchannel_logout_deliveries(next_attempt_at) WHERE delivered_at IS NULL;
--- Revocation and outbox insertion are atomic for every session-revocation path.
+-- A terminal RP session transition queues exactly one logout notification.
 CREATE FUNCTION enqueue_backchannel_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN
-        INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
-        SELECT r.session_id,r.client_id,r.user_id,c.backchannel_logout_uri
-        FROM oidc_rp_sessions r JOIN oauth_clients c ON c.id=r.client_id
-        WHERE r.session_id=NEW.id AND c.backchannel_logout_uri IS NOT NULL
-        ON CONFLICT(session_id,client_id) DO UPDATE SET
-            endpoint = EXCLUDED.endpoint,
-            id = gen_random_uuid(),
-            created_at = now(),
-            delivered_at = NULL,
-            expires_at = now()+interval '1 day',
-            next_attempt_at = now(),
-            lease_id = NULL,
-            leased_until = NULL,
-            attempts = 0,
-            last_error = NULL;
-    END IF;
+    INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
+    SELECT NEW.id,NEW.client_id,a.user_id,c.backchannel_logout_uri
+    FROM app_sessions a JOIN oauth_clients c ON c.id=NEW.client_id
+    WHERE a.id=NEW.app_session_id AND c.backchannel_logout_uri IS NOT NULL
+    ON CONFLICT(session_id,client_id) DO NOTHING;
+    UPDATE refresh_tokens SET revoked_at=NEW.revoked_at,revoke_reason=NEW.revoke_reason
+    WHERE client_session_id=NEW.id AND (revoked_at IS NULL OR revoke_reason='rotation');
+    DELETE FROM authorization_codes k USING app_sessions a
+    WHERE a.id=NEW.app_session_id AND k.user_id=a.user_id AND k.app_id=a.app_id
+        AND k.session_id=a.sso_session_id AND k.client_id=NEW.client_id
+        AND k.tenant_id IS NOT DISTINCT FROM NEW.tenant_id;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER client_session_backchannel_logout AFTER UPDATE OF revoked_at ON client_sessions
+FOR EACH ROW WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
+EXECUTE FUNCTION enqueue_backchannel_logout();
+
+CREATE FUNCTION revoke_app_session_children() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE client_sessions SET revoked_at=NEW.revoked_at,revoke_reason=NEW.revoke_reason
+    WHERE app_session_id=NEW.id AND revoked_at IS NULL;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER app_session_revocation AFTER UPDATE OF revoked_at ON app_sessions
+FOR EACH ROW WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
+EXECUTE FUNCTION revoke_app_session_children();
+
+CREATE FUNCTION enqueue_sso_logout() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE app_sessions SET revoked_at=NEW.revoked_at,revoke_reason=NEW.revoke_reason
+    WHERE sso_session_id=NEW.id AND revoked_at IS NULL;
     RETURN NEW;
 END $$;
 CREATE TRIGGER session_backchannel_logout AFTER UPDATE OF revoked_at ON sso_sessions
-FOR EACH ROW EXECUTE FUNCTION enqueue_backchannel_logout();
+FOR EACH ROW WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
+EXECUTE FUNCTION enqueue_sso_logout();
 
 CREATE FUNCTION enqueue_app_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
-    SELECT r.session_id,r.client_id,r.user_id,c.backchannel_logout_uri
-    FROM oidc_rp_sessions r JOIN oauth_clients c ON c.id=r.client_id
-    WHERE r.user_id=NEW.user_id AND c.app_id=NEW.app_id AND c.backchannel_logout_uri IS NOT NULL
-    ON CONFLICT(session_id,client_id) DO UPDATE SET
-        endpoint = EXCLUDED.endpoint,
-        id = gen_random_uuid(),
-        created_at = now(),
-        delivered_at = NULL,
-        expires_at = now()+interval '1 day',
-        next_attempt_at = now(),
-        lease_id = NULL,
-        leased_until = NULL,
-        attempts = 0,
-        last_error = NULL;
+    UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason='app_access_changed'
+    WHERE user_id=NEW.user_id AND app_id=NEW.app_id AND revoked_at IS NULL;
     RETURN NEW;
 END $$;
 CREATE TRIGGER app_backchannel_logout AFTER UPDATE OF token_version,status ON user_app_access
 FOR EACH ROW WHEN (OLD.token_version IS DISTINCT FROM NEW.token_version OR OLD.status IS DISTINCT FROM NEW.status)
 EXECUTE FUNCTION enqueue_app_logout();
 
+CREATE FUNCTION retire_client_context(p_client uuid,p_tenant uuid,p_user uuid,p_reason text)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM a.id FROM app_sessions a
+    WHERE a.revoked_at IS NULL AND (p_user IS NULL OR a.user_id=p_user)
+      AND EXISTS (SELECT 1 FROM client_sessions c WHERE c.app_session_id=a.id AND c.revoked_at IS NULL
+        AND (p_client IS NULL OR c.client_id=p_client) AND (p_tenant IS NULL OR c.tenant_id=p_tenant))
+    ORDER BY a.id FOR UPDATE;
+    UPDATE client_sessions c SET revoked_at=clock_timestamp(),revoke_reason=p_reason
+    FROM app_sessions a WHERE a.id=c.app_session_id AND c.revoked_at IS NULL
+      AND (p_user IS NULL OR a.user_id=p_user)
+      AND (p_client IS NULL OR c.client_id=p_client) AND (p_tenant IS NULL OR c.tenant_id=p_tenant);
+    UPDATE app_sessions a SET revoked_at=clock_timestamp(),revoke_reason=p_reason
+    WHERE a.revoked_at IS NULL AND (p_user IS NULL OR a.user_id=p_user)
+      AND EXISTS (SELECT 1 FROM client_sessions c WHERE c.app_session_id=a.id
+        AND (p_client IS NULL OR c.client_id=p_client) AND (p_tenant IS NULL OR c.tenant_id=p_tenant))
+      AND NOT EXISTS (SELECT 1 FROM client_sessions c WHERE c.app_session_id=a.id AND c.revoked_at IS NULL);
+END $$;
 CREATE FUNCTION enqueue_client_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
-    SELECT r.session_id,r.client_id,r.user_id,NEW.backchannel_logout_uri
-    FROM oidc_rp_sessions r WHERE r.client_id=NEW.id AND NEW.backchannel_logout_uri IS NOT NULL
-    ON CONFLICT(session_id,client_id) DO UPDATE SET
-        endpoint = EXCLUDED.endpoint,
-        id = gen_random_uuid(),
-        created_at = now(),
-        delivered_at = NULL,
-        expires_at = now()+interval '1 day',
-        next_attempt_at = now(),
-        lease_id = NULL,
-        leased_until = NULL,
-        attempts = 0,
-        last_error = NULL;
+    PERFORM retire_client_context(NEW.id,NULL,NULL,'client_policy_changed');
     RETURN NEW;
 END $$;
 CREATE TRIGGER client_backchannel_logout AFTER UPDATE OF token_version ON oauth_clients
 FOR EACH ROW WHEN (OLD.token_version IS DISTINCT FROM NEW.token_version)
 EXECUTE FUNCTION enqueue_client_logout();
+
+CREATE FUNCTION revoke_tenant_sessions() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM retire_client_context(NULL,NEW.id,NULL,'tenant_policy_changed');
+    RETURN NEW;
+END $$;
+CREATE TRIGGER tenant_session_revocation AFTER UPDATE OF auth_version ON tenants
+FOR EACH ROW WHEN (OLD.auth_version IS DISTINCT FROM NEW.auth_version)
+EXECUTE FUNCTION revoke_tenant_sessions();
+
+CREATE FUNCTION revoke_member_sessions() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM retire_client_context(NULL,NEW.tenant_id,NEW.user_id,'tenant_membership_changed');
+    RETURN NEW;
+END $$;
+CREATE TRIGGER tenant_member_session_revocation AFTER UPDATE OF auth_version ON tenant_members
+FOR EACH ROW WHEN (OLD.auth_version IS DISTINCT FROM NEW.auth_version)
+EXECUTE FUNCTION revoke_member_sessions();
 
 CREATE TABLE admin_permission_state (
     user_id uuid PRIMARY KEY REFERENCES admin_roles(user_id) ON DELETE CASCADE,
