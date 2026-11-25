@@ -175,12 +175,24 @@ clean_expired!(
 pub async fn clean_expired_password_reset_tokens(
     db: &DatabaseConnection,
 ) -> Result<u64, sea_orm::DbErr> {
-    delete_expired(
+    let now = OffsetDateTime::now_utc();
+    let expired = delete_before(
         db,
         "password_reset_tokens",
-        "expires_at < $1 OR consumed_at < $1 - interval '1 day'",
+        "expires_at < $1",
+        "expires_at",
+        now,
     )
-    .await
+    .await?;
+    let consumed = delete_before(
+        db,
+        "password_reset_tokens",
+        "consumed_at < $1",
+        "consumed_at",
+        now - time::Duration::days(1),
+    )
+    .await?;
+    Ok(expired + consumed)
 }
 
 /// Remove abandoned MFA setups and expired recovery credentials under the same
@@ -226,6 +238,25 @@ async fn clean_event_history(
 
 pub async fn clean_login_events(db: &DatabaseConnection, days: u16) -> Result<u64, sea_orm::DbErr> {
     clean_event_history(db, "login_events", days).await
+}
+
+/// Retain unbound identities for the login history window and while referenced.
+pub async fn clean_unbound_identities(
+    db: &DatabaseConnection,
+    days: u16,
+) -> Result<u64, sea_orm::DbErr> {
+    if days == 0 {
+        return Ok(0);
+    }
+    let cutoff = OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
+    delete_before(
+        db,
+        "identities",
+        "unbound_at < $1 AND NOT EXISTS (SELECT 1 FROM login_events e WHERE e.identity_id=identities.id) AND NOT EXISTS (SELECT 1 FROM sso_sessions s WHERE s.identity_id=identities.id)",
+        "unbound_at",
+        cutoff,
+    )
+    .await
 }
 
 pub async fn clean_audit_events(db: &DatabaseConnection, days: u16) -> Result<u64, sea_orm::DbErr> {

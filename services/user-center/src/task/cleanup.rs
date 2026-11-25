@@ -94,6 +94,11 @@ async fn run_cleanup(
         retention.login_event_days
     );
     do_clean!(
+        "unbound_identities",
+        crate::db::helper::cleanup::clean_unbound_identities,
+        retention.login_event_days
+    );
+    do_clean!(
         "audit_events",
         crate::db::helper::cleanup::clean_audit_events,
         retention.audit_event_days

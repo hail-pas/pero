@@ -102,7 +102,7 @@ pnpm --dir frontend audit
 
 依赖审计保留完整报告；已核实的误报按公告、包名和确切版本记录于 `.github/security/advisory-policy.json`，检查时仍输出记录。当前仅跟踪 `block-buffer 0.10.4` 的 `GHSA-qwgh-2vcv-g2f7` 误报：维护者确认受影响范围为 `>=0.11.0,<0.12.1`，聚合数据库范围过宽。未评估告警、撤包或接受期到期均令 CI 失败，不使用全局 ignore；OSV 返回未完成的分页结果也会令检查失败。前端主题源码保留 Minimal MIT 许可，构建锁定依赖版本。
 
-`sso.session_touch_interval_seconds` 默认 `0`，保持每次请求刷新 idle 时间；可显式设置不超过 `30` 秒且不超过 idle TTL 的 `1%`，减少高频请求的数据库写入。代价是空闲到期时间最多提前该间隔，每次请求仍查询数据库撤销状态。清理任务每轮每类最多 20 批、每批 500 条，积压会在后续轮次继续处理。
+`sso.session_touch_interval_seconds` 默认 `0`，保持每次请求刷新 idle 时间；可显式设置不超过 `30` 秒且不超过 idle TTL 的 `1%`，减少高频请求的数据库写入。代价是空闲到期时间最多提前该间隔，每次请求仍查询数据库撤销状态。清理任务每个清理条件每轮最多 20 批、每批 500 条，积压会在后续轮次继续处理。已解绑的第三方身份在 `retention.login_event_days` 保留期届满且不再被登录记录或 SSO 会话引用后清理；该配置为 `0` 时不自动删除解绑身份。
 
 刷新令牌支持可选 `scope` 子集；未传时保持原授权范围，扩大范围返回 `invalid_scope`，不会消耗令牌。新的刷新令牌保留原授权范围，降权仅作用于此次 access token。`prompt=select_account` 提供当前账号与切换登录选择。数据库/Redis 临时故障不会当作用户凭证失效；在线校验返回 503 时 admin 保留登录 Cookie。
 

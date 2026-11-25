@@ -363,7 +363,12 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
                 "enrollment_unavailable",
             )));
         };
-        match users::Entity::find().filter(contact).one(&state.db).await {
+        match users::Entity::find()
+            .filter(contact)
+            .filter(users::Column::DeletedAt.is_null())
+            .one(&state.db)
+            .await
+        {
             Ok(v) => v,
             Err(e) => return util::dependency_error(e),
         }
@@ -465,6 +470,7 @@ async fn render_invitation(state: &AppState, jar: CookieJar) -> Response {
     };
     let existing = match users::Entity::find()
         .filter(users::Column::Email.eq(invite.email.clone()))
+        .filter(users::Column::DeletedAt.is_null())
         .one(&state.db)
         .await
     {

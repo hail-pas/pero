@@ -617,6 +617,7 @@ pub async fn finalize(
 ) -> Result<EnrollmentResult, Error> {
     let initial = lookup(&state.db, token).await?;
     let exists = users::Entity::find()
+        .filter(users::Column::DeletedAt.is_null())
         .filter(if let Some(email) = &initial.email {
             users::Column::Email.eq(email.clone())
         } else {
@@ -664,6 +665,7 @@ pub async fn finalize(
     }
     let now = OffsetDateTime::now_utc();
     let existing = users::Entity::find()
+        .filter(users::Column::DeletedAt.is_null())
         .filter(if let Some(email) = &row.email {
             users::Column::Email.eq(email.clone())
         } else {

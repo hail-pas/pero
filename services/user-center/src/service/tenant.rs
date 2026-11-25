@@ -511,6 +511,7 @@ pub async fn finalize_invitation(
     let initial = invitation(&state.db, token).await?;
     let exists = users::Entity::find()
         .filter(users::Column::Email.eq(initial.email.clone()))
+        .filter(users::Column::DeletedAt.is_null())
         .one(&state.db)
         .await?
         .is_some();
@@ -538,6 +539,7 @@ pub async fn finalize_invitation(
     // Authenticate and lock the existing user before taking the organization lock.
     let existing = users::Entity::find()
         .filter(users::Column::Email.eq(initial.email.clone()))
+        .filter(users::Column::DeletedAt.is_null())
         .one(&txn)
         .await?;
     if let Some(user) = &existing {

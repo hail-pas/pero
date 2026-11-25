@@ -616,6 +616,9 @@ ON identities (provider_id);
 CREATE INDEX ix_identities_kind
 ON identities (kind);
 
+CREATE INDEX ix_identities_unbound_at
+ON identities (unbound_at) WHERE unbound_at IS NOT NULL;
+
 COMMENT ON TABLE identities IS
 '登录身份表。只支持 password 和 oauth 两类身份。不保存 username、email、phone、totp。';
 
@@ -1533,9 +1536,9 @@ CREATE TABLE client_sessions (
 );
 CREATE UNIQUE INDEX ux_client_sessions_active ON client_sessions(app_session_id,client_id,tenant_id)
     NULLS NOT DISTINCT WHERE revoked_at IS NULL;
-CREATE INDEX ix_client_sessions_client ON client_sessions(client_id) WHERE revoked_at IS NULL;
+CREATE INDEX ix_client_sessions_client ON client_sessions(client_id,revoked_at);
 CREATE INDEX ix_client_sessions_parent ON client_sessions(app_session_id);
-CREATE INDEX ix_client_sessions_tenant ON client_sessions(tenant_id) WHERE revoked_at IS NULL;
+CREATE INDEX ix_client_sessions_tenant ON client_sessions(tenant_id,revoked_at) WHERE tenant_id IS NOT NULL;
 
 ALTER TABLE authorization_codes
     ADD COLUMN admission_session_id uuid REFERENCES app_sessions(id) ON DELETE SET NULL,
