@@ -221,7 +221,11 @@ pub async fn finish_enrollment(
             Err(error) => {
                 tracing::error!(%error, "Registration committed but session creation failed");
                 let cookies = state.cookie_factory();
-                return (jar.add(cookies.clear_cookie(cookies.session_cookie_name())), Redirect::to("/sso/login")).into_response();
+                return (
+                    jar.add(cookies.clear_cookie(cookies.session_cookie_name())),
+                    Redirect::to("/sso/login"),
+                )
+                    .into_response();
             }
         }
     } else {
@@ -232,10 +236,14 @@ pub async fn finish_enrollment(
     }) {
         let pending = request.expect("matched pending request");
         let resume = match (pending.tenant_id, result.tenant_id) {
-            (None, Some(tenant)) => match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant).await {
-                Ok(row) => row.is_some(),
-                Err(error) => return crate::web::util::dependency_error(error),
-            },
+            (None, Some(tenant)) => {
+                match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant)
+                    .await
+                {
+                    Ok(row) => row.is_some(),
+                    Err(error) => return crate::web::util::dependency_error(error),
+                }
+            }
             (Some(a), Some(b)) => a == b,
             (_, None) => true,
         };

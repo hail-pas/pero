@@ -761,7 +761,10 @@ pub async fn start_social(
 
 async fn require_personal_app<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<(), Error> {
     if let Some(app) = app
-        && apps::Entity::find_by_id(app).one(db).await?.is_some_and(|app| app.tenant_mode == "organization")
+        && apps::Entity::find_by_id(app)
+            .one(db)
+            .await?
+            .is_some_and(|app| app.tenant_mode == "organization")
     {
         return Err(Error::Invalid("enrollment_unavailable"));
     }

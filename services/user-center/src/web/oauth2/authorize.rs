@@ -222,7 +222,10 @@ async fn authorize_request(
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create")
         && client.login_uri.is_none()
     {
-        return Err(params.redirect_err("invalid_request", Some("Registration requires a client login URI")));
+        return Err(params.redirect_err(
+            "invalid_request",
+            Some("Registration requires a client login URI"),
+        ));
     }
 
     // prompt=none: 不允许展示任何 UI，所有缺失条件直接以 error code 返回

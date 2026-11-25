@@ -220,6 +220,63 @@ async fn administrator_authorization_does_not_block_own_token_issuance() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn organization_invitation_creates_account_and_membership_once() {
+    use user_center::service::tenant;
+
+    let f = Fixture::new().await;
+    let organization = Uuid::now_v7();
+    f.sql(
+        "INSERT INTO tenants(id,kind,name,slug) VALUES($1,'organization','Invite Org','invite-org')",
+        vec![organization.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![organization.into(), f.user.into()],
+    )
+    .await;
+    let token = pero_utils::crypto::generate_token();
+    f.sql(
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at,client_id) VALUES($1,'invited@example.test','member',$2,$3,now()+interval '1 day',$4)",
+        vec![
+            organization.into(),
+            pero_utils::crypto::sha256_hex(&token).into(),
+            f.user.into(),
+            f.client.into(),
+        ],
+    )
+    .await;
+    let result = tenant::finalize_invitation(
+        &f.state,
+        &token,
+        "invited_user",
+        "Invited-Password-123!",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.client_id, Some(f.client));
+    assert_eq!(result.tenant_id, Some(organization));
+    assert!(result.identity.is_some());
+    let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT (SELECT count(*) FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 AND status='active') AS members,(SELECT count(*) FROM tenants WHERE owner_user_id=$2 AND kind='personal') AS personal,(SELECT count(*) FROM tenant_invitations WHERE tenant_id=$1 AND accepted_user_id=$2 AND status='accepted') AS accepted",
+        [organization.into(), result.user_id.into()],
+    )).await.unwrap().unwrap();
+    for column in ["members", "personal", "accepted"] {
+        assert_eq!(row.try_get::<i64>("", column).unwrap(), 1);
+    }
+    assert!(
+        tenant::finalize_invitation(&f.state, &token, "duplicate", "Invited-Password-123!", None, None)
+            .await
+            .is_err()
+    );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
     use user_center::service::{access, tenant_context};
 

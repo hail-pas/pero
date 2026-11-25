@@ -57,7 +57,10 @@ pub async fn login(
             })
             .or_else(|| {
                 super::register::flow_token(&jar).map(|token| {
-                    format!("/sso/register?enrollment_flow={}", pero_utils::crypto::sha256_hex(token))
+                    format!(
+                        "/sso/register?enrollment_flow={}",
+                        pero_utils::crypto::sha256_hex(token)
+                    )
                 })
             })
             .unwrap_or(query.redirect)

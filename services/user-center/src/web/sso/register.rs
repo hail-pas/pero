@@ -74,7 +74,11 @@ async fn active_request(
     let Ok(key) = crate::cache::key::pending_req.key(cookie.value()) else {
         return Ok(None);
     };
-    let Some(value) = state.cache.get::<crate::cache::key::PendingReqValue>(key).await? else {
+    let Some(value) = state
+        .cache
+        .get::<crate::cache::key::PendingReqValue>(key)
+        .await?
+    else {
         return Ok(None);
     };
     let Ok(id) = Uuid::parse_str(&value.auth_request_id) else {
@@ -144,17 +148,22 @@ pub async fn get(
             Ok(row) => row,
             Err(e) => return util::management_response(Err(e)),
         };
-        let proof_cookie = jar.get(SOCIAL_COOKIE).cloned().filter(|_| {
-            social_proof(&state, &jar).is_some_and(|proof| proof.matches(&row))
-        });
+        let proof_cookie = jar
+            .get(SOCIAL_COOKIE)
+            .cloned()
+            .filter(|_| social_proof(&state, &jar).is_some_and(|proof| proof.matches(&row)));
         let request = match active_request(&state, &jar).await {
             Ok(request) => request,
             Err(e) => return util::management_response(Err(e)),
         };
         let cookies = state.cookie_factory();
         let mut jar = clear_flow(jar).add(flow_cookie(&state, token));
-        if request.as_ref().is_some_and(|r| Some(r.id) != row.auth_request_id) {
-            jar = jar.add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+        if request
+            .as_ref()
+            .is_some_and(|r| Some(r.id) != row.auth_request_id)
+        {
+            jar = jar
+                .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
                 .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
         }
         if let Some(cookie) = proof_cookie {
@@ -242,7 +251,9 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
         } else if let Some(phone) = &row.phone {
             users::Column::Phone.eq(phone.clone())
         } else {
-            return util::management_response(Err(crate::service::ManagementError::Invalid("enrollment_unavailable")));
+            return util::management_response(Err(crate::service::ManagementError::Invalid(
+                "enrollment_unavailable",
+            )));
         };
         match users::Entity::find().filter(contact).one(&state.db).await {
             Ok(v) => v,
@@ -251,7 +262,9 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
     } else {
         None
     };
-    let matching_account = existing.as_ref().is_some_and(|user| session.as_ref().is_some_and(|s| s.user_id == user.id));
+    let matching_account = existing
+        .as_ref()
+        .is_some_and(|user| session.as_ref().is_some_and(|s| s.user_id == user.id));
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
     util::view_response(
         "EnrollmentView",
@@ -401,27 +414,48 @@ async fn cancel_registration(state: &AppState, jar: CookieJar) -> Response {
             Err(e) => return util::management_response(Err(e)),
         }
     } else {
-        (request.as_ref().map(|r| r.client_id), request.as_ref().map(|r| r.id), None)
+        (
+            request.as_ref().map(|r| r.client_id),
+            request.as_ref().map(|r| r.id),
+            None,
+        )
     };
     let cookies = state.cookie_factory();
     let jar = clear_flow(jar)
         .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
         .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
     if let Some(client_id) = client_id {
-        let client = match oauth_clients::Entity::find_by_id(client_id).one(&state.db).await {
+        let client = match oauth_clients::Entity::find_by_id(client_id)
+            .one(&state.db)
+            .await
+        {
             Ok(v) => v.filter(|client| client.status == CommonStatus::Active),
             Err(e) => return util::dependency_error(e),
         };
         if let Some(client) = client {
-            if let Some(request) = request.filter(|r| Some(r.id) == request_id && r.client_id == client_id && r.diagnostic_session_id.is_none())
-                && state.oauth_service().validate_client(&client.identifier, &request.redirect_uri, &request.scopes).await.is_ok()
+            if let Some(request) = request.filter(|r| {
+                Some(r.id) == request_id
+                    && r.client_id == client_id
+                    && r.diagnostic_session_id.is_none()
+            }) && state
+                .oauth_service()
+                .validate_client(&client.identifier, &request.redirect_uri, &request.scopes)
+                .await
+                .is_ok()
             {
                 let updated = authorization_requests::Entity::update_many()
-                    .col_expr(authorization_requests::Column::CompletedAt, sea_orm::sea_query::Expr::value(Some(time::OffsetDateTime::now_utc())))
+                    .col_expr(
+                        authorization_requests::Column::CompletedAt,
+                        sea_orm::sea_query::Expr::value(Some(time::OffsetDateTime::now_utc())),
+                    )
                     .filter(authorization_requests::Column::Id.eq(request.id))
                     .filter(authorization_requests::Column::CompletedAt.is_null())
-                    .filter(authorization_requests::Column::ExpiresAt.gt(time::OffsetDateTime::now_utc()))
-                    .exec(&state.db).await;
+                    .filter(
+                        authorization_requests::Column::ExpiresAt
+                            .gt(time::OffsetDateTime::now_utc()),
+                    )
+                    .exec(&state.db)
+                    .await;
                 match updated {
                     Ok(v) if v.rows_affected == 1 => {
                         let mut uri = request.redirect_uri;
@@ -438,7 +472,11 @@ async fn cancel_registration(state: &AppState, jar: CookieJar) -> Response {
             if let Some(mut uri) = client.login_uri {
                 pero_utils::encode::append_query_param(&mut uri, "enrollment_status", "cancelled");
                 if let Some(tenant) = tenant_id {
-                    pero_utils::encode::append_query_param(&mut uri, "tenant_id", &tenant.to_string());
+                    pero_utils::encode::append_query_param(
+                        &mut uri,
+                        "tenant_id",
+                        &tenant.to_string(),
+                    );
                 }
                 return (jar, Redirect::to(&uri)).into_response();
             }
@@ -646,9 +684,13 @@ pub async fn social(
     let flow_hash = flow_token(&jar).map(pero_utils::crypto::sha256_hex);
     if (redirect.starts_with("/sso/register?invitation_flow=") && invitation_hash.is_none())
         || (redirect.starts_with("/sso/register?enrollment_flow=") && flow_hash.is_none())
-        || flow_hash.as_ref().is_some_and(|hash| redirect != format!("/sso/register?enrollment_flow={hash}"))
+        || flow_hash
+            .as_ref()
+            .is_some_and(|hash| redirect != format!("/sso/register?enrollment_flow={hash}"))
     {
-        return util::management_response(Err(crate::service::ManagementError::Invalid("enrollment_unavailable")));
+        return util::management_response(Err(crate::service::ManagementError::Invalid(
+            "enrollment_unavailable",
+        )));
     }
     let app = if let Some(token) = flow_token(&jar) {
         match enrollment::lookup(&state.db, token).await {
