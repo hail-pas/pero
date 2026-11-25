@@ -4,7 +4,6 @@ pub mod health;
 pub mod jwks;
 pub mod providers;
 pub mod tenant_management;
-pub mod tenant_membership;
 pub mod tenant_reconcile;
 pub mod token;
 pub mod token_management;
@@ -48,7 +47,7 @@ pub fn routes() -> Router<crate::state::app::AppState> {
         )
         .route(
             "/tenants/membership/sync",
-            post(tenant_membership::snapshot),
+            post(tenant_reconcile::membership),
         )
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))

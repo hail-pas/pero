@@ -87,31 +87,3 @@ pub async fn resolve<C: ConnectionTrait>(
     }
     active(db, user, app, options[0].id).await
 }
-#[derive(Debug, Clone, FromQueryResult, Serialize)]
-pub struct MembershipSnapshot {
-    pub tenant_name: String,
-    pub membership_role: String,
-    pub tenant_kind: String,
-    pub tenant_status: String,
-    pub membership_status: String,
-    pub tenant_version: i64,
-    pub membership_version: i64,
-    pub app_allowed: bool,
-    pub user_active: bool,
-}
-
-/// Current membership including inactive states, only for the authenticated app's user.
-pub async fn snapshot<C: ConnectionTrait>(
-    db: &C,
-    user: Uuid,
-    app: Uuid,
-    tenant: Uuid,
-) -> Result<Option<MembershipSnapshot>, DbErr> {
-    MembershipSnapshot::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT t.name AS tenant_name,m.role AS membership_role,t.kind AS tenant_kind,t.status AS tenant_status,m.status AS membership_status,t.auth_version AS tenant_version,m.auth_version AS membership_version,(a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) AND (t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id))) AS app_allowed,(u.status='active' AND u.deleted_at IS NULL) AS user_active FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN users u ON u.id=m.user_id JOIN apps a ON a.id=$3 WHERE t.id=$1 AND m.user_id=$2 AND EXISTS (SELECT 1 FROM tenant_app_history h WHERE h.tenant_id=t.id AND h.user_id=m.user_id AND h.app_id=a.id)",
-        [tenant.into(), user.into(), app.into()],
-    ))
-    .one(db)
-    .await
-}
