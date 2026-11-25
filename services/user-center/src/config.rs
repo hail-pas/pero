@@ -106,6 +106,13 @@ impl Validatable for SsoConfig {
             "invalid_url",
             "sso.base_url must be an absolute HTTPS URL without a query or fragment (loopback HTTP is allowed)",
         )?;
+        pero_validate_core::ensure(
+            self.cookie_secure
+                || url::Url::parse(&self.base_url).is_ok_and(|url| url.scheme() == "http"),
+            "sso.cookie_secure",
+            "https_requires_secure_cookie",
+            "sso.cookie_secure must be true for an HTTPS base URL",
+        )?;
         Ok(())
     }
 }

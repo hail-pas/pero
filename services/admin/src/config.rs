@@ -29,6 +29,14 @@ impl Validatable for AppConfig {
         self.server.validate()?;
         self.oauth2.validate()?;
         self.cookie.validate()?;
+        pero_validate_core::ensure(
+            self.cookie.secure
+                || reqwest::Url::parse(&self.oauth2.redirect_uri)
+                    .is_ok_and(|url| url.scheme() == "http"),
+            "cookie.secure",
+            "https_requires_secure_cookie",
+            "cookie.secure must be true for an HTTPS redirect URI",
+        )?;
         Ok(())
     }
 }
@@ -102,5 +110,25 @@ impl Validatable for OAuth2Config {
             "oauth2.jwks_cache_ttl_seconds",
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn https_redirect_requires_secure_cookies() {
+        let mut config: AppConfig = serde_json::from_value(serde_json::json!({
+            "oauth2": {"client_id": "test-client", "client_secret": "test-secret"}
+        }))
+        .unwrap();
+        assert!(config.validate().is_ok());
+
+        config.oauth2.redirect_uri = "https://admin.example.test/callback".into();
+        assert!(config.validate().is_err());
+
+        config.cookie.secure = true;
+        assert!(config.validate().is_ok());
     }
 }

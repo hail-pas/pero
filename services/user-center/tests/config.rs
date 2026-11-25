@@ -44,3 +44,22 @@ fn shipped_production_secrets_are_not_accepted() {
     assert!(sso.validate().is_err());
     assert!(reset.validate().is_err());
 }
+
+#[test]
+fn https_base_url_requires_secure_cookies() {
+    use pero_types::SecretString;
+    use pero_validate_core::Validatable;
+    use user_center::config::SsoConfig;
+
+    let mut config = SsoConfig {
+        cookie_signing_secret: SecretString::new("test-signing-secret-at-least-32-bytes"),
+        ..Default::default()
+    };
+    assert!(config.validate().is_ok());
+
+    config.base_url = "https://auth.example.test".into();
+    assert!(config.validate().is_err());
+
+    config.cookie_secure = true;
+    assert!(config.validate().is_ok());
+}
