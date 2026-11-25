@@ -108,10 +108,11 @@ fn eligible_phone(p: &Policy) -> Result<(), Error> {
     }
     Ok(())
 }
-fn contact(row: &Enrollment) -> Result<&str, Error> {
+fn contact(row: &Enrollment) -> Result<(&'static str, &str), Error> {
     row.email
         .as_deref()
-        .or(row.phone.as_deref())
+        .map(|address| ("email", address))
+        .or_else(|| row.phone.as_deref().map(|address| ("phone", address)))
         .ok_or_else(invalid)
 }
 pub async fn policy<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<Policy, Error> {
@@ -293,15 +294,11 @@ async fn send<C: ConnectionTrait>(
     db: &C,
     state: &AppState,
     id: Uuid,
-    address: &str,
+    contact: (&str, &str),
     token: &str,
     expires: OffsetDateTime,
 ) -> Result<(), Error> {
-    let channel = if address.starts_with('+') {
-        "phone"
-    } else {
-        "email"
-    };
+    let (channel, address) = contact;
     if !state.config.notification.available(channel) {
         return Err(Error::Invalid("notification_disabled"));
     }
@@ -345,7 +342,7 @@ async fn start_contact(
     invitation: Option<(&SsoSession, bool, &str)>,
     is_phone: bool,
 ) -> Result<(), Error> {
-    limit_email(state, address).await?;
+    limit_contact(state, address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     let (invited, actor, exception, reason) = if let Some((actor, exception, reason)) = invitation {
@@ -378,7 +375,8 @@ async fn start_contact(
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });
     execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into()]).await?;
-    send(&txn, state, id, address, &token, expiry).await?;
+    let channel = if is_phone { "phone" } else { "email" };
+    send(&txn, state, id, (channel, address), &token, expiry).await?;
     txn.commit().await?;
     Ok(())
 }
@@ -447,17 +445,14 @@ pub async fn manage(
                     "sso/register",
                 );
                 pero_utils::encode::append_query_param(&mut link, "token", &token);
+                let (channel, to) = contact(&row)?;
                 super::notify::enqueue_enrollment(
                     &txn,
                     id,
                     &super::notify::Notification {
-                        channel: if row.phone.is_some() {
-                            "phone"
-                        } else {
-                            "email"
-                        },
+                        channel,
                         kind: "enrollment_rejected",
-                        to: contact(&row)?,
+                        to,
                         code: None,
                         link: &link,
                     },
@@ -700,7 +695,7 @@ pub async fn start_social(
     subject: &str,
 ) -> Result<(), Error> {
     // Reuse the same delivery and admission path; persist upstream identity before delivery.
-    limit_email(state, address).await?;
+    limit_contact(state, address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     eligible(&policy(&txn, app).await?, address, false, false)?;
@@ -709,12 +704,12 @@ pub async fn start_social(
     let token = pero_utils::crypto::generate_token();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(24);
     execute(&txn,"INSERT INTO enrollments(id,app_id,email,token_hash,expires_at,provider_id,subject) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![id.into(),app.into(),address.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into(),provider.into(),subject.into()]).await?;
-    send(&txn, state, id, address, &token, expiry).await?;
+    send(&txn, state, id, ("email", address), &token, expiry).await?;
     txn.commit().await?;
     Ok(())
 }
 
-async fn limit_email(state: &AppState, address: &str) -> Result<(), Error> {
+async fn limit_contact(state: &AppState, address: &str) -> Result<(), Error> {
     let hash = pero_utils::crypto::hmac_sha256(
         address.as_bytes(),
         state
