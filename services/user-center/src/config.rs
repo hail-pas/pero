@@ -369,6 +369,23 @@ impl Validatable for NotificationConfig {
     }
 }
 
+/// Database event retention in days. Zero retains the corresponding history indefinitely.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RetentionConfig {
+    pub login_event_days: u16,
+    pub audit_event_days: u16,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            login_event_days: 90,
+            audit_event_days: 365,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -393,6 +410,8 @@ pub struct AppConfig {
     pub http_config: HttpClientConfig,
     #[serde(default)]
     pub notification: NotificationConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
 }
 
 impl ParseConfigurable for AppConfig {

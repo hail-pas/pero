@@ -73,6 +73,7 @@ async fn main() -> ValidationResult {
         db.clone(),
         app_config.server.cleanup_interval_secs,
         app_config.sso.session_idle_ttl_seconds,
+        app_config.retention,
     );
 
     let graceful_timeout = Duration::from_secs(app_config.server.graceful_shutdown_timeout_secs);

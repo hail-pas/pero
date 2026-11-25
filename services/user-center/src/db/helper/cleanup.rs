@@ -11,14 +11,21 @@ const BATCH_SIZE: u64 = 500;
 const MAX_BATCHES: usize = 20;
 
 async fn execute_batches(db: &DatabaseConnection, sql: &str) -> Result<u64, sea_orm::DbErr> {
-    let now = OffsetDateTime::now_utc();
+    execute_batches_at(db, sql, OffsetDateTime::now_utc()).await
+}
+
+async fn execute_batches_at(
+    db: &DatabaseConnection,
+    sql: &str,
+    cutoff: OffsetDateTime,
+) -> Result<u64, sea_orm::DbErr> {
     let mut total = 0;
     for _ in 0..MAX_BATCHES {
         let deleted = db
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 sql,
-                [now.into()],
+                [cutoff.into()],
             ))
             .await?
             .rows_affected();
@@ -36,12 +43,13 @@ async fn delete_before(
     table: &str,
     condition: &str,
     order_column: &str,
+    cutoff: OffsetDateTime,
 ) -> Result<u64, sea_orm::DbErr> {
     // Identifiers and conditions are static literals supplied by the helpers below.
     let sql = format!(
         "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {condition} ORDER BY {order_column} LIMIT {BATCH_SIZE} FOR UPDATE SKIP LOCKED)"
     );
-    execute_batches(db, &sql).await
+    execute_batches_at(db, &sql, cutoff).await
 }
 
 async fn delete_expired(
@@ -49,7 +57,7 @@ async fn delete_expired(
     table: &str,
     condition: &str,
 ) -> Result<u64, sea_orm::DbErr> {
-    delete_before(db, table, condition, "expires_at").await
+    delete_before(db, table, condition, "expires_at", OffsetDateTime::now_utc()).await
 }
 
 macro_rules! clean_expired {
@@ -156,6 +164,55 @@ pub async fn clean_expired_password_reset_tokens(
     .await
 }
 
+/// Remove abandoned MFA setups and expired recovery credentials under the same
+/// user lock used by factor enrollment and verification.
+pub async fn clean_expired_mfa(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    let deleted = execute_batches(
+        db,
+        "DELETE FROM user_mfa f WHERE NOT f.enabled AND f.setup_expires_at <= $1
+         AND f.user_id IN (SELECT u.id FROM user_mfa m JOIN users u ON u.id=m.user_id
+             WHERE NOT m.enabled AND m.setup_expires_at <= $1 ORDER BY m.setup_expires_at
+             LIMIT 500 FOR UPDATE OF u SKIP LOCKED)",
+    )
+    .await?;
+    let updated = execute_batches(
+        db,
+        "UPDATE user_mfa f SET
+            pending_secret_enc=CASE WHEN f.setup_expires_at <= $1 THEN NULL ELSE f.pending_secret_enc END,
+            setup_session=CASE WHEN f.setup_expires_at <= $1 THEN NULL ELSE f.setup_session END,
+            assisted_recovery_hash=CASE WHEN f.assisted_recovery_expires_at <= $1 THEN NULL ELSE f.assisted_recovery_hash END,
+            assisted_recovery_expires_at=CASE WHEN f.assisted_recovery_expires_at <= $1 THEN NULL ELSE f.assisted_recovery_expires_at END
+         WHERE f.enabled AND ((f.pending_secret_enc IS NOT NULL AND f.setup_expires_at <= $1)
+             OR f.assisted_recovery_expires_at <= $1)
+         AND f.user_id IN (SELECT u.id FROM user_mfa m JOIN users u ON u.id=m.user_id
+             WHERE m.enabled AND ((m.pending_secret_enc IS NOT NULL AND m.setup_expires_at <= $1)
+                 OR m.assisted_recovery_expires_at <= $1)
+             LIMIT 500 FOR UPDATE OF u SKIP LOCKED)",
+    )
+    .await?;
+    Ok(deleted + updated)
+}
+
+async fn clean_event_history(
+    db: &DatabaseConnection,
+    table: &str,
+    days: u16,
+) -> Result<u64, sea_orm::DbErr> {
+    if days == 0 {
+        return Ok(0);
+    }
+    let cutoff = OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
+    delete_before(db, table, "created_at < $1", "created_at", cutoff).await
+}
+
+pub async fn clean_login_events(db: &DatabaseConnection, days: u16) -> Result<u64, sea_orm::DbErr> {
+    clean_event_history(db, "login_events", days).await
+}
+
+pub async fn clean_audit_events(db: &DatabaseConnection, days: u16) -> Result<u64, sea_orm::DbErr> {
+    clean_event_history(db, "audit_events", days).await
+}
+
 /// Keep credential expiry independent of gateway availability; retain only 30 days of terminal metadata.
 pub async fn clean_notifications(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
     let mut total = 0;
@@ -214,6 +271,7 @@ async fn clean_delivery_history(
         table,
         "created_at < $1 - interval '30 days'",
         "created_at",
+        OffsetDateTime::now_utc(),
     )
     .await?;
     Ok(expired + deleted)

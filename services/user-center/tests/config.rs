@@ -20,6 +20,8 @@ fn shipped_configuration_remains_readable() {
         std::path::Path::new("../../frontend/dist")
     );
     assert_eq!(config.sso.session_touch_interval_seconds, 0);
+    assert_eq!(config.retention.login_event_days, 90);
+    assert_eq!(config.retention.audit_event_days, 365);
     assert_eq!(config.sso.base_url, "http://localhost:8080");
     assert!(!config.sso.cookie_secure);
     let bootstrap: toml::Table =

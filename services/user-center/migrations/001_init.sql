@@ -790,6 +790,9 @@ ON sso_sessions (token_hash);
 CREATE INDEX ix_sso_sessions_user_id
 ON sso_sessions (user_id);
 
+CREATE INDEX ix_sso_sessions_identity_id
+ON sso_sessions (identity_id) WHERE identity_id IS NOT NULL;
+
 CREATE INDEX ix_sso_sessions_user_active
 ON sso_sessions (user_id, revoked_at);
 
@@ -1270,8 +1273,8 @@ CREATE TABLE login_events (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX ix_login_events_user_id
-ON login_events (user_id);
+CREATE INDEX ix_login_events_identity_id
+ON login_events (identity_id) WHERE identity_id IS NOT NULL;
 
 CREATE INDEX ix_login_events_created_at
 ON login_events (created_at);
@@ -1478,6 +1481,10 @@ ALTER TABLE authorization_requests ADD COLUMN diagnostic_session_id uuid
     REFERENCES sso_sessions(id) ON DELETE CASCADE;
 CREATE INDEX ix_authorization_requests_diagnostic_session ON authorization_requests(diagnostic_session_id) WHERE diagnostic_session_id IS NOT NULL;
 CREATE INDEX ix_user_mfa_setup_session ON user_mfa(setup_session) WHERE setup_session IS NOT NULL;
+CREATE INDEX ix_user_mfa_setup_expiry ON user_mfa(setup_expires_at)
+    WHERE NOT enabled OR pending_secret_enc IS NOT NULL;
+CREATE INDEX ix_user_mfa_recovery_expiry ON user_mfa(assisted_recovery_expires_at)
+    WHERE assisted_recovery_expires_at IS NOT NULL;
 
 CREATE TABLE app_sessions (
     id uuid PRIMARY KEY DEFAULT uuidv7(),

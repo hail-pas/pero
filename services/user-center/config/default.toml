@@ -25,6 +25,11 @@ format = "json"
 dir = "./logs"
 rotation = "daily"
 
+[retention]
+# Database event retention in days. Set either value to 0 for indefinite retention.
+login_event_days = 90
+audit_event_days = 365
+
 [database]
 url = ""
 encrypt_key = ""

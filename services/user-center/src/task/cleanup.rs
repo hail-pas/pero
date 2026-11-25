@@ -3,6 +3,7 @@ use std::time::Duration;
 use sea_orm::DatabaseConnection;
 use tokio::task::JoinHandle;
 
+use crate::config::RetentionConfig;
 use crate::db::helper::cleanup::{
     clean_expired_authorization_codes, clean_expired_authorization_requests,
     clean_expired_contact_change_requests, clean_expired_password_reset_tokens,
@@ -13,6 +14,7 @@ pub fn start_cleanup_task(
     db: DatabaseConnection,
     interval_secs: u64,
     idle_ttl_seconds: u64,
+    retention: RetentionConfig,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
@@ -26,7 +28,7 @@ pub fn start_cleanup_task(
         loop {
             interval.tick().await;
             tracing::debug!("running periodic cleanup");
-            match run_cleanup(&db, idle_ttl_seconds).await {
+            match run_cleanup(&db, idle_ttl_seconds, retention).await {
                 Ok(()) => tracing::debug!("periodic cleanup completed"),
                 Err(e) => tracing::error!(error = %e, "periodic cleanup error"),
             }
@@ -34,7 +36,11 @@ pub fn start_cleanup_task(
     })
 }
 
-async fn run_cleanup(db: &DatabaseConnection, idle_ttl_seconds: u64) -> Result<(), sea_orm::DbErr> {
+async fn run_cleanup(
+    db: &DatabaseConnection,
+    idle_ttl_seconds: u64,
+    retention: RetentionConfig,
+) -> Result<(), sea_orm::DbErr> {
     macro_rules! do_clean {
         ($label:expr, $func:path $(, $arg:expr)*) => {
             match $func(db $(, $arg)*).await {
@@ -83,6 +89,17 @@ async fn run_cleanup(db: &DatabaseConnection, idle_ttl_seconds: u64) -> Result<(
     do_clean!(
         "account_sync_deliveries",
         crate::db::helper::cleanup::clean_account_sync_deliveries
+    );
+    do_clean!("user_mfa", crate::db::helper::cleanup::clean_expired_mfa);
+    do_clean!(
+        "login_events",
+        crate::db::helper::cleanup::clean_login_events,
+        retention.login_event_days
+    );
+    do_clean!(
+        "audit_events",
+        crate::db::helper::cleanup::clean_audit_events,
+        retention.audit_event_days
     );
     Ok(())
 }

@@ -490,6 +490,62 @@ async fn expired_delivery_jobs_leave_the_queue_without_losing_recent_history() {
     f.cleanup().await;
 }
 
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn expired_security_data_is_cleaned_without_removing_current_records() {
+    use user_center::db::helper::cleanup::{
+        clean_audit_events, clean_expired_mfa, clean_login_events,
+    };
+
+    let f = Fixture::new().await;
+    let db = &f.state.db;
+    f.sql(
+        "INSERT INTO login_events(user_id,event_type,created_at)
+         VALUES($1,'login_success',now()-interval '91 days'),
+               ($1,'login_success',now()-interval '89 days')",
+        vec![f.user.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO audit_events(actor_id,actor_username,action,target,created_at)
+         VALUES($1,'workflow_admin','test','test',now()-interval '366 days'),
+               ($1,'workflow_admin','test','test',now()-interval '364 days')",
+        vec![f.admin.into()],
+    )
+    .await;
+    assert_eq!(clean_login_events(db, 0).await.unwrap(), 0);
+    assert_eq!(clean_audit_events(db, 0).await.unwrap(), 0);
+    assert_eq!(clean_login_events(db, 90).await.unwrap(), 1);
+    assert_eq!(clean_audit_events(db, 365).await.unwrap(), 1);
+    assert_eq!(clean_login_events(db, 90).await.unwrap(), 0);
+    assert_eq!(clean_audit_events(db, 365).await.unwrap(), 0);
+
+    f.sql(
+        "INSERT INTO user_mfa(user_id,secret_enc,pending_secret_enc,enabled,setup_expires_at,
+                              assisted_recovery_hash,assisted_recovery_expires_at)
+         VALUES($1,decode('01','hex'),decode('02','hex'),false,now()-interval '1 minute',NULL,NULL),
+               ($2,decode('03','hex'),decode('04','hex'),true,now()-interval '1 minute',
+                'expired',now()-interval '1 minute')",
+        vec![f.user.into(), f.admin.into()],
+    )
+    .await;
+    assert_eq!(clean_expired_mfa(db).await.unwrap(), 2);
+    assert_eq!(clean_expired_mfa(db).await.unwrap(), 0);
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS total,count(*) FILTER (WHERE enabled AND secret_enc=decode('03','hex')
+             AND pending_secret_enc IS NULL AND assisted_recovery_hash IS NULL
+             AND assisted_recovery_expires_at IS NULL) AS valid FROM user_mfa".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.try_get::<i64>("", "total").unwrap(), 1);
+    assert_eq!(row.try_get::<i64>("", "valid").unwrap(), 1);
+    f.cleanup().await;
+}
+
 struct Fixture {
     _permit: tokio::sync::SemaphorePermit<'static>,
     database: database::DatabaseFixture,
