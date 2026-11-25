@@ -40,9 +40,10 @@ impl SocialProof {
         let age = OffsetDateTime::now_utc().unix_timestamp() - self.proved_at;
         (0..600).contains(&age)
     }
-    fn matches(&self, row: &Enrollment) -> bool {
+    pub(crate) fn matches(&self, row: &Enrollment) -> bool {
         self.is_fresh()
             && self.invitation_hash.is_none()
+            && self.app == row.app_id
             && row.provider_id == Some(self.provider)
             && row.subject.as_deref() == Some(self.subject.as_str())
     }
@@ -361,6 +362,7 @@ pub async fn start_from_request(
     } else {
         email(address)?
     };
+    require_personal_app(&state.db, app).await?;
     start_contact(state, &address, app, None, is_phone, request).await
 }
 
@@ -710,6 +712,17 @@ pub async fn finalize(
     .await?;
     cancel_notifications(&txn, row.id).await?;
     audit(&txn, &user, "enrollment_completed", row.id).await?;
+    let tenant_id = if row.client_id.is_some() {
+        use crate::db::entity::tenants;
+        tenants::Entity::find()
+            .filter(tenants::Column::OwnerUserId.eq(user.id))
+            .filter(tenants::Column::Kind.eq("personal"))
+            .one(&txn)
+            .await?
+            .map(|tenant| tenant.id)
+    } else {
+        None
+    };
     txn.commit().await?;
     Ok(EnrollmentResult {
         user_id: user.id,
@@ -717,7 +730,7 @@ pub async fn finalize(
         app_id: row.app_id,
         client_id: row.client_id,
         auth_request_id: row.auth_request_id,
-        tenant_id: None,
+        tenant_id,
     })
 }
 
@@ -733,6 +746,7 @@ pub async fn start_social(
     limit_contact(state, address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
+    require_personal_app(&txn, app).await?;
     eligible(&policy(&txn, app).await?, address, false, false)?;
     allow_social(&txn, provider).await?;
     let id = Uuid::now_v7();
@@ -742,6 +756,15 @@ pub async fn start_social(
     bind_origin(&txn, id, app, request).await?;
     send(&txn, state, id, ("email", address), &token, expiry).await?;
     txn.commit().await?;
+    Ok(())
+}
+
+async fn require_personal_app<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<(), Error> {
+    if let Some(app) = app
+        && apps::Entity::find_by_id(app).one(db).await?.is_some_and(|app| app.tenant_mode == "organization")
+    {
+        return Err(Error::Invalid("enrollment_unavailable"));
+    }
     Ok(())
 }
 

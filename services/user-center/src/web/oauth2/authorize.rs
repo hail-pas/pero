@@ -219,6 +219,11 @@ async fn authorize_request(
     }
 
     let app = oauth.validate_app(&client).await?;
+    if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create")
+        && client.login_uri.is_none()
+    {
+        return Err(params.redirect_err("invalid_request", Some("Registration requires a client login URI")));
+    }
 
     // prompt=none: 不允许展示任何 UI，所有缺失条件直接以 error code 返回
     // 通过所有检查后立即生成 code 并 302，不走 resolve_authorization 避免重复查询
@@ -581,7 +586,7 @@ pub(crate) async fn resolve_authorization(
             &cookies
                 .encode_auth_request(&cookie_value)
                 .unwrap_or_default(),
-            state.config.oauth2.auth_code_ttl_seconds,
+            state.config.oauth2.authorization_request_ttl_seconds,
         );
         Ok((
             jar.clone().add(cookie),
@@ -621,7 +626,7 @@ pub(crate) async fn pending_redirect(
     let cookie = cookies.build_short_lived_cookie(
         &nonce_name,
         &nonce,
-        state.config.oauth2.auth_code_ttl_seconds,
+        state.config.oauth2.authorization_request_ttl_seconds,
     );
     Ok((
         jar.clone().add(cookie),
@@ -647,6 +652,20 @@ fn report_into_oauth_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_prompt_is_exclusive() {
+        let mut query = AuthorizeQuery {
+            response_type: "code".into(),
+            scope: "openid".into(),
+            redirect_uri: "https://client.example.test/callback".into(),
+            prompt: Some("create".into()),
+            ..Default::default()
+        };
+        assert!(query.validate_redirectable_oauth().is_ok());
+        query.prompt = Some("create login".into());
+        assert!(query.validate_redirectable_oauth().is_err());
+    }
 
     #[test]
     fn malformed_s256_challenges_are_rejected_before_authorization() {

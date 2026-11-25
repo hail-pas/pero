@@ -2011,6 +2011,7 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
                 client_type: current.r#type,
                 secret: String::new(),
                 name: current.name,
+                login_uri: current.login_uri,
                 redirect_uris: current.redirect_uris,
                 post_logout_redirect_uris: current.post_logout_redirect_uris,
                 scopes: vec!["openid".into(), "email".into()],

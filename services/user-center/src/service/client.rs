@@ -92,12 +92,12 @@ impl ClientInput {
         if self.redirect_uris.is_empty() {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
-        if let Some(uri) = &self.login_uri {
-            if !uri.starts_with("https://")
+        if self.login_uri.as_deref().is_some_and(|uri| {
+            !uri.starts_with("https://")
+                || uri.contains('?')
                 || pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_err()
-            {
-                return Err(ManagementError::Invalid("invalid_redirect_uri"));
-            }
+        }) {
+            return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
         let allow_private_scheme = self.client_type == OauthClientType::Public;
         for uris in [&self.redirect_uris, &self.post_logout_redirect_uris] {

@@ -55,9 +55,19 @@ pub async fn login(
                     pero_utils::crypto::sha256_hex(token)
                 )
             })
+            .or_else(|| {
+                super::register::flow_token(&jar).map(|token| {
+                    format!("/sso/register?enrollment_flow={}", pero_utils::crypto::sha256_hex(token))
+                })
+            })
             .unwrap_or(query.redirect)
     } else {
         query.redirect
+    };
+    let auth_request_id = if redirect.starts_with("/sso/register?") {
+        None
+    } else {
+        auth_request_id
     };
     let prepared = match svc
         .prepare_login_state(&provider, &provider_code, auth_request_id, &redirect, None)
@@ -74,7 +84,7 @@ pub async fn login(
     let social_state_cookie = cookies.build_short_lived_cookie(
         &cookies.social_state_cookie_name(),
         &prepared.state_hash,
-        state.config.oauth2.auth_code_ttl_seconds,
+        state.config.oauth2.authorization_request_ttl_seconds,
     );
 
     (
@@ -280,7 +290,7 @@ pub async fn callback(
             let cookie = cookies.build_short_lived_cookie(
                 SOCIAL_LINK_COOKIE,
                 &nonce,
-                state.config.oauth2.auth_code_ttl_seconds,
+                state.config.oauth2.authorization_request_ttl_seconds,
             );
             (jar.add(cookie), Redirect::to("/sso/social/link")).into_response()
         }

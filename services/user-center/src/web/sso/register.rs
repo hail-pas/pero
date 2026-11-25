@@ -67,7 +67,17 @@ async fn active_request(
     state: &AppState,
     jar: &CookieJar,
 ) -> Result<Option<authorization_requests::Model>, crate::service::ManagementError> {
-    let Some(id) = super::utility::resolve_auth_request_id(state, jar).await? else {
+    let cookies = state.cookie_factory();
+    let Some(cookie) = jar.get(&cookies.nonce_cookie_name()) else {
+        return Ok(None);
+    };
+    let Ok(key) = crate::cache::key::pending_req.key(cookie.value()) else {
+        return Ok(None);
+    };
+    let Some(value) = state.cache.get::<crate::cache::key::PendingReqValue>(key).await? else {
+        return Ok(None);
+    };
+    let Ok(id) = Uuid::parse_str(&value.auth_request_id) else {
         return Ok(None);
     };
     Ok(authorization_requests::Entity::find_by_id(id)
@@ -130,14 +140,27 @@ pub async fn get(
         return (jar.add(cookie), Redirect::to("/sso/register")).into_response();
     }
     if let Some(token) = query.token {
-        if let Err(e) = enrollment::progress_by_token(&state.db, &token).await {
-            return util::management_response(Err(e));
+        let row = match enrollment::progress_by_token(&state.db, &token).await {
+            Ok(row) => row,
+            Err(e) => return util::management_response(Err(e)),
+        };
+        let proof_cookie = jar.get(SOCIAL_COOKIE).cloned().filter(|_| {
+            social_proof(&state, &jar).is_some_and(|proof| proof.matches(&row))
+        });
+        let request = match active_request(&state, &jar).await {
+            Ok(request) => request,
+            Err(e) => return util::management_response(Err(e)),
+        };
+        let cookies = state.cookie_factory();
+        let mut jar = clear_flow(jar).add(flow_cookie(&state, token));
+        if request.as_ref().is_some_and(|r| Some(r.id) != row.auth_request_id) {
+            jar = jar.add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+                .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
         }
-        return (
-            clear_flow(jar).add(flow_cookie(&state, token)),
-            Redirect::to("/sso/register"),
-        )
-            .into_response();
+        if let Some(cookie) = proof_cookie {
+            jar = jar.add(cookie);
+        }
+        return (jar, Redirect::to("/sso/register")).into_response();
     }
     if tenant_token(&jar).is_some() {
         return render_invitation(&state, jar).await;
@@ -149,7 +172,7 @@ pub async fn get(
     let app = request.as_ref().map(|r| r.app_id).or(query.app);
     let jar = if let (Some(request), Some(token)) = (&request, flow_token(&jar)) {
         match enrollment::progress_by_token(&state.db, token).await {
-            Ok(row) if row.app_id != Some(request.app_id) => clear_flow(jar),
+            Ok(row) if row.auth_request_id != Some(request.id) => clear_flow(jar),
             _ => jar,
         }
     } else {
@@ -535,6 +558,21 @@ pub async fn social(
         return util::management_response(Err(e));
     }
     let invitation_hash = tenant_token(&jar).map(pero_utils::crypto::sha256_hex);
+    let flow_hash = flow_token(&jar).map(pero_utils::crypto::sha256_hex);
+    if (redirect.starts_with("/sso/register?invitation_flow=") && invitation_hash.is_none())
+        || (redirect.starts_with("/sso/register?enrollment_flow=") && flow_hash.is_none())
+        || flow_hash.as_ref().is_some_and(|hash| redirect != format!("/sso/register?enrollment_flow={hash}"))
+    {
+        return util::management_response(Err(crate::service::ManagementError::Invalid("enrollment_unavailable")));
+    }
+    let app = if let Some(token) = flow_token(&jar) {
+        match enrollment::lookup(&state.db, token).await {
+            Ok(row) => row.app_id,
+            Err(e) => return util::management_response(Err(e)),
+        }
+    } else {
+        app
+    };
     if let Some(hash) = invitation_hash.as_deref() {
         if redirect != format!("/sso/register?invitation_flow={hash}") {
             return util::management_response(Err(crate::service::ManagementError::Invalid(
@@ -576,17 +614,6 @@ pub async fn social(
     if tenant_token(&jar).is_some() {
         return (jar, Redirect::to("/sso/register")).into_response();
     }
-    let jar = if let Some(token) = flow_token(&jar) {
-        match enrollment::lookup(&state.db, token).await {
-            Ok(_) => jar,
-            Err(crate::service::ManagementError::Invalid(_)) => {
-                jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
-            }
-            Err(e) => return util::management_response(Err(e)),
-        }
-    } else {
-        jar
-    };
     if let Some(token) = flow_token(&jar) {
         let result = async {
             let txn = state.db.begin().await?;

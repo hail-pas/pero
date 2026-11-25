@@ -42,7 +42,7 @@ impl SocialLoginService<'_> {
         };
         let key = social_link
             .key_with_ttl(
-                Duration::from_secs(self.oauth2_config.auth_code_ttl_seconds),
+                Duration::from_secs(self.oauth2_config.authorization_request_ttl_seconds),
                 &nonce,
             )
             .map_err(|e| SocialLoginError::Internal(e.to_string()))?;

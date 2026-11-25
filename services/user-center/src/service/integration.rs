@@ -113,7 +113,7 @@ pub async fn start(
             max_age: None,
             login_hint: None,
             expires_at: time::OffsetDateTime::now_utc()
-                + time::Duration::seconds(state.config.oauth2.auth_code_ttl_seconds as i64),
+                + time::Duration::seconds(state.config.oauth2.authorization_request_ttl_seconds as i64),
         },
     )
     .await?;

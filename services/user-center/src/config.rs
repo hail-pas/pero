@@ -139,6 +139,7 @@ impl Validatable for OidcConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct OAuth2Config {
     pub upstream_jwks_cache_ttl_seconds: u64,
+    pub authorization_request_ttl_seconds: u64,
     pub auth_code_ttl_seconds: u64,
 }
 
@@ -146,7 +147,8 @@ impl Default for OAuth2Config {
     fn default() -> Self {
         Self {
             upstream_jwks_cache_ttl_seconds: 0,
-            auth_code_ttl_seconds: 600,
+            authorization_request_ttl_seconds: 600,
+            auth_code_ttl_seconds: 120,
         }
     }
 }
@@ -157,6 +159,11 @@ impl Validatable for OAuth2Config {
             self.upstream_jwks_cache_ttl_seconds,
             300,
             "oauth2.upstream_jwks_cache_ttl_seconds",
+        )?;
+        pero_validate_core::min(
+            self.authorization_request_ttl_seconds,
+            1,
+            "oauth2.authorization_request_ttl_seconds",
         )?;
         pero_validate_core::min(
             self.auth_code_ttl_seconds,

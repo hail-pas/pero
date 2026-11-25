@@ -167,7 +167,9 @@ pub async fn finish_login(
     let target_path = target.split('?').next().unwrap_or("");
     let management_pending = session.mfa_required
         && session.mfa_verified_at.is_none()
-        && (target_path == "/dashboard" || target_path.starts_with("/dashboard/"));
+        && (target_path == "/sso/register"
+            || target_path == "/dashboard"
+            || target_path.starts_with("/dashboard/"));
     if (session.recovery_pending || management_pending)
         && !matches!(
             target.split('?').next(),
@@ -218,7 +220,8 @@ pub async fn finish_enrollment(
             Ok((token, _)) => jar.add(state.cookie_factory().build_session_cookie(&token)),
             Err(error) => {
                 tracing::error!(%error, "Registration committed but session creation failed");
-                return (jar, Redirect::to("/sso/login")).into_response();
+                let cookies = state.cookie_factory();
+                return (jar.add(cookies.clear_cookie(cookies.session_cookie_name())), Redirect::to("/sso/login")).into_response();
             }
         }
     } else {
@@ -227,7 +230,18 @@ pub async fn finish_enrollment(
     if request.is_some_and(|r| {
         Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id
     }) {
-        return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
+        let pending = request.expect("matched pending request");
+        let resume = match (pending.tenant_id, result.tenant_id) {
+            (None, Some(tenant)) => match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant).await {
+                Ok(row) => row.is_some(),
+                Err(error) => return crate::web::util::dependency_error(error),
+            },
+            (Some(a), Some(b)) => a == b,
+            (_, None) => true,
+        };
+        if resume {
+            return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
+        }
     }
     let cookies = state.cookie_factory();
     let jar = jar

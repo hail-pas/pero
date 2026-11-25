@@ -115,7 +115,7 @@ impl<'a> SocialLoginService<'a> {
         };
 
         if let Ok(key) = social_state.key_with_ttl(
-            Duration::from_secs(self.oauth2_config.auth_code_ttl_seconds),
+            Duration::from_secs(self.oauth2_config.authorization_request_ttl_seconds),
             &state_hash,
         ) {
             self.cache
