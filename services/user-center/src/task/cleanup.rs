@@ -50,11 +50,11 @@ async fn run_cleanup(db: &DatabaseConnection, idle_ttl_seconds: u64) -> Result<(
         };
     }
 
+    do_clean!("authorization_codes", clean_expired_authorization_codes);
     do_clean!(
         "authorization_requests",
         clean_expired_authorization_requests
     );
-    do_clean!("authorization_codes", clean_expired_authorization_codes);
     do_clean!("sso_sessions", clean_expired_sso_sessions, idle_ttl_seconds);
     do_clean!("refresh_tokens", clean_expired_refresh_tokens);
     do_clean!(
@@ -72,17 +72,17 @@ async fn run_cleanup(db: &DatabaseConnection, idle_ttl_seconds: u64) -> Result<(
         "client_secrets",
         crate::db::helper::cleanup::clean_expired_client_secrets
     );
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    db.execute_raw(Statement::from_string(
-        DbBackend::Postgres,
-        "DELETE FROM backchannel_logout_deliveries WHERE created_at<now()-interval '30 days'"
-            .to_owned(),
-    ))
-    .await?;
-    db.execute_raw(Statement::from_string(
-        DbBackend::Postgres,
-        "DELETE FROM account_sync_deliveries WHERE created_at<now()-interval '30 days'".to_owned(),
-    ))
-    .await?;
+    do_clean!(
+        "tenant_invitations",
+        crate::db::helper::cleanup::clean_tenant_invitations
+    );
+    do_clean!(
+        "backchannel_logout_deliveries",
+        crate::db::helper::cleanup::clean_backchannel_deliveries
+    );
+    do_clean!(
+        "account_sync_deliveries",
+        crate::db::helper::cleanup::clean_account_sync_deliveries
+    );
     Ok(())
 }

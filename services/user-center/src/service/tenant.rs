@@ -98,7 +98,7 @@ pub async fn invitations<C: ConnectionTrait>(
 ) -> Result<Vec<Invitation>> {
     governance(db, user, id).await?;
     Ok(Invitation::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT id,email::text,role,status,expires_at FROM tenant_invitations WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100",[id.into()])).all(db).await?)
+        "SELECT id,email::text,role,CASE WHEN status='pending' AND expires_at<=now() THEN 'expired' ELSE status END AS status,expires_at FROM tenant_invitations WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100",[id.into()])).all(db).await?)
 }
 async fn governance<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<String> {
     let t = get(db, user, id).await?;

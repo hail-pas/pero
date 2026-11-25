@@ -182,6 +182,8 @@ CREATE TABLE tenant_invitations (
 );
 CREATE UNIQUE INDEX ux_tenant_invitation_pending ON tenant_invitations(tenant_id,email) WHERE status='pending';
 CREATE INDEX ix_tenant_invitation_expiry ON tenant_invitations(expires_at) WHERE status='pending';
+CREATE INDEX ix_tenant_invitations_tenant_created ON tenant_invitations(tenant_id,created_at DESC);
+CREATE INDEX ix_tenant_invitations_cleanup ON tenant_invitations(expires_at);
 CREATE INDEX ix_tenants_created_by ON tenants(created_by) WHERE kind='organization';
 COMMENT ON COLUMN tenants.status IS 'deleted is an irreversible tombstone; existing references remain valid for history.';
 COMMENT ON COLUMN tenants.max_members IS 'Maximum active memberships, including owners. Lowering the value never evicts existing members.';
@@ -702,8 +704,8 @@ ON authorization_requests (app_id);
 CREATE INDEX ix_authorization_requests_expires_at
 ON authorization_requests (expires_at);
 
-CREATE INDEX ix_authorization_requests_cleanup
-ON authorization_requests (expires_at, completed_at);
+CREATE INDEX ix_authorization_requests_tenant
+ON authorization_requests (tenant_id) WHERE tenant_id IS NOT NULL;
 
 COMMENT ON TABLE authorization_requests IS
 'SSO /oauth2/authorize 请求上下文表。用于在用户登录、第三方跳转、授权码生成之间保留原始请求信息。';
@@ -749,9 +751,6 @@ COMMENT ON COLUMN authorization_requests.expires_at IS
 
 COMMENT ON COLUMN authorization_requests.completed_at IS
 '请求完成时间。生成授权码后可写入。';
-
-COMMENT ON INDEX ix_authorization_requests_cleanup IS
-'用于定时清理过期且未完成的授权请求。';
 
 -- ============================================================
 -- 8. sso_sessions
@@ -888,6 +887,10 @@ ON authorization_codes (session_id);
 
 CREATE INDEX ix_authorization_codes_expires_at
 ON authorization_codes (expires_at);
+CREATE INDEX ix_authorization_codes_request
+ON authorization_codes (authorization_request_id) WHERE authorization_request_id IS NOT NULL;
+CREATE INDEX ix_authorization_codes_tenant_user
+ON authorization_codes (tenant_id,user_id) WHERE tenant_id IS NOT NULL;
 
 COMMENT ON TABLE authorization_codes IS
 'SSO 授权码表。授权码只保存哈希，不保存明文。授权码短有效期且只能消费一次。';
@@ -988,6 +991,10 @@ ON refresh_tokens (session_id);
 
 CREATE INDEX ix_refresh_tokens_expires_at
 ON refresh_tokens (expires_at);
+CREATE INDEX ix_refresh_tokens_replaced_by
+ON refresh_tokens (replaced_by_id) WHERE replaced_by_id IS NOT NULL;
+CREATE INDEX ix_refresh_tokens_tenant_user
+ON refresh_tokens (tenant_id,user_id) WHERE tenant_id IS NOT NULL;
 
 COMMENT ON TABLE refresh_tokens IS
 'Refresh Token 表。Access Token / ID Token 建议使用 JWT 不落库；Refresh Token 需要落库以支持撤销、轮换、单应用退出和全端退出。';
@@ -1444,11 +1451,15 @@ CREATE TABLE enrollments (
     CONSTRAINT ck_enrollment_contact CHECK (num_nonnulls(email,phone)=1)
 );
 CREATE INDEX ix_enrollments_pending ON enrollments(status,created_at);
+CREATE INDEX ix_enrollments_expiry ON enrollments(expires_at);
+CREATE INDEX ix_enrollments_auth_request ON enrollments(auth_request_id) WHERE auth_request_id IS NOT NULL;
 CREATE UNIQUE INDEX ux_enrollments_invitation ON enrollments(email,COALESCE(app_id,'00000000-0000-0000-0000-000000000000')) WHERE invitation AND status IN ('pending_verification','pending_approval','ready');
 
 ALTER TABLE notification_outbox ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE CASCADE;
 ALTER TABLE notification_deliveries ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE SET NULL;
 ALTER TABLE notification_outbox ADD CHECK (num_nonnulls(user_id,enrollment_id)=1);
+CREATE INDEX ix_notification_outbox_enrollment ON notification_outbox(enrollment_id) WHERE enrollment_id IS NOT NULL;
+CREATE INDEX ix_notification_deliveries_enrollment ON notification_deliveries(enrollment_id) WHERE enrollment_id IS NOT NULL;
 -- Application admission is governed by registration_policies; remove the competing switch.
 
 CREATE INDEX ix_enrollments_email_created ON enrollments(email,created_at DESC,id DESC);
@@ -1465,6 +1476,8 @@ ALTER TABLE user_mfa ADD CONSTRAINT assisted_recovery_pair CHECK (
 -- Internal diagnostic identity is server-owned and bound to the initiating session.
 ALTER TABLE authorization_requests ADD COLUMN diagnostic_session_id uuid
     REFERENCES sso_sessions(id) ON DELETE CASCADE;
+CREATE INDEX ix_authorization_requests_diagnostic_session ON authorization_requests(diagnostic_session_id) WHERE diagnostic_session_id IS NOT NULL;
+CREATE INDEX ix_user_mfa_setup_session ON user_mfa(setup_session) WHERE setup_session IS NOT NULL;
 
 CREATE TABLE app_sessions (
     id uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1506,6 +1519,8 @@ ALTER TABLE refresh_tokens
     ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE SET NULL;
 CREATE INDEX ix_refresh_tokens_client_session ON refresh_tokens(client_session_id);
 CREATE INDEX ix_authorization_codes_device ON authorization_codes(user_id,app_id,session_id);
+CREATE INDEX ix_authorization_codes_admission_session ON authorization_codes(admission_session_id) WHERE admission_session_id IS NOT NULL;
+CREATE INDEX ix_authorization_codes_client_session ON authorization_codes(client_session_id) WHERE client_session_id IS NOT NULL;
 CREATE TABLE backchannel_logout_deliveries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id uuid NOT NULL,
@@ -1523,6 +1538,7 @@ CREATE TABLE backchannel_logout_deliveries (
     UNIQUE(session_id, client_id)
 );
 CREATE INDEX ON backchannel_logout_deliveries(next_attempt_at) WHERE delivered_at IS NULL;
+CREATE INDEX ix_backchannel_logout_deliveries_created ON backchannel_logout_deliveries(created_at);
 -- A terminal RP session transition queues exactly one logout notification.
 CREATE FUNCTION enqueue_backchannel_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -1665,6 +1681,8 @@ COMMENT ON COLUMN account_sync_deliveries.tenant_id IS
     'Tenant identity of a membership change, including deleted tenants; intentionally not a foreign key.';
 CREATE INDEX ON account_sync_deliveries(next_attempt_at)
 WHERE delivered_at IS NULL AND cancelled_at IS NULL;
+CREATE INDEX ix_account_sync_deliveries_created ON account_sync_deliveries(created_at);
+CREATE INDEX ix_account_sync_deliveries_client ON account_sync_deliveries(client_id);
 ALTER TABLE oauth_clients ADD CONSTRAINT ck_account_sync_confidential
 CHECK (account_sync_uri IS NULL OR type='confidential');
 

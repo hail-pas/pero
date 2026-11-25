@@ -10,22 +10,14 @@ use sea_orm::QueryOrder;
 const BATCH_SIZE: u64 = 500;
 const MAX_BATCHES: usize = 20;
 
-async fn delete_expired(
-    db: &DatabaseConnection,
-    table: &str,
-    condition: &str,
-) -> Result<u64, sea_orm::DbErr> {
-    // Identifiers/conditions are static literals supplied only by the helpers below.
-    let sql = format!(
-        "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {condition} ORDER BY expires_at LIMIT {BATCH_SIZE})"
-    );
+async fn execute_batches(db: &DatabaseConnection, sql: &str) -> Result<u64, sea_orm::DbErr> {
     let now = OffsetDateTime::now_utc();
     let mut total = 0;
     for _ in 0..MAX_BATCHES {
         let deleted = db
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                &sql,
+                sql,
                 [now.into()],
             ))
             .await?
@@ -37,6 +29,27 @@ async fn delete_expired(
         tokio::task::yield_now().await;
     }
     Ok(total)
+}
+
+async fn delete_before(
+    db: &DatabaseConnection,
+    table: &str,
+    condition: &str,
+    order_column: &str,
+) -> Result<u64, sea_orm::DbErr> {
+    // Identifiers and conditions are static literals supplied by the helpers below.
+    let sql = format!(
+        "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {condition} ORDER BY {order_column} LIMIT {BATCH_SIZE} FOR UPDATE SKIP LOCKED)"
+    );
+    execute_batches(db, &sql).await
+}
+
+async fn delete_expired(
+    db: &DatabaseConnection,
+    table: &str,
+    condition: &str,
+) -> Result<u64, sea_orm::DbErr> {
+    delete_before(db, table, condition, "expires_at").await
 }
 
 macro_rules! clean_expired {
@@ -160,10 +173,49 @@ pub async fn clean_notifications(db: &DatabaseConnection) -> Result<u64, sea_orm
     Ok(total)
 }
 
-pub async fn clean_enrollments(db: &sea_orm::DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    db.execute_unprepared("UPDATE enrollments SET status='expired' WHERE expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')").await?;
-    Ok(db.execute_raw(Statement::from_string(DbBackend::Postgres,"DELETE FROM enrollments WHERE id IN (SELECT id FROM enrollments WHERE expires_at<now()-interval '30 days' ORDER BY expires_at LIMIT 500)".to_owned())).await?.rows_affected())
+pub async fn clean_enrollments(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    let expired = execute_batches(
+        db,
+        "UPDATE enrollments SET status='expired' WHERE id IN (SELECT id FROM enrollments WHERE expires_at<=$1 AND status IN ('pending_verification','pending_approval','ready') ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)",
+    )
+    .await?;
+    let deleted = delete_expired(db, "enrollments", "expires_at < $1 - interval '30 days'").await?;
+    Ok(expired + deleted)
+}
+
+pub async fn clean_tenant_invitations(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    let expired = execute_batches(
+        db,
+        "UPDATE tenant_invitations SET status='expired' WHERE id IN (SELECT id FROM tenant_invitations WHERE expires_at<=$1 AND status='pending' ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)",
+    )
+    .await?;
+    let deleted = delete_expired(
+        db,
+        "tenant_invitations",
+        "expires_at < $1 - interval '30 days'",
+    )
+    .await?;
+    Ok(expired + deleted)
+}
+
+pub async fn clean_backchannel_deliveries(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    delete_before(
+        db,
+        "backchannel_logout_deliveries",
+        "created_at < $1 - interval '30 days'",
+        "created_at",
+    )
+    .await
+}
+
+pub async fn clean_account_sync_deliveries(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    delete_before(
+        db,
+        "account_sync_deliveries",
+        "created_at < $1 - interval '30 days'",
+        "created_at",
+    )
+    .await
 }
 
 pub async fn clean_expired_client_secrets(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
