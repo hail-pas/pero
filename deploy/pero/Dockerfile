@@ -7,8 +7,8 @@ COPY frontend/ ./
 RUN pnpm build
 
 # Use Docker's bundled BuildKit frontend; no extra frontend image download is needed.
-# Official multi-platform manifest digests prevent stale mirror tags selecting old images.
-FROM docker.io/library/rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS builder
+# Pin official image digests; the builder targets Linux amd64.
+FROM docker.io/library/rust:1.100.0-bookworm@sha256:30a9c647e188457aac6e0bd3f9d73ae725dc3f36e57a2808ba3dde653c7c6db8 AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential cmake pkg-config python3 perl \
     && rm -rf /var/lib/apt/lists/*

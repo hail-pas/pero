@@ -9,7 +9,7 @@ Rust 身份认证中心，基于 Axum / SeaORM / Redis，提供 OAuth2 / OpenID 
 
 ## 依赖
 
-- Rust 1.95+ (edition 2024)
+- Rust 1.100+ (edition 2024)
 - PostgreSQL 18+（schema 使用 `uuidv7()`）
 - Redis
 - Node.js 24.11+ / pnpm 11.25（构建 React 前端）；部署初始化需 Python 3
