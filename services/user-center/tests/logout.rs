@@ -99,7 +99,8 @@ async fn logout_confirmation_expiry_and_form_contract() {
             )
             .await;
         }
-        let jwt = token(user, Some(sid), mode == "expired_get");
+        let rp_sid = database::client_session(&db, user, app, client, sid, None).await;
+        let jwt = token(user, Some(rp_sid), mode == "expired_get");
         if mode == "expired_get" {
             assert!(
                 pero_utils::oauth::jwt::verify_id_token(

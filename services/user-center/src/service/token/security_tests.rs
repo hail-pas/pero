@@ -1530,7 +1530,7 @@ async fn session_touch_and_bounded_cleanup() {
         .unwrap(),
         1101
     );
-    let delivery = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres, "SELECT count(*) AS total,count(*) FILTER (WHERE session_id=$1) AS live FROM backchannel_logout_deliveries", [live.into()])).await.unwrap().unwrap();
+    let delivery = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres, "SELECT count(*) AS total,count(*) FILTER (WHERE session_id IN (SELECT c.id FROM client_sessions c JOIN app_sessions a ON a.id=c.app_session_id WHERE a.sso_session_id=$1)) AS live FROM backchannel_logout_deliveries", [live.into()])).await.unwrap().unwrap();
     assert_eq!(delivery.try_get::<i64>("", "total").unwrap(), 2);
     assert_eq!(delivery.try_get::<i64>("", "live").unwrap(), 0);
     let row = db.query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT count(*) FILTER (WHERE revoked_at IS NOT NULL) AS revoked, count(*) FILTER (WHERE revoked_at IS NULL) AS live FROM refresh_tokens")).await.unwrap().unwrap();
@@ -4033,7 +4033,8 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .await
         .unwrap();
     let raw = pero_utils::crypto::generate_token();
-    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,ARRAY['openid']::text[],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&raw).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into()]).await;
+    let rp_sid = database::client_session(db, member, fixture.app, fixture.client, session, Some(organization.id)).await;
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,scopes,expires_at,client_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,ARRAY['openid']::text[],now()+interval '1 day',$9)",vec![pero_utils::crypto::sha256_hex(&raw).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into(),rp_sid.into()]).await;
     let client = oauth_clients::Entity::find_by_id(fixture.client)
         .one(db)
         .await
@@ -4261,5 +4262,62 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
             .count(),
         3
     );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn application_device_limit_and_takeover() {
+    let fixture = SecurityFixture::new().await;
+    let db = &fixture.state.db;
+    let service = TokenService::new(&fixture.state);
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(db).await.unwrap().unwrap();
+    let (_, first) = fixture.state.session_service()
+        .create(fixture.user, None, None, None, None).await.unwrap();
+    let (_, second) = fixture.state.session_service()
+        .create(fixture.user, None, None, None, None).await.unwrap();
+    let tenant = crate::service::tenant_context::resolve(db, fixture.user, fixture.app, None)
+        .await.unwrap().unwrap();
+    let request = async |sso: Uuid, confirmed: bool| {
+        let raw = pero_utils::crypto::generate_token();
+        let snapshot = crate::service::app_session::latest(db, fixture.user, fixture.app, sso)
+            .await.unwrap();
+        sql(db, "INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,redirect_uri,scopes,expires_at,admission_session_id,admission_revoked,takeover_allowed) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes',$9,$10,$11)",
+            vec![pero_utils::crypto::sha256_hex(&raw).into(), fixture.user.into(), fixture.app.into(),
+                fixture.client.into(), sso.into(), tenant.tenant_id.into(), tenant.tenant_version.into(),
+                tenant.tenant_member_version.into(), snapshot.as_ref().map(|d| d.id).into(),
+                snapshot.is_some_and(|d| d.revoked).into(), confirmed.into()]).await;
+        TokenRequest {
+            grant_type: "authorization_code".into(),
+            code: Some(raw),
+            redirect_uri: Some("https://client.example.test/callback".into()),
+            ..refresh_form(fixture.client, "")
+        }
+    };
+    let a = request(first, false).await;
+    let b = request(second, false).await;
+    let (a, b) = tokio::join!(
+        service.handle_authorization_code(&a, &client),
+        service.handle_authorization_code(&b, &client),
+    );
+    let (winner, loser, original) = match (a, b) {
+        (TokenEndpointResult::Success(tokens), TokenEndpointResult::Error { code: OAuth2ErrorCode::InvalidGrant, .. }) => (first, second, tokens),
+        (TokenEndpointResult::Error { code: OAuth2ErrorCode::InvalidGrant, .. }, TokenEndpointResult::Success(tokens)) => (second, first, tokens),
+        _ => panic!("one device must win the unconfirmed admission"),
+    };
+    let stale = request(winner, false).await;
+    let takeover = request(loser, true).await;
+    let TokenEndpointResult::Success(replacement) = service.handle_authorization_code(&takeover, &client).await else {
+        panic!("confirmed takeover failed");
+    };
+    assert!(crate::service::token_status::active_access(&fixture.state, &original.access_token).await.unwrap().is_none());
+    assert!(crate::service::token_status::active_access(&fixture.state, &replacement.access_token).await.unwrap().is_some());
+    assert!(matches!(service.handle_authorization_code(&stale, &client).await,
+        TokenEndpointResult::Error { code: OAuth2ErrorCode::InvalidGrant, .. }));
+    assert!(matches!(service.handle_refresh_token(
+        &refresh_form(fixture.client, original.refresh_token.as_deref().unwrap()), &client).await,
+        TokenEndpointResult::Error { code: OAuth2ErrorCode::InvalidGrant, .. }));
+    assert!(crate::service::app_session::needs_confirmation(db, fixture.user, fixture.app, winner, 60).await.unwrap());
     fixture.cleanup().await;
 }

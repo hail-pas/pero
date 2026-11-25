@@ -490,6 +490,15 @@ impl Fixture {
         .unwrap()
         .expect("user has one personal workspace");
         let tenant_id = tenant.tenant_id.to_string();
+        let client_id = Uuid::parse_str(client_identifier).unwrap();
+        let client = user_center::db::entity::oauth_clients::Entity::find_by_id(client_id)
+            .one(&self.state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let rp_sid = database::client_session(
+            &self.state.db, self.user, client.app_id, client_id, sid, Some(tenant.tenant_id),
+        ).await;
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
             "../../../tests/fixtures/rsa-private.pem"
         ))
@@ -507,7 +516,7 @@ impl Fixture {
                 tenant_version: Some(tenant.tenant_version),
                 tenant_member_version: Some(tenant.tenant_member_version),
                 ttl_seconds: 3600,
-                session_id: Some(&sid.to_string()),
+                session_id: Some(&rp_sid.to_string()),
                 kid: Some("workflow-key"),
             },
             &key,
