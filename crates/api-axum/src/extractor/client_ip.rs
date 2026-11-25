@@ -23,7 +23,19 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
 
 impl ClientIp {
     pub fn for_rate_limit(&self) -> String {
-        self.0.map(|ip| ip.to_string()).unwrap_or_default()
+        // Rate-limit IPv6 by subnet, not by individual privacy addresses.
+        // Normalize mapped IPv4 addresses to the same budget as native IPv4.
+        match self.0.map(|network| network.ip()) {
+            Some(std::net::IpAddr::V4(ip)) => format!("{ip}/32"),
+            Some(std::net::IpAddr::V6(ip)) => {
+                if let Some(ip) = ip.to_ipv4_mapped() {
+                    return format!("{ip}/32");
+                }
+                let subnet = ipnetwork::Ipv6Network::new(ip, 64).expect("valid IPv6 prefix");
+                format!("{}/64", subnet.network())
+            }
+            None => "unknown".to_owned(),
+        }
     }
 }
 
@@ -39,6 +51,16 @@ impl std::fmt::Display for ClientIp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limit_sources_are_normalized() {
+        let source = |ip: &str| ClientIp(Some(ip.parse().unwrap())).for_rate_limit();
+        assert_eq!(source("192.0.2.1/32"), source("::ffff:192.0.2.1/128"));
+        assert_eq!(source("2001:db8:1::1/128"), "2001:db8:1::/64");
+        assert_eq!(source("2001:db8:1::2/128"), source("2001:db8:1::1/128"));
+        assert_ne!(source("2001:db8:2::1/128"), source("2001:db8:1::1/128"));
+        assert_eq!(ClientIp(None).for_rate_limit(), "unknown");
+    }
 
     #[tokio::test]
     async fn forwarded_headers_require_the_trusted_proxy_layer() {

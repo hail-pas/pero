@@ -45,7 +45,7 @@ pub async fn post_forgot(
         return render_forgot(jar, &state, "identifier is required".to_owned(), false);
     }
 
-    let Ok(source_key) = rl_reset_ip.key(&source.to_string()) else {
+    let Ok(source_key) = rl_reset_ip.key(&source.for_rate_limit()) else {
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     match enforce_rate_limit(&state.cache, &source_key, 20).await {

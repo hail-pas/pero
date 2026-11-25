@@ -41,9 +41,7 @@ impl<'a> LoginService<'a> {
         ip: Option<IpNetwork>,
         account: &str,
     ) -> Result<(), PasswordLoginError> {
-        let ip_str = ip.map(|v| v.to_string()).unwrap_or_else(|| {
-            pero_config::blocks::ServerConfig::unknown_ip_placeholder().to_owned()
-        });
+        let ip_str = pero_api_axum::extractor::ClientIp(ip).for_rate_limit();
 
         let key = rl_login_ip
             .key(&ip_str)

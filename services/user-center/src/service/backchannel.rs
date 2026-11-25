@@ -66,13 +66,12 @@ pub(super) async fn send_signed(
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(key.kid);
     header.typ = Some(token_type.into());
-    let token = jsonwebtoken::encode(
-        &header,
-        claims,
-        &jsonwebtoken::EncodingKey::from_rsa_pem(key.private_key.as_bytes())
-            .map_err(|_| "signing_unavailable")?,
-    )
-    .map_err(|_| "signing_unavailable")?;
+    let signing_key = state
+        .signing_keys
+        .get(&key.private_key)
+        .map_err(|_| "signing_unavailable")?;
+    let token = jsonwebtoken::encode(&header, claims, signing_key.as_ref())
+        .map_err(|_| "signing_unavailable")?;
     txn.commit().await.map_err(|_| "database_error")?;
     state
         .http_client

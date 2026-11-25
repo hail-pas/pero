@@ -116,9 +116,6 @@ impl JwksCache {
             data.failed = true;
         }
         let response = http.get(uri).send().await?;
-        if !response.status.is_success() {
-            return Err(unavailable());
-        }
         let keys: JwkSet = response.json()?;
         let keys = keys
             .keys

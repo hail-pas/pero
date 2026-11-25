@@ -186,9 +186,7 @@ pub async fn post(
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &input.csrf_token, &state) {
         return e;
     }
-    let ip = ip
-        .map(|i| i.to_string())
-        .unwrap_or_else(|| "unknown".into());
+    let ip = pero_api_axum::extractor::ClientIp(ip).for_rate_limit();
     let key = match pero_cache_redis::rate_limit_key::rl_register_ip.key(&ip) {
         Ok(k) => k,
         Err(e) => return util::dependency_error(e),

@@ -15,7 +15,7 @@ pub async fn check_login_start_rate_limit(
     use pero_cache_redis::{RateLimitError, enforce_rate_limit, rate_limit_key::rl_login_start_ip};
 
     let key = rl_login_start_ip
-        .key(&source.to_string())
+        .key(&source.for_rate_limit())
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     match enforce_rate_limit(&state.cache, &key, 60).await {
         Ok(()) => Ok(()),
