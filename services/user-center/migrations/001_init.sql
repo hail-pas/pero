@@ -1497,7 +1497,7 @@ ALTER TABLE authorization_codes
     ADD COLUMN takeover_allowed boolean NOT NULL DEFAULT false,
     ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE SET NULL;
 ALTER TABLE refresh_tokens
-    ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE CASCADE;
+    ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE SET NULL;
 CREATE INDEX ix_refresh_tokens_client_session ON refresh_tokens(client_session_id);
 CREATE INDEX ix_authorization_codes_device ON authorization_codes(user_id,app_id,session_id);
 CREATE TABLE backchannel_logout_deliveries (

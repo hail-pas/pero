@@ -67,7 +67,7 @@ pub async fn needs_confirmation<C: ConnectionTrait>(
         "SELECT a.max_sessions>0 AND
             (SELECT count(*) FROM app_sessions d JOIN sso_sessions s ON s.id=d.sso_session_id
              WHERE d.app_id=a.id AND d.user_id=$1 AND d.revoked_at IS NULL
-               AND s.revoked_at IS NULL AND s.expires_at>now() AND s.last_seen_at>$3)>=a.max_sessions AS full
+               AND s.revoked_at IS NULL AND NOT s.recovery_pending AND s.expires_at>now() AND s.last_seen_at>$3)>=a.max_sessions AS full
          FROM apps a WHERE a.id=$2",
         [user.into(), app.into(), cutoff(idle_ttl).into()],
     )).await?;
@@ -116,7 +116,7 @@ pub async fn admit<C: ConnectionTrait>(
                 "UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason='session_limit_exceeded'
                  WHERE id IN (SELECT d.id FROM app_sessions d JOIN sso_sessions s ON s.id=d.sso_session_id
                   WHERE d.app_id=$1 AND d.user_id=$2 AND d.id<>$3 AND d.revoked_at IS NULL
-                    AND s.revoked_at IS NULL AND s.expires_at>now() AND s.last_seen_at>$4
+                    AND s.revoked_at IS NULL AND NOT s.recovery_pending AND s.expires_at>now() AND s.last_seen_at>$4
                   ORDER BY d.created_at DESC,d.id DESC OFFSET $5)",
                 [access.app.id.into(),access.user.id.into(),id.into(),cutoff(idle_ttl).into(),
                  (i64::from(access.app.max_sessions)-1).into()])).await?;

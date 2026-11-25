@@ -188,6 +188,13 @@ pub async fn revoke_account_app_sessions(
         }
         _ => return Err(ManagementError::Invalid("invalid_request")),
     }
+    let target = device.or(app).ok_or(ManagementError::Invalid("invalid_request"))?;
+    super::security::execute(
+        &txn,
+        "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status)
+         SELECT id,username,$2,$3,'success',200 FROM users WHERE id=$1",
+        vec![session.user_id.into(), if device.is_some() { "app_device_revoked" } else { "app_other_devices_revoked" }.into(), target.to_string().into()],
+    ).await?;
     txn.commit().await?;
     Ok(())
 }

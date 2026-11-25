@@ -4319,5 +4319,35 @@ async fn application_device_limit_and_takeover() {
         &refresh_form(fixture.client, original.refresh_token.as_deref().unwrap()), &client).await,
         TokenEndpointResult::Error { code: OAuth2ErrorCode::InvalidGrant, .. }));
     assert!(crate::service::app_session::needs_confirmation(db, fixture.user, fixture.app, winner, 60).await.unwrap());
+    let count = || async {
+        db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "SELECT count(*) AS n FROM app_sessions WHERE user_id=$1 AND app_id=$2 AND revoked_at IS NULL",
+            [fixture.user.into(), fixture.app.into()])).await.unwrap().unwrap().try_get::<i64>("", "n").unwrap()
+    };
+    assert_eq!(count().await, 1);
+    // Relaxation never resurrects old credentials; confirmed re-entry gets a new sid.
+    sql(db, "UPDATE apps SET max_sessions=2 WHERE id=$1", vec![fixture.app.into()]).await;
+    let reentry = request(winner, true).await;
+    let TokenEndpointResult::Success(reentered) = service.handle_authorization_code(&reentry, &client).await else {
+        panic!("second device failed");
+    };
+    assert_eq!(count().await, 2);
+    assert!(crate::service::token_status::active_access(&fixture.state, &original.access_token).await.unwrap().is_none());
+    sql(db, "UPDATE apps SET max_sessions=0 WHERE id=$1", vec![fixture.app.into()]).await;
+    let (_, third) = fixture.state.session_service().create(fixture.user, None, None, None, None).await.unwrap();
+    let unlimited = request(third, false).await;
+    let TokenEndpointResult::Success(latest) = service.handle_authorization_code(&unlimited, &client).await else {
+        panic!("unlimited admission failed");
+    };
+    assert_eq!(count().await, 3);
+    let txn = db.begin().await.unwrap();
+    txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE apps SET max_sessions=1 WHERE id=$1", [fixture.app.into()])).await.unwrap();
+    crate::service::app_session::prune(&txn, fixture.app, 1, 60).await.unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(count().await, 1);
+    assert!(crate::service::token_status::active_access(&fixture.state, &replacement.access_token).await.unwrap().is_none());
+    assert!(crate::service::token_status::active_access(&fixture.state, &reentered.access_token).await.unwrap().is_none());
+    assert!(crate::service::token_status::active_access(&fixture.state, &latest.access_token).await.unwrap().is_some());
     fixture.cleanup().await;
 }
