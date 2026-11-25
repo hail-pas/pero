@@ -218,6 +218,22 @@ export function Security({
               <Typography variant="body2">
                 {t("最近活动")}：{date(session.last_seen_at)}
               </Typography>
+               {session.app_sessions?.map((app) => (
+                 <Stack key={app.id} direction="row" sx={{ mt: 1, gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                   <Typography variant="body2" sx={{ flex: 1 }}>
+                     {app.app_name} · {t("最大登录设备数")}：{app.max_sessions === 0 ? t("不限制") : app.max_sessions}
+                     {" · "}{date(app.created_at)}
+                   </Typography>
+                   <Button size="small" color="warning" onClick={() => ask(
+                     t("退出此应用设备"), "/account/sessions/revoke", { scope: "app", session_id: app.id },
+                     t("只结束此应用设备会话，保留其他应用和全局登录。"),
+                   )}>{t("退出此应用设备")}</Button>
+                   {session.current && <Button size="small" onClick={() => ask(
+                     t("退出此应用的其他设备"), "/account/sessions/revoke", { scope: "app_others", app_id: app.app_id },
+                     t("保留当前设备，只结束此应用的其他设备会话。"),
+                   )}>{t("退出此应用的其他设备")}</Button>}
+                 </Stack>
+               ))}
               <Typography variant="body2">
                 {t("到期时间")}：{date(session.expires_at)}
               </Typography>

@@ -993,5 +993,9 @@
   "不限制": "Unlimited",
   "需要确认应用登录。继续后可能退出此应用的其他设备，不影响其他应用。": "Confirm sign-in to this application. Continuing may sign out other devices from this app without affecting other apps.",
   "确认并继续登录": "Confirm and continue signing in",
-  "最大登录设备数必须为非负整数": "Maximum signed-in devices must be a nonnegative integer"
+  "最大登录设备数必须为非负整数": "Maximum signed-in devices must be a nonnegative integer",
+  "退出此应用设备": "Sign out this app on this device",
+  "只结束此应用设备会话，保留其他应用和全局登录。": "End this application device session only, keeping other apps and the global sign-in.",
+  "退出此应用的其他设备": "Sign out this app on other devices",
+  "保留当前设备，只结束此应用的其他设备会话。": "Keep this device and end only this application's other device sessions."
 }

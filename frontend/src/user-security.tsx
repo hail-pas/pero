@@ -121,6 +121,17 @@ export function UserSecurity({
                 {t("创建时间")} {date(s.created_at)} · {t("到期时间")}{" "}
                 {date(s.expires_at)}
               </Typography>
+               {s.app_sessions?.map((app) => (
+                 <Stack key={app.id} direction="row" sx={{ gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                   <Typography variant="body2" sx={{ flex: 1 }}>
+                     {app.app_name} · {t("最大登录设备数")}：{app.max_sessions === 0 ? t("不限制") : app.max_sessions}
+                     {" · "}{date(app.created_at)}
+                   </Typography>
+                   <Button size="small" color="warning" onClick={() => intervene(
+                     "revoke_app_session", t("退出此应用设备"), app.id,
+                   )}>{t("退出此应用设备")}</Button>
+                 </Stack>
+               ))}
               <Button
                 color="warning"
                 onClick={() => intervene("revoke_one", t("退出此会话"), s.id)}

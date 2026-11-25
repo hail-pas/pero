@@ -207,6 +207,7 @@ export interface ViewDataMap {
     user_agent: string | null;
     current: boolean;
     authentication_pending: boolean;
+    app_sessions: { id: string; app_id: string; sso_session_id: string; app_name: string; max_sessions: number; created_at: string }[];
     created_at: string;
     last_seen_at: string;
     expires_at: string;
