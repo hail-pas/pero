@@ -379,7 +379,16 @@ async fn start_contact(
     } else {
         eligible(&p, address, invited, exception)?;
     }
-    execute(&txn,"UPDATE enrollments SET status='expired' WHERE expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')",vec![]).await?;
+    // Only invitations compete for the partial unique index. Periodic cleanup
+    // handles all other expired enrollments outside this request transaction.
+    if invited {
+        execute(
+            &txn,
+            "UPDATE enrollments SET status='expired' WHERE invitation AND email=$1::citext AND app_id IS NOT DISTINCT FROM $2::uuid AND expires_at<=now() AND status IN ('pending_verification','pending_approval','ready')",
+            vec![address.into(), app.into()],
+        )
+        .await?;
+    }
     let token = pero_utils::crypto::generate_token();
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });

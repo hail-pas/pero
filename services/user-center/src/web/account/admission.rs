@@ -89,10 +89,15 @@ pub async fn app(
             crate::service::account_security::leave_app(&state, &account.session, id).await
         }
         "join" => {
-            if let Some(email) = account.user.email.as_deref() {
-                crate::service::enrollment::start(&state, email, Some(id), None).await
-            } else if let Some(phone) = account.user.phone.as_deref() {
+            let email = account.user.email.as_deref();
+            let phone = account.user.phone.as_deref();
+            let prefer_phone = email.is_none()
+                || (!state.config.notification.available("email")
+                    && state.config.notification.available("phone"));
+            if let Some(phone) = phone.filter(|_| prefer_phone) {
                 crate::service::enrollment::start_phone(&state, phone, Some(id)).await
+            } else if let Some(email) = email {
+                crate::service::enrollment::start(&state, email, Some(id), None).await
             } else {
                 Err(crate::service::ManagementError::Invalid("enrollment_contact_required"))
             }
