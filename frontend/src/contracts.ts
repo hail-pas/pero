@@ -66,6 +66,7 @@ export interface ClientSummary {
   identifier: string;
   name: string | null;
   type: string;
+  login_uri?: string | null;
   redirect_uris: string[];
   post_logout_redirect_uris: string[];
   backchannel_logout_uri: string | null;

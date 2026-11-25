@@ -283,7 +283,8 @@ export function ManagementDetail({
                         name: client.name,
                         client_type: lower(client.type),
                         secret: "",
-                        redirect_uris: client.redirect_uris?.join("\n"),
+                        login_uri: client.login_uri || "",
+                         redirect_uris: client.redirect_uris?.join("\n"),
                         post_logout_redirect_uris:
                           client.post_logout_redirect_uris?.join("\n"),
                         scopes: client.scopes?.join(","),

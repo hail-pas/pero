@@ -49,6 +49,8 @@ impl SocialProof {
 pub struct Enrollment {
     pub id: Uuid,
     pub app_id: Option<Uuid>,
+    pub client_id: Option<Uuid>,
+    pub auth_request_id: Option<Uuid>,
     pub email: Option<String>,
     pub phone: Option<String>,
     pub invitation: bool,
@@ -336,12 +338,23 @@ pub async fn start(
     invitation: Option<(&SsoSession, bool, &str)>,
 ) -> Result<(), Error> {
     let address = email(address)?;
-    start_contact(state, &address, app, invitation, false).await
+    start_contact(state, &address, app, invitation, false, None).await
 }
 
 pub async fn start_phone(state: &AppState, address: &str, app: Option<Uuid>) -> Result<(), Error> {
     let address = phone(address)?;
-    start_contact(state, &address, app, None, true).await
+    start_contact(state, &address, app, None, true, None).await
+}
+
+pub async fn start_from_request(
+    state: &AppState,
+    address: &str,
+    is_phone: bool,
+    app: Option<Uuid>,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
+) -> Result<(), Error> {
+    let address = if is_phone { phone(address)? } else { email(address)? };
+    start_contact(state, &address, app, None, is_phone, request).await
 }
 
 async fn start_contact(
@@ -350,6 +363,7 @@ async fn start_contact(
     app: Option<Uuid>,
     invitation: Option<(&SsoSession, bool, &str)>,
     is_phone: bool,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
 ) -> Result<(), Error> {
     limit_contact(state, address).await?;
     let txn = state.db.begin().await?;
@@ -393,6 +407,7 @@ async fn start_contact(
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });
     execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into()]).await?;
+    bind_origin(&txn, id, app, request).await?;
     let channel = if is_phone { "phone" } else { "email" };
     send(&txn, state, id, (channel, address), &token, expiry).await?;
     txn.commit().await?;
@@ -515,6 +530,15 @@ async fn cancel_notifications<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<()
     Ok(())
 }
 
+pub struct EnrollmentResult {
+    pub user_id: Uuid,
+    pub identity: Option<identities::Model>,
+    pub app_id: Option<Uuid>,
+    pub client_id: Option<Uuid>,
+    pub auth_request_id: Option<Uuid>,
+    pub tenant_id: Option<Uuid>,
+}
+
 pub async fn finalize(
     state: &AppState,
     token: &str,
@@ -522,7 +546,7 @@ pub async fn finalize(
     password: &str,
     session: Option<&SsoSession>,
     social_proof: Option<&SocialProof>,
-) -> Result<(), Error> {
+) -> Result<EnrollmentResult, Error> {
     let initial = lookup(&state.db, token).await?;
     let exists = users::Entity::find()
         .filter(if let Some(email) = &initial.email {
@@ -579,6 +603,7 @@ pub async fn finalize(
         })
         .one(&txn)
         .await?;
+    let mut identity = None;
     let user = if let Some(user) = existing {
         let session = session
             .filter(|s| s.user_id == user.id)
@@ -631,7 +656,7 @@ pub async fn finalize(
         }
         .insert(&txn)
         .await?;
-        if let Some(provider_id) = row.provider_id {
+        identity = Some(if let Some(provider_id) = row.provider_id {
             super::provider::require_enabled_social(&txn, provider_id).await?;
             if !social_proof.is_some_and(|proof| proof.matches(&row)) {
                 return Err(Error::Invalid("social_reauthentication_required"));
@@ -648,7 +673,7 @@ pub async fn finalize(
                 ..Default::default()
             }
             .insert(&txn)
-            .await?;
+            .await?
         } else {
             let provider = crate::db::helper::identity_provider::find_local_provider(&txn).await?;
             PasswordIdentityService::create_hashed(
@@ -659,8 +684,8 @@ pub async fn finalize(
                 hash.ok_or_else(invalid)?,
                 now,
             )
-            .await?;
-        }
+            .await?
+        });
         user
     };
     if let Some(app) = row.app_id {
@@ -702,7 +727,7 @@ pub async fn finalize(
     cancel_notifications(&txn, row.id).await?;
     audit(&txn, &user, "enrollment_completed", row.id).await?;
     txn.commit().await?;
-    Ok(())
+    Ok(EnrollmentResult { user_id: user.id, identity, app_id: row.app_id, client_id: row.client_id, auth_request_id: row.auth_request_id, tenant_id: None })
 }
 
 pub async fn start_social(
@@ -711,6 +736,7 @@ pub async fn start_social(
     app: Option<Uuid>,
     provider: Uuid,
     subject: &str,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
 ) -> Result<(), Error> {
     // Reuse the same delivery and admission path; persist upstream identity before delivery.
     limit_contact(state, address).await?;
@@ -722,8 +748,16 @@ pub async fn start_social(
     let token = pero_utils::crypto::generate_token();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(24);
     execute(&txn,"INSERT INTO enrollments(id,app_id,email,token_hash,expires_at,provider_id,subject) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![id.into(),app.into(),address.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into(),provider.into(),subject.into()]).await?;
+    bind_origin(&txn, id, app, request).await?;
     send(&txn, state, id, ("email", address), &token, expiry).await?;
     txn.commit().await?;
+    Ok(())
+}
+
+async fn bind_origin<C: ConnectionTrait>(db: &C, id: Uuid, app: Option<Uuid>, request: Option<&crate::db::entity::authorization_requests::Model>) -> Result<(), Error> {
+    if let Some(request) = request.filter(|r| Some(r.app_id) == app) {
+        execute(db, "UPDATE enrollments SET client_id=$2,auth_request_id=$3 WHERE id=$1", vec![id.into(), request.client_id.into(), request.id.into()]).await?;
+    }
     Ok(())
 }
 

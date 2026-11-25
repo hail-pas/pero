@@ -43,7 +43,7 @@ export function Enrollment({
 }) {
   const { error: failure, busy, run, clearError } = useAction();
   const [formBusy, setFormBusy] = useState(false);
-  const [channel, setChannel] = useState<"phone" | "email">("phone");
+  const [channel, setChannel] = useState<"phone" | "email">("email");
   return (
     <Container
       component="main"

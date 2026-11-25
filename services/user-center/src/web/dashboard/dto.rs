@@ -85,6 +85,8 @@ pub struct CreateClientForm {
     pub client_type: String,
     pub secret: String,
     pub name: String,
+    #[serde(default)]
+    pub login_uri: String,
     pub redirect_uris: String,
     pub post_logout_redirect_uris: String,
     pub scopes: String,
@@ -108,6 +110,8 @@ pub struct ClientSettingsForm {
     #[serde(default)]
     pub secret: String,
     pub name: String,
+    #[serde(default)]
+    pub login_uri: String,
     pub redirect_uris: String,
     pub post_logout_redirect_uris: String,
     pub scopes: String,
@@ -129,6 +133,7 @@ impl From<CreateClientForm> for ClientSettingsForm {
             client_type: form.client_type,
             secret: form.secret,
             name: form.name,
+            login_uri: form.login_uri,
             redirect_uris: form.redirect_uris,
             post_logout_redirect_uris: form.post_logout_redirect_uris,
             scopes: form.scopes,
@@ -339,6 +344,7 @@ pub struct ClientSummary {
     pub identifier: String,
     pub name: Option<String>,
     pub r#type: String,
+    pub login_uri: Option<String>,
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
     pub backchannel_logout_uri: Option<String>,
@@ -361,6 +367,7 @@ impl From<oauth_clients::Model> for ClientSummary {
             identifier: model.identifier,
             name: model.name,
             r#type: model.r#type.to_string(),
+            login_uri: model.login_uri,
             redirect_uris: model.redirect_uris,
             post_logout_redirect_uris: model.post_logout_redirect_uris,
             backchannel_logout_uri: model.backchannel_logout_uri,

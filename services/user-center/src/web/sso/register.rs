@@ -6,7 +6,8 @@ use axum::{
 };
 use axum_extra::extract::{CookieJar, cookie::Cookie};
 use enrollment::SocialProof;
-use sea_orm::TransactionTrait;
+use sea_orm::{EntityTrait, TransactionTrait};
+use crate::db::entity::authorization_requests;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 const SOCIAL_COOKIE: &str = "pero_enrollment_identity";
@@ -47,6 +48,16 @@ struct View {
     social: bool,
     sent: bool,
 }
+pub(crate) fn clear_flow(jar: CookieJar) -> CookieJar {
+    jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
+        .remove(Cookie::build(SOCIAL_COOKIE).path("/sso").build())
+}
+
+async fn active_request(state: &AppState, jar: &CookieJar) -> Result<Option<authorization_requests::Model>, crate::service::ManagementError> {
+    let Some(id) = super::utility::resolve_auth_request_id(state, jar).await? else { return Ok(None) };
+    Ok(authorization_requests::Entity::find_by_id(id).one(&state.db).await?.filter(|r| r.completed_at.is_none() && r.expires_at > time::OffsetDateTime::now_utc()))
+}
+
 pub fn flow_token(jar: &CookieJar) -> Option<&str> {
     jar.get(FLOW_COOKIE).map(|c| c.value())
 }
@@ -89,30 +100,17 @@ pub async fn get(
         )
             .into_response();
     }
-    let app = if query.app.is_some() {
-        query.app
-    } else {
-        match super::utility::resolve_auth_request_id(&state, &jar).await {
-            Ok(Some(id)) => {
-                use sea_orm::EntityTrait;
-                match crate::db::entity::authorization_requests::Entity::find_by_id(id)
-                    .one(&state.db)
-                    .await
-                {
-                    Ok(Some(r))
-                        if r.expires_at > time::OffsetDateTime::now_utc()
-                            && r.completed_at.is_none() =>
-                    {
-                        Some(r.app_id)
-                    }
-                    Ok(_) => None,
-                    Err(e) => return util::dependency_error(e),
-                }
-            }
-            Ok(None) => None,
-            Err(e) => return util::dependency_error(e),
-        }
+    let request = match active_request(&state, &jar).await {
+        Ok(request) => request,
+        Err(e) => return util::management_response(Err(e)),
     };
+    let app = request.as_ref().map(|r| r.app_id).or(query.app);
+    let jar = if let (Some(request), Some(token)) = (&request, flow_token(&jar)) {
+        match enrollment::progress_by_token(&state.db, token).await {
+            Ok(row) if row.app_id != Some(request.app_id) => clear_flow(jar),
+            _ => jar,
+        }
+    } else { jar };
     render(&state, jar, app, query.sent).await
 }
 async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool) -> Response {
@@ -181,11 +179,13 @@ pub async fn post(
     State(state): State<AppState>,
     jar: CookieJar,
     pero_api_axum::extractor::ClientIp(ip): pero_api_axum::extractor::ClientIp,
+    headers: axum::http::HeaderMap,
     Form(input): Form<Input>,
 ) -> Response {
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &input.csrf_token, &state) {
         return e;
     }
+    let source_ip = ip;
     let ip = pero_api_axum::extractor::ClientIp(ip).for_rate_limit();
     let key = match pero_cache_redis::rate_limit_key::rl_register_ip.key(&ip) {
         Ok(k) => k,
@@ -201,6 +201,10 @@ pub async fn post(
             _ => util::dependency_error(e),
         };
     }
+    let request = match active_request(&state, &jar).await {
+        Ok(request) => request,
+        Err(e) => return util::management_response(Err(e)),
+    };
     let result = match input.action.as_str() {
         "verify" => match flow_token(&jar) {
             Some(token) => enrollment::verify(&state, token).await,
@@ -216,7 +220,7 @@ pub async fn post(
             let proof = social_proof(&state, &jar);
             match flow_token(&jar) {
                 Some(token) => {
-                    enrollment::finalize(
+                    return match enrollment::finalize(
                         &state,
                         token,
                         &input.username,
@@ -224,7 +228,10 @@ pub async fn post(
                         session.as_ref(),
                         proof.as_ref(),
                     )
-                    .await
+                    .await {
+                        Ok(result) => crate::web::login_flow::finish_enrollment(&state, clear_flow(jar), result, request.as_ref(), source_ip, util::user_agent(&headers)).await,
+                        Err(e) => util::management_response(Err(e)),
+                    }
                 }
                 None => Err(crate::service::ManagementError::Invalid(
                     "enrollment_unavailable",
@@ -259,26 +266,19 @@ pub async fn post(
                     proof.app,
                     proof.provider,
                     &proof.subject,
+                    request.as_ref(),
                 )
                 .await
             } else {
-                if !input.phone.trim().is_empty() {
-                    enrollment::start_phone(&state, &input.phone, input.app).await
-                } else {
-                    enrollment::start(&state, &input.email, input.app, None).await
-                }
+                let app = request.as_ref().map(|r| r.app_id).or(input.app);
+                let is_phone = !input.phone.trim().is_empty();
+                enrollment::start_from_request(&state, if is_phone { &input.phone } else { &input.email }, is_phone, app, request.as_ref()).await
             }
         }
         _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
     };
     match result {
         Err(e) => util::management_response(Err(e)),
-        Ok(()) if input.action == "finalize" => (
-            jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
-                .remove(Cookie::build(SOCIAL_COOKIE).path("/sso").build()),
-            Redirect::to("/sso/login?registered=1"),
-        )
-            .into_response(),
         Ok(()) => render(&state, jar, input.app, input.action.is_empty()).await,
     }
 }
@@ -365,7 +365,8 @@ pub async fn social(
     if let Some(address) = info.email.as_deref() {
         let result = async {
             let address = enrollment::email(address)?;
-            enrollment::start_social(state, &address, app, provider, &info.sub).await
+            let request = active_request(state, &jar).await?;
+            enrollment::start_social(state, &address, app, provider, &info.sub, request.as_ref()).await
         }
         .await;
         return match result {

@@ -180,3 +180,58 @@ pub async fn finish_login(
     }
     (jar, Redirect::to(&target)).into_response()
 }
+
+/// Complete registration without issuing protocol credentials outside authorization.
+pub async fn finish_enrollment(
+    state: &AppState,
+    jar: CookieJar,
+    result: crate::service::enrollment::EnrollmentResult,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
+    ip: Option<IpNetwork>,
+    user_agent: Option<String>,
+) -> axum::response::Response {
+    use axum::response::{IntoResponse, Redirect};
+    use sea_orm::EntityTrait;
+    use crate::db::{entity::{apps, oauth_clients}, enums::{CommonStatus, IdentityKind}};
+    let jar = if let Some(identity) = result.identity {
+        let service = state.session_service();
+        let session = if identity.kind == IdentityKind::Password {
+            service.create_verified_password(&identity, ip, user_agent).await
+        } else {
+            service.create_social(result.user_id, identity.id, identity.provider_id, ip, None, user_agent).await
+        };
+        match session {
+            Ok((token, _)) => jar.add(state.cookie_factory().build_session_cookie(&token)),
+            Err(error) => {
+                tracing::error!(%error, "Registration committed but session creation failed");
+                return (jar, Redirect::to("/sso/login")).into_response();
+            }
+        }
+    } else {
+        jar
+    };
+    if request.is_some_and(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id) {
+        return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
+    }
+    let cookies = state.cookie_factory();
+    let jar = jar.add(cookies.clear_cookie(&cookies.nonce_cookie_name())).add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
+    if let Some(id) = result.client_id {
+        match oauth_clients::Entity::find_by_id(id).one(&state.db).await {
+            Ok(Some(client)) if client.status == CommonStatus::Active && Some(client.app_id) == result.app_id => {
+                match apps::Entity::find_by_id(client.app_id).one(&state.db).await {
+                    Ok(Some(app)) if app.status == CommonStatus::Active => {
+                        if let Some(uri) = client.login_uri.filter(|uri| uri.starts_with("https://") && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()) {
+                            return (jar, Redirect::to(&uri)).into_response();
+                        }
+                    }
+                    Err(error) => return crate::web::util::dependency_error(error),
+                    _ => {}
+                }
+            }
+            Err(error) => return crate::web::util::dependency_error(error),
+            _ => {}
+        }
+    }
+    let target = result.tenant_id.map(|id| format!("/account/tenants/{id}")).unwrap_or_else(|| "/account/applications".to_owned());
+    (jar, Redirect::to(&target)).into_response()
+}

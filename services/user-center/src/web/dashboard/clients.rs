@@ -18,6 +18,7 @@ fn client_input(form: ClientSettingsForm) -> Result<ClientInput, ManagementError
             .map_err(|_| ManagementError::Invalid("invalid_client_type"))?,
         secret: form.secret.trim().to_owned(),
         name: util::empty_or_opt(&form.name),
+        login_uri: util::empty_or_opt(&form.login_uri),
         redirect_uris: util::parse_lines(&form.redirect_uris),
         post_logout_redirect_uris: util::parse_lines(&form.post_logout_redirect_uris),
         scopes: util::parse_comma_list(&form.scopes),

@@ -262,6 +262,7 @@ COMMENT ON COLUMN apps.updated_at IS
 -- ============================================================
 
 CREATE TABLE oauth_clients (
+    login_uri text,
     backchannel_logout_uri text,
     account_sync_uri text,
     previous_secret_expires_at timestamptz,
@@ -1415,6 +1416,8 @@ INSERT INTO registration_policies(id,mode) VALUES ('00000000-0000-0000-0000-0000
 CREATE TABLE enrollments (
     id uuid PRIMARY KEY,
     app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
+    client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL,
+    auth_request_id uuid REFERENCES authorization_requests(id) ON DELETE SET NULL,
     email citext,
     phone citext,
     invitation boolean NOT NULL DEFAULT false,
