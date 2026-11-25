@@ -144,6 +144,12 @@ pub async fn update(
             [id.into()],
         ))
         .await?;
+        txn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE tenant_app_requests SET status='withdrawn',updated_at=now() WHERE app_id=$1 AND status='pending'",
+            [id.into()],
+        ))
+        .await?;
     }
     if changed {
         super::session::SessionService::revoke_app_grants(&txn, id, None, "tenant_mode_changed")

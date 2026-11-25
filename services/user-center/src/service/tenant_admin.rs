@@ -349,5 +349,5 @@ pub struct PendingAppRequest {
 }
 pub async fn pending_app_requests<C: ConnectionTrait>(db: &C) -> Result<Vec<PendingAppRequest>> {
     Ok(PendingAppRequest::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT r.tenant_id,t.name AS tenant_name,r.app_id,a.name AS app_name,u.username::text AS requested_by FROM tenant_app_requests r JOIN tenants t ON t.id=r.tenant_id JOIN apps a ON a.id=r.app_id JOIN users u ON u.id=r.requested_by WHERE r.status='pending' AND t.status='active' AND a.status='active' AND a.organization_access='restricted' ORDER BY r.updated_at ASC LIMIT 50",[])).all(db).await?)
+        "SELECT r.tenant_id,t.name AS tenant_name,r.app_id,a.name AS app_name,u.username::text AS requested_by FROM tenant_app_requests r JOIN tenants t ON t.id=r.tenant_id JOIN apps a ON a.id=r.app_id JOIN users u ON u.id=r.requested_by WHERE r.status='pending' AND t.status='active' AND a.status='active' AND NOT a.system AND a.tenant_mode IN ('organization','both') AND a.organization_access='restricted' ORDER BY r.updated_at ASC LIMIT 50",[])).all(db).await?)
 }

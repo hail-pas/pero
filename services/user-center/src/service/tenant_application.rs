@@ -14,6 +14,10 @@ pub async fn change(
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
+    // Match approval's app -> tenant lock order and serialize policy changes.
+    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id FROM apps WHERE id=$1 AND status='active' AND NOT system AND tenant_mode IN ('organization','both') AND organization_access='restricted' FOR SHARE",
+        [app.into()])).await?.ok_or(Error::Invalid("invalid_app"))?;
     txn.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id FROM tenants WHERE id=$1 AND kind='organization' AND status='active' FOR UPDATE",
@@ -27,9 +31,6 @@ pub async fn change(
     if !owner {
         return Err(Error::Invalid("forbidden"));
     }
-    txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT id FROM apps WHERE id=$1 AND status='active' AND NOT system AND tenant_mode IN ('organization','both') AND organization_access='restricted'",
-        [app.into()])).await?.ok_or(Error::Invalid("invalid_app"))?;
     if action == "request" {
         let granted = txn
             .query_one_raw(Statement::from_sql_and_values(
