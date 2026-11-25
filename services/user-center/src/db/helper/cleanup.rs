@@ -73,6 +73,21 @@ pub async fn clean_expired_sso_sessions(db: &DatabaseConnection) -> Result<u64, 
             txn.commit().await?;
             break;
         }
+        // Queue RP logout notifications through the existing revocation trigger
+        // before deleting the session and its RP mappings.
+        sso_sessions::Entity::update_many()
+            .col_expr(
+                sso_sessions::Column::RevokedAt,
+                sea_orm::sea_query::Expr::value(Some(now)),
+            )
+            .col_expr(
+                sso_sessions::Column::RevokeReason,
+                sea_orm::sea_query::Expr::value("session_expired"),
+            )
+            .filter(sso_sessions::Column::Id.is_in(ids.clone()))
+            .filter(sso_sessions::Column::RevokedAt.is_null())
+            .exec(&txn)
+            .await?;
         refresh_tokens::Entity::update_many()
             .col_expr(
                 refresh_tokens::Column::RevokedAt,

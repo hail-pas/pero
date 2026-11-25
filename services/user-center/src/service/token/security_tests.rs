@@ -1503,12 +1503,22 @@ async fn session_touch_and_bounded_cleanup() {
     // More than one batch, including grants which must be revoked before ON DELETE SET NULL.
     sql(&db, "INSERT INTO sso_sessions(token_hash,user_id,created_at,expires_at) SELECT 'expired-'||n,$1,now()-interval '2 days',now()-interval '1 day' FROM generate_series(1,1100) n", vec![fixture.user.into()]).await;
     sql(&db, "INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,expires_at) SELECT token_hash,user_id,$1,$2,id,now()+interval '1 day' FROM sso_sessions", vec![fixture.app.into(),fixture.client.into()]).await;
+    sql(
+        &db,
+        "UPDATE oauth_clients SET backchannel_logout_uri='https://client.example.test/logout' WHERE id=$1",
+        vec![fixture.client.into()],
+    )
+    .await;
+    sql(&db, "INSERT INTO oidc_rp_sessions(session_id,client_id,user_id) SELECT id,$1,user_id FROM sso_sessions WHERE token_hash='expired-1' OR id=$2", vec![fixture.client.into(),live.into()]).await;
     assert_eq!(
         crate::db::helper::cleanup::clean_expired_sso_sessions(&db)
             .await
             .unwrap(),
         1100
     );
+    let delivery = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres, "SELECT count(*) AS total,count(*) FILTER (WHERE session_id=$1) AS live FROM backchannel_logout_deliveries", [live.into()])).await.unwrap().unwrap();
+    assert_eq!(delivery.try_get::<i64>("", "total").unwrap(), 1);
+    assert_eq!(delivery.try_get::<i64>("", "live").unwrap(), 0);
     let row = db.query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT count(*) FILTER (WHERE revoked_at IS NOT NULL) AS revoked, count(*) FILTER (WHERE revoked_at IS NULL) AS live FROM refresh_tokens")).await.unwrap().unwrap();
     assert_eq!(row.try_get::<i64>("", "revoked").unwrap(), 1100);
     assert_eq!(row.try_get::<i64>("", "live").unwrap(), 1);
