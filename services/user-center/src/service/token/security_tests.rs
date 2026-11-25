@@ -3315,6 +3315,7 @@ async fn enrollment_social_completion_requires_browser_proof() {
         subject: "other-subject".into(),
         proved_at: time::OffsetDateTime::now_utc().unix_timestamp(),
         app: None,
+        invitation_hash: None,
     };
     assert!(
         enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
@@ -3335,6 +3336,13 @@ async fn enrollment_social_completion_requires_browser_proof() {
             .is_none()
     );
     proof.proved_at = time::OffsetDateTime::now_utc().unix_timestamp();
+    proof.invitation_hash = Some("another-flow".into());
+    assert!(
+        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
+            .await
+            .is_err()
+    );
+    proof.invitation_hash = None;
     enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
         .await
         .unwrap();

@@ -220,7 +220,7 @@ async fn authorize_request(
 
     let app = oauth.validate_app(&client).await?;
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create")
-        && client.login_uri.is_none()
+        && !client.login_uri.as_deref().is_some_and(crate::service::client::valid_login_uri)
     {
         return Err(params.redirect_err(
             "invalid_request",

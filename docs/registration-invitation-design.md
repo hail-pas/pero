@@ -10,7 +10,7 @@
 
 配置 OAuth Client 的 `login_uri` 为应用自己的 HTTPS 登录入口，不包含查询参数或 fragment，例如 `https://app.example.com/login`。它不同于 `redirect_uri`（OAuth 回调）。应用登录入口应支持可选的 `tenant_id`；如收到 `enrollment_status=cancelled`，显示退出注册状态，不自动反复拉起注册。正常入口生成新的 state、nonce、PKCE verifier/challenge，然后跳转 Pero 授权端点。
 
-同一浏览器内且短期授权请求仍有效时，注册事务成功后建立 SSO Session，按原请求恢复 OAuth Authorization；个人注册绑定新用户个人空间。超过授权请求有效期或跨设备时，不重放原请求，返回已登记 login URI 并由应用启动新授权。组织邀请绑定来源客户端及组织，接受成功后返回 login URI 并传递目标 tenant_id；无应用来源时进入账户门户。原生应用可通过受控 HTTPS App Link 实现登录入口。应用始终独立验证 token 和租户；入口参数不是凭证。取消时有效原请求返回 `access_denied` 与原 state，否则返回登录入口或账户门户。登录失败可重新认证，不重复创建账户。
+应用注册发起阶段必须持有已验证的 OAuth 请求；若首次提交联系方式前授权已失效，须从应用重新发起，不能降级成平台注册。同一浏览器内且短期授权请求仍有效时，注册事务成功后建立 SSO Session，按原请求恢复 OAuth Authorization；个人注册绑定新用户个人空间。超过授权请求有效期或跨设备时，不重放原请求，返回已登记 login URI 并由应用启动新授权。组织邀请绑定来源客户端及组织，接受成功后返回 login URI 并传递目标 tenant_id；无应用来源时进入账户门户。原生应用可通过受控 HTTPS App Link 实现登录入口。应用始终独立验证 token 和租户；入口参数不是凭证。取消时有效原请求返回 `access_denied` 与原 state，否则返回登录入口或账户门户。登录失败可重新认证，不重复创建账户。
 
 ## 生命周期及数据
 

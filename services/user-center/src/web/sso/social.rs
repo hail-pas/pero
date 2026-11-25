@@ -301,24 +301,16 @@ pub async fn callback(
             info,
             auth_request_id,
         } => {
-            let app = if let Some(id) = auth_request_id {
-                use sea_orm::EntityTrait;
-                match crate::db::entity::authorization_requests::Entity::find_by_id(id)
-                    .one(&state.db)
-                    .await
-                {
-                    Ok(Some(r))
-                        if r.expires_at > time::OffsetDateTime::now_utc()
-                            && r.completed_at.is_none() =>
-                    {
-                        Some(r.app_id)
-                    }
-                    Err(e) => return crate::web::util::dependency_error(e),
-                    _ => None,
-                }
-            } else {
-                None
+            let request = match super::register::active_request(&state, &jar).await {
+                Ok(request) => request,
+                Err(e) => return crate::web::util::management_response(Err(e)),
             };
+            let has_flow = super::register::flow_token(&jar).is_some()
+                || super::register::tenant_token(&jar).is_some();
+            if !has_flow && request.as_ref().map(|r| r.id) != auth_request_id {
+                return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
+            }
+            let app = request.as_ref().map(|r| r.app_id);
             super::register::social(
                 &state,
                 jar,

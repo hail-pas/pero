@@ -20,17 +20,17 @@ fn bearer(h: &HeaderMap) -> Result<&str, StatusCode> {
     super::extract_bearer(h).ok_or(StatusCode::UNAUTHORIZED)
 }
 
-async fn actor_access(
+async fn actor(
     s: &AppState,
     h: &HeaderMap,
     tenant: Option<Uuid>,
     allow_disabled_recovery: bool,
-) -> Result<ActiveAccess, Response> {
-    let token = bearer(h).map_err(IntoResponse::into_response)?;
+) -> Result<ActiveAccess, Box<Response>> {
+    let token = bearer(h).map_err(|e| Box::new(e.into_response()))?;
     let access = match token_status::active_access(s, token).await {
         Ok(Some(v)) => v,
-        Ok(None) => return Err(StatusCode::UNAUTHORIZED.into_response()),
-        Err(e) => return Err(util::dependency_error(e)),
+        Ok(None) => return Err(Box::new(StatusCode::UNAUTHORIZED.into_response())),
+        Err(e) => return Err(Box::new(util::dependency_error(e))),
     };
     let ActiveAccess { claims, user, .. } = &access;
     if !claims
@@ -38,7 +38,7 @@ async fn actor_access(
         .split_whitespace()
         .any(|scope| scope == "tenant.manage")
     {
-        return Err(StatusCode::FORBIDDEN.into_response());
+        return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
     }
     if let Some(id) = tenant
         && claims
@@ -50,30 +50,19 @@ async fn actor_access(
         // A disabled organization cannot issue new tenant-bound tokens.
         // Only its owner may recover it using a valid personal-workspace token.
         if !allow_disabled_recovery || claims.tenant_kind.as_deref() != Some("personal") {
-            return Err(StatusCode::FORBIDDEN.into_response());
+            return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
         }
         match svc::get(&s.db, user.id, id).await {
             Ok(space) if space.status == "disabled" && space.role == "owner" => {}
             Ok(_) | Err(crate::service::ManagementError::Invalid(_)) => {
-                return Err(StatusCode::FORBIDDEN.into_response());
+                return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
             }
-            Err(error) => return Err(util::management_response(Err(error))),
+            Err(error) => return Err(Box::new(util::management_response(Err(error)))),
         }
     }
     Ok(access)
 }
 
-async fn actor(
-    s: &AppState,
-    h: &HeaderMap,
-    tenant: Option<Uuid>,
-    allow_disabled_recovery: bool,
-) -> Result<Uuid, Response> {
-    Ok(actor_access(s, h, tenant, allow_disabled_recovery)
-        .await?
-        .user
-        .id)
-}
 /// A logged-in application's user may enumerate their eligible workspaces without tenant.manage.
 pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
     let token = match bearer(&h) {
@@ -105,8 +94,8 @@ pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
 
 pub async fn list(State(s): State<AppState>, h: HeaderMap) -> Response {
     let user = match actor(&s, &h, None, false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     match svc::list(&s.db, user).await {
         Ok(rows) => Json(serde_json::json!({"rows":rows})).into_response(),
@@ -120,8 +109,8 @@ pub struct Create {
 }
 pub async fn create(State(s): State<AppState>, h: HeaderMap, Json(f): Json<Create>) -> Response {
     let user = match actor(&s, &h, None, false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     match svc::create(&s.db, user, &f.name, &f.slug).await {
         Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({"id":id}))).into_response(),
@@ -130,8 +119,8 @@ pub async fn create(State(s): State<AppState>, h: HeaderMap, Json(f): Json<Creat
 }
 pub async fn detail(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     match svc::get(&s.db, user, id).await {
         Ok(row) => Json(row).into_response(),
@@ -140,8 +129,8 @@ pub async fn detail(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid
 }
 pub async fn members(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     match svc::members(&s.db, user, id).await {
         Ok(rows) => Json(serde_json::json!({"rows":rows})).into_response(),
@@ -159,8 +148,8 @@ pub async fn update_member(
     Json(f): Json<MemberChange>,
 ) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     util::management_response(svc::update_member(&s.db, user, id, target, &f.action).await)
 }
@@ -175,8 +164,8 @@ pub async fn invitations(
     Path(id): Path<Uuid>,
 ) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     match svc::invitations(&s.db, user, id).await {
         Ok(rows) => Json(serde_json::json!({"rows":rows})).into_response(),
@@ -190,8 +179,8 @@ pub async fn revoke_invitation(
     Path((id, invitation)): Path<(Uuid, Uuid)>,
 ) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     util::management_response(svc::revoke_invite(&s.db, user, id, invitation).await)
 }
@@ -202,9 +191,9 @@ pub async fn invite(
     Path(id): Path<Uuid>,
     Json(f): Json<Invite>,
 ) -> Response {
-    let access = match actor_access(&s, &h, Some(id), false).await {
+    let access = match actor(&s, &h, Some(id), false).await {
         Ok(v) => v,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     util::management_response(
         svc::invite_from_client(
@@ -229,15 +218,15 @@ pub async fn rename(
     Json(f): Json<Rename>,
 ) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     util::management_response(svc::rename(&s.db, user, id, &f.name).await)
 }
 pub async fn leave(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uuid>) -> Response {
     let user = match actor(&s, &h, Some(id), false).await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     util::management_response(svc::leave(&s.db, user, id).await)
 }
@@ -252,8 +241,8 @@ pub async fn set_status(
     Json(f): Json<StatusChange>,
 ) -> Response {
     let user = match actor(&s, &h, Some(id), f.status == "active").await {
-        Ok(v) => v,
-        Err(e) => return e,
+        Ok(v) => v.user.id,
+        Err(e) => return *e,
     };
     util::management_response(svc::set_status(&s.db, user, id, &f.status).await)
 }

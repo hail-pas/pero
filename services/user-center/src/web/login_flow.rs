@@ -221,27 +221,25 @@ pub async fn finish_enrollment(
             Err(error) => {
                 tracing::error!(%error, "Registration committed but session creation failed");
                 let cookies = state.cookie_factory();
-                return (
-                    jar.add(cookies.clear_cookie(cookies.session_cookie_name())),
-                    Redirect::to("/sso/login"),
-                )
-                    .into_response();
+                jar.add(cookies.clear_cookie(cookies.session_cookie_name()))
             }
         }
     } else {
         jar
     };
-    if request.is_some_and(|r| {
+    if let Some(pending) = request.filter(|r| {
         Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id
     }) {
-        let pending = request.expect("matched pending request");
         let resume = match (pending.tenant_id, result.tenant_id) {
             (None, Some(tenant)) => {
                 match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant)
                     .await
                 {
                     Ok(row) => row.is_some(),
-                    Err(error) => return crate::web::util::dependency_error(error),
+                    Err(error) => {
+                        tracing::error!(%error, "Registration tenant binding failed");
+                        false
+                    }
                 }
             }
             (Some(a), Some(b)) => a == b,
@@ -289,9 +287,7 @@ pub(crate) async fn client_login_target(
     use crate::db::{entity::apps, enums::CommonStatus};
     use sea_orm::EntityTrait;
     let Some(mut uri) = client.login_uri.filter(|uri| {
-        uri.starts_with("https://")
-            && !uri.contains('?')
-            && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()
+        crate::service::client::valid_login_uri(uri)
     }) else {
         return Ok(None);
     };

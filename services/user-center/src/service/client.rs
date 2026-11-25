@@ -87,16 +87,18 @@ pub struct ClientInput {
     pub id_token_ttl: i32,
 }
 
+pub(crate) fn valid_login_uri(uri: &str) -> bool {
+    uri.starts_with("https://")
+        && !uri.contains('?')
+        && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()
+}
+
 impl ClientInput {
     fn validate(&self) -> Result<(), ManagementError> {
         if self.redirect_uris.is_empty() {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
-        if self.login_uri.as_deref().is_some_and(|uri| {
-            !uri.starts_with("https://")
-                || uri.contains('?')
-                || pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_err()
-        }) {
+        if self.login_uri.as_deref().is_some_and(|uri| !valid_login_uri(uri)) {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
         let allow_private_scheme = self.client_type == OauthClientType::Public;

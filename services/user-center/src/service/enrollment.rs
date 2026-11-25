@@ -342,12 +342,12 @@ pub async fn start(
     invitation: Option<(&SsoSession, bool, &str)>,
 ) -> Result<(), Error> {
     let address = email(address)?;
-    start_contact(state, &address, app, invitation, false, None).await
+    start_contact(state, &address, app, false, StartKind::Portal(invitation)).await
 }
 
 pub async fn start_phone(state: &AppState, address: &str, app: Option<Uuid>) -> Result<(), Error> {
     let address = phone(address)?;
-    start_contact(state, &address, app, None, true, None).await
+    start_contact(state, &address, app, true, StartKind::Portal(None)).await
 }
 
 pub async fn start_from_request(
@@ -362,21 +362,44 @@ pub async fn start_from_request(
     } else {
         email(address)?
     };
-    require_personal_app(&state.db, app).await?;
-    start_contact(state, &address, app, None, is_phone, request).await
+    start_contact(
+        state,
+        &address,
+        app,
+        is_phone,
+        StartKind::SelfService { request, social: None },
+    )
+    .await
+}
+
+enum StartKind<'a> {
+    Portal(Option<(&'a SsoSession, bool, &'a str)>),
+    SelfService {
+        request: Option<&'a crate::db::entity::authorization_requests::Model>,
+        social: Option<(Uuid, &'a str)>,
+    },
 }
 
 async fn start_contact(
     state: &AppState,
     address: &str,
     app: Option<Uuid>,
-    invitation: Option<(&SsoSession, bool, &str)>,
     is_phone: bool,
-    request: Option<&crate::db::entity::authorization_requests::Model>,
+    kind: StartKind<'_>,
 ) -> Result<(), Error> {
     limit_contact(state, address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
+    let (invitation, request, social) = match kind {
+        StartKind::Portal(invitation) => (invitation, None, None),
+        StartKind::SelfService { request, social } => {
+            require_personal_app(&txn, app).await?;
+            if request.is_some_and(|r| Some(r.app_id) != app) {
+                return Err(invalid());
+            }
+            (None, request, social)
+        }
+    };
     let (invited, actor, exception, reason) = if let Some((actor, exception, reason)) = invitation {
         let access = super::permissions::authorize(
             &txn,
@@ -396,8 +419,8 @@ async fn start_contact(
     } else {
         (false, None, false, "")
     };
-    if request.is_some() {
-        require_personal_app(&txn, app).await?;
+    if let Some((provider, _)) = social {
+        allow_social(&txn, provider).await?;
     }
     let p = policy(&txn, app).await?;
     if is_phone {
@@ -418,8 +441,7 @@ async fn start_contact(
     let token = pero_utils::crypto::generate_token();
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });
-    execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into()]).await?;
-    bind_origin(&txn, id, app, request).await?;
+    execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at,client_id,auth_request_id,provider_id,subject) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into(),request.map(|r|r.client_id).into(),request.map(|r|r.id).into(),social.map(|s|s.0).into(),social.map(|s|s.1).into()]).await?;
     let channel = if is_phone { "phone" } else { "email" };
     send(&txn, state, id, (channel, address), &token, expiry).await?;
     txn.commit().await?;
@@ -745,21 +767,18 @@ pub async fn start_social(
     subject: &str,
     request: Option<&crate::db::entity::authorization_requests::Model>,
 ) -> Result<(), Error> {
-    // Reuse the same delivery and admission path; persist upstream identity before delivery.
-    limit_contact(state, address).await?;
-    let txn = state.db.begin().await?;
-    super::admin::lock_policy(&txn).await?;
-    require_personal_app(&txn, app).await?;
-    eligible(&policy(&txn, app).await?, address, false, false)?;
-    allow_social(&txn, provider).await?;
-    let id = Uuid::now_v7();
-    let token = pero_utils::crypto::generate_token();
-    let expiry = OffsetDateTime::now_utc() + time::Duration::hours(24);
-    execute(&txn,"INSERT INTO enrollments(id,app_id,email,token_hash,expires_at,provider_id,subject) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![id.into(),app.into(),address.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into(),provider.into(),subject.into()]).await?;
-    bind_origin(&txn, id, app, request).await?;
-    send(&txn, state, id, ("email", address), &token, expiry).await?;
-    txn.commit().await?;
-    Ok(())
+    let address = email(address)?;
+    start_contact(
+        state,
+        &address,
+        app,
+        false,
+        StartKind::SelfService {
+            request,
+            social: Some((provider, subject)),
+        },
+    )
+    .await
 }
 
 async fn require_personal_app<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<(), Error> {
@@ -770,23 +789,6 @@ async fn require_personal_app<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> 
             .is_some_and(|app| app.tenant_mode == "organization")
     {
         return Err(Error::Invalid("enrollment_unavailable"));
-    }
-    Ok(())
-}
-
-async fn bind_origin<C: ConnectionTrait>(
-    db: &C,
-    id: Uuid,
-    app: Option<Uuid>,
-    request: Option<&crate::db::entity::authorization_requests::Model>,
-) -> Result<(), Error> {
-    if let Some(request) = request.filter(|r| Some(r.app_id) == app) {
-        execute(
-            db,
-            "UPDATE enrollments SET client_id=$2,auth_request_id=$3 WHERE id=$1",
-            vec![id.into(), request.client_id.into(), request.id.into()],
-        )
-        .await?;
     }
     Ok(())
 }
