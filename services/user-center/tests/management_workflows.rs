@@ -278,6 +278,89 @@ async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
     f.cleanup().await;
 }
 
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn organization_auto_admission_changes_resync_account_projection() {
+    let f = Fixture::new().await;
+    let tenant = Uuid::now_v7();
+    f.sql(
+        "UPDATE apps SET tenant_mode='organization',organization_access='restricted',organization_auto_access=true WHERE id=$1",
+        vec![f.app.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenants(id,kind,name,slug) VALUES($1,'organization','Sync Org','sync-org')",
+        vec![tenant.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![tenant.into(), f.user.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenant_app_grants(tenant_id,app_id) VALUES($1,$2)",
+        vec![tenant.into(), f.app.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO user_app_access(user_id,app_id,admission_origin) VALUES($1,$2,'organization')",
+        vec![f.user.into(), f.app.into()],
+    )
+    .await;
+    f.sql(
+        "UPDATE oauth_clients SET account_sync_uri='https://rp.example.test/sync' WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    for (sql, values, active) in [
+        (
+            "UPDATE tenant_members SET status='removed',auth_version=auth_version+1 WHERE tenant_id=$1 AND user_id=$2",
+            vec![tenant.into(), f.user.into()],
+            false,
+        ),
+        (
+            "UPDATE tenant_members SET status='active',auth_version=auth_version+1 WHERE tenant_id=$1 AND user_id=$2",
+            vec![tenant.into(), f.user.into()],
+            true,
+        ),
+        (
+            "UPDATE tenants SET status='disabled',auth_version=auth_version+1 WHERE id=$1",
+            vec![tenant.into()],
+            false,
+        ),
+        (
+            "UPDATE tenants SET status='active',auth_version=auth_version+1 WHERE id=$1",
+            vec![tenant.into()],
+            true,
+        ),
+        (
+            "WITH removed AS (DELETE FROM tenant_app_grants WHERE tenant_id=$1 AND app_id=$2 RETURNING tenant_id) UPDATE tenants SET auth_version=auth_version+1 WHERE id IN (SELECT tenant_id FROM removed)",
+            vec![tenant.into(), f.app.into()],
+            false,
+        ),
+    ] {
+        f.sql(
+            "DELETE FROM account_sync_deliveries WHERE client_id=$1",
+            vec![f.client.into()],
+        )
+        .await;
+        f.sql(sql, values).await;
+        let snapshot = user_center::service::account_sync::snapshot(&f.state.db, f.client, f.user)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot["active"], active);
+        let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*)::bigint AS count FROM account_sync_deliveries WHERE client_id=$1 AND user_id=$2 AND kind='sync.requested' AND tenant_id IS NULL",
+            [f.client.into(), f.user.into()],
+        )).await.unwrap().unwrap();
+        assert_eq!(row.try_get::<i64>("", "count").unwrap(), 1);
+    }
+    f.cleanup().await;
+}
+
 struct Fixture {
     _permit: tokio::sync::SemaphorePermit<'static>,
     database: database::DatabaseFixture,

@@ -24,6 +24,7 @@ prefix = "rp:" + client_id + ":"
 events = {
     "sync.requested", "account.updated", "account.status_changed",
     "account.deleted", "membership.granted", "membership.revoked",
+    "tenant.membership.changed",
 }
 
 
@@ -50,6 +51,9 @@ def synchronize():
         if "nonce" in claims or claims["event"] not in events or claims["iat"] < time.time() - 180:
             return "invalid event", 400
         sub, jti = str(uuid.UUID(claims["sub"])), str(uuid.UUID(claims["jti"]))
+        if claims["event"] == "tenant.membership.changed":
+            uuid.UUID(claims["tenant_id"])
+            return "", 200  # Account-only receiver; account changes arrive separately.
     except jwt.PyJWKClientConnectionError:
         return "keys unavailable", 503
     except (jwt.PyJWTError, ValueError, TypeError, KeyError):
