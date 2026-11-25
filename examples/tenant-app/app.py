@@ -1,4 +1,5 @@
 """Minimal confidential OIDC/BFF integration for Pero, including tenant switching and sync."""
+import base64
 import hashlib
 import json
 import os
@@ -7,7 +8,7 @@ import secrets
 import sys
 from functools import lru_cache
 from html import escape
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 
 import jwt
 import redis
@@ -18,6 +19,8 @@ from jwt import PyJWKClient
 ISSUER = os.environ["PERO_ISSUER"].rstrip("/")
 CLIENT_ID = os.environ["PERO_CLIENT_ID"]
 CLIENT_SECRET = os.environ["PERO_CLIENT_SECRET"]
+# OAuth client_secret_basic uses form-encoded credentials before HTTP Basic.
+CLIENT_AUTH = (quote_plus(CLIENT_ID), quote_plus(CLIENT_SECRET))
 REDIRECT_URI = os.environ.get("PERO_REDIRECT_URI", "http://127.0.0.1:8092/callback")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 SCOPES = os.environ.get("PERO_SCOPES", "openid profile email")
@@ -64,7 +67,7 @@ def save_session(sid, data):
 
 def client_post(endpoint, form):
     result = http.post(discovery()[endpoint], data=form,
-                       auth=(CLIENT_ID, CLIENT_SECRET), timeout=10)
+                       auth=CLIENT_AUTH, timeout=10)
     result.raise_for_status()
     return result.json() if result.content else {}
 
@@ -73,7 +76,8 @@ def introspect(data):
     value = client_post("introspection_endpoint", {"token": data["access_token"]})
     if not value.get("active") or value.get("client_id") != CLIENT_ID:
         return None
-    if value.get("sub") != data["sub"] or value.get("tenant_id") != data["tenant_id"]:
+    if (value.get("sub") != data["sub"] or value.get("tenant_id") != data["tenant_id"]
+            or not data.get("sid") or value.get("sid") != data["sid"]):
         return None
     return value
 
@@ -82,11 +86,12 @@ def start_login(tenant=None):
     previous_sid = cookie_id()
     sid = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
-    challenge = __import__("base64").urlsafe_b64encode(
+    challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     store.setex("pero-demo:flow:" + state, 600, json.dumps(
-        {"sid": sid, "previous_sid": previous_sid, "verifier": verifier, "nonce": nonce}))
+        {"sid": sid, "previous_sid": previous_sid, "verifier": verifier, "nonce": nonce,
+         "tenant_id": tenant}))
     params = {
         "client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI, "response_type": "code",
         "scope": SCOPES, "state": state, "nonce": nonce,
@@ -133,15 +138,23 @@ def callback():
     claims = jwt.decode(id_token, jwks().get_signing_key_from_jwt(id_token).key,
                         algorithms=["RS256"], issuer=ISSUER, audience=CLIENT_ID,
                         options={"require": ["iss", "sub", "aud", "exp", "iat"]})
-    if claims.get("nonce") != flow["nonce"]:
+    if claims.get("nonce") != flow["nonce"] or not claims.get("sid"):
+        abort(401)
+    access_hash = base64.urlsafe_b64encode(
+        hashlib.sha256(tokens["access_token"].encode()).digest()[:16]).rstrip(b"=").decode()
+    if claims.get("at_hash") != access_hash:
         abort(401)
     snapshot = client_post("introspection_endpoint", {"token": tokens["access_token"]})
-    if not snapshot.get("active") or snapshot.get("sub") != claims["sub"] or not snapshot.get("tenant_id"):
+    if (not snapshot.get("active") or snapshot.get("client_id") != CLIENT_ID
+            or snapshot.get("sub") != claims["sub"] or snapshot.get("sid") != claims["sid"]
+            or not snapshot.get("tenant_id") or snapshot["tenant_id"] != claims.get("tenant_id")
+            or (flow.get("tenant_id") and snapshot["tenant_id"] != flow["tenant_id"])):
         abort(403)
     session = {
         "access_token": tokens["access_token"],
         "refresh_token": tokens.get("refresh_token"),
-        "id_token": id_token, "sub": claims["sub"], "tenant_id": snapshot["tenant_id"],
+        "id_token": id_token, "sub": claims["sub"], "sid": claims["sid"],
+        "tenant_id": snapshot["tenant_id"],
         "csrf": secrets.token_urlsafe(32),
     }
     save_session(flow["sid"], session)
@@ -246,7 +259,7 @@ def verify_event(token):
 
 def snapshot(path, params):
     base = ISSUER + path
-    response = http.post(base, data=params, auth=(CLIENT_ID, CLIENT_SECRET), timeout=10)
+    response = http.post(base, data=params, auth=CLIENT_AUTH, timeout=10)
     response.raise_for_status()
     return response.json()
 
