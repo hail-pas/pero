@@ -72,11 +72,9 @@ export function Auth({
                   ? t("关联已有账户")
                   : view === "ConfirmLogoutView"
                     ? t("确认退出登录")
-                    : view === "AdminLoginView"
-                      ? t("登录应用")
-                      : done
-                        ? t("你已安全退出")
-                        : t("暂时无法访问");
+                    : done
+                      ? t("你已安全退出")
+                      : t("暂时无法访问");
   let content: React.ReactNode;
   if (view === "AppAccessDeniedView") {
     const recover = (action: string) =>
@@ -474,29 +472,6 @@ export function Auth({
           sx={{ mt: 2 }}
         >
           {t("取消并返回个人中心")}
-        </Button>
-      </>
-    );
-  else if (view === "AdminLoginView")
-    content = (
-      <>
-        <Typography color="text.secondary" sx={{ mb: 3 }}>
-          {t("通过 Pero 统一身份认证继续访问此应用。")}
-        </Typography>
-        {data.error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {errorText(data.error)}
-          </Alert>
-        )}
-        <Button
-          component="a"
-          href={data.authorize_url}
-          fullWidth
-          variant="contained"
-          color="inherit"
-          size="large"
-        >
-          {t("使用 Pero 登录")}
         </Button>
       </>
     );

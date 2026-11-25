@@ -9,32 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "admin"
-version = "0.1.0"
-dependencies = [
- "axum",
- "axum-extra",
- "clap",
- "jsonwebtoken",
- "pero-api-axum",
- "pero-config",
- "pero-error",
- "pero-http-client-core",
- "pero-http-client-reqwest",
- "pero-types",
- "pero-utils",
- "pero-validate-core",
- "reqwest",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tower",
- "tower-http 0.7.1",
- "tracing",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2842,9 +2816,6 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
- "serde",
- "serde_json",
- "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

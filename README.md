@@ -5,7 +5,6 @@ Rust 身份认证中心，基于 Axum / SeaORM / Redis，提供 OAuth2 / OpenID 
 ## 服务
 
 - **user-center** — 核心认证服务（OAuth2 授权、Token 签发、JWKS、用户管理）
-- **admin** — OAuth2 登录示例和受保护首页；用户与应用管理位于 user-center `/dashboard`
 
 ## 依赖
 
@@ -29,18 +28,15 @@ export DATABASE_URL=postgres://pero:CHANGE_ME@127.0.0.1:5432/pero
 ./scripts/migrate.sh
 make bootstrap
 
-# 4. 构建前端（两个 Rust 服务直接读取 frontend/dist）
+# 4. 构建前端（Rust 服务直接读取 frontend/dist）
 npm install --global pnpm@11.25.0 # 或使用 corepack
 bash scripts/build-frontend.sh
 
 # 5. 启动
 (cd services/user-center && cargo run --bin user-center -- --config-dir config)
-# 先注册对应 OAuth client，再配置 admin 的 local.toml
-cp services/admin/config/local.toml.example services/admin/config/local.toml
-(cd services/admin && cargo run --bin admin -- --config-dir config)
 ```
 
-UI 源码与公共资源只维护在 `frontend/`，本地配置示例让两个服务直接读取 `../../frontend/dist`（相对于各服务工作目录）；`make dev` 自动设置绝对路径。`services/` 下不保存 UI 文件或软链接。独立部署包仍包含构建产物，并使用部署目录中的 `ui/static`。
+UI 源码与公共资源只维护在 `frontend/`，本地配置示例让 Rust 服务直接读取 `../../frontend/dist`（相对于服务工作目录）；`make dev` 自动设置绝对路径。`services/` 下不保存 UI 文件或软链接。独立部署包仍包含构建产物，并使用部署目录中的 `ui/static`。
 
 ## 初始化与配置
 
@@ -58,7 +54,7 @@ OAuth 客户端密钥统一使用 Argon2id 哈希。已有 bcrypt 客户端密�
 
 密码恢复向账号的已验证邮箱或手机号发送设置/重置本地密码链接，仅使用第三方登录且尚无本地密码的账号也可以通过已验证联系方式设置第一个本地密码；新注册邮箱在创建账户前完成验证；既有账户的未验证联系方式需在个人中心完成验证后，才能用于找回密码。重置密码会取消待处理的联系方式变更及其通知，并撤销所有登录会话。仅使用第三方登录的账号也可先登录，再在 `/account/change-password` 设置本地密码；找回密码页面始终使用统一提示，不暴露账号是否具备恢复资格。恢复请求同时按来源 IP（每小时 20 次）和目标联系方式（每小时 3 次）限流，Redis 不可用时返回 503。纯第三方账号遇到相同邮箱的关联流程时，页面会引导使用原登录方式设置本地密码，再重新发起关联。
 
-前端位于 `frontend/`，使用 React + TypeScript + Vite、[Minimal Free](https://github.com/minimal-ui-kit/material-kit-react) MIT 主题和 MUI。首页、个人中心、Dash 管理、认证/授权/退出及 admin 示例均由同一个前端实现。Minimal 许可保留于 `frontend/LICENSE.minimal.md`。首页、认证页和工作空间顶部提供中英文切换，默认跟随浏览器，选择后会记住语言；切换时保留当前页面与未提交表单。
+前端位于 `frontend/`，使用 React + TypeScript + Vite、[Minimal Free](https://github.com/minimal-ui-kit/material-kit-react) MIT 主题和 MUI。首页、个人中心、Dash 管理、认证/授权/退出均由同一个前端实现。Minimal 许可保留于 `frontend/LICENSE.minimal.md`。首页、认证页和工作空间顶部提供中英文切换，默认跟随浏览器，选择后会记住语言；切换时保留当前页面与未提交表单。
 
 开发时先启动 Rust 服务，再执行 `cd frontend && pnpm dev`，访问 `http://127.0.0.1:3039`；默认代理到 `http://127.0.0.1:8080`，可通过 `PERO_API_ORIGIN` 指定后端。生产构建使用 `bash scripts/build-frontend.sh`；Docker 自动构建前端并复制产物。`[frontend].static_dir` 指向构建产物，默认 `ui/static`，资源前缀固定为 `/static`。配置按 `default.toml` → 运行环境配置（`local.toml` 或 `production.toml`）→ `PERO__` 环境变量顺序覆盖；公开默认文件包含通用参数，环境配置只填写必要的地址、凭据和覆盖项，`bootstrap.toml` 仅用于首次初始化。日志格式使用 `[log].format`。
 
@@ -200,7 +196,7 @@ Revocation 接受本客户端的 access token 或 refresh token；采用应用�
 
 Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，仅在当前有效会话已完成 MFA 且用户实时持有 `super_admin` 平台角色时为 `true`，不从令牌或调用方参数推断。仅完成主身份认证的超级管理员仍可登录不要求 MFA 的普通应用，但不会获得此管理权限标记；需要该标记的应用应要求用户完成 MFA。仅认证通过的 confidential 客户端可按上述应用和客户端边界查询；public 客户端自身仍不能调用 introspection。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
 
-业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie；本项目 admin 示例已采用每次请求在线 introspection。仅在登录时离线验签无法获得即时撤销效果。
+业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie。仅在登录时离线验签无法获得即时撤销效果。
 
 协议依据：[RFC 7662](https://www.rfc-editor.org/rfc/rfc7662)、[RFC 7009](https://www.rfc-editor.org/rfc/rfc7009)。
 

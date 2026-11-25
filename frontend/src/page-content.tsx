@@ -16,7 +16,7 @@ import { Security, AuditDetail } from "./security";
 import { Profile } from "./account";
 import { Auth } from "./auth";
 import { FieldsForm } from "./forms";
-import { AdminHome, Home } from "./home";
+import { Home } from "./home";
 import { ManagementForm } from "./management-form";
 import { ManagementList } from "./management";
 import { ManagementDetail } from "./management-detail";
@@ -75,8 +75,6 @@ export function PageContent({
       return <Security page={page} {...actions} />;
     case "HomeView":
       return <Home data={data} />;
-    case "AdminHomeView":
-      return <AdminHome data={data} />;
     case "AppAccessDeniedView":
     case "SelectAccountView":
     case "LoginView":
@@ -89,7 +87,6 @@ export function PageContent({
     case "EndSessionView":
     case "ErrorView":
     case "ForbiddenView":
-    case "AdminLoginView":
       return <Auth page={page} mutate={mutate} />;
     case "ProfileView":
       return <Profile data={data} {...actions} />;

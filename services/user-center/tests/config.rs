@@ -22,14 +22,9 @@ fn shipped_configuration_remains_readable() {
     assert_eq!(config.sso.session_touch_interval_seconds, 0);
     assert_eq!(config.sso.base_url, "http://localhost:8080");
     assert!(!config.sso.cookie_secure);
-    for input in [
-        include_str!("../config/bootstrap.toml.example"),
-        include_str!("../../admin/config/default.toml"),
-        include_str!("../../admin/config/local.toml.example"),
-    ] {
-        let table: toml::Table = toml::from_str(input).unwrap();
-        assert!(!table.is_empty());
-    }
+    let bootstrap: toml::Table =
+        toml::from_str(include_str!("../config/bootstrap.toml.example")).unwrap();
+    assert!(!bootstrap.is_empty());
 }
 
 #[test]

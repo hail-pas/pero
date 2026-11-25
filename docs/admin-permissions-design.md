@@ -24,7 +24,6 @@
 - `service/admin.rs` 已有角色变更、策略事务锁、最后一个超级管理员保护及目标会话撤销。
 - `web/dashboard/audit.rs` 已有后台 POST 的 pending/结果审计，但授权变更需要补充结构化差异。
 - `DashboardLayout` 和前端菜单目前没有细分权限；应用、用户和提供方详情还会聚合其他模块数据，必须同时调整响应内容。
-- `services/admin` 是独立 OAuth 登录入口；本次授权策略实施在实际承载管理功能的 user-center。OAuth scope、系统应用访问资格和管理权限继续独立。
 
 ## 3. 权限项：按业务能力分组
 

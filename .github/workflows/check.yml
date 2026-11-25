@@ -78,6 +78,6 @@ jobs:
       - run: rustup toolchain install 1.100.0 --profile minimal --target x86_64-unknown-linux-musl
       - run: rustup default 1.100.0
       - run: sudo apt-get update && sudo apt-get install -y musl-tools cmake clang
-      - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p user-center -p admin
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl -p user-center
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc

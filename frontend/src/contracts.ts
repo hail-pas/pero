@@ -293,14 +293,6 @@ export interface ViewDataMap {
     summary: { pending: number; overdue: number; failing: number };
   };
   HomeView: { layout: UserLayout | null };
-  AdminHomeView: CsrfPage & {
-    username: string;
-    email: string;
-    picture: string;
-    profile_url: string;
-    password_url: string;
-    issuer: string;
-  };
   AppAccessDeniedView: CsrfPage & {
     token: string;
     app_name: string;
@@ -315,7 +307,6 @@ export interface ViewDataMap {
   };
   LoginView: LoginPage;
   AccountLoginView: LoginPage & { redirect: string };
-  AdminLoginView: { authorize_url: string; error: string };
   EnrollmentView: CsrfPage & {
     mode: string;
     app: string | null;
@@ -477,8 +468,7 @@ export type AuthView =
   | "ConfirmLogoutView"
   | "EndSessionView"
   | "ErrorView"
-  | "ForbiddenView"
-  | "AdminLoginView";
+  | "ForbiddenView";
 export type ListView = "AppListView" | "UserListView" | "ProviderListView";
 export type FormView = "AppFormView" | "UserFormView" | "ProviderFormView";
 export type DetailView =

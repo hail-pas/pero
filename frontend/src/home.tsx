@@ -22,8 +22,6 @@ import type { ViewDataMap } from "./contracts";
 import { t, useLocale } from "./i18n";
 import { LanguageSwitcher } from "./language-switcher";
 import { Brand } from "./layout";
-
-import { Heading, Panel } from "./shared";
 export function Home({ data }: { data: ViewDataMap["HomeView"] }) {
   useLocale();
   return (
@@ -228,49 +226,5 @@ export function Home({ data }: { data: ViewDataMap["HomeView"] }) {
         </Stack>
       </Container>
     </>
-  );
-}
-export function AdminHome({ data }: { data: ViewDataMap["AdminHomeView"] }) {
-  useLocale();
-  return (
-    <Container maxWidth="md" sx={{ py: 6 }}>
-      <Stack
-        direction="row"
-        sx={{ justifyContent: "space-between", alignItems: "center" }}
-      >
-        <Brand />
-        <LanguageSwitcher />
-      </Stack>
-      <Box sx={{ mt: 6 }}>
-        <Heading
-          title={t("欢迎，{{0}}", { "0": data.username })}
-          description={t("你已通过 Pero 完成身份验证。")}
-        />
-        <Panel title={t("账户信息")}>
-          <Typography sx={{ mb: 3 }}>
-            {data.email || t("尚未绑定邮箱")}
-          </Typography>
-          <Stack direction="row" spacing={2}>
-            <Button
-              component="a"
-              href={data.profile_url}
-              variant="contained"
-              color="inherit"
-            >
-              {t("管理个人资料")}
-            </Button>
-            <Button component="a" href={data.password_url}>
-              {t("账户安全")}
-            </Button>
-          </Stack>
-        </Panel>
-        <Box component="form" method="post" action="/logout">
-          <input type="hidden" name="csrf_token" value={data.csrf_token} />
-          <Button type="submit" color="inherit">
-            {t("退出应用")}
-          </Button>
-        </Box>
-      </Box>
-    </Container>
   );
 }

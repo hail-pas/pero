@@ -20,7 +20,7 @@ pub struct ProvidersResponse {
 
 /// GET /api/providers
 ///
-/// 返回已启用的 social providers 列表，供 OAuth2 客户端（如 admin panel）使用
+/// 返回已启用的 social providers 列表，供 OAuth2 客户端使用
 pub async fn providers(
     State(state): State<AppState>,
 ) -> Result<ApiResponse<ProvidersResponse>, AppErrorResponder> {
