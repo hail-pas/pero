@@ -10,7 +10,8 @@ pub fn safe_site_redirect(raw: &str, default: &str) -> String {
     if raw.bytes().any(|b| b < 0x20 || b == 0x7f) {
         return default.to_owned();
     }
-    if raw.contains("//") {
+    let path = raw.split_once('?').map_or(raw, |(path, _)| path);
+    if path.contains("//") {
         return default.to_owned();
     }
 
@@ -22,6 +23,10 @@ pub fn safe_site_redirect(raw: &str, default: &str) -> String {
         return default.to_owned();
     }
 
+    // Only the path determines the navigation target; query values may contain URLs.
+    if parsed.path().starts_with("//") {
+        return default.to_owned();
+    }
     let mut out = parsed.path().to_owned();
     if let Some(query) = parsed.query() {
         out.push('?');
@@ -217,6 +222,21 @@ pub fn is_public_ip(ip: std::net::IpAddr) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn site_redirect_preserves_query_urls_but_rejects_external_targets() {
+        use super::safe_site_redirect as redirect;
+        let path = "/oauth2/authorize?redirect_uri=https://client.example.test/callback";
+        assert_eq!(redirect(path, "/"), path);
+        for target in [
+            "//example.test",
+            "/a//b",
+            "/\\example.test",
+            "https://example.test",
+        ] {
+            assert_eq!(redirect(target, "/"), "/");
+        }
+    }
+
     #[test]
     fn oauth_private_scheme_requires_opt_in_and_an_authority_free_uri() {
         use super::validate_oauth_redirect_uri as validate;

@@ -10,7 +10,7 @@ use crate::{
 
 /// GET or POST /api/oauth2/userinfo
 pub async fn userinfo(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Response {
-    let token = match extract_bearer(&headers) {
+    let token = match super::extract_bearer(&headers) {
         Some(t) => t,
         None => return bearer_error_response(BearerError::invalid_token("Missing Bearer token")),
     };
@@ -50,31 +50,4 @@ pub async fn userinfo(State(state): State<AppState>, headers: axum::http::Header
         axum::Json(resp),
     )
         .into_response()
-}
-
-fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
-    let (scheme, token) = headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .split_once(' ')?;
-    let token = token.trim_start_matches(' ');
-    (scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty()).then_some(token)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn bearer_scheme_is_case_insensitive_and_requires_credentials() {
-        for value in ["Bearer token", "bearer token", "bEaReR  token"] {
-            let mut headers = axum::http::HeaderMap::new();
-            headers.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
-            assert_eq!(super::extract_bearer(&headers), Some("token"));
-        }
-        for value in ["Basic token", "Bearer", "Bearer   "] {
-            let mut headers = axum::http::HeaderMap::new();
-            headers.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
-            assert_eq!(super::extract_bearer(&headers), None);
-        }
-    }
 }

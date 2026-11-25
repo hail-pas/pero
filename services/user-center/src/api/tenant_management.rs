@@ -10,19 +10,14 @@ use crate::{
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
 fn bearer(h: &HeaderMap) -> Result<&str, StatusCode> {
-    h.get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split_once(' '))
-        .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("Bearer").then_some(value))
-        .filter(|v| !v.is_empty())
-        .ok_or(StatusCode::UNAUTHORIZED)
+    super::extract_bearer(h).ok_or(StatusCode::UNAUTHORIZED)
 }
 
 async fn actor(
@@ -92,12 +87,7 @@ pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
         Ok(rows) => rows,
         Err(error) => return util::dependency_error(error),
     };
-    let mut response = Json(serde_json::json!({"rows": rows})).into_response();
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    response
+    Json(serde_json::json!({"rows": rows})).into_response()
 }
 
 pub async fn list(State(s): State<AppState>, h: HeaderMap) -> Response {
