@@ -198,22 +198,41 @@ pub async fn clean_tenant_invitations(db: &DatabaseConnection) -> Result<u64, se
     Ok(expired + deleted)
 }
 
-pub async fn clean_backchannel_deliveries(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
-    delete_before(
+async fn clean_delivery_history(
+    db: &DatabaseConnection,
+    table: &str,
+    pending: &str,
+) -> Result<u64, sea_orm::DbErr> {
+    // Remove expired jobs from the hot queue indexes while retaining delivery history.
+    // Do not invalidate a lease held by an in-flight delivery.
+    let sql = format!(
+        "UPDATE {table} SET expired_at=$1,lease_id=NULL,leased_until=NULL WHERE id IN (SELECT id FROM {table} WHERE {pending} AND expires_at<=$1 AND (leased_until IS NULL OR leased_until<=$1) ORDER BY expires_at LIMIT {BATCH_SIZE} FOR UPDATE SKIP LOCKED)"
+    );
+    let expired = execute_batches(db, &sql).await?;
+    let deleted = delete_before(
         db,
-        "backchannel_logout_deliveries",
+        table,
         "created_at < $1 - interval '30 days'",
         "created_at",
+    )
+    .await?;
+    Ok(expired + deleted)
+}
+
+pub async fn clean_backchannel_deliveries(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
+    clean_delivery_history(
+        db,
+        "backchannel_logout_deliveries",
+        "delivered_at IS NULL AND expired_at IS NULL",
     )
     .await
 }
 
 pub async fn clean_account_sync_deliveries(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
-    delete_before(
+    clean_delivery_history(
         db,
         "account_sync_deliveries",
-        "created_at < $1 - interval '30 days'",
-        "created_at",
+        "delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL",
     )
     .await
 }

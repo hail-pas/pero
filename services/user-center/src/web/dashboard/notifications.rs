@@ -117,13 +117,13 @@ pub async fn list(
         Vec::new()
     } else {
         match LogoutRow::find_by_statement(Statement::from_string(DbBackend::Postgres,
-        "SELECT d.id,c.identifier::text,d.attempts,d.last_error,d.created_at,CASE WHEN d.delivered_at IS NOT NULL THEN 'delivered' WHEN c.backchannel_logout_uri IS DISTINCT FROM d.endpoint THEN 'cancelled' WHEN d.expires_at<=now() THEN 'expired' WHEN d.attempts>0 THEN 'retrying' ELSE 'queued' END AS status,(d.delivered_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri IS NOT DISTINCT FROM d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())) AS can_retry FROM backchannel_logout_deliveries d JOIN oauth_clients c ON c.id=d.client_id ORDER BY d.created_at DESC LIMIT 100".to_owned())).all(&state.db).await { Ok(rows)=>rows,Err(e)=>return util::dependency_error(e) }
+        "SELECT d.id,c.identifier::text,d.attempts,d.last_error,d.created_at,CASE WHEN d.delivered_at IS NOT NULL THEN 'delivered' WHEN c.backchannel_logout_uri IS DISTINCT FROM d.endpoint THEN 'cancelled' WHEN d.expired_at IS NOT NULL OR d.expires_at<=now() THEN 'expired' WHEN d.attempts>0 THEN 'retrying' ELSE 'queued' END AS status,(d.delivered_at IS NULL AND d.expired_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri IS NOT DISTINCT FROM d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())) AS can_retry FROM backchannel_logout_deliveries d JOIN oauth_clients c ON c.id=d.client_id ORDER BY d.created_at DESC LIMIT 100".to_owned())).all(&state.db).await { Ok(rows)=>rows,Err(e)=>return util::dependency_error(e) }
     };
     let sync_rows = if !super_admin {
         Vec::new()
     } else {
         match SyncRow::find_by_statement(Statement::from_string(DbBackend::Postgres,
-            "SELECT d.id,d.user_id,d.kind,c.identifier::text,d.attempts,d.last_error,d.created_at,CASE WHEN d.delivered_at IS NOT NULL THEN 'delivered' WHEN d.cancelled_at IS NOT NULL OR c.account_sync_uri IS DISTINCT FROM d.endpoint THEN 'cancelled' WHEN d.expires_at<=now() THEN 'expired' WHEN d.attempts>0 THEN 'retrying' ELSE 'queued' END AS status,(d.delivered_at IS NULL AND d.cancelled_at IS NULL AND d.expires_at>now() AND c.status='active' AND c.account_sync_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())) AS can_retry FROM account_sync_deliveries d JOIN oauth_clients c ON c.id=d.client_id ORDER BY d.created_at DESC,d.id DESC LIMIT 100".to_owned())).all(&state.db).await {
+            "SELECT d.id,d.user_id,d.kind,c.identifier::text,d.attempts,d.last_error,d.created_at,CASE WHEN d.delivered_at IS NOT NULL THEN 'delivered' WHEN d.cancelled_at IS NOT NULL OR c.account_sync_uri IS DISTINCT FROM d.endpoint THEN 'cancelled' WHEN d.expired_at IS NOT NULL OR d.expires_at<=now() THEN 'expired' WHEN d.attempts>0 THEN 'retrying' ELSE 'queued' END AS status,(d.delivered_at IS NULL AND d.cancelled_at IS NULL AND d.expired_at IS NULL AND d.expires_at>now() AND c.status='active' AND c.account_sync_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())) AS can_retry FROM account_sync_deliveries d JOIN oauth_clients c ON c.id=d.client_id ORDER BY d.created_at DESC,d.id DESC LIMIT 100".to_owned())).all(&state.db).await {
             Ok(rows) => rows, Err(error) => return util::dependency_error(error),
         }
     };
@@ -180,7 +180,7 @@ pub async fn retry_logout(
         &state,
         &admin,
         id,
-        "UPDATE backchannel_logout_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())",
+        "UPDATE backchannel_logout_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.expired_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())",
     )
     .await
 }
@@ -199,7 +199,7 @@ pub async fn retry_account_sync(
         &state,
         &admin,
         id,
-        "UPDATE account_sync_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.cancelled_at IS NULL AND d.expires_at>now() AND (d.leased_until IS NULL OR d.leased_until<=now()) AND c.status='active' AND c.account_sync_uri=d.endpoint",
+        "UPDATE account_sync_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.cancelled_at IS NULL AND d.expired_at IS NULL AND d.expires_at>now() AND (d.leased_until IS NULL OR d.leased_until<=now()) AND c.status='active' AND c.account_sync_uri=d.endpoint",
     )
     .await
 }

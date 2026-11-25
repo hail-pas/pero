@@ -444,6 +444,52 @@ async fn organization_auto_admission_changes_resync_account_projection() {
     f.cleanup().await;
 }
 
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn expired_delivery_jobs_leave_the_queue_without_losing_recent_history() {
+    use user_center::db::helper::cleanup::{
+        clean_account_sync_deliveries, clean_backchannel_deliveries,
+    };
+
+    let f = Fixture::new().await;
+    for (table, extra_columns, extra_values) in [
+        ("backchannel_logout_deliveries", "session_id", "gen_random_uuid()"),
+        ("account_sync_deliveries", "kind", "'sync.requested'"),
+    ] {
+        f.sql(
+            &format!(
+                "INSERT INTO {table}(client_id,user_id,endpoint,created_at,expires_at,delivered_at,{extra_columns})
+                 SELECT $1,$2,'https://rp.example.test/events',now()-age,now()+ttl,delivered_at,{extra_values}
+                 FROM (VALUES
+                    (interval '1 day',interval '-1 hour',NULL::timestamptz),
+                    (interval '31 days',interval '-30 days',now()),
+                    (interval '1 hour',interval '1 hour',NULL::timestamptz),
+                    (interval '1 day',interval '-1 hour',now())
+                 ) AS jobs(age,ttl,delivered_at)"
+            ),
+            vec![f.client.into(), f.user.into()],
+        )
+        .await;
+        if table == "backchannel_logout_deliveries" {
+            assert_eq!(clean_backchannel_deliveries(&f.state.db).await.unwrap(), 2);
+            assert_eq!(clean_backchannel_deliveries(&f.state.db).await.unwrap(), 0);
+        } else {
+            assert_eq!(clean_account_sync_deliveries(&f.state.db).await.unwrap(), 2);
+            assert_eq!(clean_account_sync_deliveries(&f.state.db).await.unwrap(), 0);
+        }
+        let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("SELECT count(*) AS total,count(*) FILTER (WHERE expired_at IS NOT NULL AND delivered_at IS NULL) AS expired,count(*) FILTER (WHERE expired_at IS NULL AND delivered_at IS NULL AND expires_at>now()) AS pending,count(*) FILTER (WHERE expired_at IS NULL AND delivered_at IS NOT NULL) AS delivered FROM {table} WHERE client_id=$1"),
+            [f.client.into()],
+        )).await.unwrap().unwrap();
+        assert_eq!(row.try_get::<i64>("", "total").unwrap(), 3);
+        assert_eq!(row.try_get::<i64>("", "expired").unwrap(), 1);
+        assert_eq!(row.try_get::<i64>("", "pending").unwrap(), 1);
+        assert_eq!(row.try_get::<i64>("", "delivered").unwrap(), 1);
+    }
+    f.cleanup().await;
+}
+
 struct Fixture {
     _permit: tokio::sync::SemaphorePermit<'static>,
     database: database::DatabaseFixture,

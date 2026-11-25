@@ -6,7 +6,7 @@ SELECT id, code, name, description, homepage_url, logo_url, status, system, max_
 SELECT details, id, actor_id, actor_username, action, target, ip, user_agent, request_id, outcome, http_status, created_at FROM audit_events LIMIT 0;
 SELECT id, code_hash, authorization_request_id, user_id, app_id, client_id, session_id, redirect_uri, scopes, nonce, code_challenge, code_challenge_method, created_at, expires_at, consumed_at, admission_session_id, admission_revoked, takeover_allowed, client_session_id FROM authorization_codes LIMIT 0;
 SELECT id, client_id, app_id, redirect_uri, scopes, client_state, nonce, code_challenge, code_challenge_method, prompt, max_age, login_hint, authorized_user_id, created_at, expires_at, completed_at, diagnostic_session_id FROM authorization_requests LIMIT 0;
-SELECT id, session_id, client_id, user_id, endpoint, created_at, expires_at, next_attempt_at, attempts, lease_id, leased_until, delivered_at, last_error FROM backchannel_logout_deliveries LIMIT 0;
+SELECT id, session_id, client_id, user_id, endpoint, created_at, expires_at, next_attempt_at, attempts, lease_id, leased_until, delivered_at, expired_at, last_error FROM backchannel_logout_deliveries LIMIT 0;
 SELECT id, user_id, change_type, new_value, status, verification_code_hash, nonce, requested_at, expires_at, verified_at, cancelled_at, created_at, updated_at FROM contact_change_requests LIMIT 0;
 SELECT id, app_id, client_id, auth_request_id, email, phone, invitation, invited_by, domain_exception, reason, token_hash, status, verified_at, approved_by, approved_at, provider_id, subject, completed_user_id, created_at, expires_at, last_sent_at FROM enrollments LIMIT 0;
 SELECT id, user_id, provider_id, kind, subject, password_hash, password_algorithm, password_updated_at, profile, last_login_at, created_at, updated_at, unbound_at FROM identities LIMIT 0;
@@ -26,7 +26,7 @@ SELECT user_id, app_id, status, token_version, require_mfa, created_at, updated_
 SELECT user_id, client_id, scopes, granted_at FROM user_consents LIMIT 0;
 SELECT assisted_recovery_expires_at, assisted_recovery_hash, user_id, secret_enc, pending_secret_enc, setup_session, enabled, setup_expires_at, last_step, recovery_hashes FROM user_mfa LIMIT 0;
 SELECT id, username, email, email_verified_at, phone, phone_verified_at, nickname, avatar_url, status, created_at, updated_at, deleted_at FROM users LIMIT 0;
-SELECT id,client_id,user_id,kind,endpoint,created_at,expires_at,next_attempt_at,attempts,lease_id,leased_until,delivered_at,cancelled_at,last_error FROM account_sync_deliveries LIMIT 0;
+SELECT id,client_id,user_id,kind,endpoint,created_at,expires_at,next_attempt_at,attempts,lease_id,leased_until,delivered_at,cancelled_at,expired_at,last_error FROM account_sync_deliveries LIMIT 0;
 -- Verify security-sensitive indexes/constraints and durable logout/cancellation hooks.
 DO $$
 DECLARE object_name text;

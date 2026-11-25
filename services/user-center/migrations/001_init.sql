@@ -1082,7 +1082,7 @@ CREATE TABLE user_app_access (
 );
 
 CREATE INDEX ix_user_app_access_app_id
-ON user_app_access (app_id);
+ON user_app_access (app_id, user_id);
 
 CREATE INDEX ix_user_app_access_status
 ON user_app_access (status);
@@ -1534,10 +1534,14 @@ CREATE TABLE backchannel_logout_deliveries (
     lease_id uuid,
     leased_until timestamptz,
     delivered_at timestamptz,
+    expired_at timestamptz,
     last_error text,
     UNIQUE(session_id, client_id)
 );
-CREATE INDEX ON backchannel_logout_deliveries(next_attempt_at) WHERE delivered_at IS NULL;
+CREATE INDEX ON backchannel_logout_deliveries(next_attempt_at)
+WHERE delivered_at IS NULL AND expired_at IS NULL;
+CREATE INDEX ix_backchannel_logout_deliveries_pending_expiry ON backchannel_logout_deliveries(expires_at)
+WHERE delivered_at IS NULL AND expired_at IS NULL;
 CREATE INDEX ix_backchannel_logout_deliveries_created ON backchannel_logout_deliveries(created_at);
 -- A terminal RP session transition queues exactly one logout notification.
 CREATE FUNCTION enqueue_backchannel_logout() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1674,13 +1678,16 @@ CREATE TABLE account_sync_deliveries (
     leased_until timestamptz,
     delivered_at timestamptz,
     cancelled_at timestamptz,
+    expired_at timestamptz,
     last_error text,
     tenant_id uuid
 );
 COMMENT ON COLUMN account_sync_deliveries.tenant_id IS
     'Tenant identity of a membership change, including deleted tenants; intentionally not a foreign key.';
 CREATE INDEX ON account_sync_deliveries(next_attempt_at)
-WHERE delivered_at IS NULL AND cancelled_at IS NULL;
+WHERE delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
+CREATE INDEX ix_account_sync_deliveries_pending_expiry ON account_sync_deliveries(expires_at)
+WHERE delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
 CREATE INDEX ix_account_sync_deliveries_created ON account_sync_deliveries(created_at);
 CREATE INDEX ix_account_sync_deliveries_client ON account_sync_deliveries(client_id);
 ALTER TABLE oauth_clients ADD CONSTRAINT ck_account_sync_confidential
@@ -1878,7 +1885,7 @@ BEGIN
         IS NOT DISTINCT FROM (NEW.account_sync_uri,NEW.scopes,NEW.status) THEN RETURN NEW; END IF;
 
     UPDATE account_sync_deliveries SET cancelled_at=now(),lease_id=NULL,leased_until=NULL
-    WHERE client_id=NEW.id AND delivered_at IS NULL AND cancelled_at IS NULL;
+    WHERE client_id=NEW.id AND delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
 
     IF NEW.account_sync_uri IS NOT NULL THEN
         INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
