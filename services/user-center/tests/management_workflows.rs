@@ -361,7 +361,10 @@ async fn organization_auto_admission_changes_resync_account_projection() {
         assert_eq!(snapshot["active"], active);
         assert_eq!(
             user_center::service::access::ensure_oauth_app_access(
-                &f.state.db, &session, f.app, 3600,
+                &f.state.db,
+                &session,
+                f.app,
+                3600,
             )
             .await
             .unwrap(),
@@ -497,8 +500,14 @@ impl Fixture {
             .unwrap()
             .unwrap();
         let rp_sid = database::client_session(
-            &self.state.db, self.user, client.app_id, client_id, sid, Some(tenant.tenant_id),
-        ).await;
+            &self.state.db,
+            self.user,
+            client.app_id,
+            client_id,
+            sid,
+            Some(tenant.tenant_id),
+        )
+        .await;
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
             "../../../tests/fixtures/rsa-private.pem"
         ))
@@ -602,11 +611,17 @@ async fn enrollment_approval_tracks_effective_policy() {
         .await
         .unwrap();
     assert_eq!(
-        enrollment::lookup(&f.state.db, &app_token).await.unwrap().status,
+        enrollment::lookup(&f.state.db, &app_token)
+            .await
+            .unwrap()
+            .status,
         "ready"
     );
     assert_eq!(
-        enrollment::lookup(&f.state.db, &platform_token).await.unwrap().status,
+        enrollment::lookup(&f.state.db, &platform_token)
+            .await
+            .unwrap()
+            .status,
         "pending_approval"
     );
 
@@ -614,7 +629,10 @@ async fn enrollment_approval_tracks_effective_policy() {
         .await
         .unwrap();
     assert_eq!(
-        enrollment::lookup(&f.state.db, &app_token).await.unwrap().status,
+        enrollment::lookup(&f.state.db, &app_token)
+            .await
+            .unwrap()
+            .status,
         "pending_approval"
     );
 

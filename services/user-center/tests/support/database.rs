@@ -122,18 +122,29 @@ pub async fn client_session(
     tenant: Option<Uuid>,
 ) -> Uuid {
     use sea_orm::{DbBackend, Statement};
-    let parent: Uuid = db.query_one_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO app_sessions(user_id,app_id,sso_session_id) VALUES($1,$2,$3)
+    let parent: Uuid = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO app_sessions(user_id,app_id,sso_session_id) VALUES($1,$2,$3)
          ON CONFLICT(user_id,app_id,sso_session_id) WHERE revoked_at IS NULL
          DO UPDATE SET user_id=EXCLUDED.user_id RETURNING id",
-        [user.into(), app.into(), sso.into()],
-    )).await.unwrap().unwrap().try_get("", "id").unwrap();
+            [user.into(), app.into(), sso.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
     db.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO client_sessions(app_session_id,client_id,tenant_id) VALUES($1,$2,$3)
          ON CONFLICT(app_session_id,client_id,tenant_id) WHERE revoked_at IS NULL
          DO UPDATE SET client_id=EXCLUDED.client_id RETURNING id",
         [parent.into(), client.into(), tenant.into()],
-    )).await.unwrap().unwrap().try_get("", "id").unwrap()
+    ))
+    .await
+    .unwrap()
+    .unwrap()
+    .try_get("", "id")
+    .unwrap()
 }

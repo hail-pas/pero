@@ -417,7 +417,10 @@ async fn wechat_configuration_roundtrip_and_activation_validation() {
         &pending,
         state.config.oauth2.auth_code_ttl_seconds,
     ));
-    assert_eq!(social::link_get(State(state.clone()), jar).await.status(), 200);
+    assert_eq!(
+        social::link_get(State(state.clone()), jar).await.status(),
+        200
+    );
     service.delete_social_link_cache(&pending).await;
 
     user_center::service::provider::toggle_enabled(

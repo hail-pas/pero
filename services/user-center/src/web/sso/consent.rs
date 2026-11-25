@@ -227,8 +227,12 @@ pub async fn post(
         Err(crate::service::oauth::OAuthError::InteractionRequired) => {
             // A quota change while the page was open requires another explicit confirmation.
             return match crate::web::oauth2::authorize::pending_redirect(
-                &state, &jar, ctx.auth_request.id,
-            ).await {
+                &state,
+                &jar,
+                ctx.auth_request.id,
+            )
+            .await
+            {
                 Ok((jar, response)) => (jar, response).into_response(),
                 Err(error) => error.into_response(),
             };

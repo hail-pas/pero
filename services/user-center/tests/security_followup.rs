@@ -116,9 +116,20 @@ async fn authorization_and_recovery_regressions() {
         .await
         .unwrap();
     let tenant = user_center::service::tenant_context::resolve(&db, user, app_a, None)
-        .await.unwrap().unwrap();
-    let rp_sid = database::client_session(&db, user, app_a, client_a, sid_old, Some(tenant.tenant_id)).await;
-    let old_at = jwt(&issuer, user, "admin-client", rp_sid, Some("openid"), None, &tenant);
+        .await
+        .unwrap()
+        .unwrap();
+    let rp_sid =
+        database::client_session(&db, user, app_a, client_a, sid_old, Some(tenant.tenant_id)).await;
+    let old_at = jwt(
+        &issuer,
+        user,
+        "admin-client",
+        rp_sid,
+        Some("openid"),
+        None,
+        &tenant,
+    );
     // Authorize max_age=0 using a minute-old session and existing consent.
     sql(
         &db,
