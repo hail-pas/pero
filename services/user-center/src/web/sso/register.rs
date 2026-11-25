@@ -57,9 +57,13 @@ struct View {
     providers: Vec<super::dto::SocialProvider>,
 }
 pub(crate) fn clear_flow(jar: CookieJar) -> CookieJar {
-    jar.remove(Cookie::build(FLOW_COOKIE).path("/sso").build())
-        .remove(Cookie::build(SOCIAL_COOKIE).path("/sso").build())
-        .remove(Cookie::build(INVITATION_COOKIE).path("/sso").build())
+    // Requests outside /sso do not carry these cookies. Explicit expiration
+    // is required even when the incoming CookieJar has no original cookie.
+    [FLOW_COOKIE, SOCIAL_COOKIE, INVITATION_COOKIE]
+        .into_iter()
+        .fold(jar, |jar, name| {
+            jar.add(pero_api_axum::cookie::clear_cookie_with_domain(name, "/sso", None))
+        })
 }
 
 pub(crate) async fn active_request(
@@ -90,12 +94,34 @@ pub(crate) async fn active_request(
 }
 
 pub(crate) fn tenant_token(jar: &CookieJar) -> Option<&str> {
-    jar.get(INVITATION_COOKIE).map(|c| c.value())
+    jar.get(INVITATION_COOKIE)
+        .map(|c| c.value())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn flow_token(jar: &CookieJar) -> Option<&str> {
-    jar.get(FLOW_COOKIE).map(|c| c.value())
+    jar.get(FLOW_COOKIE)
+        .map(|c| c.value())
+        .filter(|value| !value.is_empty())
 }
+pub(crate) fn social_flow_redirect(jar: &CookieJar) -> Option<String> {
+    tenant_token(jar)
+        .map(|token| format!("/sso/register?invitation_flow={}", pero_utils::crypto::sha256_hex(token)))
+        .or_else(|| {
+            flow_token(jar).map(|token| {
+                format!("/sso/register?enrollment_flow={}", pero_utils::crypto::sha256_hex(token))
+            })
+        })
+}
+
+pub(crate) fn social_flow_matches(jar: &CookieJar, redirect: &str) -> bool {
+    if redirect.starts_with("/sso/register?") {
+        social_flow_redirect(jar).as_deref() == Some(redirect)
+    } else {
+        redirect != "/sso/register" || social_flow_redirect(jar).is_none()
+    }
+}
+
 pub(crate) fn flow_cookie(state: &AppState, token: String) -> Cookie<'static> {
     Cookie::build((FLOW_COOKIE, token))
         .path("/sso")
@@ -197,7 +223,9 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
     let row = if let Some(token) = flow_token(&jar) {
         match enrollment::progress_by_token(&state.db, token).await {
             Ok(r) => Some(r),
-            Err(crate::service::ManagementError::Invalid(_)) => None,
+            Err(crate::service::ManagementError::Invalid(_)) => {
+                return (clear_flow(jar), Redirect::to("/sso/register")).into_response();
+            }
             Err(e) => return util::management_response(Err(e)),
         }
     } else {
@@ -590,10 +618,11 @@ pub async fn post(
                         )
                         .await
                     }
-                    Err(crate::service::ManagementError::Invalid("reauth_required")) => {
-                        (jar, Redirect::to("/account/reauth?redirect=%2Fsso%2Fregister"))
-                            .into_response()
-                    }
+                    Err(crate::service::ManagementError::Invalid("reauth_required")) => (
+                        jar,
+                        Redirect::to("/account/reauth?redirect=%2Fsso%2Fregister"),
+                    )
+                        .into_response(),
                     Err(e) => util::management_response(Err(e)),
                 };
             }
@@ -712,18 +741,12 @@ pub async fn social(
     if let Err(e) = enrollment::allow_social(&state.db, provider).await {
         return util::management_response(Err(e));
     }
-    let invitation_hash = tenant_token(&jar).map(pero_utils::crypto::sha256_hex);
-    let flow_hash = flow_token(&jar).map(pero_utils::crypto::sha256_hex);
-    if (redirect.starts_with("/sso/register?invitation_flow=") && invitation_hash.is_none())
-        || (redirect.starts_with("/sso/register?enrollment_flow=") && flow_hash.is_none())
-        || flow_hash
-            .as_ref()
-            .is_some_and(|hash| redirect != format!("/sso/register?enrollment_flow={hash}"))
-    {
+    if !social_flow_matches(&jar, redirect) {
         return util::management_response(Err(crate::service::ManagementError::Invalid(
             "enrollment_unavailable",
         )));
     }
+    let invitation_hash = tenant_token(&jar).map(pero_utils::crypto::sha256_hex);
     let app = if let Some(token) = flow_token(&jar) {
         match enrollment::lookup(&state.db, token).await {
             Ok(row) => row.app_id,
@@ -732,13 +755,7 @@ pub async fn social(
     } else {
         app
     };
-    if let Some(hash) = invitation_hash.as_deref() {
-        if redirect != format!("/sso/register?invitation_flow={hash}") {
-            return util::management_response(Err(crate::service::ManagementError::Invalid(
-                "invalid_invitation",
-            )));
-        }
-        let token = tenant_token(&jar).unwrap_or_default();
+    if let Some(token) = tenant_token(&jar) {
         if let Err(e) = crate::service::tenant::invitation(&state.db, token).await {
             return util::management_response(Err(e));
         }

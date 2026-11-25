@@ -48,27 +48,17 @@ pub async fn login(
     };
 
     let redirect = if query.redirect == "/sso/register" {
-        super::register::tenant_token(&jar)
-            .map(|token| {
-                format!(
-                    "/sso/register?invitation_flow={}",
-                    pero_utils::crypto::sha256_hex(token)
-                )
-            })
-            .or_else(|| {
-                super::register::flow_token(&jar).map(|token| {
-                    format!(
-                        "/sso/register?enrollment_flow={}",
-                        pero_utils::crypto::sha256_hex(token)
-                    )
-                })
-            })
-            .unwrap_or(query.redirect)
+        super::register::social_flow_redirect(&jar).unwrap_or(query.redirect)
     } else {
         query.redirect
     };
     let auth_request_id = if redirect.starts_with("/sso/register?") {
         None
+    } else if redirect == "/sso/register" {
+        match super::register::active_request(&state, &jar).await {
+            Ok(request) => request.map(|request| request.id),
+            Err(e) => return crate::web::util::management_response(Err(e)),
+        }
     } else {
         auth_request_id
     };
@@ -252,6 +242,9 @@ pub async fn callback(
         return (jar, Redirect::to(target)).into_response();
     }
 
+    if !super::register::social_flow_matches(&jar, &cb_state.social_value.redirect) {
+        return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
+    }
     let authenticated_at = user_info.authenticated_at;
     let resolution = match svc
         .resolve_identity(
@@ -305,12 +298,12 @@ pub async fn callback(
                 Ok(request) => request,
                 Err(e) => return crate::web::util::management_response(Err(e)),
             };
-            let has_flow = super::register::flow_token(&jar).is_some()
-                || super::register::tenant_token(&jar).is_some();
+            let has_flow = cb_state.social_value.redirect.starts_with("/sso/register?");
             if !has_flow && request.as_ref().map(|r| r.id) != auth_request_id {
                 return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
             }
             let app = request.as_ref().map(|r| r.app_id);
+            let jar = if has_flow { jar } else { super::register::clear_flow(jar) };
             super::register::social(
                 &state,
                 jar,
@@ -359,6 +352,9 @@ pub async fn link_post(
         return render_social_link(&state, jar, &form.nonce, "invalid_csrf").await;
     }
 
+    if !super::register::social_flow_matches(&jar, &link.redirect) {
+        return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
+    }
     let user_id = match Uuid::parse_str(&link.user_id) {
         Ok(id) => id,
         Err(_) => return Redirect::to(&login_error_url("social_link_expired")).into_response(),

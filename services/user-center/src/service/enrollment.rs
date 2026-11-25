@@ -397,8 +397,19 @@ async fn start_contact(
         StartKind::Portal(invitation) => (invitation, None, None),
         StartKind::SelfService { request, social } => {
             require_personal_app(&txn, app).await?;
-            if request.is_some_and(|r| Some(r.app_id) != app) {
-                return Err(invalid());
+            if let Some(request) = request {
+                if Some(request.app_id) != app {
+                    return Err(invalid());
+                }
+                crate::db::entity::oauth_clients::Entity::find_by_id(request.client_id)
+                    .one(&txn)
+                    .await?
+                    .filter(|client| {
+                        client.status == CommonStatus::Active
+                            && client.app_id == request.app_id
+                            && client.login_uri.as_deref().is_some_and(super::client::valid_login_uri)
+                    })
+                    .ok_or_else(invalid)?;
             }
             (None, request, social)
         }

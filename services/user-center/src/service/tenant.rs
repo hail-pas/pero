@@ -327,16 +327,25 @@ pub async fn invite_from_client(
     client_id: Option<Uuid>,
 ) -> Result<()> {
     let email = super::enrollment::email(email)?;
-    if !matches!(role, "admin" | "member")
-        || email.len() > 254
-        || !validator::ValidateEmail::validate_email(&email)
-    {
+    if !matches!(role, "admin" | "member") {
         return Err(Error::Invalid("invalid_request"));
     }
     if !state.config.notification.available("email") {
         return Err(Error::Invalid("notification_disabled"));
     }
     let txn = state.db.begin().await?;
+    if let Some(client_id) = client_id {
+        use crate::db::{entity::oauth_clients, enums::CommonStatus};
+        use sea_orm::EntityTrait;
+        oauth_clients::Entity::find_by_id(client_id)
+            .one(&txn)
+            .await?
+            .filter(|client| {
+                client.status == CommonStatus::Active
+                    && client.login_uri.as_deref().is_some_and(super::client::valid_login_uri)
+            })
+            .ok_or(Error::Invalid("enrollment_unavailable"))?;
+    }
     lock_organization(&txn, id).await?;
     let actor_role = governance(&txn, user, id).await?;
     if get(&txn, user, id).await?.status != "active" {
@@ -533,8 +542,12 @@ pub async fn finalize_invitation(
             .filter(|s| s.user_id == user.id)
             .ok_or(Error::Invalid("existing_account_login_required"))?;
         super::account_security::lock_account_session(&txn, session, &state.config.sso).await?;
-        if !super::security::recent(&txn, session.id, state.config.sso.session_idle_ttl_seconds)
-            .await?
+        // The authenticated account and its single-use mailbox invitation
+        // are sufficient for joining an organization. Platform administrators
+        // retain the stronger recent-authentication requirement.
+        if super::security::role(&txn, user.id).await?.is_some()
+            && !super::security::recent(&txn, session.id, state.config.sso.session_idle_ttl_seconds)
+                .await?
         {
             return Err(Error::Invalid("reauth_required"));
         }
