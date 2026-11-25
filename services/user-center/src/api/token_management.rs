@@ -195,6 +195,16 @@ pub async fn revoke(
         let user = if let Some(rt) = refresh(&state, &input.token, &client).await? {
             if rt.expires_at <= time::OffsetDateTime::now_utc()
                 || rt.revoked_at.is_some() && rt.revoke_reason.as_deref() != Some("rotation")
+                || crate::db::helper::session::app_query(
+                    time::OffsetDateTime::now_utc(),
+                    state.config.sso.session_idle_ttl_seconds,
+                    client.app_id,
+                )
+                .filter(sso_sessions::Column::Id.eq(rt.session_id))
+                .filter(sso_sessions::Column::UserId.eq(rt.user_id))
+                .one(&state.db)
+                .await?
+                .is_none()
                 || !crate::service::tenant_context::grant_context_is_current(
                     &state.db,
                     rt.user_id,

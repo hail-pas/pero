@@ -228,7 +228,7 @@ pub async fn set_status(
     Path(id): Path<Uuid>,
     Json(f): Json<StatusChange>,
 ) -> Response {
-    let user = match actor(&s, &h, Some(id), true).await {
+    let user = match actor(&s, &h, Some(id), f.status == "active").await {
         Ok(v) => v,
         Err(e) => return e,
     };

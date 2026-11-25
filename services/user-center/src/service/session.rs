@@ -344,7 +344,7 @@ impl<'a> SessionService<'a> {
         Ok(())
     }
 
-    async fn revoke_refresh_tokens_where_on<C, F>(
+    pub(super) async fn revoke_refresh_tokens_where_on<C, F>(
         db: &C,
         reason: &str,
         apply_filters: F,

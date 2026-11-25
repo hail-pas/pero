@@ -35,14 +35,12 @@ pub async fn revoke_sessions<C: ConnectionTrait>(
         .filter(sso_sessions::Column::RevokedAt.is_null())
         .exec(db)
         .await?;
-    refresh_tokens::Entity::update_many()
-        .col_expr(refresh_tokens::Column::RevokedAt, Expr::value(Some(now)))
-        .col_expr(refresh_tokens::Column::RevokeReason, Expr::value(reason))
-        .filter(refresh_tokens::Column::UserId.eq(user_id))
-        .filter(refresh_tokens::Column::SessionId.in_subquery(ids))
-        .filter(refresh_tokens::Column::RevokedAt.is_null())
-        .exec(db)
-        .await?;
+    SessionService::revoke_refresh_tokens_where_on(db, reason, |query| {
+        query
+            .filter(refresh_tokens::Column::UserId.eq(user_id))
+            .filter(refresh_tokens::Column::SessionId.in_subquery(ids))
+    })
+    .await?;
     Ok(())
 }
 
