@@ -169,7 +169,10 @@ pub async fn reset_password(
 
 pub(crate) enum RegistrationCredential<'a> {
     Password(pero_utils::crypto::password::PasswordHashResult),
-    Social { provider_id: uuid::Uuid, subject: &'a str },
+    Social {
+        provider_id: uuid::Uuid,
+        subject: &'a str,
+    },
 }
 
 /// Persist a verified contact and its initial identity in the caller's transaction.
@@ -180,7 +183,8 @@ pub(crate) async fn create_verified_user(
     phone: Option<String>,
     credential: RegistrationCredential<'_>,
 ) -> Result<(users::Model, identities::Model), ManagementError> {
-    crate::db::helper::user::validate_username(username.trim()).map_err(ManagementError::Validation)?;
+    crate::db::helper::user::validate_username(username.trim())
+        .map_err(ManagementError::Validation)?;
     let now = time::OffsetDateTime::now_utc();
     let user = users::ActiveModel {
         id: Set(uuid::Uuid::now_v7()),
@@ -199,9 +203,20 @@ pub(crate) async fn create_verified_user(
     let identity = match credential {
         RegistrationCredential::Password(hash) => {
             let provider = crate::db::helper::identity_provider::find_local_provider(txn).await?;
-            PasswordIdentityService::create_hashed(txn, user.id, provider.id, user.id.to_string(), hash, now).await?
+            PasswordIdentityService::create_hashed(
+                txn,
+                user.id,
+                provider.id,
+                user.id.to_string(),
+                hash,
+                now,
+            )
+            .await?
         }
-        RegistrationCredential::Social { provider_id, subject } => {
+        RegistrationCredential::Social {
+            provider_id,
+            subject,
+        } => {
             super::enrollment::allow_social(txn, provider_id).await?;
             identities::ActiveModel {
                 id: Set(uuid::Uuid::now_v7()),

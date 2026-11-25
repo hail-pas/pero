@@ -451,7 +451,11 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
     Ok(())
 }
 
-async fn accept_in_transaction(txn: &sea_orm::DatabaseTransaction, user: Uuid, token: &str) -> Result<()> {
+async fn accept_in_transaction(
+    txn: &sea_orm::DatabaseTransaction,
+    user: Uuid,
+    token: &str,
+) -> Result<()> {
     if super::enrollment::policy(txn, None).await?.emergency_stop {
         return Err(Error::Invalid("registration_closed"));
     }
@@ -496,16 +500,9 @@ async fn accept_in_transaction(txn: &sea_orm::DatabaseTransaction, user: Uuid, t
         vec![id.into(), user.into()],
     )
     .await?;
-    audit(
-        txn,
-        user,
-        "tenant.invitation.accepted",
-        &tenant.to_string(),
-    )
-    .await?;
+    audit(txn, user, "tenant.invitation.accepted", &tenant.to_string()).await?;
     Ok(())
 }
-
 
 pub async fn finalize_invitation(
     state: &crate::state::app::AppState,
@@ -515,14 +512,26 @@ pub async fn finalize_invitation(
     session: Option<&crate::state::session::SsoSession>,
     proof: Option<&super::enrollment::SocialProof>,
 ) -> Result<super::enrollment::EnrollmentResult> {
+    use super::{enrollment, password::PasswordIdentityService, user::RegistrationCredential};
     use crate::db::{entity::users, enums::UserStatus};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-    use super::{enrollment, password::PasswordIdentityService, user::RegistrationCredential};
     let initial = invitation(&state.db, token).await?;
-    let exists = users::Entity::find().filter(users::Column::Email.eq(initial.email.clone())).one(&state.db).await?.is_some();
-    let proof = proof.filter(|proof| proof.is_fresh() && proof.invitation_hash.as_deref() == Some(pero_utils::crypto::sha256_hex(token).as_str()));
+    let exists = users::Entity::find()
+        .filter(users::Column::Email.eq(initial.email.clone()))
+        .one(&state.db)
+        .await?
+        .is_some();
+    let proof = proof.filter(|proof| {
+        proof.is_fresh()
+            && proof.invitation_hash.as_deref()
+                == Some(pero_utils::crypto::sha256_hex(token).as_str())
+    });
     let hash = if !exists && proof.is_none() {
-        state.config.password.validate_password(password).map_err(Error::Validation)?;
+        state
+            .config
+            .password
+            .validate_password(password)
+            .map_err(Error::Validation)?;
         Some(PasswordIdentityService::hash_password(password).await?)
     } else {
         None
@@ -536,16 +545,37 @@ pub async fn finalize_invitation(
     // Lock the organization before checking current invitation and member capacity.
     lock_organization(&txn, initial.tenant_id).await?;
     let invite = invitation(&txn, token).await?;
-    let existing = users::Entity::find().filter(users::Column::Email.eq(invite.email.clone())).one(&txn).await?;
+    let existing = users::Entity::find()
+        .filter(users::Column::Email.eq(invite.email.clone()))
+        .one(&txn)
+        .await?;
     let (user_id, identity) = if let Some(user) = existing {
-        let session = session.filter(|s| s.user_id == user.id).ok_or(Error::Invalid("existing_account_login_required"))?;
+        let session = session
+            .filter(|s| s.user_id == user.id)
+            .ok_or(Error::Invalid("existing_account_login_required"))?;
         super::account_security::lock_account_session(&txn, session, &state.config.sso).await?;
-        let user = users::Entity::find_by_id(user.id).one(&txn).await?.ok_or(Error::Invalid("invalid_invitation"))?;
-        if user.status != UserStatus::Active || user.deleted_at.is_some() || user.email.as_deref().and_then(|email| enrollment::email(email).ok()).as_deref() != Some(invite.email.as_str()) {
+        let user = users::Entity::find_by_id(user.id)
+            .one(&txn)
+            .await?
+            .ok_or(Error::Invalid("invalid_invitation"))?;
+        if user.status != UserStatus::Active
+            || user.deleted_at.is_some()
+            || user
+                .email
+                .as_deref()
+                .and_then(|email| enrollment::email(email).ok())
+                .as_deref()
+                != Some(invite.email.as_str())
+        {
             return Err(Error::Invalid("invalid_invitation"));
         }
         if user.email_verified_at.is_none() {
-            exec(&txn, "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1", vec![user.id.into()]).await?;
+            exec(
+                &txn,
+                "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1",
+                vec![user.id.into()],
+            )
+            .await?;
         }
         (user.id, None)
     } else {
@@ -556,18 +586,32 @@ pub async fn finalize_invitation(
             return Err(Error::Invalid("tenant_member_limit"));
         }
         let credential = if let Some(proof) = proof {
-            RegistrationCredential::Social { provider_id: proof.provider, subject: &proof.subject }
+            RegistrationCredential::Social {
+                provider_id: proof.provider,
+                subject: &proof.subject,
+            }
         } else {
             RegistrationCredential::Password(hash.ok_or(Error::Invalid("invalid_request"))?)
         };
-        let (user, identity) = super::user::create_verified_user(&txn, username, Some(invite.email.clone()), None, credential).await?;
+        let (user, identity) = super::user::create_verified_user(
+            &txn,
+            username,
+            Some(invite.email.clone()),
+            None,
+            credential,
+        )
+        .await?;
         (user.id, Some(identity))
     };
     accept_in_transaction(&txn, user_id, token).await?;
     txn.commit().await?;
     Ok(enrollment::EnrollmentResult {
-        user_id, identity, app_id: invite.app_id, client_id: invite.client_id,
-        auth_request_id: None, tenant_id: Some(invite.tenant_id),
+        user_id,
+        identity,
+        app_id: invite.app_id,
+        client_id: invite.client_id,
+        auth_request_id: None,
+        tenant_id: Some(invite.tenant_id),
     })
 }
 

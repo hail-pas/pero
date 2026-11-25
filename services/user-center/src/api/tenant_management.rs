@@ -63,8 +63,16 @@ async fn actor_access(
     Ok(access)
 }
 
-async fn actor(s: &AppState, h: &HeaderMap, tenant: Option<Uuid>, allow_disabled_recovery: bool) -> Result<Uuid, Response> {
-    Ok(actor_access(s, h, tenant, allow_disabled_recovery).await?.user.id)
+async fn actor(
+    s: &AppState,
+    h: &HeaderMap,
+    tenant: Option<Uuid>,
+    allow_disabled_recovery: bool,
+) -> Result<Uuid, Response> {
+    Ok(actor_access(s, h, tenant, allow_disabled_recovery)
+        .await?
+        .user
+        .id)
 }
 /// A logged-in application's user may enumerate their eligible workspaces without tenant.manage.
 pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
@@ -198,7 +206,17 @@ pub async fn invite(
         Ok(v) => v,
         Err(e) => return e,
     };
-    util::management_response(svc::invite_from_client(&s, access.user.id, id, &f.email, &f.role, Some(access.client.id)).await)
+    util::management_response(
+        svc::invite_from_client(
+            &s,
+            access.user.id,
+            id,
+            &f.email,
+            &f.role,
+            Some(access.client.id),
+        )
+        .await,
+    )
 }
 #[derive(Deserialize)]
 pub struct Rename {

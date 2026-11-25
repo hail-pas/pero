@@ -356,7 +356,11 @@ pub async fn start_from_request(
     app: Option<Uuid>,
     request: Option<&crate::db::entity::authorization_requests::Model>,
 ) -> Result<(), Error> {
-    let address = if is_phone { phone(address)? } else { email(address)? };
+    let address = if is_phone {
+        phone(address)?
+    } else {
+        email(address)?
+    };
     start_contact(state, &address, app, None, is_phone, request).await
 }
 
@@ -650,13 +654,21 @@ pub async fn finalize(
             if !social_proof.is_some_and(|proof| proof.matches(&row)) {
                 return Err(Error::Invalid("social_reauthentication_required"));
             }
-            RegistrationCredential::Social { provider_id, subject: row.subject.as_deref().ok_or_else(invalid)? }
+            RegistrationCredential::Social {
+                provider_id,
+                subject: row.subject.as_deref().ok_or_else(invalid)?,
+            }
         } else {
             RegistrationCredential::Password(hash.ok_or_else(invalid)?)
         };
         let (user, created_identity) = super::user::create_verified_user(
-            &txn, username, row.email.clone(), row.phone.clone(), credential,
-        ).await?;
+            &txn,
+            username,
+            row.email.clone(),
+            row.phone.clone(),
+            credential,
+        )
+        .await?;
         identity = Some(created_identity);
         user
     };
@@ -699,7 +711,14 @@ pub async fn finalize(
     cancel_notifications(&txn, row.id).await?;
     audit(&txn, &user, "enrollment_completed", row.id).await?;
     txn.commit().await?;
-    Ok(EnrollmentResult { user_id: user.id, identity, app_id: row.app_id, client_id: row.client_id, auth_request_id: row.auth_request_id, tenant_id: None })
+    Ok(EnrollmentResult {
+        user_id: user.id,
+        identity,
+        app_id: row.app_id,
+        client_id: row.client_id,
+        auth_request_id: row.auth_request_id,
+        tenant_id: None,
+    })
 }
 
 pub async fn start_social(
@@ -726,9 +745,19 @@ pub async fn start_social(
     Ok(())
 }
 
-async fn bind_origin<C: ConnectionTrait>(db: &C, id: Uuid, app: Option<Uuid>, request: Option<&crate::db::entity::authorization_requests::Model>) -> Result<(), Error> {
+async fn bind_origin<C: ConnectionTrait>(
+    db: &C,
+    id: Uuid,
+    app: Option<Uuid>,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
+) -> Result<(), Error> {
     if let Some(request) = request.filter(|r| Some(r.app_id) == app) {
-        execute(db, "UPDATE enrollments SET client_id=$2,auth_request_id=$3 WHERE id=$1", vec![id.into(), request.client_id.into(), request.id.into()]).await?;
+        execute(
+            db,
+            "UPDATE enrollments SET client_id=$2,auth_request_id=$3 WHERE id=$1",
+            vec![id.into(), request.client_id.into(), request.id.into()],
+        )
+        .await?;
     }
     Ok(())
 }

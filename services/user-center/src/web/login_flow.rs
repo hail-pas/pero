@@ -190,15 +190,29 @@ pub async fn finish_enrollment(
     ip: Option<IpNetwork>,
     user_agent: Option<String>,
 ) -> axum::response::Response {
+    use crate::db::{
+        entity::{apps, oauth_clients},
+        enums::{CommonStatus, IdentityKind},
+    };
     use axum::response::{IntoResponse, Redirect};
     use sea_orm::EntityTrait;
-    use crate::db::{entity::{apps, oauth_clients}, enums::{CommonStatus, IdentityKind}};
     let jar = if let Some(identity) = result.identity {
         let service = state.session_service();
         let session = if identity.kind == IdentityKind::Password {
-            service.create_verified_password(&identity, ip, user_agent).await
+            service
+                .create_verified_password(&identity, ip, user_agent)
+                .await
         } else {
-            service.create_social(result.user_id, identity.id, identity.provider_id, ip, None, user_agent).await
+            service
+                .create_social(
+                    result.user_id,
+                    identity.id,
+                    identity.provider_id,
+                    ip,
+                    None,
+                    user_agent,
+                )
+                .await
         };
         match session {
             Ok((token, _)) => jar.add(state.cookie_factory().build_session_cookie(&token)),
@@ -210,19 +224,34 @@ pub async fn finish_enrollment(
     } else {
         jar
     };
-    if request.is_some_and(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id) {
+    if request.is_some_and(|r| {
+        Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id
+    }) {
         return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
     }
     let cookies = state.cookie_factory();
-    let jar = jar.add(cookies.clear_cookie(&cookies.nonce_cookie_name())).add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
+    let jar = jar
+        .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+        .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
     if let Some(id) = result.client_id {
         match oauth_clients::Entity::find_by_id(id).one(&state.db).await {
-            Ok(Some(client)) if client.status == CommonStatus::Active && Some(client.app_id) == result.app_id => {
+            Ok(Some(client))
+                if client.status == CommonStatus::Active
+                    && Some(client.app_id) == result.app_id =>
+            {
                 match apps::Entity::find_by_id(client.app_id).one(&state.db).await {
                     Ok(Some(app)) if app.status == CommonStatus::Active => {
-                        if let Some(mut uri) = client.login_uri.filter(|uri| uri.starts_with("https://") && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()) {
+                        if let Some(mut uri) = client.login_uri.filter(|uri| {
+                            uri.starts_with("https://")
+                                && pero_utils::redirect::validate_oauth_redirect_uri(uri, false)
+                                    .is_ok()
+                        }) {
                             if let Some(tenant) = result.tenant_id {
-                                pero_utils::encode::append_query_param(&mut uri, "tenant_id", &tenant.to_string());
+                                pero_utils::encode::append_query_param(
+                                    &mut uri,
+                                    "tenant_id",
+                                    &tenant.to_string(),
+                                );
                             }
                             return (jar, Redirect::to(&uri)).into_response();
                         }
@@ -235,6 +264,9 @@ pub async fn finish_enrollment(
             _ => {}
         }
     }
-    let target = result.tenant_id.map(|id| format!("/account/tenants/{id}")).unwrap_or_else(|| "/account/applications".to_owned());
+    let target = result
+        .tenant_id
+        .map(|id| format!("/account/tenants/{id}"))
+        .unwrap_or_else(|| "/account/applications".to_owned());
     (jar, Redirect::to(&target)).into_response()
 }

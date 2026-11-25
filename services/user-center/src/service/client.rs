@@ -93,7 +93,9 @@ impl ClientInput {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
         if let Some(uri) = &self.login_uri {
-            if !uri.starts_with("https://") || pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_err() {
+            if !uri.starts_with("https://")
+                || pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_err()
+            {
                 return Err(ManagementError::Invalid("invalid_redirect_uri"));
             }
         }

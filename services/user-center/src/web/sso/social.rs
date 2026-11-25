@@ -48,16 +48,19 @@ pub async fn login(
     };
 
     let redirect = if query.redirect == "/sso/register" {
-        super::register::tenant_token(&jar).map(|token| format!("/sso/register?invitation_flow={}", pero_utils::crypto::sha256_hex(token))).unwrap_or(query.redirect)
-    } else { query.redirect };
+        super::register::tenant_token(&jar)
+            .map(|token| {
+                format!(
+                    "/sso/register?invitation_flow={}",
+                    pero_utils::crypto::sha256_hex(token)
+                )
+            })
+            .unwrap_or(query.redirect)
+    } else {
+        query.redirect
+    };
     let prepared = match svc
-        .prepare_login_state(
-            &provider,
-            &provider_code,
-            auth_request_id,
-            &redirect,
-            None,
-        )
+        .prepare_login_state(&provider, &provider_code, auth_request_id, &redirect, None)
         .await
     {
         Ok(p) => p,
@@ -303,7 +306,15 @@ pub async fn callback(
             } else {
                 None
             };
-            super::register::social(&state, jar, cb_state.provider.provider.id, info, app, &cb_state.social_value.redirect).await
+            super::register::social(
+                &state,
+                jar,
+                cb_state.provider.provider.id,
+                info,
+                app,
+                &cb_state.social_value.redirect,
+            )
+            .await
         }
     }
 }

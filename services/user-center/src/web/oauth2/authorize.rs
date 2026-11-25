@@ -67,9 +67,12 @@ impl AuthorizeQuery {
         if let Some(prompt) = &self.prompt {
             let values: Vec<_> = prompt.split_whitespace().collect();
             if values.is_empty()
-                || values
-                    .iter()
-                    .any(|p| !matches!(*p, "none" | "login" | "consent" | "select_account" | "create"))
+                || values.iter().any(|p| {
+                    !matches!(
+                        *p,
+                        "none" | "login" | "consent" | "select_account" | "create"
+                    )
+                })
                 || ((values.contains(&"none") || values.contains(&"create")) && values.len() != 1)
             {
                 return Err(self.redirect_err("invalid_request", Some("Invalid prompt")));
@@ -351,7 +354,10 @@ async fn authorize_request(
 
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create") {
         let (jar, _) = pending_redirect(&state, &jar, auth_request.id).await?;
-        return Ok((crate::web::sso::register::clear_flow(jar), Redirect::to("/sso/register").into_response()));
+        return Ok((
+            crate::web::sso::register::clear_flow(jar),
+            Redirect::to("/sso/register").into_response(),
+        ));
     }
 
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "select_account") {
