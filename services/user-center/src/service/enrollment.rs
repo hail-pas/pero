@@ -367,7 +367,10 @@ pub async fn start_from_request(
         &address,
         app,
         is_phone,
-        StartKind::SelfService { request, social: None },
+        StartKind::SelfService {
+            request,
+            social: None,
+        },
     )
     .await
 }

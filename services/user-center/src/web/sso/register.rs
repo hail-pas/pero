@@ -338,7 +338,9 @@ async fn registration_session(
         && session.mfa_required
         && session.mfa_verified_at.is_none()
     {
-        return Err(Box::new(Redirect::to("/sso/mfa?redirect=%2Fsso%2Fregister").into_response()));
+        return Err(Box::new(
+            Redirect::to("/sso/mfa?redirect=%2Fsso%2Fregister").into_response(),
+        ));
     }
     crate::web::session::extract_session(state, jar)
         .await

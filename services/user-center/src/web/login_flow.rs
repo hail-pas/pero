@@ -227,9 +227,9 @@ pub async fn finish_enrollment(
     } else {
         jar
     };
-    if let Some(pending) = request.filter(|r| {
-        Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id
-    }) {
+    if let Some(pending) = request
+        .filter(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id)
+    {
         let resume = match (pending.tenant_id, result.tenant_id) {
             (None, Some(tenant)) => {
                 match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant)
@@ -286,9 +286,10 @@ pub(crate) async fn client_login_target(
 ) -> Result<Option<String>, sea_orm::DbErr> {
     use crate::db::{entity::apps, enums::CommonStatus};
     use sea_orm::EntityTrait;
-    let Some(mut uri) = client.login_uri.filter(|uri| {
-        crate::service::client::valid_login_uri(uri)
-    }) else {
+    let Some(mut uri) = client
+        .login_uri
+        .filter(|uri| crate::service::client::valid_login_uri(uri))
+    else {
         return Ok(None);
     };
     if client.status != CommonStatus::Active

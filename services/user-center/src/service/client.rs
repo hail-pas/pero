@@ -98,7 +98,11 @@ impl ClientInput {
         if self.redirect_uris.is_empty() {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
-        if self.login_uri.as_deref().is_some_and(|uri| !valid_login_uri(uri)) {
+        if self
+            .login_uri
+            .as_deref()
+            .is_some_and(|uri| !valid_login_uri(uri))
+        {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
         let allow_private_scheme = self.client_type == OauthClientType::Public;
