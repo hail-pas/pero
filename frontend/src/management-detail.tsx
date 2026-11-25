@@ -320,7 +320,8 @@ export function ManagementDetail({
                 >
                   {t("应用注销通知")}
                 </Button>
-                {isSuper(data.layout) &&
+                {!system &&
+                  isSuper(data.layout) &&
                   lower(client.type) === "confidential" && (
                     <Button
                       size="small"

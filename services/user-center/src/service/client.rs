@@ -32,6 +32,15 @@ pub(crate) async fn save_security_change(
     {
         return Err(ManagementError::Invalid("forbidden"));
     }
+    if active.account_sync_uri.as_ref().is_some()
+        && active.account_sync_uri.as_ref() != &expected.account_sync_uri
+        && apps::Entity::find_by_id(expected.app_id)
+            .one(&txn)
+            .await?
+            .is_some_and(|app| app.system)
+    {
+        return Err(ManagementError::Invalid("system_app_protected"));
+    }
     if permission == P::ClientsManage
         && (active.r#type.as_ref() != &expected.r#type
             || active.secret_hash.as_ref() != &expected.secret_hash)
