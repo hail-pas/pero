@@ -50,7 +50,12 @@ impl TokenService<'_> {
             .column(rt::Column::AppId)
             .column(rt::Column::SessionId)
             .column(rt::Column::TenantId)
-            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<uuid::Uuid>)>()
+            .into_tuple::<(
+                uuid::Uuid,
+                uuid::Uuid,
+                Option<uuid::Uuid>,
+                Option<uuid::Uuid>,
+            )>()
             .one(&txn)
             .await;
         let (user_id, app_id, session_id, tenant_id) = match owner {

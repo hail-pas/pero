@@ -229,8 +229,7 @@ pub async fn update(
 }
 
 fn same_set(left: &[String], right: &[String]) -> bool {
-    left.iter().all(|value| right.contains(value))
-        && right.iter().all(|value| left.contains(value))
+    left.iter().all(|value| right.contains(value)) && right.iter().all(|value| left.contains(value))
 }
 
 pub async fn reset_secret(

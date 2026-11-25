@@ -45,14 +45,7 @@ async fn client(
     client_id: &mut String,
     client_secret: &mut Option<String>,
 ) -> Result<crate::db::entity::oauth_clients::Model, Response> {
-    let c = super::client_auth::authenticate(
-        s,
-        headers,
-        client_id,
-        client_secret,
-        source,
-    )
-    .await?;
+    let c = super::client_auth::authenticate(s, headers, client_id, client_secret, source).await?;
     if c.r#type != crate::db::enums::OauthClientType::Confidential || c.account_sync_uri.is_none() {
         return Err(StatusCode::FORBIDDEN.into_response());
     }

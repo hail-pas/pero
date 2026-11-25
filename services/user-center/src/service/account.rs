@@ -90,14 +90,9 @@ impl<'a> AccountService<'a> {
         let user = PasswordIdentityService::lock_user(&txn, session.user_id).await?;
         let idle_ttl = self.state.config.sso.session_idle_ttl_seconds;
         if user.status != UserStatus::Active
-            || crate::db::helper::session::lock_active(
-                &txn,
-                session.id,
-                session.user_id,
-                idle_ttl,
-            )
-            .await?
-            .is_none()
+            || crate::db::helper::session::lock_active(&txn, session.id, session.user_id, idle_ttl)
+                .await?
+                .is_none()
         {
             return Err(ManagementError::Invalid("unauthorized"));
         }

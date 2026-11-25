@@ -47,18 +47,25 @@ pub(crate) async fn lock_context<C: ConnectionTrait>(
     let Some(tenant) = tenant else {
         return Ok(true);
     };
-    if db.query_one_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id FROM tenants WHERE id=$1 FOR SHARE",
-        [tenant.into()],
-    )).await?.is_none() {
+    if db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM tenants WHERE id=$1 FOR SHARE",
+            [tenant.into()],
+        ))
+        .await?
+        .is_none()
+    {
         return Ok(false);
     }
-    Ok(db.query_one_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 FOR SHARE",
-        [tenant.into(), user.into()],
-    )).await?.is_some())
+    Ok(db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT user_id FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 FOR SHARE",
+            [tenant.into(), user.into()],
+        ))
+        .await?
+        .is_some())
 }
 
 /// A stale tenant grant must not trigger session-wide or app-wide revocation.
