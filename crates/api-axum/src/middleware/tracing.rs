@@ -57,7 +57,7 @@ fn trace_level(config: &LogConfig) -> ::tracing::Level {
     }
 }
 
-/// OAuth callback and recovery credentials must never be recorded in request spans.
+/// Route templates keep query and path credentials out of request spans.
 #[derive(Debug, Clone)]
 pub struct SanitizedMakeSpan {
     level: ::tracing::Level,
@@ -65,8 +65,13 @@ pub struct SanitizedMakeSpan {
 
 impl<B> MakeSpan<B> for SanitizedMakeSpan {
     fn make_span(&mut self, request: &axum::http::Request<B>) -> ::tracing::Span {
+        let path = request
+            .extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map(|path| path.as_str())
+            .unwrap_or("<unmatched>");
         macro_rules! span {
-            ($level:expr) => { ::tracing::span!($level, "request", method = %request.method(), path = request.uri().path(), version = ?request.version()) };
+            ($level:expr) => { ::tracing::span!($level, "request", method = %request.method(), path = path, version = ?request.version()) };
         }
         match self.level {
             ::tracing::Level::TRACE => span!(::tracing::Level::TRACE),

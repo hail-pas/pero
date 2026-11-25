@@ -3942,9 +3942,46 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .unwrap()
         .unwrap();
 
+    // A rotation predecessor from the old tenant grant cannot revoke the shared SSO session.
+    let (session_token, session) = fixture
+        .state
+        .session_service()
+        .create(member, None, None, None, None)
+        .await
+        .unwrap();
+    let raw = pero_utils::crypto::generate_token();
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,ARRAY['openid']::text[],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&raw).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into()]).await;
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let service = TokenService::new(&fixture.state);
+    let request = refresh_form(fixture.client, &raw);
+    assert!(matches!(
+        service.handle_refresh_token(&request, &client).await,
+        TokenEndpointResult::Success(_)
+    ));
+
     crate::service::tenant::update_member(db, fixture.user, organization.id, member, "admin")
         .await
         .unwrap();
+    assert!(matches!(
+        service.handle_refresh_token(&request, &client).await,
+        TokenEndpointResult::Error {
+            code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    assert!(
+        fixture
+            .state
+            .session_service()
+            .validate(&session_token)
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert_ne!(
         crate::service::tenant_context::active(db, member, fixture.app, organization.id)
             .await

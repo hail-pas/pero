@@ -37,6 +37,26 @@ pub async fn active<C: ConnectionTrait>(
         "SELECT t.id AS tenant_id,t.kind AS tenant_kind,m.role AS membership_role,t.auth_version AS tenant_version,m.auth_version AS tenant_member_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3 JOIN users u ON u.id=m.user_id WHERE t.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.user_id=$2 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) AND (t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id)) AND EXISTS (SELECT 1 FROM user_app_access ua WHERE ua.app_id=a.id AND ua.user_id=m.user_id AND ua.status='active' AND (ua.admission_origin='explicit' OR (ua.admission_origin='organization' AND a.organization_auto_access AND t.kind='organization')))",
         [tenant.into(),user.into(),app.into()])).one(db).await
 }
+/// A stale tenant grant must not trigger session-wide or app-wide revocation.
+pub(crate) async fn refresh_token_context_is_current<C: ConnectionTrait>(
+    db: &C,
+    token: &crate::db::entity::refresh_tokens::Model,
+) -> Result<bool, DbErr> {
+    if let Some(tenant) = token.tenant_id {
+        return Ok(active(db, token.user_id, token.app_id, tenant)
+            .await?
+            .is_some_and(|ctx| {
+                Some(ctx.tenant_version) == token.tenant_version
+                    && Some(ctx.tenant_member_version) == token.tenant_member_version
+            }));
+    }
+    use sea_orm::EntityTrait;
+    Ok(crate::db::entity::apps::Entity::find_by_id(token.app_id)
+        .one(db)
+        .await?
+        .is_some_and(|app| app.system))
+}
+
 /// Whether the user belongs to any currently admitted organization for this app.
 /// Explicitly disabled user-app grants are still authoritative.
 pub async fn auto_eligible<C: ConnectionTrait>(

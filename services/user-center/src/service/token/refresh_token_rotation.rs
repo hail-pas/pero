@@ -102,6 +102,15 @@ impl TokenService<'_> {
                     "Refresh token revoked",
                 );
             }
+            // Tenant policy changes also invalidate rotation predecessors. Do not
+            // turn a withdrawn tenant grant into a logout of unrelated sessions/apps.
+            match crate::service::tenant_context::refresh_token_context_is_current(&txn, &existing)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            }
             // Release issuance locks before the shared session-wide revocation path.
             // A failed attempt remains retryable with this same revoked token.
             if let Err(error) = txn.rollback().await {
