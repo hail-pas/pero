@@ -320,6 +320,21 @@ pub async fn callback(
             if !has_flow && request.as_ref().map(|r| r.id) != auth_request_id {
                 return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
             }
+            // Only callbacks started for a specific enrollment or invitation
+            // may reuse its cookies. A normal login starts a new enrollment.
+            let jar = if !has_flow && cb_state.social_value.redirect != "/sso/register" {
+                let jar = super::register::clear_flow(jar);
+                if let Some(request) = &request {
+                    match super::register::request_context_cookie(&state, request.client_id) {
+                        Ok(cookie) => jar.add(cookie),
+                        Err(e) => return crate::web::util::management_response(Err(e)),
+                    }
+                } else {
+                    jar
+                }
+            } else {
+                jar
+            };
             let app = request.as_ref().map(|r| r.app_id);
             super::register::social(
                 &state,
