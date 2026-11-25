@@ -22,6 +22,8 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub name: Option<String>,
     pub r#type: OauthClientType,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub login_uri: Option<String>,
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
     pub backchannel_logout_uri: Option<String>,

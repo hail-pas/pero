@@ -199,40 +199,6 @@ pub async fn revoke_invite(
     }
     util::management_response(svc::revoke_invite(&s.db, a.user.id, id, invitation).await)
 }
-pub async fn invitation(
-    State(s): State<AppState>,
-    jar: CookieJar,
-    a: AccountContext,
-    Path(token): Path<String>,
-) -> Response {
-    let invite = match svc::invitation(&s.db, &token).await {
-        Ok(v) => v,
-        Err(e) => return util::management_response(Err(e)),
-    };
-    let layout = match AccountLayout::from_user(&s.db, &a.user).await {
-        Ok(v) => v,
-        Err(e) => return util::dependency_error(e),
-    };
-    let (jar, csrf_token) = s.web_security().ensure_csrf(jar);
-    util::view_response(
-        "TenantInvitationView",
-        serde_json::json!({"layout":layout,"csrf_token":csrf_token,"invitation":invite,"verified_email":a.user.email_verified_at.is_some(),"user_email":a.user.email}),
-        jar,
-    )
-}
-pub async fn accept(
-    State(s): State<AppState>,
-    jar: CookieJar,
-    a: AccountContext,
-    Path(token): Path<String>,
-    Form(f): Form<OnlyCsrf>,
-) -> Response {
-    if let Some(e) = checked(&jar, &f.csrf_token, &s) {
-        return e;
-    }
-    util::management_response(svc::accept(&s.db, a.user.id, &token).await)
-}
-
 #[derive(Deserialize)]
 pub struct StatusChange {
     csrf_token: String,

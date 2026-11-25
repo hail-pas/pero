@@ -137,7 +137,8 @@ impl<'a> SsoWebSecurity<'a> {
 
     pub(crate) fn clear_login_cookies(&self, jar: CookieJar) -> CookieJar {
         let cookies = self.cookies();
-        jar.add(cookies.clear_cookie(cookies.session_cookie_name()))
+        crate::web::sso::register::clear_flow(jar)
+            .add(cookies.clear_cookie(cookies.session_cookie_name()))
             .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()))
             .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
             .add(cookies.clear_cookie(&cookies.social_state_cookie_name()))

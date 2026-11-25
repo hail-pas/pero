@@ -67,10 +67,13 @@ impl AuthorizeQuery {
         if let Some(prompt) = &self.prompt {
             let values: Vec<_> = prompt.split_whitespace().collect();
             if values.is_empty()
-                || values
-                    .iter()
-                    .any(|p| !matches!(*p, "none" | "login" | "consent" | "select_account"))
-                || (values.contains(&"none") && values.len() != 1)
+                || values.iter().any(|p| {
+                    !matches!(
+                        *p,
+                        "none" | "login" | "consent" | "select_account" | "create"
+                    )
+                })
+                || ((values.contains(&"none") || values.contains(&"create")) && values.len() != 1)
             {
                 return Err(self.redirect_err("invalid_request", Some("Invalid prompt")));
             }
@@ -216,6 +219,17 @@ async fn authorize_request(
     }
 
     let app = oauth.validate_app(&client).await?;
+    if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create")
+        && !client
+            .login_uri
+            .as_deref()
+            .is_some_and(crate::service::client::valid_login_uri)
+    {
+        return Err(params.redirect_err(
+            "invalid_request",
+            Some("Registration requires a client login URI"),
+        ));
+    }
 
     // prompt=none: 不允许展示任何 UI，所有缺失条件直接以 error code 返回
     // 通过所有检查后立即生成 code 并 302，不走 resolve_authorization 避免重复查询
@@ -348,6 +362,16 @@ async fn authorize_request(
             login_hint: params.login_hint.clone(),
         })
         .await?;
+
+    if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create") {
+        let (jar, _) = pending_redirect(&state, &jar, auth_request.id).await?;
+        let context = crate::web::sso::register::request_context_cookie(&state, client.id)
+            .map_err(|_| OAuthError::Unavailable)?;
+        return Ok((
+            crate::web::sso::register::clear_flow(jar).add(context),
+            Redirect::to("/sso/register").into_response(),
+        ));
+    }
 
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "select_account") {
         return super::select_account::redirect(&state, jar, auth_request.id).await;
@@ -570,7 +594,7 @@ pub(crate) async fn resolve_authorization(
             &cookies
                 .encode_auth_request(&cookie_value)
                 .unwrap_or_default(),
-            state.config.oauth2.auth_code_ttl_seconds,
+            state.config.oauth2.authorization_request_ttl_seconds,
         );
         Ok((
             jar.clone().add(cookie),
@@ -610,7 +634,7 @@ pub(crate) async fn pending_redirect(
     let cookie = cookies.build_short_lived_cookie(
         &nonce_name,
         &nonce,
-        state.config.oauth2.auth_code_ttl_seconds,
+        state.config.oauth2.authorization_request_ttl_seconds,
     );
     Ok((
         jar.clone().add(cookie),
@@ -636,6 +660,20 @@ fn report_into_oauth_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_prompt_is_exclusive() {
+        let mut query = AuthorizeQuery {
+            response_type: "code".into(),
+            scope: "openid".into(),
+            redirect_uri: "https://client.example.test/callback".into(),
+            prompt: Some("create".into()),
+            ..Default::default()
+        };
+        assert!(query.validate_redirectable_oauth().is_ok());
+        query.prompt = Some("create login".into());
+        assert!(query.validate_redirectable_oauth().is_err());
+    }
 
     #[test]
     fn malformed_s256_challenges_are_rejected_before_authorization() {

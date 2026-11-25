@@ -166,3 +166,72 @@ pub async fn reset_password(
     txn.commit().await?;
     Ok(())
 }
+
+pub(crate) enum RegistrationCredential<'a> {
+    Password(pero_utils::crypto::password::PasswordHashResult),
+    Social {
+        provider_id: uuid::Uuid,
+        subject: &'a str,
+    },
+}
+
+/// Persist a verified contact and its initial identity in the caller's transaction.
+pub(crate) async fn create_verified_user(
+    txn: &sea_orm::DatabaseTransaction,
+    username: &str,
+    email: Option<String>,
+    phone: Option<String>,
+    credential: RegistrationCredential<'_>,
+) -> Result<(users::Model, identities::Model), ManagementError> {
+    crate::db::helper::user::validate_username(username.trim())
+        .map_err(ManagementError::Validation)?;
+    let now = time::OffsetDateTime::now_utc();
+    let user = users::ActiveModel {
+        id: Set(uuid::Uuid::now_v7()),
+        username: Set(username.trim().to_owned()),
+        email_verified_at: Set(email.as_ref().map(|_| now)),
+        phone_verified_at: Set(phone.as_ref().map(|_| now)),
+        email: Set(email),
+        phone: Set(phone),
+        status: Set(UserStatus::Active),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(txn)
+    .await?;
+    let identity = match credential {
+        RegistrationCredential::Password(hash) => {
+            let provider = crate::db::helper::identity_provider::find_local_provider(txn).await?;
+            PasswordIdentityService::create_hashed(
+                txn,
+                user.id,
+                provider.id,
+                user.id.to_string(),
+                hash,
+                now,
+            )
+            .await?
+        }
+        RegistrationCredential::Social {
+            provider_id,
+            subject,
+        } => {
+            super::enrollment::allow_social(txn, provider_id).await?;
+            identities::ActiveModel {
+                id: Set(uuid::Uuid::now_v7()),
+                user_id: Set(user.id),
+                provider_id: Set(provider_id),
+                kind: Set(IdentityKind::Oauth),
+                subject: Set(subject.to_owned()),
+                profile: Set(serde_json::json!({})),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            }
+            .insert(txn)
+            .await?
+        }
+    };
+    Ok((user, identity))
+}

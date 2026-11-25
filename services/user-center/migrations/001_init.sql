@@ -177,6 +177,7 @@ CREATE TABLE tenant_invitations (
     invited_by uuid REFERENCES users(id) ON DELETE SET NULL,
     expires_at timestamptz NOT NULL,
     accepted_at timestamptz,
+    accepted_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ux_tenant_invitation_pending ON tenant_invitations(tenant_id,email) WHERE status='pending';
@@ -262,6 +263,7 @@ COMMENT ON COLUMN apps.updated_at IS
 -- ============================================================
 
 CREATE TABLE oauth_clients (
+    login_uri text,
     backchannel_logout_uri text,
     account_sync_uri text,
     previous_secret_expires_at timestamptz,
@@ -1400,6 +1402,8 @@ $$;
 CREATE TRIGGER notification_outbox_deleted AFTER DELETE ON notification_outbox
 FOR EACH ROW EXECUTE FUNCTION notification_outbox_deleted();
 
+ALTER TABLE tenant_invitations ADD COLUMN client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL;
+
 -- Platform defaults and explicit per-application overrides share one policy shape.
 CREATE TABLE registration_policies (
     id uuid PRIMARY KEY,
@@ -1415,6 +1419,8 @@ INSERT INTO registration_policies(id,mode) VALUES ('00000000-0000-0000-0000-0000
 CREATE TABLE enrollments (
     id uuid PRIMARY KEY,
     app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
+    client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL,
+    auth_request_id uuid REFERENCES authorization_requests(id) ON DELETE SET NULL,
     email citext,
     phone citext,
     invitation boolean NOT NULL DEFAULT false,

@@ -56,7 +56,6 @@ pub async fn gate(
             && (path.starts_with("/dashboard/")
                 || path.starts_with("/account/tenants/")
                 || path == "/account/tenants"
-                || path.starts_with("/account/invitations/")
                 || matches!(
                     path,
                     "/account/close"

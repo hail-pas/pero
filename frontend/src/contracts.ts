@@ -66,6 +66,7 @@ export interface ClientSummary {
   identifier: string;
   name: string | null;
   type: string;
+  login_uri?: string | null;
   redirect_uris: string[];
   post_logout_redirect_uris: string[];
   backchannel_logout_uri: string | null;
@@ -319,6 +320,13 @@ export interface ViewDataMap {
     reason: string;
     social: boolean;
     sent: boolean;
+    tenant_name?: string;
+    tenant_invitation?: boolean;
+    existing_account?: boolean;
+    signed_in?: boolean;
+    matching_account?: boolean;
+    allowed_methods?: string[];
+    providers?: LoginPage["providers"];
   };
   EnrollmentAdminView: AccountPage &
     ProgressList & {
@@ -346,6 +354,7 @@ export interface ViewDataMap {
       logo_url: string | null;
       status: string | null;
       organization_admission: boolean;
+      organization_only: boolean;
       require_mfa: boolean;
     }[];
   };
@@ -438,7 +447,6 @@ export interface ViewDataMap {
   TenantAdminDetailView: AccountPage & {tenant: TenantAdminRow;members: TenantAdminMembers;apps:TenantAdminApp[]};
   TenantListView: AccountPage & { tenants: TenantSummary[]; creation_policy: TenantCreationPolicy };
   TenantDetailView: AccountPage & {tenant: TenantSummary;members: TenantMember[];invitations: TenantInvitation[];current_user_id:string;can_invite:boolean;apps:TenantAdminApp[]};
-  TenantInvitationView: AccountPage & {invitation:{tenant_id:string;tenant_name:string;email:string;role:string};verified_email:boolean;user_email:string|null};
   TenantChoiceView: CsrfPage & {token:string;choices:{id:string;kind:string;name:string;role:string}[]};
   ProviderDetailView: AccountPage & {
     provider: ProviderSummary;

@@ -76,6 +76,7 @@ pub struct ClientInput {
     pub client_type: OauthClientType,
     pub secret: String,
     pub name: Option<String>,
+    pub login_uri: Option<String>,
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
     pub scopes: Vec<String>,
@@ -86,9 +87,22 @@ pub struct ClientInput {
     pub id_token_ttl: i32,
 }
 
+pub(crate) fn valid_login_uri(uri: &str) -> bool {
+    uri.starts_with("https://")
+        && !uri.contains('?')
+        && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()
+}
+
 impl ClientInput {
     fn validate(&self) -> Result<(), ManagementError> {
         if self.redirect_uris.is_empty() {
+            return Err(ManagementError::Invalid("invalid_redirect_uri"));
+        }
+        if self
+            .login_uri
+            .as_deref()
+            .is_some_and(|uri| !valid_login_uri(uri))
+        {
             return Err(ManagementError::Invalid("invalid_redirect_uri"));
         }
         let allow_private_scheme = self.client_type == OauthClientType::Public;
@@ -106,6 +120,7 @@ impl ClientInput {
         }
         active.r#type = Set(self.client_type);
         active.name = Set(self.name);
+        active.login_uri = Set(self.login_uri);
         active.redirect_uris = Set(self.redirect_uris);
         active.post_logout_redirect_uris = Set(self.post_logout_redirect_uris);
         active.scopes = Set(self.scopes);

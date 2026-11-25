@@ -8,14 +8,14 @@ SELECT id, code_hash, authorization_request_id, user_id, app_id, client_id, sess
 SELECT id, client_id, app_id, redirect_uri, scopes, client_state, nonce, code_challenge, code_challenge_method, prompt, max_age, login_hint, authorized_user_id, created_at, expires_at, completed_at, diagnostic_session_id FROM authorization_requests LIMIT 0;
 SELECT id, session_id, client_id, user_id, endpoint, created_at, expires_at, next_attempt_at, attempts, lease_id, leased_until, delivered_at, last_error FROM backchannel_logout_deliveries LIMIT 0;
 SELECT id, user_id, change_type, new_value, status, verification_code_hash, nonce, requested_at, expires_at, verified_at, cancelled_at, created_at, updated_at FROM contact_change_requests LIMIT 0;
-SELECT id, app_id, email, phone, invitation, invited_by, domain_exception, reason, token_hash, status, verified_at, approved_by, approved_at, provider_id, subject, completed_user_id, created_at, expires_at, last_sent_at FROM enrollments LIMIT 0;
+SELECT id, app_id, client_id, auth_request_id, email, phone, invitation, invited_by, domain_exception, reason, token_hash, status, verified_at, approved_by, approved_at, provider_id, subject, completed_user_id, created_at, expires_at, last_sent_at FROM enrollments LIMIT 0;
 SELECT id, user_id, provider_id, kind, subject, password_hash, password_algorithm, password_updated_at, profile, last_login_at, created_at, updated_at, unbound_at FROM identities LIMIT 0;
 SELECT activate_at, last_issued_until, id, provider_id, kid, use, algorithm, public_key_pem, private_key_pem_enc, certificate_pem, active, not_before, expires_at, revoked_at, created_at, updated_at FROM identity_provider_keys LIMIT 0;
 SELECT id, code, name, kind, issuer, authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri, end_session_endpoint, client_id, client_secret_enc, scopes, settings, enabled, created_at, updated_at FROM identity_providers LIMIT 0;
 SELECT id, user_id, identity_id, provider_id, event_type, ip, user_agent, detail, created_at FROM login_events LIMIT 0;
 SELECT id, user_id, kind, channel, recipient, status, attempts, last_error, http_status, created_at, updated_at, enrollment_id FROM notification_deliveries LIMIT 0;
 SELECT id, payload_enc, expires_at, next_attempt_at, attempts, user_id, kind, lease_id, leased_until, enrollment_id FROM notification_outbox LIMIT 0;
-SELECT account_sync_uri, backchannel_logout_uri, previous_secret_expires_at, previous_secret_hash, id, app_id, identifier, secret_hash, name, type, redirect_uris, post_logout_redirect_uris, scopes, grant_types, require_pkce, access_token_ttl_seconds, refresh_token_ttl_seconds, id_token_ttl_seconds, status, token_version, created_at, updated_at FROM oauth_clients LIMIT 0;
+SELECT login_uri, account_sync_uri, backchannel_logout_uri, previous_secret_expires_at, previous_secret_hash, id, app_id, identifier, secret_hash, name, type, redirect_uris, post_logout_redirect_uris, scopes, grant_types, require_pkce, access_token_ttl_seconds, refresh_token_ttl_seconds, id_token_ttl_seconds, status, token_version, created_at, updated_at FROM oauth_clients LIMIT 0;
 SELECT id,user_id,app_id,sso_session_id,created_at,revoked_at,revoke_reason FROM app_sessions LIMIT 0;
 SELECT id,app_session_id,client_id,tenant_id,created_at,revoked_at,revoke_reason FROM client_sessions LIMIT 0;
 SELECT id, user_id, token_hash, issued_at, expires_at, consumed_at FROM password_reset_tokens LIMIT 0;
@@ -94,7 +94,7 @@ END $$;
 
 SELECT id,kind,name,slug,owner_user_id,status,platform_suspended,auth_version,created_at,updated_at,max_members FROM tenants LIMIT 0;
 SELECT tenant_id,user_id,role,status,auth_version,joined_at,updated_at FROM tenant_members LIMIT 0;
-SELECT id,tenant_id,email,role,token_hash,status,invited_by,expires_at,accepted_at,created_at FROM tenant_invitations LIMIT 0;
+SELECT id,tenant_id,client_id,email,role,token_hash,status,invited_by,expires_at,accepted_at,accepted_user_id,created_at FROM tenant_invitations LIMIT 0;
 SELECT tenant_mode,organization_access,organization_auto_access FROM apps LIMIT 0;
 SELECT admission_origin FROM user_app_access LIMIT 0;
 SELECT tenant_id,app_id FROM tenant_app_grants LIMIT 0;

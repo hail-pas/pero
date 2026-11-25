@@ -3,7 +3,7 @@ use super::{ManagementError as Error, password::PasswordIdentityService, securit
 use crate::{
     db::{
         entity::{apps, identities, user_app_access, users},
-        enums::{CommonStatus, IdentityKind, UserStatus},
+        enums::{CommonStatus, UserStatus},
     },
     state::{app::AppState, session::SsoSession},
 };
@@ -32,14 +32,18 @@ pub struct SocialProof {
     pub subject: String,
     pub proved_at: i64,
     pub app: Option<Uuid>,
+    #[serde(default)]
+    pub invitation_hash: Option<String>,
 }
 impl SocialProof {
     pub fn is_fresh(&self) -> bool {
         let age = OffsetDateTime::now_utc().unix_timestamp() - self.proved_at;
         (0..600).contains(&age)
     }
-    fn matches(&self, row: &Enrollment) -> bool {
+    pub(crate) fn matches(&self, row: &Enrollment) -> bool {
         self.is_fresh()
+            && self.invitation_hash.is_none()
+            && self.app == row.app_id
             && row.provider_id == Some(self.provider)
             && row.subject.as_deref() == Some(self.subject.as_str())
     }
@@ -49,6 +53,8 @@ impl SocialProof {
 pub struct Enrollment {
     pub id: Uuid,
     pub app_id: Option<Uuid>,
+    pub client_id: Option<Uuid>,
+    pub auth_request_id: Option<Uuid>,
     pub email: Option<String>,
     pub phone: Option<String>,
     pub invitation: bool,
@@ -264,6 +270,9 @@ pub async fn progress_by_token<C: ConnectionTrait>(
 }
 async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, Error> {
     let p = policy(db, row.app_id).await?;
+    if !row.invitation {
+        require_personal_app(db, row.app_id).await?;
+    }
     if let Some(id) = row.provider_id {
         allow_social(db, id).await?;
     }
@@ -336,24 +345,92 @@ pub async fn start(
     invitation: Option<(&SsoSession, bool, &str)>,
 ) -> Result<(), Error> {
     let address = email(address)?;
-    start_contact(state, &address, app, invitation, false).await
+    start_contact(state, &address, app, false, StartKind::Portal(invitation)).await
 }
 
 pub async fn start_phone(state: &AppState, address: &str, app: Option<Uuid>) -> Result<(), Error> {
     let address = phone(address)?;
-    start_contact(state, &address, app, None, true).await
+    start_contact(state, &address, app, true, StartKind::Portal(None)).await
+}
+
+pub async fn start_from_request(
+    state: &AppState,
+    address: &str,
+    is_phone: bool,
+    app: Option<Uuid>,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
+) -> Result<(), Error> {
+    let address = if is_phone {
+        phone(address)?
+    } else {
+        email(address)?
+    };
+    start_contact(
+        state,
+        &address,
+        app,
+        is_phone,
+        StartKind::SelfService {
+            request,
+            social: None,
+        },
+    )
+    .await
+}
+
+enum StartKind<'a> {
+    Portal(Option<(&'a SsoSession, bool, &'a str)>),
+    SelfService {
+        request: Option<&'a crate::db::entity::authorization_requests::Model>,
+        social: Option<(Uuid, &'a str)>,
+    },
 }
 
 async fn start_contact(
     state: &AppState,
     address: &str,
     app: Option<Uuid>,
-    invitation: Option<(&SsoSession, bool, &str)>,
     is_phone: bool,
+    kind: StartKind<'_>,
 ) -> Result<(), Error> {
     limit_contact(state, address).await?;
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
+    let (invitation, request, social) = match kind {
+        StartKind::Portal(invitation) => (invitation, None, None),
+        StartKind::SelfService { request, social } => {
+            // Application registration must retain its validated OAuth origin.
+            // Portal admission uses StartKind::Portal instead.
+            if app != request.map(|request| request.app_id) {
+                return Err(invalid());
+            }
+            if let Some(request) = request {
+                crate::db::entity::authorization_requests::Entity::find_by_id(request.id)
+                    .one(&txn)
+                    .await?
+                    .filter(|current| {
+                        current.completed_at.is_none()
+                            && current.expires_at > OffsetDateTime::now_utc()
+                            && current.client_id == request.client_id
+                            && current.app_id == request.app_id
+                    })
+                    .ok_or_else(invalid)?;
+                crate::db::entity::oauth_clients::Entity::find_by_id(request.client_id)
+                    .one(&txn)
+                    .await?
+                    .filter(|client| {
+                        client.status == CommonStatus::Active
+                            && client.app_id == request.app_id
+                            && client
+                                .login_uri
+                                .as_deref()
+                                .is_some_and(super::client::valid_login_uri)
+                    })
+                    .ok_or_else(invalid)?;
+            }
+            (None, request, social)
+        }
+    };
     let (invited, actor, exception, reason) = if let Some((actor, exception, reason)) = invitation {
         let access = super::permissions::authorize(
             &txn,
@@ -373,6 +450,12 @@ async fn start_contact(
     } else {
         (false, None, false, "")
     };
+    if !invited {
+        require_personal_app(&txn, app).await?;
+    }
+    if let Some((provider, _)) = social {
+        allow_social(&txn, provider).await?;
+    }
     let p = policy(&txn, app).await?;
     if is_phone {
         eligible_phone(&p)?;
@@ -392,7 +475,7 @@ async fn start_contact(
     let token = pero_utils::crypto::generate_token();
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });
-    execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into()]).await?;
+    execute(&txn,"INSERT INTO enrollments(id,app_id,email,phone,invitation,invited_by,domain_exception,reason,token_hash,expires_at,client_id,auth_request_id,provider_id,subject) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",vec![id.into(),app.into(),(!is_phone).then_some(address).into(),is_phone.then_some(address).into(),invited.into(),actor.into(),exception.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into(),request.map(|r|r.client_id).into(),request.map(|r|r.id).into(),social.map(|s|s.0).into(),social.map(|s|s.1).into()]).await?;
     let channel = if is_phone { "phone" } else { "email" };
     send(&txn, state, id, (channel, address), &token, expiry).await?;
     txn.commit().await?;
@@ -515,6 +598,15 @@ async fn cancel_notifications<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<()
     Ok(())
 }
 
+pub struct EnrollmentResult {
+    pub user_id: Uuid,
+    pub identity: Option<identities::Model>,
+    pub app_id: Option<Uuid>,
+    pub client_id: Option<Uuid>,
+    pub auth_request_id: Option<Uuid>,
+    pub tenant_id: Option<Uuid>,
+}
+
 pub async fn finalize(
     state: &AppState,
     token: &str,
@@ -522,7 +614,7 @@ pub async fn finalize(
     password: &str,
     session: Option<&SsoSession>,
     social_proof: Option<&SocialProof>,
-) -> Result<(), Error> {
+) -> Result<EnrollmentResult, Error> {
     let initial = lookup(&state.db, token).await?;
     let exists = users::Entity::find()
         .filter(if let Some(email) = &initial.email {
@@ -549,13 +641,6 @@ pub async fn finalize(
     let txn = state.db.begin().await?;
     super::admin::lock_policy(&txn).await?;
     let row = lookup(&txn, token).await?;
-    let p = check(&txn, &row).await?;
-    if row.status != "ready"
-        || row.verified_at.is_none()
-        || (!row.invitation && p.approval_required && row.approved_by.is_none())
-    {
-        return Err(Error::Invalid("approval_required"));
-    }
     if let Some(app) = row.app_id {
         use sea_orm::QuerySelect;
         apps::Entity::find_by_id(app)
@@ -570,6 +655,13 @@ pub async fn finalize(
                 .await?;
         }
     }
+    let p = check(&txn, &row).await?;
+    if row.status != "ready"
+        || row.verified_at.is_none()
+        || (!row.invitation && p.approval_required && row.approved_by.is_none())
+    {
+        return Err(Error::Invalid("approval_required"));
+    }
     let now = OffsetDateTime::now_utc();
     let existing = users::Entity::find()
         .filter(if let Some(email) = &row.email {
@@ -579,6 +671,7 @@ pub async fn finalize(
         })
         .one(&txn)
         .await?;
+    let mut identity = None;
     let user = if let Some(user) = existing {
         let session = session
             .filter(|s| s.user_id == user.id)
@@ -617,50 +710,27 @@ pub async fn finalize(
         }
         user
     } else {
-        let user = users::ActiveModel {
-            id: Set(Uuid::now_v7()),
-            username: Set(username.trim().to_owned()),
-            email: Set(row.email.clone()),
-            email_verified_at: Set(row.email.as_ref().map(|_| now)),
-            phone: Set(row.phone.clone()),
-            phone_verified_at: Set(row.phone.as_ref().map(|_| now)),
-            status: Set(UserStatus::Active),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .insert(&txn)
-        .await?;
-        if let Some(provider_id) = row.provider_id {
-            super::provider::require_enabled_social(&txn, provider_id).await?;
+        use super::user::RegistrationCredential;
+        let credential = if let Some(provider_id) = row.provider_id {
             if !social_proof.is_some_and(|proof| proof.matches(&row)) {
                 return Err(Error::Invalid("social_reauthentication_required"));
             }
-            identities::ActiveModel {
-                id: Set(Uuid::now_v7()),
-                user_id: Set(user.id),
-                provider_id: Set(provider_id),
-                kind: Set(IdentityKind::Oauth),
-                subject: Set(row.subject.clone().ok_or_else(invalid)?),
-                profile: Set(serde_json::json!({})),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
+            RegistrationCredential::Social {
+                provider_id,
+                subject: row.subject.as_deref().ok_or_else(invalid)?,
             }
-            .insert(&txn)
-            .await?;
         } else {
-            let provider = crate::db::helper::identity_provider::find_local_provider(&txn).await?;
-            PasswordIdentityService::create_hashed(
-                &txn,
-                user.id,
-                provider.id,
-                user.id.to_string(),
-                hash.ok_or_else(invalid)?,
-                now,
-            )
-            .await?;
-        }
+            RegistrationCredential::Password(hash.ok_or_else(invalid)?)
+        };
+        let (user, created_identity) = super::user::create_verified_user(
+            &txn,
+            username,
+            row.email.clone(),
+            row.phone.clone(),
+            credential,
+        )
+        .await?;
+        identity = Some(created_identity);
         user
     };
     if let Some(app) = row.app_id {
@@ -701,8 +771,28 @@ pub async fn finalize(
     .await?;
     cancel_notifications(&txn, row.id).await?;
     audit(&txn, &user, "enrollment_completed", row.id).await?;
+    // Only a newly created personal account has an implicit workspace choice.
+    // Existing accounts retain the original OAuth tenant selection.
+    let tenant_id = if row.client_id.is_some() && identity.is_some() {
+        use crate::db::entity::tenants;
+        tenants::Entity::find()
+            .filter(tenants::Column::OwnerUserId.eq(user.id))
+            .filter(tenants::Column::Kind.eq("personal"))
+            .one(&txn)
+            .await?
+            .map(|tenant| tenant.id)
+    } else {
+        None
+    };
     txn.commit().await?;
-    Ok(())
+    Ok(EnrollmentResult {
+        user_id: user.id,
+        identity,
+        app_id: row.app_id,
+        client_id: row.client_id,
+        auth_request_id: row.auth_request_id,
+        tenant_id,
+    })
 }
 
 pub async fn start_social(
@@ -711,19 +801,31 @@ pub async fn start_social(
     app: Option<Uuid>,
     provider: Uuid,
     subject: &str,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
 ) -> Result<(), Error> {
-    // Reuse the same delivery and admission path; persist upstream identity before delivery.
-    limit_contact(state, address).await?;
-    let txn = state.db.begin().await?;
-    super::admin::lock_policy(&txn).await?;
-    eligible(&policy(&txn, app).await?, address, false, false)?;
-    allow_social(&txn, provider).await?;
-    let id = Uuid::now_v7();
-    let token = pero_utils::crypto::generate_token();
-    let expiry = OffsetDateTime::now_utc() + time::Duration::hours(24);
-    execute(&txn,"INSERT INTO enrollments(id,app_id,email,token_hash,expires_at,provider_id,subject) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![id.into(),app.into(),address.into(),pero_utils::crypto::sha256_hex(&token).into(),expiry.into(),provider.into(),subject.into()]).await?;
-    send(&txn, state, id, ("email", address), &token, expiry).await?;
-    txn.commit().await?;
+    let address = email(address)?;
+    start_contact(
+        state,
+        &address,
+        app,
+        false,
+        StartKind::SelfService {
+            request,
+            social: Some((provider, subject)),
+        },
+    )
+    .await
+}
+
+async fn require_personal_app<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> Result<(), Error> {
+    if let Some(app) = app
+        && apps::Entity::find_by_id(app)
+            .one(db)
+            .await?
+            .is_some_and(|app| app.tenant_mode == "organization")
+    {
+        return Err(Error::Invalid("enrollment_unavailable"));
+    }
     Ok(())
 }
 

@@ -167,7 +167,9 @@ pub async fn finish_login(
     let target_path = target.split('?').next().unwrap_or("");
     let management_pending = session.mfa_required
         && session.mfa_verified_at.is_none()
-        && (target_path == "/dashboard" || target_path.starts_with("/dashboard/"));
+        && (target_path == "/sso/register"
+            || target_path == "/dashboard"
+            || target_path.starts_with("/dashboard/"));
     if (session.recovery_pending || management_pending)
         && !matches!(
             target.split('?').next(),
@@ -179,4 +181,143 @@ pub async fn finish_login(
         target = challenge;
     }
     (jar, Redirect::to(&target)).into_response()
+}
+
+/// Complete registration without issuing protocol credentials outside authorization.
+pub async fn finish_enrollment(
+    state: &AppState,
+    jar: CookieJar,
+    result: crate::service::enrollment::EnrollmentResult,
+    request: Option<&crate::db::entity::authorization_requests::Model>,
+    ip: Option<IpNetwork>,
+    user_agent: Option<String>,
+) -> axum::response::Response {
+    use crate::db::{
+        entity::oauth_clients,
+        enums::{CommonStatus, IdentityKind},
+    };
+    use axum::response::{IntoResponse, Redirect};
+    use sea_orm::EntityTrait;
+    let jar = if let Some(identity) = result.identity {
+        let service = state.session_service();
+        let session = if identity.kind == IdentityKind::Password {
+            service
+                .create_verified_password(&identity, ip, user_agent)
+                .await
+        } else {
+            service
+                .create_social(
+                    result.user_id,
+                    identity.id,
+                    identity.provider_id,
+                    ip,
+                    None,
+                    user_agent,
+                )
+                .await
+        };
+        match session {
+            Ok((token, _)) => jar.add(state.cookie_factory().build_session_cookie(&token)),
+            Err(error) => {
+                tracing::error!(%error, "Registration committed but session creation failed");
+                let cookies = state.cookie_factory();
+                jar.add(cookies.clear_cookie(cookies.session_cookie_name()))
+            }
+        }
+    } else {
+        jar
+    };
+    // Enrollment may outlive its short-lived OAuth request. Recheck the
+    // browser nonce and request after committing registration and creating the session.
+    let pending = if let Some(request) = request
+        .filter(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id)
+    {
+        match crate::web::sso::register::active_request(state, &jar).await {
+            Ok(current) => current.filter(|r| r.id == request.id && r.client_id == request.client_id),
+            Err(error) => {
+                tracing::error!(%error, "Registration authorization lookup failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(pending) = pending {
+        let resume = match (pending.tenant_id, result.tenant_id) {
+            (None, Some(tenant)) => {
+                match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant)
+                    .await
+                {
+                    Ok(row) => row.is_some(),
+                    Err(error) => {
+                        tracing::error!(%error, "Registration tenant binding failed");
+                        false
+                    }
+                }
+            }
+            (Some(a), Some(b)) => a == b,
+            (_, None) => true,
+        };
+        if resume {
+            return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
+        }
+    }
+    let cookies = state.cookie_factory();
+    let jar = jar
+        .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+        .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
+    if let Some(id) = result.client_id {
+        match oauth_clients::Entity::find_by_id(id).one(&state.db).await {
+            Ok(Some(client))
+                if client.status == CommonStatus::Active
+                    && Some(client.app_id) == result.app_id =>
+            {
+                match client_login_target(state, client, result.tenant_id, false).await {
+                    Ok(Some(uri)) => return (jar, Redirect::to(&uri)).into_response(),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::error!(%error, "Registration continuation lookup failed")
+                    }
+                }
+            }
+            Err(error) => tracing::error!(%error, "Registration client lookup failed"),
+            _ => {}
+        }
+    }
+    let target = result
+        .tenant_id
+        .map(|id| format!("/account/tenants/{id}"))
+        .unwrap_or_else(|| "/account/applications".to_owned());
+    (jar, Redirect::to(&target)).into_response()
+}
+
+pub(crate) async fn client_login_target(
+    state: &AppState,
+    client: crate::db::entity::oauth_clients::Model,
+    tenant_id: Option<uuid::Uuid>,
+    cancelled: bool,
+) -> Result<Option<String>, sea_orm::DbErr> {
+    use crate::db::{entity::apps, enums::CommonStatus};
+    use sea_orm::EntityTrait;
+    let Some(mut uri) = client
+        .login_uri
+        .filter(|uri| crate::service::client::valid_login_uri(uri))
+    else {
+        return Ok(None);
+    };
+    if client.status != CommonStatus::Active
+        || !apps::Entity::find_by_id(client.app_id)
+            .one(&state.db)
+            .await?
+            .is_some_and(|app| app.status == CommonStatus::Active)
+    {
+        return Ok(None);
+    }
+    if cancelled {
+        pero_utils::encode::append_query_param(&mut uri, "enrollment_status", "cancelled");
+    }
+    if let Some(tenant) = tenant_id {
+        pero_utils::encode::append_query_param(&mut uri, "tenant_id", &tenant.to_string());
+    }
+    Ok(Some(uri))
 }

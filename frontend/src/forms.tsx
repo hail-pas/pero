@@ -526,6 +526,7 @@ export const providerFields: Field[] = [
   },
 ];
 export const clientFields: Field[] = [
+  text("login_uri", "Login URI"),
   text("identifier", "Client ID", true),
   text("name", "客户端名称"),
   {

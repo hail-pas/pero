@@ -1001,5 +1001,6 @@
   "关闭限制": "Disable limit",
   "限制设备数量": "Limit device count",
   "达到上限后，确认登录将退出最早的设备。减少额度会保留最新设备。": "Confirmed sign-ins at the limit end the oldest device session. Reducing the limit keeps the newest devices.",
-  "最大登录设备数必须为有效正整数": "Enter a valid positive integer for the device limit"
+  "最大登录设备数必须为有效正整数": "Enter a valid positive integer for the device limit",
+  "Login URI": "Login URI"
 }

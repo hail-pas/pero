@@ -22,7 +22,6 @@ type TenantPage = ViewEnvelope<
   | "TenantAdminDetailView"
   | "TenantListView"
   | "TenantDetailView"
-  | "TenantInvitationView"
   | "TenantChoiceView"
 >;
 
@@ -270,35 +269,6 @@ export function Tenants({
               </Button>
             ))}
           </Stack>
-        </Panel>
-      </>
-    );
-  }
-
-  if (view === "TenantInvitationView") {
-    const canAccept =
-      data.verified_email &&
-      data.user_email?.toLowerCase() === data.invitation.email.toLowerCase();
-
-    return (
-      <>
-        <Heading title={t("加入组织")} description={data.invitation.tenant_name} />
-        <Panel title={t("邀请详情")}>
-          <Typography sx={{ mb: 2 }}>
-            {data.invitation.email} · {data.invitation.role}
-          </Typography>
-          {!canAccept ? (
-            <Typography color="error">
-              {t("请使用与邀请邮箱一致且已验证的账号接受邀请。")}
-            </Typography>
-          ) : (
-            <Button
-              variant="contained"
-              onClick={() => mutate(pathname, {}, () => navigate("/account/tenants"))}
-            >
-              {t("接受邀请")}
-            </Button>
-          )}
         </Panel>
       </>
     );

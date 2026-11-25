@@ -3315,6 +3315,7 @@ async fn enrollment_social_completion_requires_browser_proof() {
         subject: "other-subject".into(),
         proved_at: time::OffsetDateTime::now_utc().unix_timestamp(),
         app: None,
+        invitation_hash: None,
     };
     assert!(
         enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
@@ -3335,6 +3336,13 @@ async fn enrollment_social_completion_requires_browser_proof() {
             .is_none()
     );
     proof.proved_at = time::OffsetDateTime::now_utc().unix_timestamp();
+    proof.invitation_hash = Some("another-flow".into());
+    assert!(
+        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
+            .await
+            .is_err()
+    );
+    proof.invitation_hash = None;
     enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
         .await
         .unwrap();
@@ -3972,6 +3980,21 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
     fixture.cleanup().await;
 }
 
+async fn accept_tenant_invitation(
+    state: &crate::state::app::AppState,
+    user: Uuid,
+    token: &str,
+) -> Result<(), crate::service::ManagementError> {
+    let (raw, _) = state
+        .session_service()
+        .create(user, None, None, None, None)
+        .await?;
+    let session = state.session_service().validate(&raw).await?.unwrap();
+    crate::service::tenant::finalize_invitation(state, token, "", "", Some(&session), None)
+        .await
+        .map(|_| ())
+}
+
 #[tokio::test]
 #[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
 async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
@@ -4030,12 +4053,14 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         ],
     )
     .await;
-    crate::service::tenant::accept(db, member, &invitation)
+    accept_tenant_invitation(&fixture.state, member, &invitation)
         .await
         .unwrap();
-    crate::service::tenant::accept(db, member, &invitation)
-        .await
-        .unwrap();
+    assert!(
+        accept_tenant_invitation(&fixture.state, member, &invitation)
+            .await
+            .is_err()
+    );
 
     let personal = crate::service::tenant::list(db, member)
         .await
@@ -4180,7 +4205,7 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .await
         .unwrap();
     assert!(
-        crate::service::tenant::accept(db, member, &stale_invite)
+        accept_tenant_invitation(&fixture.state, member, &stale_invite)
             .await
             .is_err()
     );
@@ -4250,7 +4275,7 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
         vec![kept.id.into(),pero_utils::crypto::sha256_hex(&invitation).into(),fixture.user.into()],
     )
     .await;
-    crate::service::tenant::accept(db, member, &invitation)
+    accept_tenant_invitation(&fixture.state, member, &invitation)
         .await
         .unwrap();
 
@@ -4293,7 +4318,7 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
     let pending = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'quota-another@tenant.example','member',$2,$3,now()+interval '1 day')",
         vec![kept.id.into(),pero_utils::crypto::sha256_hex(&pending).into(),fixture.user.into()]).await;
-    crate::service::tenant::accept(db, another, &pending)
+    accept_tenant_invitation(&fixture.state, another, &pending)
         .await
         .unwrap();
     // Nonempty organizations can still update their existing members and metadata.

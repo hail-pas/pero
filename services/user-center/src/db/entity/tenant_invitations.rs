@@ -15,6 +15,8 @@ pub struct Model {
     pub invited_by: Option<Uuid>,
     pub expires_at: TimeDateTimeWithTimeZone,
     pub accepted_at: Option<TimeDateTimeWithTimeZone>,
+    pub accepted_user_id: Option<Uuid>,
+    pub client_id: Option<Uuid>,
     pub created_at: TimeDateTimeWithTimeZone,
 }
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

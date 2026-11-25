@@ -220,6 +220,70 @@ async fn administrator_authorization_does_not_block_own_token_issuance() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn organization_invitation_creates_account_and_membership_once() {
+    use user_center::service::tenant;
+
+    let f = Fixture::new().await;
+    let organization = Uuid::now_v7();
+    f.sql(
+        "INSERT INTO tenants(id,kind,name,slug) VALUES($1,'organization','Invite Org','invite-org')",
+        vec![organization.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![organization.into(), f.user.into()],
+    )
+    .await;
+    let token = pero_utils::crypto::generate_token();
+    f.sql(
+        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at,client_id) VALUES($1,'invited@example.test','member',$2,$3,now()+interval '1 day',$4)",
+        vec![
+            organization.into(),
+            pero_utils::crypto::sha256_hex(&token).into(),
+            f.user.into(),
+            f.client.into(),
+        ],
+    )
+    .await;
+    let result = tenant::finalize_invitation(
+        &f.state,
+        &token,
+        "invited_user",
+        "Invited-Password-123!",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.client_id, Some(f.client));
+    assert_eq!(result.tenant_id, Some(organization));
+    assert!(result.identity.is_some());
+    let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT (SELECT count(*) FROM tenant_members WHERE tenant_id=$1 AND user_id=$2 AND status='active') AS members,(SELECT count(*) FROM tenants WHERE owner_user_id=$2 AND kind='personal') AS personal,(SELECT count(*) FROM tenant_invitations WHERE tenant_id=$1 AND accepted_user_id=$2 AND status='accepted') AS accepted",
+        [organization.into(), result.user_id.into()],
+    )).await.unwrap().unwrap();
+    for column in ["members", "personal", "accepted"] {
+        assert_eq!(row.try_get::<i64>("", column).unwrap(), 1);
+    }
+    assert!(
+        tenant::finalize_invitation(
+            &f.state,
+            &token,
+            "duplicate",
+            "Invited-Password-123!",
+            None,
+            None
+        )
+        .await
+        .is_err()
+    );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
     use user_center::service::{access, tenant_context};
 
@@ -575,6 +639,78 @@ async fn call(
             .unwrap_or_else(|_| panic!("{path}: {}", String::from_utf8_lossy(&body)))
     };
     (status, value, headers)
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn expired_application_registration_returns_to_initiating_client() {
+    let f = Fixture::new().await;
+    f.sql(
+        "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let router = user_center::router::build(f.state.clone());
+    let uri = format!(
+        "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=create",
+        f.client
+    );
+    let (status, _, headers) = call(&router, "", &uri, None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/sso/register");
+    let context = headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .find(|value| value.starts_with("pero_enrollment_request=") && !value.contains("Max-Age=0"))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    // The browser still has the registration context, but its OAuth nonce is gone.
+    let (status, _, headers) = call(&router, context, "/sso/register", None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers["location"],
+        "https://client.example.test/login?enrollment_status=cancelled"
+    );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn organization_only_apps_reject_self_service_enrollment_from_the_portal() {
+    use user_center::service::{ManagementError, enrollment};
+
+    let f = Fixture::new().await;
+    f.sql(
+        "UPDATE apps SET tenant_mode='organization' WHERE id=$1",
+        vec![f.app.into()],
+    )
+    .await;
+    let token = pero_utils::crypto::generate_token();
+    f.sql(
+        "INSERT INTO enrollments(id,app_id,email,token_hash,status,verified_at,expires_at) VALUES($1,$2,'member@example.test',$3,'ready',now(),now()+interval '1 day')",
+        vec![Uuid::now_v7().into(), f.app.into(), pero_utils::crypto::sha256_hex(&token).into()],
+    )
+    .await;
+    let (_, _, _, raw) = f.login(f.user).await;
+    let session = f
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        enrollment::start(&f.state, "member@example.test", Some(f.app), None).await,
+        Err(ManagementError::Invalid("enrollment_unavailable"))
+    ));
+    assert!(matches!(
+        enrollment::finalize(&f.state, &token, "", "", Some(&session), None).await,
+        Err(ManagementError::Invalid("enrollment_unavailable"))
+    ));
+    f.cleanup().await;
 }
 
 #[tokio::test]
@@ -2011,6 +2147,7 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
                 client_type: current.r#type,
                 secret: String::new(),
                 name: current.name,
+                login_uri: current.login_uri,
                 redirect_uris: current.redirect_uris,
                 post_logout_redirect_uris: current.post_logout_redirect_uris,
                 scopes: vec!["openid".into(), "email".into()],

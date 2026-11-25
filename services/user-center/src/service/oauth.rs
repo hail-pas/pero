@@ -117,7 +117,7 @@ impl<'a> OAuthService<'a> {
         params: CreateAuthorizationRequestParams,
     ) -> Result<authorization_requests::Model, OAuthError> {
         let expires_at = OffsetDateTime::now_utc()
-            + time::Duration::seconds(self.config.auth_code_ttl_seconds as i64);
+            + time::Duration::seconds(self.config.authorization_request_ttl_seconds as i64);
 
         auth_request::create(
             self.db,
@@ -444,7 +444,7 @@ impl<'a> OAuthService<'a> {
         let nonce = pero_utils::crypto::generate_nonce();
         let key = pending_req
             .key_with_ttl(
-                Duration::from_secs(self.config.auth_code_ttl_seconds),
+                Duration::from_secs(self.config.authorization_request_ttl_seconds),
                 &nonce,
             )
             .map_err(|e| {

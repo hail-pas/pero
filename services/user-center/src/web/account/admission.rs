@@ -15,6 +15,7 @@ struct AppRow {
     name: String,
     status: Option<String>,
     organization_admission: bool,
+    organization_only: bool,
     code: String,
     description: Option<String>,
     homepage_url: Option<String>,
@@ -30,7 +31,7 @@ pub async fn get(
     let eligibility = crate::service::tenant_context::AUTO_ELIGIBILITY;
     let rows = AppRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        format!("SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,COALESCE(u.require_mfa,false) AS require_mfa,COALESCE(u.admission_origin='organization',false) AS organization_admission,CASE WHEN u.status='active' AND u.admission_origin='organization' AND NOT ({eligibility}) THEN NULL ELSE u.status::text END AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name"),
+        format!("SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,a.tenant_mode='organization' AS organization_only,COALESCE(u.require_mfa,false) AS require_mfa,COALESCE(u.admission_origin='organization',false) AS organization_admission,CASE WHEN u.status='active' AND u.admission_origin='organization' AND NOT ({eligibility}) THEN NULL ELSE u.status::text END AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name"),
         [account.user.id.into()],
     ))
     .all(&state.db)
@@ -138,11 +139,7 @@ pub async fn progress_action(
         return e;
     }
     match crate::service::enrollment::owner_action(&state, &account.session, id, &f.action).await {
-        Ok(Some(token)) => (
-            jar.add(crate::web::sso::register::flow_cookie(&state, token)),
-            Redirect::to("/sso/register"),
-        )
-            .into_response(),
+        Ok(Some(token)) => crate::web::sso::register::enter_enrollment(&state, jar, token).await,
         Ok(None) => pero_api_axum::json_ok(),
         Err(e) => util::management_response(Err(e)),
     }
