@@ -325,7 +325,7 @@ export function Tenants({
             <Typography color="text.secondary">/{tenant.slug}</Typography>
           )}
         </Stack>
-        {canManage && isOrganization && (
+        {isOwner && isOrganization && (
           <Button
             variant="outlined"
             onClick={() =>
@@ -564,7 +564,7 @@ export function Tenants({
                 <Typography>
                   {inv.email} · {inv.role} · {inv.status}
                 </Typography>
-                {inv.status === "pending" && (
+                {inv.status === "pending" && (isOwner || inv.role === "member") && (
                   <Button
                     size="small"
                     color="error"

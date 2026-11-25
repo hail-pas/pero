@@ -297,7 +297,10 @@ impl NotificationConfig {
                     && !c.auth_token.is_empty()
                     && !c.from.is_empty()
             }),
-            "email" | "phone" => !self.endpoint.is_empty() && !self.bearer_token.is_empty(),
+            "email" | "phone" => {
+                !self.bearer_token.is_empty()
+                    && pero_utils::redirect::validate_provider_endpoint_uri(&self.endpoint).is_ok()
+            }
             _ => false,
         }
     }
@@ -409,6 +412,22 @@ impl Validatable for AppConfig {
 #[cfg(test)]
 mod notification_tests {
     use super::*;
+    #[test]
+    fn gateway_availability_matches_public_https_policy() {
+        let mut config = NotificationConfig {
+            bearer_token: SecretString::new("test-gateway-secret"),
+            ..Default::default()
+        };
+        for endpoint in ["", "http://example.test/notify", "https://127.0.0.1/notify"] {
+            config.endpoint = endpoint.into();
+            assert!(!config.available("email"));
+            assert!(!config.available("phone"));
+        }
+        config.endpoint = "https://notifications.example.test/notify".into();
+        assert!(config.available("email"));
+        assert!(config.available("phone"));
+    }
+
     #[test]
     fn optional_notification_configuration_is_checked_at_send_time() {
         let config = NotificationConfig::default();

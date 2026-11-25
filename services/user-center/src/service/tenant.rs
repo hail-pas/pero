@@ -202,7 +202,9 @@ pub async fn rename(db: &DatabaseConnection, user: Uuid, id: Uuid, name: &str) -
     }
     let txn = db.begin().await?;
     lock_organization(&txn, id).await?;
-    governance(&txn, user, id).await?;
+    if governance(&txn, user, id).await? != "owner" {
+        return Err(Error::Invalid("forbidden"));
+    }
     exec(
         &txn,
         "UPDATE tenants SET name=$2,updated_at=now() WHERE id=$1 AND kind='organization'",
@@ -332,8 +334,21 @@ pub async fn invite(
     if !can_invite(&txn, id).await? {
         return Err(Error::Invalid("tenant_member_limit"));
     }
-    if role == "admin" && actor_role != "owner" {
-        return Err(Error::Invalid("forbidden"));
+    if actor_role != "owner" {
+        if role == "admin" {
+            return Err(Error::Invalid("forbidden"));
+        }
+        // Reissuing a member invitation must not replace an active Owner-issued admin invitation.
+        let protected = txn
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM tenant_invitations WHERE tenant_id=$1 AND email=$2 AND status='pending' AND role='admin' AND expires_at>now()",
+                [id.into(), email.clone().into()],
+            ))
+            .await?;
+        if protected.is_some() {
+            return Err(Error::Invalid("forbidden"));
+        }
     }
     // Bound notification abuse both per sender and recipient. Hash the email in cache keys.
     let actor_key = rl_tenant_invite_actor
@@ -383,8 +398,16 @@ pub async fn revoke_invite(
 ) -> Result<()> {
     let txn = db.begin().await?;
     lock_organization(&txn, tenant).await?;
-    governance(&txn, user, tenant).await?;
-    if exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE id=$1 AND tenant_id=$2 AND status='pending'",vec![invitation.into(),tenant.into()]).await?!=1{return Err(Error::Invalid("not_found"));}
+    let actor_role = governance(&txn, user, tenant).await?;
+    let changed = exec(
+        &txn,
+        "UPDATE tenant_invitations SET status='revoked' WHERE id=$1 AND tenant_id=$2 AND status='pending' AND (role='member' OR $3)",
+        vec![invitation.into(), tenant.into(), (actor_role == "owner").into()],
+    )
+    .await?;
+    if changed != 1 {
+        return Err(Error::Invalid("not_found"));
+    }
     audit(
         &txn,
         user,
