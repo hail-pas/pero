@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Use current default.toml as the schema; copy matching old deployment values only."""
+"""Refresh deployment configuration, retaining supported explicit overrides."""
 import argparse
 import json
 import os
@@ -7,14 +7,39 @@ from pathlib import Path
 import tomllib
 
 
-def refresh(template, previous):
+# Fields supplied by Rust defaults or optional configuration blocks are not
+# necessarily present in default.toml. Preserve them when explicitly configured.
+OPTIONAL_FIELDS = {
+    ('server',): ('graceful_shutdown_timeout_secs', 'cleanup_interval_secs', 'cors'),
+    ('server', 'cors'): ('allow_origins', 'allow_methods', 'allow_headers',
+                         'allow_credentials', 'expose_headers', 'max_age_secs'),
+    ('database',): ('acquire_timeout_secs', 'idle_timeout_secs', 'max_lifetime_secs'),
+    ('redis',): ('connect_timeout_secs', 'command_timeout_secs'),
+    ('sso',): ('session_cookie_name', 'session_touch_interval_seconds', 'cookie_domain', 'cookie_path'),
+    ('http_config',): ('timeout_secs', 'connect_timeout_secs', 'pool_idle_timeout_secs',
+                       'pool_max_idle_per_host', 'user_agent', 'retry', 'max_response_bytes'),
+    ('http_config', 'retry'): ('enabled', 'max_retries', 'base_delay_millis', 'max_delay_millis'),
+    ('notification',): ('smtp', 'sms'),
+    ('notification', 'smtp'): ('host', 'port', 'username', 'password', 'from', 'security'),
+    ('notification', 'sms'): ('account_sid', 'auth_token', 'from'),
+}
+
+
+def refresh(template, previous, path=()):
+    if not isinstance(previous, dict):
+        raise ValueError(f'Expected a TOML table: {".".join(path)}')
     result = {}
-    for key, value in template.items():
-        old = previous.get(key)
-        if isinstance(value, dict):
-            result[key] = refresh(value, old if isinstance(old, dict) else {})
+    keys = dict.fromkeys((*template, *OPTIONAL_FIELDS.get(path, ())))
+    for key in keys:
+        child = (*path, key)
+        if key not in template and key not in previous:
+            continue
+        value = template.get(key)
+        if isinstance(value, dict) or child in OPTIONAL_FIELDS:
+            result[key] = refresh(value if isinstance(value, dict) else {},
+                                  previous.get(key, {}), child)
         else:
-            result[key] = old if key in previous else value
+            result[key] = previous.get(key, value)
     return result
 
 

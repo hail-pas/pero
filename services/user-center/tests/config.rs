@@ -31,3 +31,16 @@ fn shipped_configuration_remains_readable() {
         assert!(!table.is_empty());
     }
 }
+
+#[test]
+fn shipped_production_secrets_are_not_accepted() {
+    use pero_validate_core::Validatable;
+    use user_center::config::{PasswordResetConfig, SsoConfig};
+
+    let example: toml::Value =
+        toml::from_str(include_str!("../../../deploy/pero/production.toml.example")).unwrap();
+    let sso: SsoConfig = example["sso"].clone().try_into().unwrap();
+    let reset: PasswordResetConfig = example["password_reset"].clone().try_into().unwrap();
+    assert!(sso.validate().is_err());
+    assert!(reset.validate().is_err());
+}

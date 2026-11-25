@@ -72,7 +72,7 @@ bash scripts/package-production-config.sh
 # PERO_PYTHON=/可用Python路径 bash scripts/package-production-config.sh
 ```
 
-脚本以当前源码 default.toml 的结构生成 production.toml，迁入原匹配字段的值，新增字段使用最新默认值；旧 askama.static_dir 会迁入 frontend.static_dir。bootstrap 和 RSA 密钥保留。输出 `deploy/pero-config.tar.gz` 及 `.sha256` 校验文件。
+脚本以当前源码 default.toml 的结构生成 production.toml，迁入原匹配字段及受支持的可选配置（如 CORS、HTTP 客户端、SMTP/SMS）的值，新增字段使用最新默认值；旧 askama.static_dir 会迁入 frontend.static_dir。bootstrap 和 RSA 密钥保留。输出 `deploy/pero-config.tar.gz` 及 `.sha256` 校验文件。
 
 配置包包含真实密码和私钥，只通过 SSH 传输，不提交 Git。打包前确认本机配置与实际生产信息一致。已有服务更新时，按新版配置结构调整生产配置，避免用示例或过期的本机配置覆盖服务器上的有效值。
 

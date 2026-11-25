@@ -62,6 +62,43 @@ class DockerDeployTest(unittest.TestCase):
         self.assertEqual(checksum, [hashlib.sha256(self.archive.read_bytes()).hexdigest(), self.archive.name])
         self.assertEqual(list((self.root / 'deploy').glob('.pero-config.*')), [])
 
+    def test_runtime_optional_settings_survive_packaging(self):
+        path = self.config / 'production.toml'
+        path.write_text(path.read_text() + '''
+[server.cors]
+allow_origins = ["https://app.example.test"]
+allow_credentials = true
+[sso]
+cookie_domain = "example.test"
+session_touch_interval_seconds = 10
+[http_config]
+timeout_secs = 12
+[http_config.retry]
+enabled = true
+max_retries = 2
+[notification.smtp]
+host = "smtp.example.test"
+port = 587
+security = "starttls"
+password = "fixture-password"
+[notification.sms]
+account_sid = "AC00000000000000000000000000000000"
+auth_token = "fixture-token"
+from = "+12025550123"
+''')
+        self.assertEqual(self.run_packager().returncode, 0)
+        with tarfile.open(self.archive) as archive:
+            production = tomllib.loads(archive.extractfile('config/production.toml').read().decode())
+        self.assertEqual(production['server']['cors']['allow_origins'], ['https://app.example.test'])
+        self.assertTrue(production['server']['cors']['allow_credentials'])
+        self.assertEqual(production['sso']['cookie_domain'], 'example.test')
+        self.assertEqual(production['sso']['session_touch_interval_seconds'], 10)
+        self.assertEqual(production['http_config']['timeout_secs'], 12)
+        self.assertEqual(production['http_config']['retry'], {'enabled': True, 'max_retries': 2})
+        self.assertEqual(production['notification']['smtp']['password'], 'fixture-password')
+        self.assertEqual(production['notification']['sms']['auth_token'], 'fixture-token')
+        self.assertNotIn('obsolete', production)
+
     def test_invalid_config_preserves_previous_package(self):
         self.assertEqual(self.run_packager().returncode, 0)
         previous = self.archive.read_bytes()

@@ -91,7 +91,11 @@ impl Validatable for SsoConfig {
             "sso.cookie_signing_secret",
         )?;
         pero_validate_core::ensure(
-            self.cookie_signing_secret.expose_secret() != "change-me-cookie-signing-key-32bytes!!",
+            !matches!(
+                self.cookie_signing_secret.expose_secret(),
+                "change-me-cookie-signing-key-32bytes!!"
+                    | "REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_CHARS"
+            ),
             "sso.cookie_signing_secret",
             "weak_default",
             "sso.cookie_signing_secret must be changed from the default placeholder",
@@ -239,7 +243,11 @@ impl Validatable for PasswordResetConfig {
             "password_reset.signing_key",
         )?;
         pero_validate_core::ensure(
-            self.signing_key.expose_secret() != "change-me-reset-key-32bytes!!",
+            !matches!(
+                self.signing_key.expose_secret(),
+                "change-me-reset-key-32bytes!!"
+                    | "REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET_AT_LEAST_32_CHARS"
+            ),
             "password_reset.signing_key",
             "weak_default",
             "password_reset.signing_key must be changed from the default placeholder",
@@ -379,6 +387,12 @@ impl Validatable for AppConfig {
             self.database.extras.encrypt_key.expose_secret(),
             1,
             "database.extras.encrypt_key",
+        )?;
+        pero_validate_core::ensure(
+            self.database.extras.encrypt_key.expose_secret() != "REPLACE_DATABASE_ENCRYPTION_KEY",
+            "database.extras.encrypt_key",
+            "weak_default",
+            "database encryption key must be changed from the default placeholder",
         )?;
         self.redis.validate()?;
         self.sso.validate()?;
