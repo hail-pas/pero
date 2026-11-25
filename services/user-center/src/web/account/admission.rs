@@ -138,11 +138,7 @@ pub async fn progress_action(
         return e;
     }
     match crate::service::enrollment::owner_action(&state, &account.session, id, &f.action).await {
-        Ok(Some(token)) => (
-            jar.add(crate::web::sso::register::flow_cookie(&state, token)),
-            Redirect::to("/sso/register"),
-        )
-            .into_response(),
+        Ok(Some(token)) => crate::web::sso::register::enter_enrollment(&state, jar, token).await,
         Ok(None) => pero_api_axum::json_ok(),
         Err(e) => util::management_response(Err(e)),
     }

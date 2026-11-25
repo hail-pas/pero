@@ -193,7 +193,7 @@ pub async fn finish_enrollment(
     user_agent: Option<String>,
 ) -> axum::response::Response {
     use crate::db::{
-        entity::{apps, oauth_clients},
+        entity::oauth_clients,
         enums::{CommonStatus, IdentityKind},
     };
     use axum::response::{IntoResponse, Redirect};
@@ -261,28 +261,13 @@ pub async fn finish_enrollment(
                 if client.status == CommonStatus::Active
                     && Some(client.app_id) == result.app_id =>
             {
-                match apps::Entity::find_by_id(client.app_id).one(&state.db).await {
-                    Ok(Some(app)) if app.status == CommonStatus::Active => {
-                        if let Some(mut uri) = client.login_uri.filter(|uri| {
-                            uri.starts_with("https://")
-                                && pero_utils::redirect::validate_oauth_redirect_uri(uri, false)
-                                    .is_ok()
-                        }) {
-                            if let Some(tenant) = result.tenant_id {
-                                pero_utils::encode::append_query_param(
-                                    &mut uri,
-                                    "tenant_id",
-                                    &tenant.to_string(),
-                                );
-                            }
-                            return (jar, Redirect::to(&uri)).into_response();
-                        }
-                    }
-                    Err(error) => return crate::web::util::dependency_error(error),
-                    _ => {}
+                match client_login_target(state, client, result.tenant_id, false).await {
+                    Ok(Some(uri)) => return (jar, Redirect::to(&uri)).into_response(),
+                    Ok(None) => {}
+                    Err(error) => tracing::error!(%error, "Registration continuation lookup failed"),
                 }
             }
-            Err(error) => return crate::web::util::dependency_error(error),
+            Err(error) => tracing::error!(%error, "Registration client lookup failed"),
             _ => {}
         }
     }
@@ -291,4 +276,36 @@ pub async fn finish_enrollment(
         .map(|id| format!("/account/tenants/{id}"))
         .unwrap_or_else(|| "/account/applications".to_owned());
     (jar, Redirect::to(&target)).into_response()
+}
+
+pub(crate) async fn client_login_target(
+    state: &AppState,
+    client: crate::db::entity::oauth_clients::Model,
+    tenant_id: Option<uuid::Uuid>,
+    cancelled: bool,
+) -> Result<Option<String>, sea_orm::DbErr> {
+    use crate::db::{entity::apps, enums::CommonStatus};
+    use sea_orm::EntityTrait;
+    let Some(mut uri) = client.login_uri.filter(|uri| {
+        uri.starts_with("https://")
+            && !uri.contains('?')
+            && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()
+    }) else {
+        return Ok(None);
+    };
+    if client.status != CommonStatus::Active
+        || !apps::Entity::find_by_id(client.app_id)
+            .one(&state.db)
+            .await?
+            .is_some_and(|app| app.status == CommonStatus::Active)
+    {
+        return Ok(None);
+    }
+    if cancelled {
+        pero_utils::encode::append_query_param(&mut uri, "enrollment_status", "cancelled");
+    }
+    if let Some(tenant) = tenant_id {
+        pero_utils::encode::append_query_param(&mut uri, "tenant_id", &tenant.to_string());
+    }
+    Ok(Some(uri))
 }

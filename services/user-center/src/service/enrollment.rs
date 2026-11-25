@@ -396,6 +396,9 @@ async fn start_contact(
     } else {
         (false, None, false, "")
     };
+    if request.is_some() {
+        require_personal_app(&txn, app).await?;
+    }
     let p = policy(&txn, app).await?;
     if is_phone {
         eligible_phone(&p)?;

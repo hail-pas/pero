@@ -42,7 +42,6 @@ export function PageContent({
     case "TenantAdminDetailView":
     case "TenantListView":
     case "TenantDetailView":
-    case "TenantInvitationView":
     case "TenantChoiceView":
       return <Tenants page={page} {...actions} />;
     case "UserSecurityView":

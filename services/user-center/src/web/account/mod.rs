@@ -36,10 +36,6 @@ pub fn routes() -> Router<AppState> {
             "/account/tenants/{id}/invitations/{invitation}",
             post(tenant::revoke_invite),
         )
-        .route(
-            "/account/invitations/{token}",
-            get(tenant::invitation).post(tenant::accept),
-        )
         .route("/account/applications", get(admission::get))
         .route(
             "/account/enrollments/{id}",

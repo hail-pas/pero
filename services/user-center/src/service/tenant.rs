@@ -452,14 +452,6 @@ pub async fn invitation_progress<C: ConnectionTrait>(db: &C, token: &str) -> Res
         "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role,i.client_id,c.app_id,CASE WHEN i.status='pending' AND i.expires_at<=now() THEN 'expired' WHEN i.status='pending' AND t.status<>'active' THEN 'revoked' ELSE i.status END AS status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id LEFT JOIN oauth_clients c ON c.id=i.client_id WHERE i.token_hash=$1",
         [hash.into()])).one(db).await?.ok_or(Error::Invalid("not_found"))
 }
-pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<()> {
-    let txn = db.begin().await?;
-    super::admin::lock_policy(&txn).await?;
-    accept_in_transaction(&txn, user, token).await?;
-    txn.commit().await?;
-    Ok(())
-}
-
 async fn accept_in_transaction(
     txn: &sea_orm::DatabaseTransaction,
     user: Uuid,
@@ -551,18 +543,20 @@ pub async fn finalize_invitation(
     if policy.emergency_stop {
         return Err(Error::Invalid("registration_closed"));
     }
-    // Lock the organization before checking current invitation and member capacity.
-    lock_organization(&txn, initial.tenant_id).await?;
-    let invite = invitation(&txn, token).await?;
+    // Authenticate and lock the existing user before taking the organization lock.
     let existing = users::Entity::find()
-        .filter(users::Column::Email.eq(invite.email.clone()))
+        .filter(users::Column::Email.eq(initial.email.clone()))
         .one(&txn)
         .await?;
-    let (user_id, identity) = if let Some(user) = existing {
+    if let Some(user) = &existing {
         let session = session
             .filter(|s| s.user_id == user.id)
             .ok_or(Error::Invalid("existing_account_login_required"))?;
         super::account_security::lock_account_session(&txn, session, &state.config.sso).await?;
+    }
+    lock_organization(&txn, initial.tenant_id).await?;
+    let invite = invitation(&txn, token).await?;
+    let (user_id, identity) = if let Some(user) = existing {
         let user = users::Entity::find_by_id(user.id)
             .one(&txn)
             .await?
@@ -579,6 +573,9 @@ pub async fn finalize_invitation(
             return Err(Error::Invalid("invalid_invitation"));
         }
         if user.email_verified_at.is_none() {
+            if super::security::role(&txn, user.id).await?.is_some() {
+                return Err(Error::Invalid("invalid_invitation"));
+            }
             exec(
                 &txn,
                 "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1",

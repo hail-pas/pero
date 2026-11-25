@@ -495,7 +495,9 @@ async fn finish_social_login(
         }
     };
 
-    let redirect_target = if ctx.auth_request_id.is_some() {
+    let redirect_target = if ctx.redirect.split('?').next() == Some("/sso/register") {
+        "/sso/register".to_owned()
+    } else if ctx.auth_request_id.is_some() {
         "/oauth2/authorize/resume".to_owned()
     } else {
         crate::web::util::safe_redirect(&ctx.redirect)

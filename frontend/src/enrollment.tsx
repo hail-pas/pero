@@ -45,7 +45,9 @@ export function Enrollment({
   const [formBusy, setFormBusy] = useState(false);
   const [preferredChannel, setChannel] = useState<"phone" | "email">("email");
   const methods = data.allowed_methods ?? ["email", "phone"];
-  const channel = methods.includes(preferredChannel) ? preferredChannel : "email" === preferredChannel && methods.includes("phone") ? "phone" : "email";
+  const channel = methods.includes(preferredChannel)
+    ? preferredChannel
+    : methods.includes("phone") ? "phone" : "email";
   const socialProviders = (data.providers ?? []).map((p) => (
     <Button key={p.key} component="a" href={`/sso/social/${encodeURIComponent(p.key)}/login?redirect=%2Fsso%2Fregister`} disabled={busy || formBusy} variant="outlined">{p.name}</Button>
   ));
@@ -109,9 +111,9 @@ export function Enrollment({
           </Stack>
         ) : data.tenant_invitation || (data.status === "ready" && data.existing_account) ? (
           <Stack spacing={2}>
-            <Typography>{data.tenant_name} · {data.email}</Typography>
+            <Typography>{[data.tenant_name || data.app_name, data.phone || data.email].filter(Boolean).join(" · ")}</Typography>
             {data.matching_account ? (
-              <Button variant="contained" disabled={busy} onClick={() => run(() => mutate("/sso/register", { action: "finalize" }))}>{data.tenant_invitation ? t("加入组织") : t("完成注册或确认加入")}</Button>
+              <Button variant="contained" disabled={busy || formBusy} onClick={() => run(() => mutate("/sso/register", { action: "finalize" }))}>{data.tenant_invitation ? t("加入组织") : t("完成注册或确认加入")}</Button>
             ) : data.existing_account || data.signed_in ? (
               <Button component={RouterLink} to="/account/login?redirect=%2Fsso%2Fregister" onClick={data.signed_in ? (event) => { event.preventDefault(); run(() => mutate("/sso/register", { action: "switch" })); } : undefined}>{t("登录已有账户")}</Button>
             ) : (
