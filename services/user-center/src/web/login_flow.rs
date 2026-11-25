@@ -264,7 +264,9 @@ pub async fn finish_enrollment(
                 match client_login_target(state, client, result.tenant_id, false).await {
                     Ok(Some(uri)) => return (jar, Redirect::to(&uri)).into_response(),
                     Ok(None) => {}
-                    Err(error) => tracing::error!(%error, "Registration continuation lookup failed"),
+                    Err(error) => {
+                        tracing::error!(%error, "Registration continuation lookup failed")
+                    }
                 }
             }
             Err(error) => tracing::error!(%error, "Registration client lookup failed"),

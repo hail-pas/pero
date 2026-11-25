@@ -192,7 +192,6 @@ pub(crate) async fn enter_enrollment(state: &AppState, jar: CookieJar, token: St
         jar = jar.add(cookie);
     }
     (jar, Redirect::to("/sso/register")).into_response()
-
 }
 
 async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool) -> Response {
@@ -234,8 +233,8 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, sent: bool)
         String::new()
     };
     let proof = social_proof(state, &jar);
-    let social_only = row.as_ref().is_none()
-        && proof.as_ref().is_some_and(|p| p.is_fresh() && p.app == app);
+    let social_only =
+        row.as_ref().is_none() && proof.as_ref().is_some_and(|p| p.is_fresh() && p.app == app);
     let mut allowed_methods = Vec::new();
     if state.config.notification.available("email") {
         allowed_methods.push("email");
@@ -428,12 +427,22 @@ async fn cancel_registration(state: &AppState, jar: CookieJar) -> Response {
     };
     let (client_id, request_id, tenant_id, completed) = if let Some(token) = tenant_token(&jar) {
         match crate::service::tenant::invitation_progress(&state.db, token).await {
-            Ok(invite) => (invite.client_id, None, Some(invite.tenant_id), invite.status == "accepted"),
+            Ok(invite) => (
+                invite.client_id,
+                None,
+                Some(invite.tenant_id),
+                invite.status == "accepted",
+            ),
             Err(e) => return util::management_response(Err(e)),
         }
     } else if let Some(token) = flow_token(&jar) {
         match enrollment::progress_by_token(&state.db, token).await {
-            Ok(row) => (row.client_id, row.auth_request_id, None, row.status == "completed"),
+            Ok(row) => (
+                row.client_id,
+                row.auth_request_id,
+                None,
+                row.status == "completed",
+            ),
             Err(e) => return util::management_response(Err(e)),
         }
     } else {
@@ -495,7 +504,9 @@ async fn cancel_registration(state: &AppState, jar: CookieJar) -> Response {
                     Err(e) => return util::dependency_error(e),
                 }
             }
-            match crate::web::login_flow::client_login_target(state, client, tenant_id, !completed).await {
+            match crate::web::login_flow::client_login_target(state, client, tenant_id, !completed)
+                .await
+            {
                 Ok(Some(uri)) => return (jar, Redirect::to(&uri)).into_response(),
                 Ok(None) => {}
                 Err(e) => return util::dependency_error(e),
@@ -506,7 +517,8 @@ async fn cancel_registration(state: &AppState, jar: CookieJar) -> Response {
         tenant_id.map(|id| format!("/account/tenants/{id}"))
     } else {
         None
-    }.unwrap_or_else(|| "/account/applications".to_owned());
+    }
+    .unwrap_or_else(|| "/account/applications".to_owned());
     (jar, Redirect::to(&target)).into_response()
 }
 
