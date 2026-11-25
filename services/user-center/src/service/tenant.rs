@@ -436,11 +436,20 @@ pub struct InviteDetail {
     pub role: String,
     pub client_id: Option<Uuid>,
     pub app_id: Option<Uuid>,
+    pub status: String,
 }
 pub async fn invitation<C: ConnectionTrait>(db: &C, token: &str) -> Result<InviteDetail> {
+    let invite = invitation_progress(db, token).await?;
+    if invite.status != "pending" {
+        return Err(Error::Invalid("invalid_invitation"));
+    }
+    Ok(invite)
+}
+
+pub async fn invitation_progress<C: ConnectionTrait>(db: &C, token: &str) -> Result<InviteDetail> {
     let hash = pero_utils::crypto::sha256_hex(token);
     InviteDetail::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role,i.client_id,c.app_id FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id LEFT JOIN oauth_clients c ON c.id=i.client_id WHERE i.token_hash=$1 AND i.status='pending' AND i.expires_at>now() AND t.status='active'",
+        "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role,i.client_id,c.app_id,CASE WHEN i.status='pending' AND i.expires_at<=now() THEN 'expired' WHEN i.status='pending' AND t.status<>'active' THEN 'revoked' ELSE i.status END AS status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id LEFT JOIN oauth_clients c ON c.id=i.client_id WHERE i.token_hash=$1",
         [hash.into()])).one(db).await?.ok_or(Error::Invalid("not_found"))
 }
 pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<()> {

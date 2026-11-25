@@ -107,11 +107,11 @@ export function Enrollment({
               </Button>
             )}
           </Stack>
-        ) : data.tenant_invitation ? (
+        ) : data.tenant_invitation || (data.status === "ready" && data.existing_account) ? (
           <Stack spacing={2}>
             <Typography>{data.tenant_name} · {data.email}</Typography>
             {data.matching_account ? (
-              <Button variant="contained" disabled={busy} onClick={() => run(() => mutate("/sso/register", { action: "finalize" }))}>{t("加入组织")}</Button>
+              <Button variant="contained" disabled={busy} onClick={() => run(() => mutate("/sso/register", { action: "finalize" }))}>{data.tenant_invitation ? t("加入组织") : t("完成注册或确认加入")}</Button>
             ) : data.existing_account || data.signed_in ? (
               <Button component={RouterLink} to="/account/login?redirect=%2Fsso%2Fregister" onClick={data.signed_in ? (event) => { event.preventDefault(); run(() => mutate("/sso/register", { action: "switch" })); } : undefined}>{t("登录已有账户")}</Button>
             ) : (
@@ -160,8 +160,9 @@ export function Enrollment({
                   component={RouterLink}
                   to="/account/login?redirect=%2Fsso%2Fregister"
                 >
-                  {data.social ? t("重新验证第三方身份") : t("登录已有账户")}
+                  {t("登录已有账户")}
                 </Button>
+                {data.social && socialProviders}
                 <FieldsForm
                   disabled={busy}
                   onBusyChange={(submitting) => {
@@ -231,6 +232,11 @@ export function Enrollment({
           </Stack>
         )}
       </Panel>
+      {!data.status && (
+        <Button disabled={busy || formBusy} onClick={() => run(() => mutate("/sso/register", { action: "reset" }))}>
+          {t("退出本次注册流程")}
+        </Button>
+      )}
     </Container>
   );
 }
