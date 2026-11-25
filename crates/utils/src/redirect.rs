@@ -49,6 +49,15 @@ pub fn validate_oauth_redirect_uri(
     let parsed = url::Url::parse(uri).map_err(|_| RedirectUriError::Invalid)?;
     let scheme = parsed.scheme();
     if DEFAULT_ALLOWED_REDIRECT_SCHEMES.contains(&scheme) {
+        // The URL parser normalizes forms such as https:example.com and
+        // https:///example.com, but redirects use the original string.
+        if !uri.split_once("://").is_some_and(|(raw_scheme, authority)| {
+            raw_scheme.eq_ignore_ascii_case(scheme)
+                && !authority.is_empty()
+                && !authority.starts_with('/')
+        }) {
+            return Err(RedirectUriError::Invalid);
+        }
         if parsed.host_str().is_none() {
             return Err(RedirectUriError::MissingHost);
         }
@@ -81,6 +90,12 @@ pub fn validate_oauth_redirect_uri(
         return Err(RedirectUriError::FragmentNotAllowed);
     }
     Ok(())
+}
+
+/// Service URLs are absolute HTTPS URLs (HTTP only for local development).
+/// A base URL cannot contain a query or fragment because endpoint paths are appended to it.
+pub fn is_valid_service_base_url(uri: &str) -> bool {
+    !uri.contains('?') && validate_oauth_redirect_uri(uri, false).is_ok()
 }
 
 pub fn validate_oauth_redirect_uris(
@@ -264,6 +279,33 @@ mod tests {
             "com.example.app:/call\tback",
         ] {
             assert!(validate(uri, true).is_err(), "{uri}");
+        }
+    }
+
+    #[test]
+    fn service_base_urls_require_secure_absolute_urls_without_queries() {
+        for uri in [
+            "https://auth.example.test",
+            "https://auth.example.test/tenant/",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+        ] {
+            assert!(super::is_valid_service_base_url(uri), "{uri}");
+        }
+        for uri in [
+            "http://auth.example.test",
+            "https:auth.example.test",
+            "https:///auth.example.test",
+            "https://auth.example.test?query=value",
+            "https://auth.example.test#fragment",
+            "https://user@auth.example.test",
+            "/relative",
+        ] {
+            assert!(!super::is_valid_service_base_url(uri), "{uri}");
+            if !uri.contains('?') {
+                assert!(super::validate_oauth_redirect_uri(uri, false).is_err(), "{uri}");
+            }
         }
     }
 

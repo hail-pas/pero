@@ -65,7 +65,12 @@ impl Default for OAuth2Config {
 
 impl Validatable for OAuth2Config {
     fn validate(&self) -> ValidationResult {
-        pero_validate_core::not_blank(&self.issuer, "oauth2.issuer")?;
+        pero_validate_core::ensure(
+            pero_utils::redirect::is_valid_service_base_url(&self.issuer),
+            "oauth2.issuer",
+            "invalid_url",
+            "oauth2.issuer must be an absolute HTTPS URL without a query or fragment (loopback HTTP is allowed)",
+        )?;
         pero_validate_core::not_blank(&self.client_id, "oauth2.client_id")?;
         pero_validate_core::ensure(
             !self.client_secret.expose_secret().trim().is_empty()
@@ -74,11 +79,17 @@ impl Validatable for OAuth2Config {
             "required",
             "oauth2.client_secret must be configured with the registered client secret",
         )?;
-        pero_validate_core::not_blank(&self.redirect_uri, "oauth2.redirect_uri")?;
-        pero_validate_core::not_blank(
-            &self.post_logout_redirect_uri,
-            "oauth2.post_logout_redirect_uri",
-        )?;
+        for (uri, field) in [
+            (&self.redirect_uri, "oauth2.redirect_uri"),
+            (&self.post_logout_redirect_uri, "oauth2.post_logout_redirect_uri"),
+        ] {
+            pero_validate_core::ensure(
+                pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok(),
+                field,
+                "invalid_url",
+                "redirect URI must be an absolute HTTPS URL (loopback HTTP is allowed)",
+            )?;
+        }
         pero_validate_core::ensure(
             self.scopes.iter().any(|scope| scope == "openid"),
             "oauth2.scopes",

@@ -100,7 +100,12 @@ impl Validatable for SsoConfig {
             "weak_default",
             "sso.cookie_signing_secret must be changed from the default placeholder",
         )?;
-        pero_validate_core::not_blank(&self.base_url, "sso.base_url")?;
+        pero_validate_core::ensure(
+            pero_utils::redirect::is_valid_service_base_url(&self.base_url),
+            "sso.base_url",
+            "invalid_url",
+            "sso.base_url must be an absolute HTTPS URL without a query or fragment (loopback HTTP is allowed)",
+        )?;
         Ok(())
     }
 }
@@ -113,7 +118,12 @@ pub struct OidcConfig {
 
 impl Validatable for OidcConfig {
     fn validate(&self) -> ValidationResult {
-        pero_validate_core::not_blank(&self.issuer, "oidc.issuer")?;
+        pero_validate_core::ensure(
+            pero_utils::redirect::is_valid_service_base_url(&self.issuer),
+            "oidc.issuer",
+            "invalid_url",
+            "oidc.issuer must be an absolute HTTPS URL without a query or fragment (loopback HTTP is allowed)",
+        )?;
         Ok(())
     }
 }
