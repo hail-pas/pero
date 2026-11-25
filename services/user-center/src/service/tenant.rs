@@ -533,6 +533,11 @@ pub async fn finalize_invitation(
             .filter(|s| s.user_id == user.id)
             .ok_or(Error::Invalid("existing_account_login_required"))?;
         super::account_security::lock_account_session(&txn, session, &state.config.sso).await?;
+        if !super::security::recent(&txn, session.id, state.config.sso.session_idle_ttl_seconds)
+            .await?
+        {
+            return Err(Error::Invalid("reauth_required"));
+        }
     }
     lock_organization(&txn, initial.tenant_id).await?;
     let invite = invitation(&txn, token).await?;

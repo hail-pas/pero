@@ -590,6 +590,10 @@ pub async fn post(
                         )
                         .await
                     }
+                    Err(crate::service::ManagementError::Invalid("reauth_required")) => {
+                        (jar, Redirect::to("/account/reauth?redirect=%2Fsso%2Fregister"))
+                            .into_response()
+                    }
                     Err(e) => util::management_response(Err(e)),
                 };
             }
