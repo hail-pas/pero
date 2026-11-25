@@ -25,10 +25,13 @@ pub(crate) async fn save_security_change(
     let access = permissions::authorize(&txn, actor).await?;
     permissions::app(&txn, &access, expected.app_id, permission).await?;
     // Provisioning exposes member profiles without individual consent. Only a super
-    // administrator may enable/redirect it or change its field policy.
+    // administrator may enable/redirect it, change its field policy or obtain new credentials.
     if !access.super_admin
         && (active.account_sync_uri.as_ref() != &expected.account_sync_uri
-            || expected.account_sync_uri.is_some() && active.scopes.as_ref() != &expected.scopes)
+            || expected.account_sync_uri.is_some()
+                && (active.scopes.as_ref() != &expected.scopes
+                    || active.secret_hash.as_ref() != &expected.secret_hash
+                    || permission == P::ClientsSecretRotate))
     {
         return Err(ManagementError::Invalid("forbidden"));
     }

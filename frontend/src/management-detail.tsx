@@ -21,6 +21,8 @@ export function ManagementDetail({
       page.view === "AppDetailView" ? page.data.app.id : undefined,
     );
   const superAdmin = isSuper(data.layout);
+  const canRotateSecret = (syncUri: string | null) =>
+    allowed("clients.secret.rotate") && (!syncUri || superAdmin);
   useLocale();
   const isApp = view === "AppDetailView",
     isUser = view === "UserDetailView",
@@ -261,7 +263,7 @@ export function ManagementDetail({
                           (field) =>
                             field.name !== "identifier" &&
                             (field.name !== "secret" ||
-                              allowed("clients.secret.rotate")),
+                              canRotateSecret(client.account_sync_uri)),
                         )
                         .map((field) =>
                           client.account_sync_uri &&
@@ -348,7 +350,7 @@ export function ManagementDetail({
                 <Button
                   size="small"
                   disabled={
-                    !allowed("clients.secret.rotate") ||
+                    !canRotateSecret(client.account_sync_uri) ||
                     lower(client.type) === "public"
                   }
                   onClick={() =>
@@ -380,7 +382,7 @@ export function ManagementDetail({
                     </Typography>
                     <Button
                       sx={{
-                        display: allowed("clients.secret.rotate")
+                        display: canRotateSecret(client.account_sync_uri)
                           ? undefined
                           : "none",
                       }}
@@ -399,7 +401,7 @@ export function ManagementDetail({
                 <Button
                   size="small"
                   disabled={
-                    !allowed("clients.secret.rotate") ||
+                    !canRotateSecret(client.account_sync_uri) ||
                     lower(client.type) === "public"
                   }
                   onClick={() =>

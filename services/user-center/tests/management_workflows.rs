@@ -2063,6 +2063,36 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
             .iter()
             .any(|row| row["kind"] == "tenant.membership.changed")
     );
+    // User status changes affect both account and historical tenant membership projections.
+    for (status, expected_events) in [("disabled", 2), ("active", 3)] {
+        f.sql(
+            "UPDATE users SET status=$2::user_status WHERE id=$1",
+            vec![f.user.into(), status.into()],
+        )
+        .await;
+        let (_, view, _) = call(&router, &cookies, "/dashboard/notifications", None).await;
+        let rows = view["data"]["sync_rows"].as_array().unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["kind"] == "tenant.membership.changed")
+                .count(),
+            expected_events
+        );
+    }
+    // Client-secret permissions must not bypass the super-admin account sync boundary.
+    f.sql(
+        "INSERT INTO admin_app_permissions(user_id,app_id,permission) VALUES($1,$2,'clients.secret.rotate')",
+        vec![delegated.session.user_id.into(), f.app.into()],
+    )
+    .await;
+    assert!(matches!(
+        user_center::service::client::reset_secret(&f.state.db, &delegated, f.client).await,
+        Err(user_center::service::ManagementError::Invalid("forbidden"))
+    ));
+    assert!(matches!(
+        user_center::service::client::rotate_secret(&f.state.db, &delegated, f.client, 60).await,
+        Err(user_center::service::ManagementError::Invalid("forbidden"))
+    ));
     // Public browser clients have no credentials for server-side provisioning.
     f.sql(
         "UPDATE oauth_clients SET account_sync_uri=NULL,type='public',secret_hash=NULL WHERE id=$1",
