@@ -224,6 +224,9 @@ async fn revoke_inner(
     let mut active: keys::ActiveModel = key.into();
     active.active = Set(false);
     active.revoked_at = Set(Some(now));
+    // Revocation is irreversible; retain public metadata, not signing credentials.
+    active.private_key_pem_enc = Set(None);
+    active.activate_at = Set(None);
     active.updated_at = Set(now);
     active.update(&txn).await?;
     txn.commit().await?;

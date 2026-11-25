@@ -1,3 +1,4 @@
+use sea_orm::sea_query::{LockBehavior, LockType};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
     QuerySelect, Statement, TransactionTrait,
@@ -94,7 +95,7 @@ pub async fn clean_expired_sso_sessions(
             .order_by_asc(sso_sessions::Column::ExpiresAt)
             .order_by_asc(sso_sessions::Column::Id)
             // Match token issuance and logout: lock sessions before refresh grants.
-            .lock_exclusive()
+            .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .limit(BATCH_SIZE)
             .into_tuple()
             .all(&txn)
@@ -144,7 +145,7 @@ pub async fn clean_expired_sso_sessions(
     }
     // Orphans already fail authorization; revoke a bounded batch for bookkeeping.
     db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "UPDATE refresh_tokens SET revoked_at=$1, revoke_reason='session_expired' WHERE id IN (SELECT id FROM refresh_tokens WHERE session_id IS NULL AND revoked_at IS NULL LIMIT 500)", [OffsetDateTime::now_utc().into()])).await?;
+        "UPDATE refresh_tokens SET revoked_at=$1, revoke_reason='session_expired' WHERE session_id IS NULL AND revoked_at IS NULL AND id IN (SELECT id FROM refresh_tokens WHERE session_id IS NULL AND revoked_at IS NULL LIMIT 500 FOR UPDATE SKIP LOCKED)", [OffsetDateTime::now_utc().into()])).await?;
     Ok(total)
 }
 
@@ -220,7 +221,7 @@ pub async fn clean_notifications(db: &DatabaseConnection) -> Result<u64, sea_orm
         let expired = db.execute_raw(Statement::from_string(DbBackend::Postgres,
             "DELETE FROM notification_outbox WHERE id IN (SELECT id FROM notification_outbox WHERE expires_at<=now() ORDER BY expires_at FOR UPDATE SKIP LOCKED LIMIT 500)".to_owned())).await?.rows_affected();
         let archived = db.execute_raw(Statement::from_string(DbBackend::Postgres,
-            "DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE updated_at<now()-interval '30 days' AND status IN ('delivered','expired','cancelled') ORDER BY updated_at LIMIT 500)".to_owned())).await?.rows_affected();
+            "DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE updated_at<now()-interval '30 days' AND status IN ('delivered','expired','cancelled') ORDER BY updated_at LIMIT 500 FOR UPDATE SKIP LOCKED)".to_owned())).await?.rows_affected();
         total += expired + archived;
         if expired < BATCH_SIZE && archived < BATCH_SIZE {
             break;

@@ -885,6 +885,9 @@ ON authorization_codes (user_id);
 CREATE INDEX ix_authorization_codes_client_id
 ON authorization_codes (client_id);
 
+CREATE INDEX ix_authorization_codes_app_user
+ON authorization_codes (app_id, user_id);
+
 CREATE INDEX ix_authorization_codes_session_id
 ON authorization_codes (session_id);
 
@@ -989,8 +992,15 @@ ON refresh_tokens (user_id, revoked_at);
 CREATE INDEX ix_refresh_tokens_client_id
 ON refresh_tokens (client_id);
 
+CREATE INDEX ix_refresh_tokens_app_user
+ON refresh_tokens (app_id, user_id);
+
 CREATE INDEX ix_refresh_tokens_session_id
 ON refresh_tokens (session_id);
+
+CREATE INDEX ix_refresh_tokens_orphan_active
+ON refresh_tokens (id)
+WHERE session_id IS NULL AND revoked_at IS NULL;
 
 CREATE INDEX ix_refresh_tokens_expires_at
 ON refresh_tokens (expires_at);
