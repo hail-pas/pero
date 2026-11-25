@@ -236,7 +236,7 @@ pub async fn lock_grant_access<C: ConnectionTrait>(
         return Ok(None);
     };
     let access = uaa::Entity::find_by_id((user_id, app_id))
-        .lock_shared()
+        .lock_exclusive()
         .one(db)
         .await?;
     let Some(access) = access.filter(|access| access.status == CommonStatus::Active) else {

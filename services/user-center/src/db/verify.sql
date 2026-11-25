@@ -2,9 +2,9 @@ SELECT user_id, app_id, permission FROM admin_app_permissions LIMIT 0;
 SELECT user_id, revision, updated_by, updated_at FROM admin_permission_state LIMIT 0;
 SELECT user_id, permission FROM admin_permissions LIMIT 0;
 SELECT user_id, role FROM admin_roles LIMIT 0;
-SELECT id, code, name, description, homepage_url, logo_url, status, system, created_at, updated_at FROM apps LIMIT 0;
+SELECT id, code, name, description, homepage_url, logo_url, status, system, max_sessions, created_at, updated_at FROM apps LIMIT 0;
 SELECT details, id, actor_id, actor_username, action, target, ip, user_agent, request_id, outcome, http_status, created_at FROM audit_events LIMIT 0;
-SELECT id, code_hash, authorization_request_id, user_id, app_id, client_id, session_id, redirect_uri, scopes, nonce, code_challenge, code_challenge_method, created_at, expires_at, consumed_at FROM authorization_codes LIMIT 0;
+SELECT id, code_hash, authorization_request_id, user_id, app_id, client_id, session_id, redirect_uri, scopes, nonce, code_challenge, code_challenge_method, created_at, expires_at, consumed_at, admission_session_id, admission_revoked, takeover_allowed, client_session_id FROM authorization_codes LIMIT 0;
 SELECT id, client_id, app_id, redirect_uri, scopes, client_state, nonce, code_challenge, code_challenge_method, prompt, max_age, login_hint, authorized_user_id, created_at, expires_at, completed_at, diagnostic_session_id FROM authorization_requests LIMIT 0;
 SELECT id, session_id, client_id, user_id, endpoint, created_at, expires_at, next_attempt_at, attempts, lease_id, leased_until, delivered_at, last_error FROM backchannel_logout_deliveries LIMIT 0;
 SELECT id, user_id, change_type, new_value, status, verification_code_hash, nonce, requested_at, expires_at, verified_at, cancelled_at, created_at, updated_at FROM contact_change_requests LIMIT 0;
@@ -16,9 +16,10 @@ SELECT id, user_id, identity_id, provider_id, event_type, ip, user_agent, detail
 SELECT id, user_id, kind, channel, recipient, status, attempts, last_error, http_status, created_at, updated_at, enrollment_id FROM notification_deliveries LIMIT 0;
 SELECT id, payload_enc, expires_at, next_attempt_at, attempts, user_id, kind, lease_id, leased_until, enrollment_id FROM notification_outbox LIMIT 0;
 SELECT account_sync_uri, backchannel_logout_uri, previous_secret_expires_at, previous_secret_hash, id, app_id, identifier, secret_hash, name, type, redirect_uris, post_logout_redirect_uris, scopes, grant_types, require_pkce, access_token_ttl_seconds, refresh_token_ttl_seconds, id_token_ttl_seconds, status, token_version, created_at, updated_at FROM oauth_clients LIMIT 0;
-SELECT session_id, client_id, user_id FROM oidc_rp_sessions LIMIT 0;
+SELECT id,user_id,app_id,sso_session_id,created_at,revoked_at,revoke_reason FROM app_sessions LIMIT 0;
+SELECT id,app_session_id,client_id,tenant_id,created_at,revoked_at,revoke_reason FROM client_sessions LIMIT 0;
 SELECT id, user_id, token_hash, issued_at, expires_at, consumed_at FROM password_reset_tokens LIMIT 0;
-SELECT id, token_hash, user_id, app_id, client_id, session_id, scopes, created_at, expires_at, revoked_at, revoke_reason, replaced_by_id FROM refresh_tokens LIMIT 0;
+SELECT id, token_hash, user_id, app_id, client_id, session_id, scopes, created_at, expires_at, revoked_at, revoke_reason, replaced_by_id, client_session_id FROM refresh_tokens LIMIT 0;
 SELECT id, app_id, mode, domains, approval_required, emergency_stop, version FROM registration_policies LIMIT 0;
 SELECT recovery_pending, reauthenticated_at, oidc_reauthenticated_at, mfa_verified_at, mfa_required, id, token_hash, user_id, identity_id, provider_id, ip, user_agent, created_at, authenticated_at, last_seen_at, expires_at, revoked_at, revoke_reason FROM sso_sessions LIMIT 0;
 SELECT user_id, app_id, status, token_version, require_mfa, created_at, updated_at FROM user_app_access LIMIT 0;
@@ -36,7 +37,7 @@ BEGIN
         'account_sync_deliveries', 'apps', 'audit_events', 'authorization_codes', 'authorization_requests',
         'backchannel_logout_deliveries', 'contact_change_requests', 'enrollments', 'identities',
         'identity_provider_keys', 'identity_providers', 'login_events', 'notification_deliveries',
-        'notification_outbox', 'oauth_clients', 'oidc_rp_sessions', 'password_reset_tokens',
+        'notification_outbox', 'oauth_clients', 'app_sessions', 'client_sessions', 'password_reset_tokens',
         'refresh_tokens', 'registration_policies', 'sso_sessions', 'user_app_access',
         'user_consents', 'user_mfa', 'users', 'tenants', 'tenant_members', 'tenant_invitations',
         'tenant_creation_policies', 'tenant_app_grants', 'tenant_app_history', 'tenant_app_requests'
@@ -49,7 +50,7 @@ BEGIN
     FOREACH object_name IN ARRAY ARRAY[
         'ux_users_email_alive', 'ux_users_phone_alive', 'ux_users_username_alive',
         'ux_sso_sessions_token_hash', 'ux_identity_provider_keys_active_signing',
-        'ux_refresh_tokens_token_hash', 'ux_contact_change_nonce',
+        'ux_refresh_tokens_token_hash', 'ux_app_sessions_active', 'ux_client_sessions_active', 'ux_contact_change_nonce',
         'ux_contact_change_one_pending_per_type', 'ux_contact_change_value_pending',
         'ux_password_reset_tokens_hash', 'ux_enrollments_invitation',
         'ux_tenant_personal_owner', 'ux_tenant_organization_slug', 'ux_tenant_invitation_pending'
@@ -62,14 +63,15 @@ BEGIN
     END LOOP;
     FOREACH object_name IN ARRAY ARRAY['assisted_recovery_pair','ck_previous_client_secret','ck_account_sync_confidential',
                                       'ck_tenant_owner_shape', 'tenants_max_members_check', 'apps_organization_access_check',
-                                      'ck_app_admission_origin', 'ck_enrollment_contact', 'account_sync_deliveries_kind_check'] LOOP
+                                      'ck_app_admission_origin', 'apps_max_sessions_check', 'ck_enrollment_contact', 'account_sync_deliveries_kind_check'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE connamespace=current_schema()::regnamespace
                        AND conname=object_name AND convalidated) THEN
             RAISE EXCEPTION 'Missing security constraint: %', object_name;
         END IF;
     END LOOP;
     FOREACH object_name IN ARRAY ARRAY['session_backchannel_logout','app_backchannel_logout',
-                                      'client_backchannel_logout','notification_outbox_deleted',
+                                      'client_backchannel_logout','client_session_backchannel_logout','app_session_revocation',
+                                      'tenant_session_revocation','tenant_member_session_revocation','notification_outbox_deleted',
                                       'user_account_sync','membership_account_sync','client_account_sync','app_account_sync',
                                       'tg_pero_personal_tenant','tenant_membership_sync','tenant_status_sync',
                                       'aa_tenant_app_history_access','aa_tenant_app_history_member',

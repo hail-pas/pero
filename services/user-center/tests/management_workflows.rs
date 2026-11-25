@@ -361,7 +361,10 @@ async fn organization_auto_admission_changes_resync_account_projection() {
         assert_eq!(snapshot["active"], active);
         assert_eq!(
             user_center::service::access::ensure_oauth_app_access(
-                &f.state.db, &session, f.app, 3600,
+                &f.state.db,
+                &session,
+                f.app,
+                3600,
             )
             .await
             .unwrap(),
@@ -490,6 +493,21 @@ impl Fixture {
         .unwrap()
         .expect("user has one personal workspace");
         let tenant_id = tenant.tenant_id.to_string();
+        let client_id = Uuid::parse_str(client_identifier).unwrap();
+        let client = user_center::db::entity::oauth_clients::Entity::find_by_id(client_id)
+            .one(&self.state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let rp_sid = database::client_session(
+            &self.state.db,
+            self.user,
+            client.app_id,
+            client_id,
+            sid,
+            Some(tenant.tenant_id),
+        )
+        .await;
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
             "../../../tests/fixtures/rsa-private.pem"
         ))
@@ -507,7 +525,7 @@ impl Fixture {
                 tenant_version: Some(tenant.tenant_version),
                 tenant_member_version: Some(tenant.tenant_member_version),
                 ttl_seconds: 3600,
-                session_id: Some(&sid.to_string()),
+                session_id: Some(&rp_sid.to_string()),
                 kid: Some("workflow-key"),
             },
             &key,
@@ -593,11 +611,17 @@ async fn enrollment_approval_tracks_effective_policy() {
         .await
         .unwrap();
     assert_eq!(
-        enrollment::lookup(&f.state.db, &app_token).await.unwrap().status,
+        enrollment::lookup(&f.state.db, &app_token)
+            .await
+            .unwrap()
+            .status,
         "ready"
     );
     assert_eq!(
-        enrollment::lookup(&f.state.db, &platform_token).await.unwrap().status,
+        enrollment::lookup(&f.state.db, &platform_token)
+            .await
+            .unwrap()
+            .status,
         "pending_approval"
     );
 
@@ -605,7 +629,10 @@ async fn enrollment_approval_tracks_effective_policy() {
         .await
         .unwrap();
     assert_eq!(
-        enrollment::lookup(&f.state.db, &app_token).await.unwrap().status,
+        enrollment::lookup(&f.state.db, &app_token)
+            .await
+            .unwrap()
+            .status,
         "pending_approval"
     );
 

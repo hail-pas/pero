@@ -76,11 +76,29 @@ export function ManagementForm({
               ? { ...field, disabled: true }
               : field,
           )}
-          initial={kind === "apps" ? { tenant_mode: "personal", ...data.form } : data.form}
-          serverError={data.error ? errorText(data.error) : ""}
-          submit={(values) =>
-            mutate(path, values, () => navigate(`/dashboard/${kind}`))
+          initial={
+            kind === "apps"
+              ? {
+                  tenant_mode: "personal",
+                  ...data.form,
+                  session_limit_mode: Number(data.form.max_sessions) === 0 ? "unlimited" : "limited",
+                  max_sessions: Number(data.form.max_sessions) || 1,
+                }
+              : data.form
           }
+          serverError={data.error ? errorText(data.error) : ""}
+          submit={async (values) => {
+            if (kind === "apps") {
+              const { session_limit_mode, max_sessions, ...rest } = values;
+              const limit = session_limit_mode === "unlimited" ? 0 : Number(max_sessions);
+              if (session_limit_mode !== "unlimited" && (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)) {
+                throw new Error(t("最大登录设备数必须为有效正整数"));
+              }
+              await mutate(path, { ...rest, max_sessions: limit }, () => navigate(`/dashboard/${kind}`));
+            } else {
+              await mutate(path, values, () => navigate(`/dashboard/${kind}`));
+            }
+          }}
         />
       </Panel>
     </>

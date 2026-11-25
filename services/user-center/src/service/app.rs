@@ -15,10 +15,14 @@ pub struct AppUpdate {
     pub tenant_mode: String,
     pub organization_access: String,
     pub organization_auto_access: bool,
+    pub max_sessions: i32,
 }
 
 impl AppUpdate {
     fn validate(&self) -> Result<(), ManagementError> {
+        if self.max_sessions < 0 {
+            return Err(ManagementError::Invalid("invalid_max_sessions"));
+        }
         if !matches!(
             self.tenant_mode.as_str(),
             "personal" | "organization" | "both"
@@ -38,6 +42,7 @@ impl AppUpdate {
         Ok(())
     }
     fn apply(self, active: &mut apps::ActiveModel) {
+        active.max_sessions = Set(self.max_sessions);
         active.tenant_mode = Set(self.tenant_mode);
         active.organization_access = Set(self.organization_access);
         active.organization_auto_access = Set(self.organization_auto_access);
@@ -113,6 +118,7 @@ pub async fn update(
     actor: &Actor,
     id: uuid::Uuid,
     input: AppUpdate,
+    idle_ttl: u64,
 ) -> Result<(), ManagementError> {
     input.validate()?;
     let txn = db.begin().await?;
@@ -134,9 +140,14 @@ pub async fn update(
     // has been made open or personal-only and is later restricted again.
     let clear_grants =
         changed && (input.organization_access == "open" || input.tenant_mode == "personal");
+    let limit = input.max_sessions;
+    let tighten = limit > 0 && (old.max_sessions == 0 || limit < old.max_sessions);
     let mut active: apps::ActiveModel = old.into();
     input.apply(&mut active);
     active.update(&txn).await?;
+    if tighten && !changed {
+        super::app_session::prune(&txn, id, limit, idle_ttl).await?;
+    }
     if clear_grants {
         txn.execute_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,

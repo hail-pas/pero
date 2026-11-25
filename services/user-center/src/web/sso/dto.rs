@@ -65,6 +65,7 @@ pub struct ResetPasswordForm {
 /// 授权确认页模板
 #[derive(Debug, serde::Serialize)]
 pub struct ConsentView {
+    pub session_takeover: bool,
     pub csrf_token: String,
     pub request_token: String,
     pub client_name: String,

@@ -396,6 +396,22 @@ export const userFields: Field[] = [
 export const appFields: Field[] = [
   text("code", "应用标识", true),
   text("name", "应用名称", true),
+  {
+    name: "session_limit_mode",
+    label: "设备登录限制",
+    required: true,
+    default: "limited",
+    options: [["unlimited", "关闭限制"], ["limited", "限制设备数量"]],
+  },
+  {
+    name: "max_sessions",
+    label: "最大登录设备数",
+    type: "number",
+    required: true,
+    default: 1,
+    visibleWhen: (values) => values.session_limit_mode === "limited",
+    hint: "达到上限后，确认登录将退出最早的设备。减少额度会保留最新设备。",
+  },
   {name:"tenant_mode",label:"租户模式",required:true,options:[["personal","个人空间"],["organization","组织空间"],["both","个人及组织"]]},
   {name:"organization_access",label:"组织准入规则",required:true,
     options:[["open","所有符合条件的组织"],["restricted","仅明确授权的组织"]],

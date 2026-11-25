@@ -122,7 +122,20 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
 
     let (jar, csrf_token) = state.web_security().ensure_csrf(jar);
 
+    let session_takeover = match crate::service::app_session::needs_confirmation(
+        &state.db,
+        session.user_id,
+        ctx.auth_request.app_id,
+        session.id,
+        state.config.sso.session_idle_ttl_seconds,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => return crate::web::util::dependency_error(error),
+    };
     let tpl = ConsentView {
+        session_takeover,
         csrf_token,
         request_token,
         client_name: client_display_name.clone(),
@@ -195,17 +208,35 @@ pub async fn post(
         return (jar, Redirect::to(&url)).into_response();
     }
 
-    // 显式检查 action=allow，其他值拒绝
-    if form.action != "allow" {
+    // A normal consent is not permission to evict another device.
+    if !matches!(form.action.as_str(), "allow" | "allow_takeover") {
         return Redirect::to("/sso/error?code=invalid_action").into_response();
     }
 
     let oauth = state.oauth_service();
     let raw_code = match oauth
-        .issue_auth_code_with_consent(ctx.auth_request.id, &session, true)
+        .issue_auth_code_with_consent(
+            ctx.auth_request.id,
+            &session,
+            true,
+            form.action == "allow_takeover",
+        )
         .await
     {
         Ok(code) => code,
+        Err(crate::service::oauth::OAuthError::InteractionRequired) => {
+            // A quota change while the page was open requires another explicit confirmation.
+            return match crate::web::oauth2::authorize::pending_redirect(
+                &state,
+                &jar,
+                ctx.auth_request.id,
+            )
+            .await
+            {
+                Ok((jar, response)) => (jar, response).into_response(),
+                Err(error) => error.into_response(),
+            };
+        }
         Err(crate::service::oauth::OAuthError::Internal(e)) => {
             tracing::error!("Auth code issue error: {e}");
             return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();

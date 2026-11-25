@@ -169,6 +169,48 @@ pub async fn revoke_account_sessions(
     Ok(())
 }
 
+/// Withdraw only the selected application device(s), keeping browser SSO intact.
+pub async fn revoke_account_app_sessions(
+    db: &DatabaseConnection,
+    session: &crate::state::session::SsoSession,
+    config: &crate::config::SsoConfig,
+    device: Option<Uuid>,
+    app: Option<Uuid>,
+) -> Result<(), ManagementError> {
+    let txn = db.begin().await?;
+    lock_account_session(&txn, session, config).await?;
+    match (device, app) {
+        (Some(id), None) => {
+            super::app_session::revoke_device(&txn, session.user_id, id, "user_revoked").await?
+        }
+        (None, Some(id)) => {
+            super::app_session::revoke_other_devices(&txn, session.user_id, id, session.id).await?
+        }
+        _ => return Err(ManagementError::Invalid("invalid_request")),
+    }
+    let target = device
+        .or(app)
+        .ok_or(ManagementError::Invalid("invalid_request"))?;
+    super::security::execute(
+        &txn,
+        "INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status)
+         SELECT id,username,$2,$3,'success',200 FROM users WHERE id=$1",
+        vec![
+            session.user_id.into(),
+            if device.is_some() {
+                "app_device_revoked"
+            } else {
+                "app_other_devices_revoked"
+            }
+            .into(),
+            target.to_string().into(),
+        ],
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(())
+}
+
 /// Remove membership, consent and issued credentials together; keep the shared account.
 pub async fn leave_app(
     state: &crate::state::app::AppState,

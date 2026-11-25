@@ -56,8 +56,8 @@ http = "1.4.0"
 webpki-root-certs = "1"
 toml = "1.1.6"
 validator = { version = "0.21", features = ["derive"] }
-url = "2"
-cookie = "0.18"
+url = "2.5.9"
+cookie = "0.18.3"
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 time = { version = "0.3.55", features = ["serde-well-known"] }

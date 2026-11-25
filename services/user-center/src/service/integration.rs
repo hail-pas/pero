@@ -218,15 +218,18 @@ pub async fn finish(
         &key.public_key_pem,
     )
     .map_err(|_| ManagementError::Invalid("integration_token_invalid"))?;
+    let access = crate::service::token_status::active_access(state, &token.access_token)
+        .await?
+        .ok_or(ManagementError::Invalid("integration_token_invalid"))?;
     if claims.nonce.as_deref() != Some(value.nonce.as_str())
         || claims.sub != session.user_id.to_string()
-        || claims.sid.as_deref() != Some(session.id.to_string().as_str())
+        || claims.sid != access.claims.sid
+        || access.client.id != c.id
+        || access.user.id != session.user_id
+        || access.sso_session_id != session.id
         || claims.at_hash.as_deref()
             != Some(pero_utils::oauth::jwt::oidc_hash(&token.access_token).as_str())
         || claims.c_hash.as_deref() != Some(pero_utils::oauth::jwt::oidc_hash(&code).as_str())
-        || crate::service::token_status::active_access(state, &token.access_token)
-            .await?
-            .is_none()
     {
         return Err(ManagementError::Invalid("integration_token_invalid"));
     }

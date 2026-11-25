@@ -24,6 +24,7 @@ fn jwt(
     sid: Uuid,
     scope: Option<&str>,
     at_hash: Option<String>,
+    tenant: &user_center::service::tenant_context::TenantContext,
 ) -> String {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let mut c = serde_json::json!({"iss":issuer,"sub":sub.to_string(),"aud":aud,"sid":sid.to_string(),"exp":now+3600,"iat":now});
@@ -31,6 +32,10 @@ fn jwt(
         c["scope"] = s.into();
         c["client_version"] = 0.into();
         c["access_version"] = 0.into();
+        c["tenant_id"] = tenant.tenant_id.to_string().into();
+        c["tenant_kind"] = tenant.tenant_kind.clone().into();
+        c["tenant_version"] = tenant.tenant_version.into();
+        c["tenant_member_version"] = tenant.tenant_member_version.into();
     }
     if let Some(s) = at_hash {
         c["at_hash"] = s.into();
@@ -110,7 +115,21 @@ async fn authorization_and_recovery_regressions() {
         .create(user, None, None, None, None)
         .await
         .unwrap();
-    let old_at = jwt(&issuer, user, "admin-client", sid_old, Some("openid"), None);
+    let tenant = user_center::service::tenant_context::resolve(&db, user, app_a, None)
+        .await
+        .unwrap()
+        .unwrap();
+    let rp_sid =
+        database::client_session(&db, user, app_a, client_a, sid_old, Some(tenant.tenant_id)).await;
+    let old_at = jwt(
+        &issuer,
+        user,
+        "admin-client",
+        rp_sid,
+        Some("openid"),
+        None,
+        &tenant,
+    );
     // Authorize max_age=0 using a minute-old session and existing consent.
     sql(
         &db,

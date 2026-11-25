@@ -60,10 +60,16 @@ impl TokenService<'_> {
             .column(ac::Column::UserId)
             .column(ac::Column::AppId)
             .column(ac::Column::SessionId)
-            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>)>()
+            .column(ac::Column::TenantId)
+            .into_tuple::<(
+                uuid::Uuid,
+                uuid::Uuid,
+                Option<uuid::Uuid>,
+                Option<uuid::Uuid>,
+            )>()
             .one(&txn)
             .await;
-        let (user_id, app_id, session_id) = match owner {
+        let (user_id, app_id, session_id, tenant_id) = match owner {
             Ok(Some(owner)) => owner,
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
@@ -94,6 +100,18 @@ impl TokenService<'_> {
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
+
+        match crate::service::tenant_context::lock_context(&txn, user_id, tenant_id).await {
+            Ok(true) => {}
+            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        }
+        if crate::service::app_session::lock_devices(&txn, user_id, app_id, None)
+            .await
+            .is_err()
+        {
+            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+        }
 
         let auth_code = match ac::Entity::find()
             .filter(ac::Column::CodeHash.eq(&code_hash))
@@ -152,8 +170,25 @@ impl TokenService<'_> {
         }
 
         // Only a replay with the correct client, redirect URI and PKCE proof may revoke
-        // the login session. Release issuance locks before using the shared revocation path.
+        // the affected authorization session.
         if auth_code.consumed_at.is_some() {
+            let Some(sid) = auth_code.client_session_id else {
+                return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+            };
+            match crate::service::app_session::sso_for_client(
+                &txn,
+                sid,
+                auth_code.user_id,
+                client.id,
+                client.app_id,
+                auth_code.tenant_id,
+            )
+            .await
+            {
+                Ok(Some(id)) if id == session_id => {}
+                Ok(_) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            }
             // A consumed code from a withdrawn tenant grant cannot revoke SSO.
             match crate::service::tenant_context::grant_context_is_current(
                 &txn,
@@ -169,18 +204,20 @@ impl TokenService<'_> {
                 Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
                 Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
             }
-            if let Err(error) = txn.rollback().await {
-                tracing::error!(%error, "Authorization code replay rollback failed");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
-            }
-            if let Some(session_id) = auth_code.session_id
-                && let Err(error) = self
-                    .state
-                    .session_service()
-                    .revoke_login_state(session_id, "authorization_code_reuse")
-                    .await
+            if let Err(error) = crate::service::app_session::revoke_client(
+                &txn,
+                sid,
+                auth_code.user_id,
+                client.id,
+                "authorization_code_reuse",
+            )
+            .await
             {
                 tracing::error!(%error, "Authorization code replay revocation failed");
+                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+            }
+            if let Err(error) = txn.commit().await {
+                tracing::error!(%error, "Authorization code replay commit failed");
                 return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
             }
             return TokenEndpointResult::error_desc(
@@ -197,14 +234,7 @@ impl TokenService<'_> {
         }
 
         let body = match self
-            .issue_tokens_from_auth_code(
-                &txn,
-                client,
-                &auth_code,
-                code,
-                &access,
-                &active_session,
-            )
+            .issue_tokens_from_auth_code(&txn, client, &auth_code, code, &access, &active_session)
             .await
         {
             Ok(body) => body,
@@ -232,7 +262,7 @@ impl TokenService<'_> {
         C: ConnectionTrait,
     {
         let user = &access.user;
-        let session_id = active_session.id;
+        let sso_session_id = active_session.id;
 
         let tenant = if let Some(id) = auth_code.tenant_id {
             let ctx = crate::service::tenant_context::active(db, user.id, client.app_id, id)
@@ -261,7 +291,9 @@ impl TokenService<'_> {
         }
         let openid = crate::service::scope::contains(&auth_code.scopes, "openid");
         let ttl = if openid {
-            client.access_token_ttl_seconds.max(client.id_token_ttl_seconds)
+            client
+                .access_token_ttl_seconds
+                .max(client.id_token_ttl_seconds)
         } else {
             client.access_token_ttl_seconds
         };
@@ -269,6 +301,22 @@ impl TokenService<'_> {
             Ok(k) => k,
             Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
         };
+        let session_id = crate::service::app_session::admit(
+            db,
+            access,
+            auth_code,
+            sso_session_id,
+            self.state.config.sso.session_idle_ttl_seconds,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Application session admission failed");
+            TokenEndpointResult::error(OAuth2ErrorCode::ServerError)
+        })?
+        .ok_or(TokenEndpointResult::error_desc(
+            OAuth2ErrorCode::InvalidGrant,
+            "Application session changed; authorize again",
+        ))?;
         let scopes_str = auth_code.scopes.join(" ");
         let issuer = TokenIssuer::new(self.state, client, &signing);
         let access_token = match issuer.issue_access_token(
@@ -292,6 +340,7 @@ impl TokenService<'_> {
                 &auth_code.scopes,
                 auth_code.nonce.as_deref(),
                 active_session,
+                session_id,
                 super::token_issuer::OidcHashes {
                     access_token: &access_token,
                     authorization_code: raw_code,
@@ -306,11 +355,6 @@ impl TokenService<'_> {
             };
         }
 
-        if id_token.is_some() {
-            crate::service::backchannel::remember(db, session_id, client.id, user.id)
-                .await
-                .map_err(|_| TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?;
-        }
         let mut refresh_token = None;
         let mut refresh_model = None;
         if client
@@ -332,7 +376,8 @@ impl TokenService<'_> {
                 tenant_version: Set(tenant.as_ref().map(|c| c.tenant_version)),
                 tenant_member_version: Set(tenant.as_ref().map(|c| c.tenant_member_version)),
                 client_id: Set(client.id),
-                session_id: Set(Some(session_id)),
+                session_id: Set(Some(sso_session_id)),
+                client_session_id: Set(Some(session_id)),
                 scopes: Set(auth_code.scopes.clone()),
                 created_at: Set(now),
                 expires_at: Set(rt_expires),
@@ -351,6 +396,7 @@ impl TokenService<'_> {
             client.id,
             &auth_code.redirect_uri,
             now,
+            session_id,
         )
         .await
         {

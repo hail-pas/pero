@@ -17,6 +17,7 @@ pub struct Model {
     pub tenant_member_version: Option<i64>,
     pub client_id: Uuid,
     pub session_id: Option<Uuid>,
+    pub client_session_id: Option<Uuid>,
     pub scopes: Vec<String>,
     pub created_at: TimeDateTimeWithTimeZone,
     pub expires_at: TimeDateTimeWithTimeZone,

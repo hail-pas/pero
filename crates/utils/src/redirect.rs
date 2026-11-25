@@ -51,11 +51,14 @@ pub fn validate_oauth_redirect_uri(
     if DEFAULT_ALLOWED_REDIRECT_SCHEMES.contains(&scheme) {
         // The URL parser normalizes forms such as https:example.com and
         // https:///example.com, but redirects use the original string.
-        if !uri.split_once("://").is_some_and(|(raw_scheme, authority)| {
-            raw_scheme.eq_ignore_ascii_case(scheme)
-                && !authority.is_empty()
-                && !authority.starts_with('/')
-        }) {
+        if !uri
+            .split_once("://")
+            .is_some_and(|(raw_scheme, authority)| {
+                raw_scheme.eq_ignore_ascii_case(scheme)
+                    && !authority.is_empty()
+                    && !authority.starts_with('/')
+            })
+        {
             return Err(RedirectUriError::Invalid);
         }
         if parsed.host_str().is_none() {
@@ -304,7 +307,10 @@ mod tests {
         ] {
             assert!(!super::is_valid_service_base_url(uri), "{uri}");
             if !uri.contains('?') {
-                assert!(super::validate_oauth_redirect_uri(uri, false).is_err(), "{uri}");
+                assert!(
+                    super::validate_oauth_redirect_uri(uri, false).is_err(),
+                    "{uri}"
+                );
             }
         }
     }

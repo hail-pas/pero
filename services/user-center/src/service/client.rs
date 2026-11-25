@@ -51,8 +51,10 @@ pub(crate) async fn save_security_change(
         access.require_app(expected.app_id, P::ClientsSecretRotate)?;
     }
 
+    // Policy updates do not change client keys. Allow foreign-key checks from
+    // logout deliveries while serializing policy edits and token issuance.
     let current = oauth_clients::Entity::find_by_id(expected.id)
-        .lock_exclusive()
+        .lock(sea_orm::sea_query::LockType::NoKeyUpdate)
         .one(&txn)
         .await?;
     // Hashing runs before this transaction; do not overwrite a concurrent policy edit.
@@ -229,8 +231,7 @@ pub async fn update(
 }
 
 fn same_set(left: &[String], right: &[String]) -> bool {
-    left.iter().all(|value| right.contains(value))
-        && right.iter().all(|value| left.contains(value))
+    left.iter().all(|value| right.contains(value)) && right.iter().all(|value| left.contains(value))
 }
 
 pub async fn reset_secret(

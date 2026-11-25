@@ -78,6 +78,7 @@ async fn inspect(
         client: owner,
         mfa_verified,
         tenant,
+        ..
     }) = token_status::active_access(state, token).await?
         && (owner.id == client.id
             || owner.app_id == client.app_id
@@ -149,6 +150,23 @@ async fn inspect(
             return Ok(serde_json::json!({"active":false}));
         }
     }
+    let Some(sid) = rt.client_session_id else {
+        return Ok(serde_json::json!({"active":false}));
+    };
+    if crate::service::app_session::sso_for_client(
+        &state.db,
+        sid,
+        rt.user_id,
+        client.id,
+        client.app_id,
+        rt.tenant_id,
+    )
+    .await?
+        != rt.session_id
+        || rt.session_id.is_none()
+    {
+        return Ok(serde_json::json!({"active":false}));
+    }
     let session = crate::db::helper::session::app_query(
         now,
         state.config.sso.session_idle_ttl_seconds,
@@ -195,7 +213,7 @@ pub async fn revoke(
     };
     let _ = &input.token_type_hint; // A hint never prevents trying both supported token types.
     let result = async {
-        let user = if let Some(rt) = refresh(&state, &input.token, &client).await? {
+        let target = if let Some(rt) = refresh(&state, &input.token, &client).await? {
             if rt.expires_at <= time::OffsetDateTime::now_utc()
                 || rt.revoked_at.is_some() && rt.revoke_reason.as_deref() != Some("rotation")
                 || crate::db::helper::session::app_query(
@@ -220,15 +238,22 @@ pub async fn revoke(
             {
                 None
             } else {
-                Some(rt.user_id)
+                rt.client_session_id.map(|sid| (rt.user_id, sid))
             }
         } else {
             token_status::active_access(&state, &input.token)
                 .await?
                 .filter(|access| access.client.id == client.id)
-                .map(|access| access.user.id)
+                .and_then(|access| {
+                    access
+                        .claims
+                        .sid
+                        .as_deref()
+                        .and_then(|sid| uuid::Uuid::parse_str(sid).ok())
+                        .map(|sid| (access.user.id, sid))
+                })
         };
-        if let Some(user) = user {
+        if let Some((user, sid)) = target {
             let txn = state.db.begin().await?;
             // Match issuance's client -> app -> access -> user lock order.
             oauth_clients::Entity::find_by_id(client.id)
@@ -243,13 +268,8 @@ pub async fn revoke(
                 .lock_exclusive()
                 .one(&txn)
                 .await?;
-            crate::service::session::SessionService::revoke_app_grants(
-                &txn,
-                client.app_id,
-                Some(user),
-                "token_revoked",
-            )
-            .await?;
+            crate::service::app_session::revoke_client(&txn, sid, user, client.id, "token_revoked")
+                .await?;
             txn.commit().await?;
         }
         Ok::<_, sea_orm::DbErr>(())

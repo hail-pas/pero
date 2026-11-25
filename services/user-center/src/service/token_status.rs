@@ -14,6 +14,7 @@ pub struct ActiveAccess {
     pub user: users::Model,
     pub client: oauth_clients::Model,
     pub mfa_verified: bool,
+    pub sso_session_id: uuid::Uuid,
     pub tenant: Option<super::tenant_context::TenantContext>,
 }
 
@@ -98,12 +99,24 @@ pub async fn active_access(
     else {
         return Ok(None);
     };
+    let Some(sso_id) = super::app_session::sso_for_client(
+        &state.db,
+        sid,
+        id,
+        client.id,
+        client.app_id,
+        tenant.as_ref().map(|t| t.tenant_id),
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
     let Some(session) = crate::db::helper::session::app_query(
         time::OffsetDateTime::now_utc(),
         state.config.sso.session_idle_ttl_seconds,
         client.app_id,
     )
-    .filter(sso_sessions::Column::Id.eq(sid))
+    .filter(sso_sessions::Column::Id.eq(sso_id))
     .filter(sso_sessions::Column::UserId.eq(id))
     .one(&state.db)
     .await?
@@ -123,6 +136,7 @@ pub async fn active_access(
         user,
         client,
         mfa_verified: session.mfa_verified_at.is_some(),
+        sso_session_id: session.id,
         tenant,
     }))
 }

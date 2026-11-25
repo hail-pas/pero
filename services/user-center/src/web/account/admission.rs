@@ -85,9 +85,7 @@ pub async fn app(
         return e;
     }
     let result = match f.action.as_str() {
-        "leave" => {
-            crate::service::account_security::leave_app(&state, &account.session, id).await
-        }
+        "leave" => crate::service::account_security::leave_app(&state, &account.session, id).await,
         "join" => {
             let email = account.user.email.as_deref();
             let phone = account.user.phone.as_deref();
@@ -99,7 +97,9 @@ pub async fn app(
             } else if let Some(email) = email {
                 crate::service::enrollment::start(&state, email, Some(id), None).await
             } else {
-                Err(crate::service::ManagementError::Invalid("enrollment_contact_required"))
+                Err(crate::service::ManagementError::Invalid(
+                    "enrollment_contact_required",
+                ))
             }
         }
         _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
@@ -118,13 +118,11 @@ pub async fn close(
     match crate::service::account_security::close_account(&state, &account.session, &f.confirmation)
         .await
     {
-        Ok(()) => {
-            (
-                state.web_security().clear_login_cookies(jar),
-                Redirect::to("/account/login?closed=1"),
-            )
-                .into_response()
-        }
+        Ok(()) => (
+            state.web_security().clear_login_cookies(jar),
+            Redirect::to("/account/login?closed=1"),
+        )
+            .into_response(),
         Err(e) => util::management_response(Err(e)),
     }
 }

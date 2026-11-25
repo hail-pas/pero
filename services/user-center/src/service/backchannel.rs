@@ -6,17 +6,6 @@ use uuid::Uuid;
 
 pub(super) const EVENT_TOKEN_TTL_SECONDS: i64 = 120;
 
-pub async fn remember<C: ConnectionTrait>(
-    db: &C,
-    session: Uuid,
-    client: Uuid,
-    user: Uuid,
-) -> Result<(), DbErr> {
-    db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "INSERT INTO oidc_rp_sessions(session_id,client_id,user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-        [session.into(),client.into(),user.into()])).await?;
-    Ok(())
-}
 #[derive(FromQueryResult)]
 struct Delivery {
     id: Uuid,
@@ -62,9 +51,10 @@ pub(super) async fn send_signed(
     pero_utils::redirect::validate_provider_endpoint_uri(endpoint)
         .map_err(|_| "invalid_endpoint")?;
     let txn = state.db.begin().await.map_err(|_| "database_error")?;
-    let key = crate::db::helper::signing_key::require_active_signing_key(&txn, EVENT_TOKEN_TTL_SECONDS)
-        .await
-        .map_err(|_| "signing_unavailable")?;
+    let key =
+        crate::db::helper::signing_key::require_active_signing_key(&txn, EVENT_TOKEN_TTL_SECONDS)
+            .await
+            .map_err(|_| "signing_unavailable")?;
     let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(key.kid);
     header.typ = Some(token_type.into());

@@ -58,6 +58,12 @@ async fn bind_test_grants(db: &sea_orm::DatabaseConnection, user: Uuid, app: Uui
         )
         .await;
     }
+    // Direct SQL fixtures bypass token issuance: give pending refresh grants their
+    // own RP session and snapshot the device for unconsumed authorization codes.
+    sql(db, "INSERT INTO app_sessions(user_id,app_id,sso_session_id) SELECT DISTINCT r.user_id,r.app_id,r.session_id FROM refresh_tokens r WHERE r.user_id=$1 AND r.app_id=$2 AND r.session_id IS NOT NULL AND r.client_session_id IS NULL AND r.revoked_at IS NULL ON CONFLICT(user_id,app_id,sso_session_id) WHERE revoked_at IS NULL DO NOTHING", vec![user.into(),app.into()]).await;
+    sql(db, "INSERT INTO client_sessions(app_session_id,client_id,tenant_id) SELECT DISTINCT a.id,r.client_id,r.tenant_id FROM refresh_tokens r JOIN app_sessions a ON a.user_id=r.user_id AND a.app_id=r.app_id AND a.sso_session_id=r.session_id AND a.revoked_at IS NULL WHERE r.user_id=$1 AND r.app_id=$2 AND r.client_session_id IS NULL AND r.revoked_at IS NULL ON CONFLICT(app_session_id,client_id,tenant_id) WHERE revoked_at IS NULL DO NOTHING", vec![user.into(),app.into()]).await;
+    sql(db, "UPDATE refresh_tokens r SET client_session_id=c.id FROM app_sessions a JOIN client_sessions c ON c.app_session_id=a.id WHERE r.user_id=$1 AND r.app_id=$2 AND r.user_id=a.user_id AND r.app_id=a.app_id AND r.session_id=a.sso_session_id AND r.client_id=c.client_id AND r.tenant_id IS NOT DISTINCT FROM c.tenant_id AND r.client_session_id IS NULL AND r.revoked_at IS NULL AND a.revoked_at IS NULL AND c.revoked_at IS NULL", vec![user.into(),app.into()]).await;
+    sql(db, "UPDATE authorization_codes k SET admission_session_id=a.id,admission_revoked=a.revoked_at IS NOT NULL,takeover_allowed=true FROM (SELECT DISTINCT ON (user_id,app_id,sso_session_id) id,user_id,app_id,sso_session_id,revoked_at FROM app_sessions ORDER BY user_id,app_id,sso_session_id,created_at DESC,id DESC) a WHERE k.user_id=$1 AND k.app_id=$2 AND k.user_id=a.user_id AND k.app_id=a.app_id AND k.session_id=a.sso_session_id AND k.consumed_at IS NULL AND k.admission_session_id IS NULL", vec![user.into(),app.into()]).await;
 }
 
 struct SecurityFixture {
@@ -450,7 +456,7 @@ async fn refresh_replay() {
         "valid refresh must work"
     );
     // Revocation failures must be retryable, rather than claiming replay handling completed.
-    db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON sso_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
+    db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON client_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
         .await.unwrap();
     assert!(matches!(
         service
@@ -473,7 +479,7 @@ async fn refresh_replay() {
         .unwrap();
     assert!(replacement.revoked_at.is_none());
     db.execute_unprepared(
-        "DROP TRIGGER fail_replay_revoke ON sso_sessions; DROP FUNCTION fail_replay_revoke()",
+        "DROP TRIGGER fail_replay_revoke ON client_sessions; DROP FUNCTION fail_replay_revoke()",
     )
     .await
     .unwrap();
@@ -1513,7 +1519,13 @@ async fn session_touch_and_bounded_cleanup() {
         vec![fixture.client.into()],
     )
     .await;
-    sql(&db, "INSERT INTO oidc_rp_sessions(session_id,client_id,user_id) SELECT id,$1,user_id FROM sso_sessions WHERE token_hash IN ('expired-1','idle-expired') OR id=$2", vec![fixture.client.into(),live.into()]).await;
+    sql(&db, "INSERT INTO app_sessions(user_id,app_id,sso_session_id) SELECT user_id,$1,id FROM sso_sessions WHERE token_hash IN ('expired-1','idle-expired') OR id=$2", vec![fixture.app.into(),live.into()]).await;
+    sql(
+        &db,
+        "INSERT INTO client_sessions(app_session_id,client_id) SELECT id,$1 FROM app_sessions",
+        vec![fixture.client.into()],
+    )
+    .await;
     assert_eq!(
         crate::db::helper::cleanup::clean_expired_sso_sessions(
             &db,
@@ -1523,7 +1535,7 @@ async fn session_touch_and_bounded_cleanup() {
         .unwrap(),
         1101
     );
-    let delivery = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres, "SELECT count(*) AS total,count(*) FILTER (WHERE session_id=$1) AS live FROM backchannel_logout_deliveries", [live.into()])).await.unwrap().unwrap();
+    let delivery = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres, "SELECT count(*) AS total,count(*) FILTER (WHERE session_id IN (SELECT c.id FROM client_sessions c JOIN app_sessions a ON a.id=c.app_session_id WHERE a.sso_session_id=$1)) AS live FROM backchannel_logout_deliveries", [live.into()])).await.unwrap().unwrap();
     assert_eq!(delivery.try_get::<i64>("", "total").unwrap(), 2);
     assert_eq!(delivery.try_get::<i64>("", "live").unwrap(), 0);
     let row = db.query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT count(*) FILTER (WHERE revoked_at IS NOT NULL) AS revoked, count(*) FILTER (WHERE revoked_at IS NULL) AS live FROM refresh_tokens")).await.unwrap().unwrap();
@@ -2080,12 +2092,12 @@ async fn concurrent_first_consents_both_issue_codes() {
     }
     let oauth = fixture.state.oauth_service();
     let (first, second) = tokio::join!(
-        oauth.issue_auth_code_with_consent(requests[0], &session, true),
-        oauth.issue_auth_code_with_consent(requests[1], &session, true),
+        oauth.issue_auth_code_with_consent(requests[0], &session, true, false),
+        oauth.issue_auth_code_with_consent(requests[1], &session, true, false),
     );
-    assert!(first.is_ok());
-    assert!(second.is_ok());
-    assert_ne!(first.unwrap(), second.unwrap());
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_ne!(first, second);
     let grants = crate::db::entity::user_consents::Entity::find()
         .all(&fixture.state.db)
         .await
@@ -2099,6 +2111,42 @@ async fn concurrent_first_consents_both_issue_codes() {
     assert_eq!(codes.len(), 2);
     assert!(codes.iter().any(|code| code.scopes == vec!["openid"]));
     assert!(codes.iter().any(|code| code.scopes == vec!["profile"]));
+
+    // Both codes were issued before this browser had an application device.
+    // Their parallel exchanges must reuse one device and one RP session.
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(&fixture.state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let exchange = |code| TokenRequest {
+        grant_type: "authorization_code".into(),
+        code: Some(code),
+        redirect_uri: Some("https://client.example.test/callback".into()),
+        ..refresh_form(fixture.client, "")
+    };
+    let first = exchange(first);
+    let second = exchange(second);
+    let service = TokenService::new(&fixture.state);
+    let (first, second) = tokio::join!(
+        service.handle_authorization_code(&first, &client),
+        service.handle_authorization_code(&second, &client),
+    );
+    let (TokenEndpointResult::Success(first), TokenEndpointResult::Success(second)) =
+        (first, second)
+    else {
+        panic!("concurrent same-device grants must both succeed");
+    };
+    let first = crate::service::token_status::active_access(&fixture.state, &first.access_token)
+        .await
+        .unwrap()
+        .unwrap();
+    let second = crate::service::token_status::active_access(&fixture.state, &second.access_token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.claims.sid, second.claims.sid);
+
     // A denial that already passed the HTTP precheck must not overwrite a
     // completion committed while its UPDATE was waiting for the request lock.
     use axum_extra::extract::cookie::{Cookie, CookieJar};
@@ -2237,7 +2285,7 @@ async fn client_revocation_precedes_authorization_request_locks() {
     let issuance = tokio::spawn(async move {
         state
             .oauth_service()
-            .issue_auth_code_with_consent(request, &session, true)
+            .issue_auth_code_with_consent(request, &session, true, false)
             .await
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -2381,7 +2429,10 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
     );
 
     replay(&regranted_code).await;
-    assert_eq!(status(&sibling_tokens.access_token).await, http::StatusCode::OK);
+    assert_eq!(
+        status(&sibling_tokens.access_token).await,
+        http::StatusCode::OK
+    );
     let (rotated, _) = issue(fixture.client).await;
     assert_eq!(status(&rotated.access_token).await, http::StatusCode::OK);
     // Refresh issuance also binds the current versions, without revoking its previous AT.
@@ -2746,9 +2797,12 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
     else {
         panic!("valid refresh must rotate before consent withdrawal");
     };
-    let signing = crate::db::helper::signing_key::require_active_signing_key(db, i64::from(client.access_token_ttl_seconds))
-        .await
-        .unwrap();
+    let signing = crate::db::helper::signing_key::require_active_signing_key(
+        db,
+        i64::from(client.access_token_ttl_seconds),
+    )
+    .await
+    .unwrap();
     let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
         .issue_access_token(fixture.user, "openid", Some(current), 0, Some(&tenant))
         .unwrap();
@@ -2973,7 +3027,7 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
     assert!(matches!(
         state
             .oauth_service()
-            .issue_auth_code_with_consent(pending_request, &account_session, true)
+            .issue_auth_code_with_consent(pending_request, &account_session, true, false)
             .await,
         Err(crate::service::oauth::OAuthError::AccessDenied)
     ));
@@ -3321,9 +3375,14 @@ async fn lifecycle_guards_and_transactional_logout() {
         .await
         .unwrap();
     sql(db,"UPDATE oauth_clients SET backchannel_logout_uri='https://rp.example.test/logout' WHERE id=$1",vec![fixture.client.into()]).await;
-    crate::service::backchannel::remember(db, sid, fixture.client, fixture.user)
-        .await
-        .unwrap();
+    sql(
+        db,
+        "INSERT INTO app_sessions(user_id,app_id,sso_session_id) VALUES($1,$2,$3)",
+        vec![fixture.user.into(), fixture.app.into(), sid.into()],
+    )
+    .await;
+    let rp_sid = Uuid::now_v7();
+    sql(db, "INSERT INTO client_sessions(id,app_session_id,client_id) SELECT $1,id,$2 FROM app_sessions WHERE sso_session_id=$3", vec![rp_sid.into(),fixture.client.into(),sid.into()]).await;
     let txn = db.begin().await.unwrap();
     crate::db::helper::session::revoke(&txn, sid, Some("test".into()))
         .await
@@ -3338,43 +3397,19 @@ async fn lifecycle_guards_and_transactional_logout() {
         .unwrap()
         .unwrap();
     assert_eq!(count.try_get::<i64>("", "n").unwrap(), 0);
-    // A later revocation must replace a previous delivery's endpoint snapshot.
+    // One immutable delivery belongs to the revoked RP session, not the SSO ID.
     sql(
         db,
-        "UPDATE user_app_access SET token_version=token_version+1 WHERE user_id=$1 AND app_id=$2",
-        vec![fixture.user.into(), fixture.app.into()],
+        "UPDATE oauth_clients SET backchannel_logout_uri='https://rp.example.test/session' WHERE id=$1",
+        vec![fixture.client.into()],
     )
     .await;
-    for (suffix, statement, values) in [
-        (
-            "app",
-            "UPDATE user_app_access SET token_version=token_version+1 WHERE user_id=$1 AND app_id=$2",
-            vec![fixture.user.into(), fixture.app.into()],
-        ),
-        (
-            "client",
-            "UPDATE oauth_clients SET token_version=token_version+1 WHERE id=$1",
-            vec![fixture.client.into()],
-        ),
-        (
-            "session",
-            "UPDATE sso_sessions SET revoked_at=now() WHERE id=$1",
-            vec![sid.into()],
-        ),
-    ] {
-        let endpoint = format!("https://rp.example.test/{suffix}");
-        sql(
-            db,
-            "UPDATE oauth_clients SET backchannel_logout_uri=$2 WHERE id=$1",
-            vec![fixture.client.into(), endpoint.clone().into()],
-        )
-        .await;
-        sql(db, statement, values).await;
-        let queued = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-            "SELECT endpoint FROM backchannel_logout_deliveries WHERE session_id=$1 AND client_id=$2",
-            [sid.into(), fixture.client.into()])).await.unwrap().unwrap();
-        assert_eq!(queued.try_get::<String>("", "endpoint").unwrap(), endpoint);
-    }
+    sql(
+        db,
+        "UPDATE sso_sessions SET revoked_at=now() WHERE id=$1",
+        vec![sid.into()],
+    )
+    .await;
     fixture
         .state
         .session_service()
@@ -3498,7 +3533,7 @@ async fn lifecycle_guards_and_transactional_logout() {
         let claims = seen.lock().unwrap();
         assert_eq!(claims.len(), 2);
         assert_eq!(claims[0]["jti"], claims[1]["jti"]);
-        assert_eq!(claims[0]["sid"], sid.to_string());
+        assert_eq!(claims[0]["sid"], rp_sid.to_string());
         assert_eq!(claims[0]["aud"], fixture.client.to_string());
     }
     let key = crate::db::helper::signing_key::require_active_signing_key(db, 120)
@@ -4044,7 +4079,16 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .await
         .unwrap();
     let raw = pero_utils::crypto::generate_token();
-    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,ARRAY['openid']::text[],now()+interval '1 day')",vec![pero_utils::crypto::sha256_hex(&raw).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into()]).await;
+    let rp_sid = database::client_session(
+        db,
+        member,
+        fixture.app,
+        fixture.client,
+        session,
+        Some(organization.id),
+    )
+    .await;
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,scopes,expires_at,client_session_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,ARRAY['openid']::text[],now()+interval '1 day',$9)",vec![pero_utils::crypto::sha256_hex(&raw).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into(),rp_sid.into()]).await;
     let client = oauth_clients::Entity::find_by_id(fixture.client)
         .one(db)
         .await
@@ -4077,7 +4121,9 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         }
     ));
     assert!(matches!(
-        service.handle_authorization_code(&code_request, &client).await,
+        service
+            .handle_authorization_code(&code_request, &client)
+            .await,
         TokenEndpointResult::Error {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
@@ -4269,6 +4315,195 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
             .filter(|t| t.kind == "organization")
             .count(),
         3
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL"]
+async fn application_device_limit_and_takeover() {
+    let fixture = SecurityFixture::new().await;
+    let db = &fixture.state.db;
+    let service = TokenService::new(&fixture.state);
+    let client = oauth_clients::Entity::find_by_id(fixture.client)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, first) = fixture
+        .state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let (_, second) = fixture
+        .state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let tenant = crate::service::tenant_context::resolve(db, fixture.user, fixture.app, None)
+        .await
+        .unwrap()
+        .unwrap();
+    let request = async |sso: Uuid, confirmed: bool| {
+        let raw = pero_utils::crypto::generate_token();
+        let snapshot = crate::service::app_session::latest(db, fixture.user, fixture.app, sso)
+            .await
+            .unwrap();
+        sql(db, "INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,redirect_uri,scopes,expires_at,admission_session_id,admission_revoked,takeover_allowed) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes',$9,$10,$11)",
+            vec![pero_utils::crypto::sha256_hex(&raw).into(), fixture.user.into(), fixture.app.into(),
+                fixture.client.into(), sso.into(), tenant.tenant_id.into(), tenant.tenant_version.into(),
+                tenant.tenant_member_version.into(), snapshot.as_ref().map(|d| d.id).into(),
+                snapshot.is_some_and(|d| d.revoked).into(), confirmed.into()]).await;
+        TokenRequest {
+            grant_type: "authorization_code".into(),
+            code: Some(raw),
+            redirect_uri: Some("https://client.example.test/callback".into()),
+            ..refresh_form(fixture.client, "")
+        }
+    };
+    let a = request(first, false).await;
+    let b = request(second, false).await;
+    let (a, b) = tokio::join!(
+        service.handle_authorization_code(&a, &client),
+        service.handle_authorization_code(&b, &client),
+    );
+    let (winner, loser, original) = match (a, b) {
+        (
+            TokenEndpointResult::Success(tokens),
+            TokenEndpointResult::Error {
+                code: OAuth2ErrorCode::InvalidGrant,
+                ..
+            },
+        ) => (first, second, tokens),
+        (
+            TokenEndpointResult::Error {
+                code: OAuth2ErrorCode::InvalidGrant,
+                ..
+            },
+            TokenEndpointResult::Success(tokens),
+        ) => (second, first, tokens),
+        _ => panic!("one device must win the unconfirmed admission"),
+    };
+    let stale = request(winner, false).await;
+    let takeover = request(loser, true).await;
+    let TokenEndpointResult::Success(replacement) =
+        service.handle_authorization_code(&takeover, &client).await
+    else {
+        panic!("confirmed takeover failed");
+    };
+    assert!(
+        crate::service::token_status::active_access(&fixture.state, &original.access_token)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::service::token_status::active_access(&fixture.state, &replacement.access_token)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(matches!(
+        service.handle_authorization_code(&stale, &client).await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    assert!(matches!(
+        service
+            .handle_refresh_token(
+                &refresh_form(fixture.client, original.refresh_token.as_deref().unwrap()),
+                &client
+            )
+            .await,
+        TokenEndpointResult::Error {
+            code: OAuth2ErrorCode::InvalidGrant,
+            ..
+        }
+    ));
+    assert!(
+        crate::service::app_session::needs_confirmation(db, fixture.user, fixture.app, winner, 60)
+            .await
+            .unwrap()
+    );
+    let count = || async {
+        db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "SELECT count(*) AS n FROM app_sessions WHERE user_id=$1 AND app_id=$2 AND revoked_at IS NULL",
+            [fixture.user.into(), fixture.app.into()])).await.unwrap().unwrap().try_get::<i64>("", "n").unwrap()
+    };
+    assert_eq!(count().await, 1);
+    // Relaxation never resurrects old credentials; confirmed re-entry gets a new sid.
+    sql(
+        db,
+        "UPDATE apps SET max_sessions=2 WHERE id=$1",
+        vec![fixture.app.into()],
+    )
+    .await;
+    let reentry = request(winner, true).await;
+    let TokenEndpointResult::Success(reentered) =
+        service.handle_authorization_code(&reentry, &client).await
+    else {
+        panic!("second device failed");
+    };
+    assert_eq!(count().await, 2);
+    assert!(
+        crate::service::token_status::active_access(&fixture.state, &original.access_token)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    sql(
+        db,
+        "UPDATE apps SET max_sessions=0 WHERE id=$1",
+        vec![fixture.app.into()],
+    )
+    .await;
+    let (_, third) = fixture
+        .state
+        .session_service()
+        .create(fixture.user, None, None, None, None)
+        .await
+        .unwrap();
+    let unlimited = request(third, false).await;
+    let TokenEndpointResult::Success(latest) =
+        service.handle_authorization_code(&unlimited, &client).await
+    else {
+        panic!("unlimited admission failed");
+    };
+    assert_eq!(count().await, 3);
+    let txn = db.begin().await.unwrap();
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE apps SET max_sessions=1 WHERE id=$1",
+        [fixture.app.into()],
+    ))
+    .await
+    .unwrap();
+    crate::service::app_session::prune(&txn, fixture.app, 1, 60)
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+    assert_eq!(count().await, 1);
+    assert!(
+        crate::service::token_status::active_access(&fixture.state, &replacement.access_token)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::service::token_status::active_access(&fixture.state, &reentered.access_token)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::service::token_status::active_access(&fixture.state, &latest.access_token)
+            .await
+            .unwrap()
+            .is_some()
     );
     fixture.cleanup().await;
 }

@@ -146,5 +146,6 @@
   "invalid_organization_access": "组织准入规则无效。",
   "tenant_confirmation_mismatch": "组织标识不匹配，无法解散。",
   "tenant_disabled": "组织已停用，无法邀请新成员。",
-  "tenant_platform_suspended": "组织已由平台停用，请联系平台管理员恢复。"
+  "tenant_platform_suspended": "组织已由平台停用，请联系平台管理员恢复。",
+  "invalid_max_sessions": "最大登录设备数必须为非负整数"
 }

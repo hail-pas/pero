@@ -34,10 +34,7 @@ pub fn start_cleanup_task(
     })
 }
 
-async fn run_cleanup(
-    db: &DatabaseConnection,
-    idle_ttl_seconds: u64,
-) -> Result<(), sea_orm::DbErr> {
+async fn run_cleanup(db: &DatabaseConnection, idle_ttl_seconds: u64) -> Result<(), sea_orm::DbErr> {
     macro_rules! do_clean {
         ($label:expr, $func:path $(, $arg:expr)*) => {
             match $func(db $(, $arg)*).await {

@@ -19,6 +19,10 @@ pub struct Model {
     pub tenant_member_version: Option<i64>,
     pub client_id: Uuid,
     pub session_id: Option<Uuid>,
+    pub admission_session_id: Option<Uuid>,
+    pub admission_revoked: bool,
+    pub takeover_allowed: bool,
+    pub client_session_id: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
     pub redirect_uri: String,
     pub scopes: Vec<String>,
