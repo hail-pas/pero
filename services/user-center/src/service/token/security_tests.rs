@@ -3548,7 +3548,20 @@ async fn lifecycle_guards_and_transactional_logout() {
     let key = crate::db::helper::signing_key::require_active_signing_key(db)
         .await
         .unwrap();
+    key.record_issuance(db, 86_400).await.unwrap();
+    let before = crate::db::helper::signing_key::find_verification_key_by_kid(db, &key.kid)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_issued_until;
     key.record_issuance(db, 120).await.unwrap();
+    let after = crate::db::helper::signing_key::find_verification_key_by_kid(db, &key.kid)
+        .await
+        .unwrap()
+        .unwrap()
+        .last_issued_until;
+    assert!(before.is_some());
+    assert_eq!(before, after);
     sql(
         db,
         "UPDATE identity_provider_keys SET active=false WHERE kid=$1",

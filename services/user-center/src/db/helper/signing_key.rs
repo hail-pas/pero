@@ -1,6 +1,6 @@
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, ExprTrait, FromQueryResult, QueryFilter,
-    QuerySelect, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, ExprTrait, FromQueryResult,
+    QueryFilter, QuerySelect, Statement, sea_query::Expr,
 };
 
 use super::identity_provider::find_local_provider;
@@ -96,14 +96,30 @@ where
 
 impl SigningKeyMaterial {
     /// Finalize issuance just before commit, after signing and other grant writes.
-    /// Recheck key validity under the update's row lock so a concurrent rotation
-    /// or revocation cannot publish a token signed with a superseded key.
+    /// A reserved verification window lets concurrent issuers share the key lock.
+    /// Rotation or revocation still needs an exclusive lock on the same row.
     pub async fn record_issuance<C>(&self, db: &C, ttl_seconds: i64) -> Result<(), DbErr>
     where
         C: ConnectionTrait,
     {
-        let result = db.execute_raw(sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Postgres,
-            "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,clock_timestamp()+make_interval(secs=>$2::bigint+300))
+        // Only lock rows that already cover this token; never upgrade a shared lock.
+        let statement = Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM identity_provider_keys
+             WHERE id=$1 AND active AND revoked_at IS NULL
+               AND (not_before IS NULL OR not_before<=clock_timestamp())
+               AND (expires_at IS NULL OR expires_at>clock_timestamp())
+               AND last_issued_until>=statement_timestamp()+make_interval(secs=>$2::bigint+300)
+             FOR SHARE",
+            [self.id.into(), ttl_seconds.into()],
+        );
+        if db.query_one_raw(statement).await?.is_some() {
+            return Ok(());
+        }
+
+        // Reserve one additional minute to amortize writes without shortening retention.
+        let result = db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+            "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,clock_timestamp()+make_interval(secs=>$2::bigint+360))
              WHERE id=$1 AND active AND revoked_at IS NULL
                AND (not_before IS NULL OR not_before<=clock_timestamp())
                AND (expires_at IS NULL OR expires_at>clock_timestamp())",

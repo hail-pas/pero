@@ -1479,6 +1479,8 @@ CREATE TABLE enrollments (
 );
 CREATE INDEX ix_enrollments_pending ON enrollments(status,created_at);
 CREATE INDEX ix_enrollments_expiry ON enrollments(expires_at);
+CREATE INDEX ix_enrollments_pending_expiry ON enrollments(expires_at)
+    WHERE status IN ('pending_verification','pending_approval','ready');
 CREATE INDEX ix_enrollments_app ON enrollments(app_id);
 CREATE INDEX ix_enrollments_completed_user ON enrollments(completed_user_id) WHERE completed_user_id IS NOT NULL;
 CREATE INDEX ix_enrollments_auth_request ON enrollments(auth_request_id) WHERE auth_request_id IS NOT NULL;
