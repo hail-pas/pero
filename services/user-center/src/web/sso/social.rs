@@ -52,11 +52,22 @@ pub async fn login(
     } else {
         query.redirect
     };
+    let mut jar = jar;
     let auth_request_id = if redirect.starts_with("/sso/register?") {
         None
     } else if redirect == "/sso/register" {
         match super::register::active_request(&state, &jar).await {
-            Ok(request) => request.map(|request| request.id),
+            Ok(Some(request)) => {
+                match super::register::request_context_cookie(&state, request.client_id) {
+                    Ok(cookie) => jar = jar.add(cookie),
+                    Err(e) => return crate::web::util::management_response(Err(e)),
+                }
+                Some(request.id)
+            }
+            Ok(None) if super::register::request_context_client(&state, &jar).is_some() => {
+                return Redirect::to("/sso/register").into_response();
+            }
+            Ok(None) => None,
             Err(e) => return crate::web::util::management_response(Err(e)),
         }
     } else {
@@ -310,11 +321,6 @@ pub async fn callback(
                 return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
             }
             let app = request.as_ref().map(|r| r.app_id);
-            let jar = if has_flow {
-                jar
-            } else {
-                super::register::clear_flow(jar)
-            };
             super::register::social(
                 &state,
                 jar,
@@ -474,7 +480,8 @@ async fn validate_login_context(
             .map_err(|e| Box::new(crate::web::util::management_response(Err(e))))?
             .is_some_and(|request| request.id == id)
     } else {
-        true
+        redirect != "/sso/register"
+            || super::register::request_context_client(state, jar).is_none()
     };
     if !matches_flow || !matches_request {
         return Err(Box::new(

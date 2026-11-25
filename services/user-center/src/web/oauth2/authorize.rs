@@ -365,8 +365,10 @@ async fn authorize_request(
 
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create") {
         let (jar, _) = pending_redirect(&state, &jar, auth_request.id).await?;
+        let context = crate::web::sso::register::request_context_cookie(&state, client.id)
+            .map_err(|_| OAuthError::Unavailable)?;
         return Ok((
-            crate::web::sso::register::clear_flow(jar),
+            crate::web::sso::register::clear_flow(jar).add(context),
             Redirect::to("/sso/register").into_response(),
         ));
     }

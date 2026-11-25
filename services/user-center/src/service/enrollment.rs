@@ -270,6 +270,9 @@ pub async fn progress_by_token<C: ConnectionTrait>(
 }
 async fn check<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<Policy, Error> {
     let p = policy(db, row.app_id).await?;
+    if !row.invitation && row.client_id.is_some() {
+        require_personal_app(db, row.app_id).await?;
+    }
     if let Some(id) = row.provider_id {
         allow_social(db, id).await?;
     }
@@ -693,6 +696,9 @@ pub async fn finalize(
         }
         user
     } else {
+        if !row.invitation {
+            require_personal_app(&txn, row.app_id).await?;
+        }
         use super::user::RegistrationCredential;
         let credential = if let Some(provider_id) = row.provider_id {
             if !social_proof.is_some_and(|proof| proof.matches(&row)) {

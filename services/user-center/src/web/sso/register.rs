@@ -13,6 +13,7 @@ use uuid::Uuid;
 const SOCIAL_COOKIE: &str = "pero_enrollment_identity";
 const FLOW_COOKIE: &str = "pero_enrollment";
 const INVITATION_COOKIE: &str = "pero_tenant_invitation";
+const REQUEST_CONTEXT_COOKIE: &str = "pero_enrollment_request";
 #[derive(Default, Deserialize)]
 pub struct Params {
     pub token: Option<String>,
@@ -59,13 +60,58 @@ struct View {
 pub(crate) fn clear_flow(jar: CookieJar) -> CookieJar {
     // Requests outside /sso do not carry these cookies. Explicit expiration
     // is required even when the incoming CookieJar has no original cookie.
-    [FLOW_COOKIE, SOCIAL_COOKIE, INVITATION_COOKIE]
-        .into_iter()
-        .fold(jar, |jar, name| {
-            jar.add(pero_api_axum::cookie::clear_cookie_with_domain(
-                name, "/sso", None,
-            ))
-        })
+    [
+        FLOW_COOKIE,
+        SOCIAL_COOKIE,
+        INVITATION_COOKIE,
+        REQUEST_CONTEXT_COOKIE,
+    ]
+    .into_iter()
+    .fold(jar, |jar, name| {
+        jar.add(pero_api_axum::cookie::clear_cookie_with_domain(
+            name, "/sso", None,
+        ))
+    })
+}
+
+// Keep the initiating client beyond the short-lived OAuth nonce, so an
+// expired authorization cannot silently become a platform registration.
+pub(crate) fn request_context_cookie(
+    state: &AppState,
+    client_id: Uuid,
+) -> Result<Cookie<'static>, crate::service::ManagementError> {
+    let value = pero_utils::crypto::encode_signed_json(
+        &client_id,
+        state
+            .config
+            .sso
+            .cookie_signing_secret
+            .expose_secret()
+            .as_bytes(),
+    )
+    .map_err(|_| crate::service::ManagementError::Invalid("enrollment_unavailable"))?;
+    Ok(Cookie::build((REQUEST_CONTEXT_COOKIE, value))
+        .path("/sso")
+        .http_only(true)
+        .secure(state.config.sso.cookie_secure)
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(time::Duration::days(1))
+        .build())
+}
+
+pub(crate) fn request_context_client(state: &AppState, jar: &CookieJar) -> Option<Uuid> {
+    jar.get(REQUEST_CONTEXT_COOKIE).and_then(|cookie| {
+        pero_utils::crypto::decode_signed_json(
+            cookie.value(),
+            state
+            .config
+            .sso
+            .cookie_signing_secret
+            .expose_secret()
+            .as_bytes(),
+        )
+        .ok()
+    })
 }
 
 pub(crate) async fn active_request(
@@ -199,6 +245,20 @@ pub async fn get(
             Ok(row) if row.auth_request_id != Some(request.id) => clear_flow(jar),
             Ok(_) | Err(crate::service::ManagementError::Invalid(_)) => jar,
             Err(e) => return util::management_response(Err(e)),
+        }
+    } else {
+        jar
+    };
+    let jar = if flow_token(&jar).is_none() {
+        if let Some(request) = &request {
+            match request_context_cookie(&state, request.client_id) {
+                Ok(cookie) => jar.add(cookie),
+                Err(e) => return util::management_response(Err(e)),
+            }
+        } else if request_context_client(&state, &jar).is_some() {
+            return cancel_registration(&state, jar).await;
+        } else {
+            jar
         }
     } else {
         jar
@@ -489,7 +549,10 @@ async fn cancel_registration(state: &AppState, jar: CookieJar) -> Response {
         }
     } else {
         (
-            request.as_ref().map(|r| r.client_id),
+            request
+                .as_ref()
+                .map(|r| r.client_id)
+                .or_else(|| request_context_client(state, &jar)),
             request.as_ref().map(|r| r.id),
             None,
             false,
@@ -652,6 +715,12 @@ pub async fn post(
         Ok(request) => request,
         Err(e) => return util::management_response(Err(e)),
     };
+    if request.is_none()
+        && flow_token(&jar).is_none()
+        && request_context_client(&state, &jar).is_some()
+    {
+        return cancel_registration(&state, jar).await;
+    }
     let app = request.as_ref().map(|r| r.app_id);
     if input.action.is_empty() && input.app != app {
         return util::management_response(Err(crate::service::ManagementError::Invalid(
@@ -864,7 +933,12 @@ mod tests {
         assert!(tenant_token(&jar).is_none());
         let response = (jar, axum::http::StatusCode::NO_CONTENT).into_response();
         let headers = response.headers().get_all(axum::http::header::SET_COOKIE);
-        for name in [FLOW_COOKIE, SOCIAL_COOKIE, INVITATION_COOKIE] {
+        for name in [
+            FLOW_COOKIE,
+            SOCIAL_COOKIE,
+            INVITATION_COOKIE,
+            REQUEST_CONTEXT_COOKIE,
+        ] {
             assert!(headers.iter().any(|header| {
                 let value = header.to_str().unwrap();
                 value.starts_with(&format!("{name}="))

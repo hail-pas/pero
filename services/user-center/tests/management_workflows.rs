@@ -643,6 +643,42 @@ async fn call(
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn expired_application_registration_returns_to_initiating_client() {
+    let f = Fixture::new().await;
+    f.sql(
+        "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let router = user_center::router::build(f.state.clone());
+    let uri = format!(
+        "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=create",
+        f.client
+    );
+    let (status, _, headers) = call(&router, "", &uri, None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers["location"], "/sso/register");
+    let context = headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .find(|value| value.starts_with("pero_enrollment_request=") && !value.contains("Max-Age=0"))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    // The browser still has the registration context, but its OAuth nonce is gone.
+    let (status, _, headers) = call(&router, context, "/sso/register", None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers["location"],
+        "https://client.example.test/login?enrollment_status=cancelled"
+    );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn enrollment_approval_tracks_effective_policy() {
     use user_center::service::enrollment;
 
