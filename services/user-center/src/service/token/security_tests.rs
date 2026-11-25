@@ -1988,34 +1988,13 @@ async fn consent_submissions_bind_to_the_displayed_request_and_session() {
         .unwrap();
     assert_eq!(codes.len(), 1);
     assert_eq!(codes[0].client_id, fixture.client);
-    // A failed consent deletion must roll back the terminal request state.
-    state.db.execute_unprepared("CREATE FUNCTION fail_consent_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected consent deletion failure'; END $$; CREATE TRIGGER fail_consent_delete BEFORE DELETE ON user_consents FOR EACH STATEMENT EXECUTE FUNCTION fail_consent_delete()")
-        .await.unwrap();
-    let unavailable = consent::post(
-        axum::extract::State(state.clone()),
-        jar.clone(),
-        axum::Form(ConsentForm {
-            action: "deny".into(),
-            csrf_token: csrf_token.clone(),
-            request_token: requests[1].1.clone(),
-        }),
+    // Declining another request must not remove an existing grant.
+    sql(
+        &state.db,
+        "INSERT INTO user_consents(user_id,client_id,scopes) VALUES($1,$2,ARRAY['openid'])",
+        vec![fixture.user.into(), client_b.into()],
     )
     .await;
-    assert_eq!(
-        unavailable.status(),
-        axum::http::StatusCode::SERVICE_UNAVAILABLE
-    );
-    state.db.execute_unprepared("DROP TRIGGER fail_consent_delete ON user_consents; DROP FUNCTION fail_consent_delete()")
-        .await.unwrap();
-    assert!(
-        crate::db::entity::authorization_requests::Entity::find_by_id(requests[1].0)
-            .one(&state.db)
-            .await
-            .unwrap()
-            .unwrap()
-            .completed_at
-            .is_none()
-    );
     let response = consent::post(
         axum::extract::State(state.clone()),
         jar,
@@ -2036,8 +2015,18 @@ async fn consent_submissions_bind_to_the_displayed_request_and_session() {
         .all(&state.db)
         .await
         .unwrap();
-    assert_eq!(grants.len(), 1);
-    assert_eq!(grants[0].client_id, fixture.client);
+    assert_eq!(grants.len(), 2);
+    assert!(grants.iter().any(|grant| grant.client_id == fixture.client));
+    assert!(grants.iter().any(|grant| grant.client_id == client_b));
+    assert!(
+        crate::db::entity::authorization_requests::Entity::find_by_id(requests[1].0)
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap()
+            .completed_at
+            .is_some()
+    );
     fixture.cleanup().await;
 }
 

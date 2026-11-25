@@ -378,55 +378,37 @@ impl<'a> OAuthService<'a> {
         Ok(raw_code)
     }
 
-    /// A request has one terminal decision. Claim it before changing stored consent.
+    /// Reject only this request; existing consent is withdrawn by explicit revocation.
     pub async fn deny_authorization_request(
         &self,
         auth_request_id: Uuid,
         session: &SsoSession,
     ) -> Result<(), OAuthError> {
-        let user_id = session.user_id;
-        let result: Result<(), sea_orm::DbErr> = async {
-            let txn = self.db.begin().await?;
-            let now = OffsetDateTime::now_utc();
-            let request = authorization_requests::Entity::update_many()
-                .col_expr(
-                    authorization_requests::Column::CompletedAt,
-                    sea_orm::sea_query::Expr::value(Some(now)),
-                )
-                .col_expr(
-                    authorization_requests::Column::AuthorizedUserId,
-                    sea_orm::sea_query::Expr::value(Some(user_id)),
-                )
-                .filter(authorization_requests::Column::Id.eq(auth_request_id))
-                .filter(authorization_requests::Column::CompletedAt.is_null())
-                .filter(authorization_requests::Column::ExpiresAt.gt(now))
-                .exec_with_returning(&txn)
-                .await?;
-            let Some(request) = request.first() else {
-                return Err(sea_orm::DbErr::RecordNotFound(
-                    "Authorization request is no longer valid".into(),
-                ));
-            };
-            if request
-                .diagnostic_session_id
-                .is_some_and(|id| id != session.id)
-            {
-                return Err(sea_orm::DbErr::RecordNotFound(
-                    "Diagnostic session mismatch".into(),
-                ));
-            }
-            if request.diagnostic_session_id.is_none() {
-                user_consents::Entity::delete_by_id((user_id, request.client_id))
-                    .exec(&txn)
-                    .await?;
-            }
-            txn.commit().await
+        let now = OffsetDateTime::now_utc();
+        let result = authorization_requests::Entity::update_many()
+            .col_expr(
+                authorization_requests::Column::CompletedAt,
+                sea_orm::sea_query::Expr::value(Some(now)),
+            )
+            .col_expr(
+                authorization_requests::Column::AuthorizedUserId,
+                sea_orm::sea_query::Expr::value(Some(session.user_id)),
+            )
+            .filter(authorization_requests::Column::Id.eq(auth_request_id))
+            .filter(authorization_requests::Column::CompletedAt.is_null())
+            .filter(authorization_requests::Column::ExpiresAt.gt(now))
+            .filter(
+                sea_orm::Condition::any()
+                    .add(authorization_requests::Column::DiagnosticSessionId.is_null())
+                    .add(authorization_requests::Column::DiagnosticSessionId.eq(session.id)),
+            )
+            .exec(self.db)
+            .await
+            .map_err(|error| OAuthError::Internal(crate::db::error::to_app_error(error)))?;
+        if result.rows_affected != 1 {
+            return Err(OAuthError::AccessDenied);
         }
-        .await;
-        result.map_err(|error| match error {
-            sea_orm::DbErr::RecordNotFound(_) => OAuthError::AccessDenied,
-            error => OAuthError::Internal(crate::db::error::to_app_error(error)),
-        })
+        Ok(())
     }
 
     /// 将 authorization_request ID 存入 Redis（短命 pending），返回 nonce 作为 cookie 值
