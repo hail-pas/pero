@@ -407,7 +407,10 @@ async fn start_contact(
                     .filter(|client| {
                         client.status == CommonStatus::Active
                             && client.app_id == request.app_id
-                            && client.login_uri.as_deref().is_some_and(super::client::valid_login_uri)
+                            && client
+                                .login_uri
+                                .as_deref()
+                                .is_some_and(super::client::valid_login_uri)
                     })
                     .ok_or_else(invalid)?;
             }

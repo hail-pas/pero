@@ -342,7 +342,10 @@ pub async fn invite_from_client(
             .await?
             .filter(|client| {
                 client.status == CommonStatus::Active
-                    && client.login_uri.as_deref().is_some_and(super::client::valid_login_uri)
+                    && client
+                        .login_uri
+                        .as_deref()
+                        .is_some_and(super::client::valid_login_uri)
             })
             .ok_or(Error::Invalid("enrollment_unavailable"))?;
     }

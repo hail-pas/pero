@@ -242,8 +242,15 @@ pub async fn callback(
         return (jar, Redirect::to(target)).into_response();
     }
 
-    if !super::register::social_flow_matches(&jar, &cb_state.social_value.redirect) {
-        return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
+    if let Err(response) = validate_login_context(
+        &state,
+        &jar,
+        &cb_state.social_value.redirect,
+        cb_state.auth_request_id,
+    )
+    .await
+    {
+        return *response;
     }
     let authenticated_at = user_info.authenticated_at;
     let resolution = match svc
@@ -303,7 +310,11 @@ pub async fn callback(
                 return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
             }
             let app = request.as_ref().map(|r| r.app_id);
-            let jar = if has_flow { jar } else { super::register::clear_flow(jar) };
+            let jar = if has_flow {
+                jar
+            } else {
+                super::register::clear_flow(jar)
+            };
             super::register::social(
                 &state,
                 jar,
@@ -352,9 +363,6 @@ pub async fn link_post(
         return render_social_link(&state, jar, &form.nonce, "invalid_csrf").await;
     }
 
-    if !super::register::social_flow_matches(&jar, &link.redirect) {
-        return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
-    }
     let user_id = match Uuid::parse_str(&link.user_id) {
         Ok(id) => id,
         Err(_) => return Redirect::to(&login_error_url("social_link_expired")).into_response(),
@@ -370,6 +378,11 @@ pub async fn link_post(
         },
         None => None,
     };
+
+    if let Err(response) = validate_login_context(&state, &jar, &link.redirect, auth_request_id).await
+    {
+        return *response;
+    }
 
     let user = match crate::db::entity::users::Entity::find_by_id(user_id)
         .one(&state.db)
@@ -446,6 +459,29 @@ pub struct CallbackParams {
     pub code: Option<String>,
     pub state: Option<String>,
     pub error: Option<String>,
+}
+
+async fn validate_login_context(
+    state: &AppState,
+    jar: &CookieJar,
+    redirect: &str,
+    auth_request_id: Option<Uuid>,
+) -> Result<(), Box<Response>> {
+    let matches_flow = super::register::social_flow_matches(jar, redirect);
+    let matches_request = if let Some(id) = auth_request_id {
+        super::register::active_request(state, jar)
+            .await
+            .map_err(|e| Box::new(crate::web::util::management_response(Err(e))))?
+            .is_some_and(|request| request.id == id)
+    } else {
+        true
+    };
+    if !matches_flow || !matches_request {
+        return Err(Box::new(
+            Redirect::to("/sso/error?code=enrollment_unavailable").into_response(),
+        ));
+    }
+    Ok(())
 }
 
 struct SocialLoginContext {

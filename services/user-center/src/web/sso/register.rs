@@ -62,7 +62,9 @@ pub(crate) fn clear_flow(jar: CookieJar) -> CookieJar {
     [FLOW_COOKIE, SOCIAL_COOKIE, INVITATION_COOKIE]
         .into_iter()
         .fold(jar, |jar, name| {
-            jar.add(pero_api_axum::cookie::clear_cookie_with_domain(name, "/sso", None))
+            jar.add(pero_api_axum::cookie::clear_cookie_with_domain(
+                name, "/sso", None,
+            ))
         })
 }
 
@@ -106,10 +108,18 @@ pub fn flow_token(jar: &CookieJar) -> Option<&str> {
 }
 pub(crate) fn social_flow_redirect(jar: &CookieJar) -> Option<String> {
     tenant_token(jar)
-        .map(|token| format!("/sso/register?invitation_flow={}", pero_utils::crypto::sha256_hex(token)))
+        .map(|token| {
+            format!(
+                "/sso/register?invitation_flow={}",
+                pero_utils::crypto::sha256_hex(token)
+            )
+        })
         .or_else(|| {
             flow_token(jar).map(|token| {
-                format!("/sso/register?enrollment_flow={}", pero_utils::crypto::sha256_hex(token))
+                format!(
+                    "/sso/register?enrollment_flow={}",
+                    pero_utils::crypto::sha256_hex(token)
+                )
             })
         })
 }
@@ -171,12 +181,17 @@ pub async fn get(
     if let Some(token) = query.token {
         return enter_enrollment(&state, jar, token).await;
     }
-    if tenant_token(&jar).is_some() {
-        return render_invitation(&state, jar).await;
-    }
     let request = match active_request(&state, &jar).await {
         Ok(request) => request,
         Err(e) => return util::management_response(Err(e)),
+    };
+    let jar = if tenant_token(&jar).is_some() {
+        if request.is_none() {
+            return render_invitation(&state, jar).await;
+        }
+        clear_flow(jar)
+    } else {
+        jar
     };
     let app = request.as_ref().map(|r| r.app_id);
     let jar = if let (Some(request), Some(token)) = (&request, flow_token(&jar)) {
@@ -836,4 +851,26 @@ pub async fn social(
         };
     }
     (jar, Redirect::to("/sso/register")).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registration_cookies_are_cleared_outside_the_sso_path() {
+        let jar = clear_flow(CookieJar::new());
+        assert!(flow_token(&jar).is_none());
+        assert!(tenant_token(&jar).is_none());
+        let response = (jar, axum::http::StatusCode::NO_CONTENT).into_response();
+        let headers = response.headers().get_all(axum::http::header::SET_COOKIE);
+        for name in [FLOW_COOKIE, SOCIAL_COOKIE, INVITATION_COOKIE] {
+            assert!(headers.iter().any(|header| {
+                let value = header.to_str().unwrap();
+                value.starts_with(&format!("{name}="))
+                    && value.contains("Path=/sso")
+                    && value.contains("Max-Age=0")
+            }));
+        }
+    }
 }
