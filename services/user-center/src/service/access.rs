@@ -48,7 +48,7 @@ pub async fn grant_app(
     Ok(())
 }
 
-async fn write_app_access<C: ConnectionTrait>(
+pub(super) async fn write_app_access<C: ConnectionTrait>(
     db: &C,
     user_id: Uuid,
     app_id: Uuid,

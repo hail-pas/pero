@@ -190,15 +190,14 @@ pub async fn leave_app(
         .one(&txn)
         .await?;
     lock_account_session(&txn, session, &state.config.sso).await?;
-    user_app_access::Entity::update_many()
-        .col_expr(
-            user_app_access::Column::Status,
-            Expr::value(crate::db::enums::CommonStatus::Disabled),
-        )
-        .filter(user_app_access::Column::UserId.eq(session.user_id))
-        .filter(user_app_access::Column::AppId.eq(app_id))
-        .exec(&txn)
-        .await?;
+    // Persist an explicit denial even before the first organization auto-admission.
+    super::access::write_app_access(
+        &txn,
+        session.user_id,
+        app_id,
+        crate::db::enums::CommonStatus::Disabled,
+    )
+    .await?;
     SessionService::revoke_app_grants(&txn, app_id, Some(session.user_id), "membership_withdrawn")
         .await?;
     super::security::execute(&txn,"DELETE FROM user_consents WHERE user_id=$1 AND client_id IN (SELECT id FROM oauth_clients WHERE app_id=$2)",vec![session.user_id.into(),app_id.into()]).await?;

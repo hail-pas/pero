@@ -341,6 +341,8 @@ pub fn decode_jwt_kid(token: &str) -> Result<String, jsonwebtoken::errors::Error
 
 fn rsa_validation(issuer: &str, audience: &str) -> Validation {
     let mut validation = Validation::new(Algorithm::RS256);
+    // Enforce the issuer's token lifetime rather than the library's default 60-second grace period.
+    validation.leeway = 0;
     validation.set_issuer(&[issuer]);
     validation.set_audience(&[audience]);
     validation.set_required_spec_claims(&["exp", "iss", "aud"]);
@@ -394,6 +396,16 @@ mod tests {
         assert!(verify_access_token(&at, "issuer", "client", PUBLIC).is_ok());
         assert!(verify_id_token(&at, "issuer", "client", PUBLIC).is_err());
         assert!(verify_access_token(&sign(&access, "JWT"), "issuer", "client", PUBLIC).is_err());
+        // Recently expired tokens must not remain usable for the default grace period.
+        let mut expired = claims.clone();
+        expired["exp"] = (now - 5).into();
+        expired["iat"] = (now - 65).into();
+        let expired_id = sign(&expired, "JWT");
+        assert!(verify_id_token(&expired_id, "issuer", "client", PUBLIC).is_err());
+        assert!(verify_logout_hint(&expired_id, "issuer", "client", PUBLIC).is_ok());
+        access["exp"] = (now - 5).into();
+        access["iat"] = (now - 65).into();
+        assert!(verify_access_token(&sign(&access, "at+jwt"), "issuer", "client", PUBLIC).is_err());
         access["scope"] = serde_json::Value::Null;
         let malformed = sign(&access, "JWT");
         assert!(verify_id_token(&malformed, "issuer", "client", PUBLIC).is_err());
