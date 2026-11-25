@@ -66,6 +66,7 @@ pub async fn consume_if_valid<C>(
     client_id: Uuid,
     redirect_uri: &str,
     now: OffsetDateTime,
+    client_session_id: Uuid,
 ) -> Result<bool, sea_orm::DbErr>
 where
     C: ConnectionTrait,
@@ -74,6 +75,10 @@ where
         .col_expr(
             authorization_codes::Column::ConsumedAt,
             sea_orm::sea_query::Expr::value(Some(now)),
+        )
+        .col_expr(
+            authorization_codes::Column::ClientSessionId,
+            sea_orm::sea_query::Expr::value(client_session_id),
         )
         .filter(authorization_codes::Column::Id.eq(id))
         .filter(authorization_codes::Column::ClientId.eq(client_id))

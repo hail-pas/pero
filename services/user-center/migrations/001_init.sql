@@ -1301,13 +1301,14 @@ COMMENT ON COLUMN login_events.created_at IS
 '事件发生时间。';
 
 -- 数据初始化
-INSERT INTO apps (id, code, name, status, system, created_at, updated_at)
+INSERT INTO apps (id, code, name, status, system, max_sessions, created_at, updated_at)
 VALUES (
     gen_random_uuid(),
     'user-center',
     '用户中心',
     'active',
     true,
+    0,
     now(),
     now()
 ) ON CONFLICT (code) DO UPDATE SET system = true;
@@ -1473,6 +1474,7 @@ CREATE UNIQUE INDEX ux_app_sessions_active ON app_sessions(user_id,app_id,sso_se
 CREATE INDEX ix_app_sessions_active_user ON app_sessions(app_id,user_id,created_at,id)
     WHERE revoked_at IS NULL;
 CREATE INDEX ix_app_sessions_sso ON app_sessions(sso_session_id);
+CREATE INDEX ix_app_sessions_latest ON app_sessions(user_id,app_id,sso_session_id,created_at DESC,id DESC);
 
 CREATE TABLE client_sessions (
     id uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1547,6 +1549,8 @@ EXECUTE FUNCTION revoke_app_session_children();
 
 CREATE FUNCTION enqueue_sso_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    PERFORM id FROM app_sessions WHERE sso_session_id=NEW.id AND revoked_at IS NULL
+    ORDER BY id FOR UPDATE;
     UPDATE app_sessions SET revoked_at=NEW.revoked_at,revoke_reason=NEW.revoke_reason
     WHERE sso_session_id=NEW.id AND revoked_at IS NULL;
     RETURN NEW;
@@ -1557,6 +1561,8 @@ EXECUTE FUNCTION enqueue_sso_logout();
 
 CREATE FUNCTION enqueue_app_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    PERFORM id FROM app_sessions WHERE user_id=NEW.user_id AND app_id=NEW.app_id AND revoked_at IS NULL
+    ORDER BY id FOR UPDATE;
     UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason='app_access_changed'
     WHERE user_id=NEW.user_id AND app_id=NEW.app_id AND revoked_at IS NULL;
     RETURN NEW;

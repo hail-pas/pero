@@ -49,10 +49,11 @@ impl TokenService<'_> {
             .column(rt::Column::UserId)
             .column(rt::Column::AppId)
             .column(rt::Column::SessionId)
-            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>)>()
+            .column(rt::Column::TenantId)
+            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<uuid::Uuid>)>()
             .one(&txn)
             .await;
-        let (user_id, app_id, session_id) = match owner {
+        let (user_id, app_id, session_id, tenant_id) = match owner {
             Ok(Some(owner)) => owner,
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
@@ -83,6 +84,18 @@ impl TokenService<'_> {
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
+
+        match crate::service::tenant_context::lock_context(&txn, user_id, tenant_id).await {
+            Ok(true) => {}
+            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        }
+        if crate::service::app_session::lock_devices(&txn, user_id, app_id, Some(session_id))
+            .await
+            .is_err()
+        {
+            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+        }
 
         let existing = match rt::Entity::find()
             .filter(rt::Column::TokenHash.eq(&rt_hash))

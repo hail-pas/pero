@@ -35,6 +35,24 @@ pub async fn latest<C: ConnectionTrait>(
     .await
 }
 
+/// Lock device rows before grant rows, in the same order as policy revocation.
+pub async fn lock_devices<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+    app: Uuid,
+    sso: Option<Uuid>,
+) -> Result<(), DbErr> {
+    db.query_all_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM app_sessions WHERE user_id=$1 AND app_id=$2
+         AND ($3::uuid IS NULL OR sso_session_id=$3) AND revoked_at IS NULL
+         ORDER BY id FOR UPDATE",
+        [user.into(), app.into(), sso.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 pub async fn needs_confirmation<C: ConnectionTrait>(
     db: &C,
     user: Uuid,
@@ -73,17 +91,7 @@ pub async fn admit<C: ConnectionTrait>(
         return Ok(None);
     }
     let app_session = if let Some(device) = current.filter(|d| !d.revoked) {
-        if db
-            .query_one_raw(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT id FROM app_sessions WHERE id=$1 AND revoked_at IS NULL FOR UPDATE",
-                [device.id.into()],
-            ))
-            .await?
-            .is_none()
-        {
-            return Ok(None);
-        }
+        // Device rows were locked before the authorization code.
         device.id
     } else {
         if !code.takeover_allowed
@@ -155,6 +163,12 @@ pub async fn prune<C: ConnectionTrait>(
     limit: i32,
     idle_ttl: u64,
 ) -> Result<(), DbErr> {
+    db.query_all_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM app_sessions WHERE app_id=$1 AND revoked_at IS NULL ORDER BY id FOR UPDATE",
+        [app.into()],
+    ))
+    .await?;
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason='session_limit_changed'
@@ -245,6 +259,7 @@ pub async fn revoke_other_devices<C: ConnectionTrait>(
     app: Uuid,
     current: Uuid,
 ) -> Result<(), DbErr> {
+    lock_devices(db, user, app, None).await?;
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason='user_revoked'

@@ -247,6 +247,16 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
 
+        if !super::tenant_context::lock_context(&txn, session.user_id, request.tenant_id)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+        {
+            return Err(OAuthError::AccessDenied);
+        }
+        super::app_session::lock_devices(&txn, session.user_id, request.app_id, Some(session.id))
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+
         if !grant_consent {
             let consent = user_consents::Entity::find_by_id((session.user_id, client.id))
                 .one(&txn)

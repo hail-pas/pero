@@ -50,7 +50,7 @@ BEGIN
     FOREACH object_name IN ARRAY ARRAY[
         'ux_users_email_alive', 'ux_users_phone_alive', 'ux_users_username_alive',
         'ux_sso_sessions_token_hash', 'ux_identity_provider_keys_active_signing',
-        'ux_refresh_tokens_token_hash', 'ux_contact_change_nonce',
+        'ux_refresh_tokens_token_hash', 'ux_app_sessions_active', 'ux_client_sessions_active', 'ux_contact_change_nonce',
         'ux_contact_change_one_pending_per_type', 'ux_contact_change_value_pending',
         'ux_password_reset_tokens_hash', 'ux_enrollments_invitation',
         'ux_tenant_personal_owner', 'ux_tenant_organization_slug', 'ux_tenant_invitation_pending'
@@ -63,7 +63,7 @@ BEGIN
     END LOOP;
     FOREACH object_name IN ARRAY ARRAY['assisted_recovery_pair','ck_previous_client_secret','ck_account_sync_confidential',
                                       'ck_tenant_owner_shape', 'tenants_max_members_check', 'apps_organization_access_check',
-                                      'ck_app_admission_origin', 'ck_enrollment_contact', 'account_sync_deliveries_kind_check'] LOOP
+                                      'ck_app_admission_origin', 'apps_max_sessions_check', 'ck_enrollment_contact', 'account_sync_deliveries_kind_check'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE connamespace=current_schema()::regnamespace
                        AND conname=object_name AND convalidated) THEN
             RAISE EXCEPTION 'Missing security constraint: %', object_name;

@@ -60,10 +60,11 @@ impl TokenService<'_> {
             .column(ac::Column::UserId)
             .column(ac::Column::AppId)
             .column(ac::Column::SessionId)
-            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>)>()
+            .column(ac::Column::TenantId)
+            .into_tuple::<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<uuid::Uuid>)>()
             .one(&txn)
             .await;
-        let (user_id, app_id, session_id) = match owner {
+        let (user_id, app_id, session_id, tenant_id) = match owner {
             Ok(Some(owner)) => owner,
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
@@ -94,6 +95,18 @@ impl TokenService<'_> {
             Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
+
+        match crate::service::tenant_context::lock_context(&txn, user_id, tenant_id).await {
+            Ok(true) => {}
+            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        }
+        if crate::service::app_session::lock_devices(&txn, user_id, app_id, None)
+            .await
+            .is_err()
+        {
+            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+        }
 
         let auth_code = match ac::Entity::find()
             .filter(ac::Column::CodeHash.eq(&code_hash))
@@ -243,8 +256,6 @@ impl TokenService<'_> {
     where
         C: ConnectionTrait,
     {
-        use crate::db::entity::authorization_codes as ac;
-
         let user = &access.user;
         let sso_session_id = active_session.id;
 
@@ -380,6 +391,7 @@ impl TokenService<'_> {
             client.id,
             &auth_code.redirect_uri,
             now,
+            session_id,
         )
         .await
         {
@@ -395,16 +407,6 @@ impl TokenService<'_> {
                 return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
             }
         }
-
-        ac::Entity::update_many()
-            .col_expr(
-                ac::Column::ClientSessionId,
-                sea_orm::sea_query::Expr::value(session_id),
-            )
-            .filter(ac::Column::Id.eq(auth_code.id))
-            .exec(db)
-            .await
-            .map_err(|_| TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?;
 
         if let Some(rt_model) = refresh_model
             && let Err(e) = rt_model.insert(db).await
