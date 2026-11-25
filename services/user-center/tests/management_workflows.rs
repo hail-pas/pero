@@ -218,6 +218,43 @@ async fn administrator_authorization_does_not_block_own_token_issuance() {
     );
 }
 
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
+    use user_center::service::{access, tenant_context};
+
+    let f = Fixture::new().await;
+    let db = &f.state.db;
+    let actor = database::management_actor(db).await;
+    let tenant = Uuid::now_v7();
+    f.sql(
+        "UPDATE apps SET tenant_mode='organization',organization_access='open',organization_auto_access=true WHERE id=$1",
+        vec![f.app.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenants(id,kind,name,slug) VALUES($1,'organization','Workflow Org','workflow-org')",
+        vec![tenant.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![tenant.into(), f.user.into()],
+    )
+    .await;
+    let (_, _, _, raw) = f.login(f.user).await;
+    let session = f.state.session_service().validate(&raw).await.unwrap().unwrap();
+    assert!(tenant_context::auto_eligible(db, f.user, f.app).await.unwrap());
+    assert!(access::active_app_access(db, f.user, f.app).await.unwrap().is_none());
+
+    access::revoke_app(db, &actor, f.user, f.app).await.unwrap();
+    assert!(!access::ensure_oauth_app_access(db, &session, f.app, 3600).await.unwrap());
+
+    access::grant_app(db, &actor, f.user, f.app).await.unwrap();
+    assert!(access::ensure_oauth_app_access(db, &session, f.app, 3600).await.unwrap());
+    f.cleanup().await;
+}
+
 struct Fixture {
     _permit: tokio::sync::SemaphorePermit<'static>,
     database: database::DatabaseFixture,
