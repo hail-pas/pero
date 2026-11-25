@@ -47,6 +47,7 @@ pub async fn openid_configuration(State(state): State<AppState>) -> Response {
         revocation_endpoint_auth_methods_supported: vec![
             "client_secret_basic",
             "client_secret_post",
+            "none",
         ],
         userinfo_endpoint: format!("{base}/api/oauth2/userinfo"),
         jwks_uri: format!("{base}/api/oauth2/jwks"),
@@ -66,6 +67,7 @@ pub async fn openid_configuration(State(state): State<AppState>) -> Response {
             "aud",
             "exp",
             "iat",
+            "auth_time",
             "nonce",
             "at_hash",
             "c_hash",
