@@ -167,34 +167,69 @@ pub async fn retry(
 }
 
 pub async fn retry_logout(
+    admin: AdminContext,
     State(state): State<AppState>,
     jar: CookieJar,
     Path(id): Path<Uuid>,
     Form(form): Form<util::CsrfOnly>,
 ) -> Response {
-    use sea_orm::ConnectionTrait;
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    match state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE backchannel_logout_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())",[id.into()])).await {
-        Ok(r) if r.rows_affected()>0=>pero_api_axum::json_ok(),Ok(_)=>pero_api_axum::json_error("notification_not_retryable"),Err(e)=>util::dependency_error(e)
-    }
+    retry_delivery(
+        &state,
+        &admin,
+        id,
+        "UPDATE backchannel_logout_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.expires_at>now() AND c.backchannel_logout_uri=d.endpoint AND (d.leased_until IS NULL OR d.leased_until<=now())",
+    )
+    .await
 }
 
 pub async fn retry_account_sync(
+    admin: AdminContext,
     State(state): State<AppState>,
     jar: CookieJar,
     Path(id): Path<Uuid>,
     Form(form): Form<util::CsrfOnly>,
 ) -> Response {
-    use sea_orm::ConnectionTrait;
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    match state.db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "UPDATE account_sync_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.cancelled_at IS NULL AND d.expires_at>now() AND (d.leased_until IS NULL OR d.leased_until<=now()) AND c.status='active' AND c.account_sync_uri=d.endpoint",[id.into()])).await {
-        Ok(result) if result.rows_affected()>0 => pero_api_axum::json_ok(),
-        Ok(_) => pero_api_axum::json_error("notification_not_retryable"),
-        Err(error) => util::dependency_error(error),
+    retry_delivery(
+        &state,
+        &admin,
+        id,
+        "UPDATE account_sync_deliveries d SET next_attempt_at=now() FROM oauth_clients c WHERE d.id=$1 AND c.id=d.client_id AND d.delivered_at IS NULL AND d.cancelled_at IS NULL AND d.expires_at>now() AND (d.leased_until IS NULL OR d.leased_until<=now()) AND c.status='active' AND c.account_sync_uri=d.endpoint",
+    )
+    .await
+}
+
+async fn retry_delivery(
+    state: &AppState,
+    admin: &AdminContext,
+    id: Uuid,
+    sql: &'static str,
+) -> Response {
+    use crate::service::{ManagementError, permissions};
+    use sea_orm::{ConnectionTrait, TransactionTrait};
+
+    let result = async {
+        let txn = state.db.begin().await?;
+        permissions::require_super(&txn, &admin.actor(state)).await?;
+        let updated = txn
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                sql,
+                [id.into()],
+            ))
+            .await?
+            .rows_affected();
+        if updated == 0 {
+            return Err(ManagementError::Invalid("notification_not_retryable"));
+        }
+        txn.commit().await?;
+        Ok(())
     }
+    .await;
+    util::management_response(result)
 }
