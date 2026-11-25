@@ -2186,12 +2186,21 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     f.sql("INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid']::text[],now()+interval '1 hour')", vec![pero_utils::crypto::sha256_hex(refresh).into(),f.user.into(),f.app.into(),native.into(),sid.into()]).await;
     assert_eq!(inspect(refresh).await.1, json!({"active":false}));
 
-    // The next request observes role grants and revocation on the same token.
+    // A role grant alone cannot elevate a primary-only application session.
     f.sql(
         "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
         vec![f.user.into()],
     )
     .await;
+    let primary_only = inspect(&token).await.1;
+    assert_eq!(primary_only["active"], true);
+    assert_eq!(primary_only["is_superadmin"], false);
+    f.sql(
+        "UPDATE sso_sessions SET mfa_verified_at=now() WHERE id=$1",
+        vec![sid.into()],
+    )
+    .await;
+    // The next request observes both MFA assurance and the current role.
     assert_eq!(inspect(&token).await.1["is_superadmin"], true);
     f.sql(
         "UPDATE admin_roles SET role='admin' WHERE user_id=$1",

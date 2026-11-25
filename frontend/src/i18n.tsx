@@ -25,8 +25,14 @@ export function t(
   params: Record<string, unknown> = {},
 ): string {
   if (!value) return "";
-  const key = dictionary[value] ? value : reverse.get(value) || value;
-  const text = current === "en" ? dictionary[key] || value : key;
+  const key = Object.hasOwn(dictionary, value)
+    ? value
+    : reverse.get(value) || value;
+  const text = current === "en" && Object.hasOwn(dictionary, key)
+    ? dictionary[key]
+    : current === "en"
+      ? value
+      : key;
   return text.replace(/\{\{(\w+)\}\}/g, (_, key) => String(params[key] ?? ""));
 }
 const LocaleContext = createContext<{

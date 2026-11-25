@@ -13,6 +13,7 @@ pub struct ActiveAccess {
     pub claims: AccessTokenClaims,
     pub user: users::Model,
     pub client: oauth_clients::Model,
+    pub mfa_verified: bool,
     pub tenant: Option<super::tenant_context::TenantContext>,
 }
 
@@ -97,7 +98,7 @@ pub async fn active_access(
     else {
         return Ok(None);
     };
-    if crate::db::helper::session::app_query(
+    let Some(session) = crate::db::helper::session::app_query(
         time::OffsetDateTime::now_utc(),
         state.config.sso.session_idle_ttl_seconds,
         client.app_id,
@@ -106,10 +107,9 @@ pub async fn active_access(
     .filter(sso_sessions::Column::UserId.eq(id))
     .one(&state.db)
     .await?
-    .is_none()
-    {
+    else {
         return Ok(None);
-    }
+    };
     let scopes = claims
         .scope
         .split_whitespace()
@@ -122,6 +122,7 @@ pub async fn active_access(
         claims,
         user,
         client,
+        mfa_verified: session.mfa_verified_at.is_some(),
         tenant,
     }))
 }

@@ -198,7 +198,7 @@ MIT OR Apache-2.0
 
 Revocation 接受本客户端的 access token 或 refresh token；采用应用授权级撤销，使该用户在目标应用的既有令牌及未使用授权码失效，保留应用访问资格、SSO 会话和其他应用授权。未知、已撤销或其他客户端的令牌统一返回 200。旧刷新令牌的主动撤销不会触发刷新重放导致的 SSO 全局退出。
 
-Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，实时查询当前用户的 `super_admin` 平台角色，不从令牌或调用方参数推断。仅认证通过的 confidential 客户端可按上述应用和客户端边界查询；public 客户端自身仍不能调用 introspection。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
+Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，仅在当前有效会话已完成 MFA 且用户实时持有 `super_admin` 平台角色时为 `true`，不从令牌或调用方参数推断。仅完成主身份认证的超级管理员仍可登录不要求 MFA 的普通应用，但不会获得此管理权限标记；需要该标记的应用应要求用户完成 MFA。仅认证通过的 confidential 客户端可按上述应用和客户端边界查询；public 客户端自身仍不能调用 introspection。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
 
 业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie；本项目 admin 示例已采用每次请求在线 introspection。仅在登录时离线验签无法获得即时撤销效果。
 

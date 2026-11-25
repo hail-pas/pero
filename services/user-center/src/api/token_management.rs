@@ -76,6 +76,7 @@ async fn inspect(
         claims,
         user,
         client: owner,
+        mfa_verified,
         tenant,
     }) = token_status::active_access(state, token).await?
         && (owner.id == client.id
@@ -84,11 +85,13 @@ async fn inspect(
     {
         // A confidential backend may validate its own app's native/public access tokens.
         // Public callers, other apps and sibling confidential clients remain isolated.
-        // Read the current platform role, never a role supplied by the OAuth client.
-        let is_superadmin = crate::service::security::role(&state.db, user.id)
-            .await?
-            .as_deref()
-            == Some("super_admin");
+        // A primary-only session may access an ordinary app, but must not
+        // confer administrator privileges on a downstream service.
+        let is_superadmin = mfa_verified
+            && crate::service::security::role(&state.db, user.id)
+                .await?
+                .as_deref()
+                == Some("super_admin");
         let scopes = claims
             .scope
             .split_whitespace()
