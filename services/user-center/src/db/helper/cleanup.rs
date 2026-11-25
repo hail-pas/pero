@@ -79,6 +79,32 @@ pub async fn clean_expired_sso_sessions(
     db: &DatabaseConnection,
     idle_ttl_seconds: u64,
 ) -> Result<u64, sea_orm::DbErr> {
+    let now = OffsetDateTime::now_utc();
+    // Sweep each lifetime independently so both use an ordered index range scan.
+    let absolute = clean_sso_sessions_before(db, sso_sessions::Column::ExpiresAt, now).await?;
+    let idle = clean_sso_sessions_before(
+        db,
+        sso_sessions::Column::LastSeenAt,
+        now - time::Duration::seconds(idle_ttl_seconds as i64),
+    )
+    .await?;
+
+    // Orphans already fail authorization; drain them in bounded batches for bookkeeping.
+    let orphans = execute_batches(
+        db,
+        "UPDATE refresh_tokens SET revoked_at=$1, revoke_reason='session_expired'
+         WHERE id IN (SELECT id FROM refresh_tokens WHERE session_id IS NULL
+             AND revoked_at IS NULL ORDER BY id LIMIT 500 FOR UPDATE SKIP LOCKED)",
+    )
+    .await?;
+    Ok(absolute + idle + orphans)
+}
+
+async fn clean_sso_sessions_before(
+    db: &DatabaseConnection,
+    column: sso_sessions::Column,
+    cutoff: OffsetDateTime,
+) -> Result<u64, sea_orm::DbErr> {
     let mut total = 0;
     for _ in 0..MAX_BATCHES {
         let txn = db.begin().await?;
@@ -86,14 +112,8 @@ pub async fn clean_expired_sso_sessions(
         let ids: Vec<uuid::Uuid> = sso_sessions::Entity::find()
             .select_only()
             .column(sso_sessions::Column::Id)
-            .filter(
-                sea_orm::Condition::any()
-                    .add(sso_sessions::Column::ExpiresAt.lte(now))
-                    .add(sso_sessions::Column::LastSeenAt.lte(
-                        now - time::Duration::seconds(idle_ttl_seconds as i64),
-                    )),
-            )
-            .order_by_asc(sso_sessions::Column::ExpiresAt)
+            .filter(column.lte(cutoff))
+            .order_by_asc(column)
             .order_by_asc(sso_sessions::Column::Id)
             // Match token issuance and logout: lock sessions before refresh grants.
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
@@ -144,9 +164,6 @@ pub async fn clean_expired_sso_sessions(
         }
         tokio::task::yield_now().await;
     }
-    // Orphans already fail authorization; revoke a bounded batch for bookkeeping.
-    db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "UPDATE refresh_tokens SET revoked_at=$1, revoke_reason='session_expired' WHERE session_id IS NULL AND revoked_at IS NULL AND id IN (SELECT id FROM refresh_tokens WHERE session_id IS NULL AND revoked_at IS NULL LIMIT 500 FOR UPDATE SKIP LOCKED)", [OffsetDateTime::now_utc().into()])).await?;
     Ok(total)
 }
 

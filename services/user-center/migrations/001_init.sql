@@ -797,7 +797,10 @@ CREATE INDEX ix_sso_sessions_user_active
 ON sso_sessions (user_id, revoked_at);
 
 CREATE INDEX ix_sso_sessions_expires_at
-ON sso_sessions (expires_at);
+ON sso_sessions (expires_at, id);
+
+CREATE INDEX ix_sso_sessions_last_seen_at
+ON sso_sessions (last_seen_at, id);
 
 COMMENT ON TABLE sso_sessions IS
 '用户中心 SSO 登录态表。浏览器 Cookie 中保存不透明 session token，数据库只保存 token_hash。';
@@ -1058,6 +1061,8 @@ CREATE TABLE user_consents (
 
     PRIMARY KEY (user_id, client_id)
 );
+
+CREATE INDEX ix_user_consents_client_id ON user_consents (client_id);
 
 COMMENT ON TABLE user_consents IS
 '用户对 OAuth Client 的 scope 授权同意记录。首次同意后后续 authorize 可跳过同意页。';
@@ -1565,6 +1570,7 @@ WHERE delivered_at IS NULL AND expired_at IS NULL;
 CREATE INDEX ix_backchannel_logout_deliveries_pending_expiry ON backchannel_logout_deliveries(expires_at)
 WHERE delivered_at IS NULL AND expired_at IS NULL;
 CREATE INDEX ix_backchannel_logout_deliveries_created ON backchannel_logout_deliveries(created_at);
+CREATE INDEX ix_backchannel_logout_deliveries_client ON backchannel_logout_deliveries(client_id);
 -- A terminal RP session transition queues exactly one logout notification.
 CREATE FUNCTION enqueue_backchannel_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

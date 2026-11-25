@@ -494,7 +494,7 @@ async fn expired_delivery_jobs_leave_the_queue_without_losing_recent_history() {
 #[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn expired_security_data_is_cleaned_without_removing_current_records() {
     use user_center::db::helper::cleanup::{
-        clean_audit_events, clean_expired_mfa, clean_login_events,
+        clean_audit_events, clean_expired_mfa, clean_expired_sso_sessions, clean_login_events,
     };
 
     let f = Fixture::new().await;
@@ -519,6 +519,27 @@ async fn expired_security_data_is_cleaned_without_removing_current_records() {
     assert_eq!(clean_audit_events(db, 365).await.unwrap(), 1);
     assert_eq!(clean_login_events(db, 90).await.unwrap(), 0);
     assert_eq!(clean_audit_events(db, 365).await.unwrap(), 0);
+
+    f.sql(
+        "INSERT INTO sso_sessions(token_hash,user_id,created_at,last_seen_at,expires_at)
+         VALUES('absolute',$1,now()-interval '3 hours',now()-interval '10 minutes',now()-interval '5 minutes'),
+               ('idle',$1,now()-interval '3 hours',now()-interval '1 hour',now()+interval '1 hour'),
+               ('both',$1,now()-interval '3 hours',now()-interval '1 hour',now()-interval '5 minutes'),
+               ('current',$1,now()-interval '10 minutes',now(),now()+interval '1 hour')",
+        vec![f.user.into()],
+    )
+    .await;
+    assert_eq!(clean_expired_sso_sessions(db, 1800).await.unwrap(), 3);
+    assert_eq!(clean_expired_sso_sessions(db, 1800).await.unwrap(), 0);
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT token_hash FROM sso_sessions".to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.try_get::<String>("", "token_hash").unwrap(), "current");
 
     f.sql(
         "INSERT INTO user_mfa(user_id,secret_enc,pending_secret_enc,enabled,setup_expires_at,
