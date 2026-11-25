@@ -123,6 +123,7 @@ pub struct SessionRow {
     pub user_agent: Option<String>,
     pub current: bool,
     pub authentication_pending: bool,
+    pub app_sessions: Vec<crate::service::app_session::DeviceRow>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -138,6 +139,7 @@ impl SessionRow {
             ip: s.ip.map(|ip| ip.to_string()),
             user_agent: s.user_agent,
             current: s.id == current,
+            app_sessions: Vec::new(),
             authentication_pending: s.recovery_pending
                 || s.mfa_required && s.mfa_verified_at.is_none(),
             created_at: s.created_at,
@@ -145,6 +147,25 @@ impl SessionRow {
             expires_at: s.expires_at,
         }
     }
+}
+
+pub(crate) async fn session_rows(
+    state: &AppState,
+    user: Uuid,
+    sessions: Vec<sso_sessions::Model>,
+    current: Uuid,
+) -> Result<Vec<SessionRow>, sea_orm::DbErr> {
+    let ids = sessions.iter().map(|s| s.id).collect();
+    let devices = crate::service::app_session::devices(&state.db, user, ids).await?;
+    let mut grouped = std::collections::HashMap::<Uuid, Vec<_>>::new();
+    for device in devices {
+        grouped.entry(device.sso_session_id).or_default().push(device);
+    }
+    Ok(sessions.into_iter().map(|s| {
+        let mut row = SessionRow::new(s, current);
+        row.app_sessions = grouped.remove(&row.id).unwrap_or_default();
+        row
+    }).collect())
 }
 
 pub async fn sessions(
@@ -173,10 +194,10 @@ pub async fn sessions(
         Ok(value) => value,
         Err(error) => return util::dependency_error(error),
     };
-    let rows = rows
-        .into_iter()
-        .map(|s| SessionRow::new(s, account.session.id))
-        .collect();
+    let rows = match session_rows(&state, account.user.id, rows, account.session.id).await {
+        Ok(rows) => rows,
+        Err(error) => return util::dependency_error(error),
+    };
     render(
         &state,
         jar,
@@ -193,6 +214,7 @@ pub struct RevokeSessionsForm {
     pub csrf_token: String,
     pub scope: String,
     pub session_id: Option<Uuid>,
+    pub app_id: Option<Uuid>,
 }
 
 pub async fn revoke_sessions(
@@ -203,6 +225,18 @@ pub async fn revoke_sessions(
 ) -> Response {
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
+    }
+    if matches!(form.scope.as_str(), "app" | "app_others") {
+        let (device, app) = if form.scope == "app" {
+            (form.session_id, None)
+        } else {
+            (None, form.app_id)
+        };
+        return util::management_response(
+            crate::service::account_security::revoke_account_app_sessions(
+                &state.db, &account.session, &state.config.sso, device, app,
+            ).await,
+        );
     }
     let (selection, logout) = match form.scope.as_str() {
         "one" => match form.session_id {

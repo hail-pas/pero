@@ -134,3 +134,50 @@ pub async fn revoke_client<C: ConnectionTrait>(
         [parent.id.into(),reason.into()])).await?;
     Ok(())
 }
+
+#[derive(FromQueryResult, serde::Serialize)]
+pub struct DeviceRow {
+    pub id: Uuid,
+    pub app_id: Uuid,
+    pub sso_session_id: Uuid,
+    pub app_name: String,
+    pub max_sessions: i32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+/// The caller supplies the authenticated user and the already validated SSO page.
+pub async fn devices<C: ConnectionTrait>(
+    db: &C, user: Uuid, sessions: Vec<Uuid>,
+) -> Result<Vec<DeviceRow>, DbErr> {
+    if sessions.is_empty() {
+        return Ok(Vec::new());
+    }
+    DeviceRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT d.id,d.app_id,d.sso_session_id,a.name AS app_name,a.max_sessions,d.created_at
+         FROM app_sessions d JOIN apps a ON a.id=d.app_id
+         WHERE d.user_id=$1 AND d.sso_session_id=ANY($2::uuid[]) AND d.revoked_at IS NULL
+         ORDER BY d.created_at DESC,d.id DESC",
+        [user.into(),sessions.into()])).all(db).await
+}
+
+/// Called under the user's security lock; never changes the global SSO session.
+pub async fn revoke_device<C: ConnectionTrait>(
+    db: &C, user: Uuid, device: Uuid, reason: &str,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason=$3
+         WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL",
+        [device.into(),user.into(),reason.into()])).await?;
+    Ok(())
+}
+
+pub async fn revoke_other_devices<C: ConnectionTrait>(
+    db: &C, user: Uuid, app: Uuid, current: Uuid,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE app_sessions SET revoked_at=clock_timestamp(),revoke_reason='user_revoked'
+         WHERE user_id=$1 AND app_id=$2 AND sso_session_id<>$3 AND revoked_at IS NULL",
+        [user.into(),app.into(),current.into()])).await?;
+    Ok(())
+}

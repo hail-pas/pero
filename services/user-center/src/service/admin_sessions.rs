@@ -42,6 +42,10 @@ pub async fn change(
             )
             .await?;
         }
+        "revoke_app_session" => {
+            let id = session_id.ok_or(ManagementError::Invalid("invalid_request"))?;
+            super::app_session::revoke_device(&txn, target, id, "admin_revoked").await?;
+        }
         "revoke_all" => {
             super::session::SessionService::revoke_all_login_state_for_user_in_db(
                 &txn,
