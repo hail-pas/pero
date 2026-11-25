@@ -314,9 +314,16 @@ async fn authorize_request(
         {
             return Err(params.redirect_err("interaction_required", None));
         }
-        let code = oauth
-            .issue_auth_code_with_consent(auth_request.id, &session, false)
-            .await?;
+        let code = match oauth
+            .issue_auth_code_with_consent(auth_request.id, &session, false, false)
+            .await
+        {
+            Ok(code) => code,
+            Err(crate::service::oauth::OAuthError::InteractionRequired) => {
+                return Err(params.redirect_err("interaction_required", None));
+            }
+            Err(error) => return Err(error.into()),
+        };
         let redirect = pero_utils::oauth::url::build_code_redirect_url(
             &params.redirect_uri,
             &code,
@@ -534,16 +541,23 @@ pub(crate) async fn resolve_authorization(
     };
 
     if has_consent {
-        let code = oauth
-            .issue_auth_code_with_consent(auth_request.id, &session, false)
-            .await?;
-        let redirect = pero_utils::oauth::url::build_code_redirect_url(
-            &auth_request.redirect_uri,
-            &code,
-            auth_request.client_state.as_deref(),
-        );
-        Ok((jar.clone(), Redirect::to(&redirect).into_response()))
-    } else {
+        match oauth
+            .issue_auth_code_with_consent(auth_request.id, &session, false, false)
+            .await
+        {
+            Ok(code) => {
+                let redirect = pero_utils::oauth::url::build_code_redirect_url(
+                    &auth_request.redirect_uri,
+                    &code,
+                    auth_request.client_state.as_deref(),
+                );
+                return Ok((jar.clone(), Redirect::to(&redirect).into_response()));
+            }
+            Err(crate::service::oauth::OAuthError::InteractionRequired) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    {
         let cookies = state.cookie_factory();
         let req_cookie_name = cookies.auth_req_cookie_name();
         let cookie_value = AuthReqCookieValue {

@@ -380,7 +380,7 @@ export function Auth({
           }}
           submit={() =>
             mutate("/sso/consent", {
-              action: "allow",
+              action: data.session_takeover ? "allow_takeover" : "allow",
               request_token: data.request_token,
             })
           }

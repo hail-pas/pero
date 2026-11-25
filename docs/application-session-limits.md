@@ -9,3 +9,5 @@ Clients must use the RP-specific `sid` in access and ID tokens. Resource servers
 Account security and administrator session pages support application-specific device revocation in addition to global session revocation.
 
 The schema changes are included in the initial migration as requested. An existing installation is not migrated; provision a fresh database for this schema. Do not apply the changed initial migration to an existing production database or bypass migration checksum validation.
+
+Application sessions intentionally share the SSO session lifetime, rather than introducing a second idle timeout or per-request writes. The device list reports logical authenticated sessions, not online presence. The protected built-in user-center application has no quota (`max_sessions = 0`); ordinary applications default to 1.

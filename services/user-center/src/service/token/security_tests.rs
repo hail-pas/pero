@@ -2087,8 +2087,8 @@ async fn concurrent_first_consents_both_issue_codes() {
     }
     let oauth = fixture.state.oauth_service();
     let (first, second) = tokio::join!(
-        oauth.issue_auth_code_with_consent(requests[0], &session, true),
-        oauth.issue_auth_code_with_consent(requests[1], &session, true),
+        oauth.issue_auth_code_with_consent(requests[0], &session, true, false),
+        oauth.issue_auth_code_with_consent(requests[1], &session, true, false),
     );
     assert!(first.is_ok());
     assert!(second.is_ok());
@@ -2244,7 +2244,7 @@ async fn client_revocation_precedes_authorization_request_locks() {
     let issuance = tokio::spawn(async move {
         state
             .oauth_service()
-            .issue_auth_code_with_consent(request, &session, true)
+            .issue_auth_code_with_consent(request, &session, true, false)
             .await
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -2986,7 +2986,7 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
     assert!(matches!(
         state
             .oauth_service()
-            .issue_auth_code_with_consent(pending_request, &account_session, true)
+            .issue_auth_code_with_consent(pending_request, &account_session, true, false)
             .await,
         Err(crate::service::oauth::OAuthError::AccessDenied)
     ));

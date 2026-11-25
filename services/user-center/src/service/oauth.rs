@@ -190,6 +190,7 @@ impl<'a> OAuthService<'a> {
         auth_request_id: Uuid,
         session: &SsoSession,
         grant_consent: bool,
+        confirm_takeover: bool,
     ) -> Result<String, OAuthError> {
         let raw_code = pero_utils::crypto::generate_token();
         let code_hash = pero_utils::crypto::sha256_hex(&raw_code);
@@ -329,7 +330,9 @@ impl<'a> OAuthService<'a> {
         if auth_request.tenant_id != tenant.as_ref().map(|c| c.tenant_id) {
             return Err(OAuthError::AccessDenied);
         }
-        let takeover_allowed = grant_consent && !has_prompt(auth_request.prompt.as_deref(), "none");
+        let takeover_allowed = grant_consent
+            && confirm_takeover
+            && !has_prompt(auth_request.prompt.as_deref(), "none");
         if !takeover_allowed
             && super::app_session::needs_confirmation(
                 &txn,
@@ -341,7 +344,7 @@ impl<'a> OAuthService<'a> {
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
         {
-            return Err(OAuthError::AccessDenied);
+            return Err(OAuthError::InteractionRequired);
         }
         auth_code::create(
             &txn,
@@ -518,6 +521,7 @@ pub enum OAuthError {
     InvalidRedirectUri,
     InvalidScope(String),
     AccessDenied,
+    InteractionRequired,
     Internal(AppError),
 }
 
@@ -533,6 +537,9 @@ impl From<OAuthError> for AppError {
             }
             OAuthError::AccessDenied => {
                 AppError::forbidden("access_denied", "Access denied to this application")
+            }
+            OAuthError::InteractionRequired => {
+                AppError::bad_request("interaction_required", "Device confirmation required")
             }
             OAuthError::Internal(e) => e,
         }

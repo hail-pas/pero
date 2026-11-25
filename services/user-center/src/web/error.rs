@@ -44,6 +44,9 @@ impl From<ServiceOAuthError> for OAuthError {
                 OAuthError::BadRequest("Invalid scope".to_owned())
             }
             ServiceOAuthError::AccessDenied => OAuthError::BadRequest("Access denied".to_owned()),
+            ServiceOAuthError::InteractionRequired => {
+                OAuthError::BadRequest("Device confirmation required".to_owned())
+            }
             ServiceOAuthError::Internal(e) => OAuthError::Internal(e),
         }
     }
