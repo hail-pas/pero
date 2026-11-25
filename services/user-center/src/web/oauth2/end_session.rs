@@ -1,7 +1,7 @@
 use crate::{
     state::app::AppState,
     web::{
-        session::extract_session,
+        session::extract_browser_session,
         sso::dto::{ConfirmLogoutView, EndSessionView},
     },
 };
@@ -95,7 +95,8 @@ async fn handle(
     is_post: bool,
     wants_html: bool,
 ) -> Response {
-    let session = match extract_session(state, &jar).await {
+    // Logout must also revoke a browser session that is restricted to MFA recovery.
+    let session = match extract_browser_session(state, &jar).await {
         Ok(session) => session,
         Err(status) => return status.into_response(),
     };

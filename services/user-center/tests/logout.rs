@@ -83,6 +83,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
     for (mode, redirect_uri) in [
         ("get", WEB_CALLBACK),
         ("expired_get", WEB_CALLBACK),
+        ("recovery_get", WEB_CALLBACK),
         ("post", NATIVE_CALLBACK),
     ] {
         let (raw, sid) = state
@@ -90,6 +91,14 @@ async fn logout_confirmation_expiry_and_form_contract() {
             .create(user, None, None, None, None)
             .await
             .unwrap();
+        if mode == "recovery_get" {
+            sql(
+                &db,
+                "UPDATE sso_sessions SET mfa_required=true,recovery_pending=true WHERE id=$1",
+                vec![sid.into()],
+            )
+            .await;
+        }
         let jwt = token(user, Some(sid), mode == "expired_get");
         if mode == "expired_get" {
             assert!(
@@ -125,6 +134,17 @@ async fn logout_confirmation_expiry_and_form_contract() {
         assert_eq!(
             response.headers()["location"],
             format!("{redirect_uri}&state=a%26b%2Bc")
+        );
+        // A recovery session is already rejected by validate(); check revocation itself.
+        use sea_orm::EntityTrait;
+        assert!(
+            user_center::db::entity::sso_sessions::Entity::find_by_id(sid)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .revoked_at
+                .is_some()
         );
         assert!(
             state

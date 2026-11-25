@@ -1,7 +1,10 @@
 //! Logout hints are evidence of a session, never general authentication tokens.
 use crate::{
-    db::{entity::oauth_clients, enums::OauthClientType},
-    state::{app::AppState, session::SsoSession},
+    db::{
+        entity::{oauth_clients, sso_sessions},
+        enums::OauthClientType,
+    },
+    state::app::AppState,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
@@ -23,7 +26,7 @@ pub async fn prepare(
     token: Option<&str>,
     redirect: Option<&str>,
     callback_state: Option<&str>,
-    session: Option<&SsoSession>,
+    session: Option<&sso_sessions::Model>,
 ) -> Result<LogoutPlan, LogoutError> {
     let hint = match token.filter(|token| !token.is_empty()) {
         Some(token) => match verify_hint(state, token).await {

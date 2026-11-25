@@ -24,7 +24,11 @@ pub async fn gate(
     if let Some(s) = session {
         let security = matches!(
             path,
-            "/account/security" | "/account/reauth" | "/sso/mfa" | "/account/logout"
+            "/account/security"
+                | "/account/reauth"
+                | "/sso/mfa"
+                | "/account/logout"
+                | "/oauth2/session/end"
         ) || path.starts_with("/account/reauth/");
         // Re-running primary authentication must remain possible after an
         // expired MFA challenge, including accounts with only an upstream IdP.
