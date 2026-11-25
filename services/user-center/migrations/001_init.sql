@@ -1,5 +1,5 @@
 -- ============================================================
--- User Center — Init Schema
+-- User Center — Initial Schema
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -133,6 +133,69 @@ COMMENT ON INDEX ux_users_phone_alive IS
 '未删除用户的 phone 唯一。';
 
 -- ============================================================
+-- Tenants and organization membership
+-- ============================================================
+CREATE TABLE tenants (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    kind text NOT NULL CHECK (kind IN ('personal','organization')),
+    name text NOT NULL,
+    slug citext,
+    owner_user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled','deleted')),
+    auth_version bigint NOT NULL DEFAULT 0,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT ck_tenant_owner_shape CHECK (
+        (kind='personal' AND owner_user_id IS NOT NULL AND slug IS NULL)
+        OR (kind='organization' AND owner_user_id IS NULL)
+    ),
+    created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    max_members integer NOT NULL DEFAULT 100
+        CONSTRAINT tenants_max_members_check CHECK (max_members BETWEEN 1 AND 100000),
+    platform_suspended boolean NOT NULL DEFAULT false
+);
+CREATE UNIQUE INDEX ux_tenant_personal_owner ON tenants(owner_user_id) WHERE kind='personal';
+CREATE UNIQUE INDEX ux_tenant_organization_slug ON tenants(slug) WHERE kind='organization' AND slug IS NOT NULL;
+CREATE TABLE tenant_members (
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role text NOT NULL CHECK (role IN ('owner','admin','member')),
+    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','removed')),
+    auth_version bigint NOT NULL DEFAULT 0,
+    joined_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id,user_id)
+);
+CREATE INDEX ix_tenant_members_user_active ON tenant_members(user_id, tenant_id) WHERE status='active';
+CREATE TABLE tenant_invitations (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    email citext NOT NULL,
+    role text NOT NULL CHECK (role IN ('admin','member')),
+    token_hash text NOT NULL UNIQUE,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','revoked','expired')),
+    invited_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    expires_at timestamptz NOT NULL,
+    accepted_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX ux_tenant_invitation_pending ON tenant_invitations(tenant_id,email) WHERE status='pending';
+CREATE INDEX ix_tenant_invitation_expiry ON tenant_invitations(expires_at) WHERE status='pending';
+CREATE INDEX ix_tenants_created_by ON tenants(created_by) WHERE kind='organization';
+COMMENT ON COLUMN tenants.status IS 'deleted is an irreversible tombstone; existing references remain valid for history.';
+COMMENT ON COLUMN tenants.max_members IS 'Maximum active memberships, including owners. Lowering the value never evicts existing members.';
+COMMENT ON COLUMN tenants.platform_suspended IS 'True when platform super administrators suspended the organization; owners cannot reactivate it.';
+
+-- Absence of an explicit policy means creation is disabled.
+CREATE TABLE tenant_creation_policies (
+    user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled boolean NOT NULL DEFAULT false,
+    max_tenants integer NOT NULL DEFAULT 0 CHECK (max_tenants >= 0),
+    updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- 2. apps
 -- ============================================================
 
@@ -149,7 +212,12 @@ CREATE TABLE apps (
     status common_status NOT NULL DEFAULT 'active',
     system boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    tenant_mode text NOT NULL DEFAULT 'personal'
+        CHECK (tenant_mode IN ('personal', 'organization', 'both')),
+    organization_access text NOT NULL DEFAULT 'open'
+        CONSTRAINT apps_organization_access_check CHECK (organization_access IN ('open','restricted')),
+    organization_auto_access boolean NOT NULL DEFAULT false
 );
 
 CREATE UNIQUE INDEX ux_apps_code
@@ -618,7 +686,8 @@ CREATE TABLE authorization_requests (
     completed_at timestamptz NULL,
 
     CONSTRAINT ck_authorization_requests_expiry
-        CHECK (expires_at > created_at)
+        CHECK (expires_at > created_at),
+    tenant_id uuid REFERENCES tenants(id)
 );
 
 CREATE INDEX ix_authorization_requests_client_id
@@ -796,7 +865,10 @@ CREATE TABLE authorization_codes (
     consumed_at timestamptz NULL,
 
     CONSTRAINT ck_authorization_codes_expiry
-        CHECK (expires_at > created_at)
+        CHECK (expires_at > created_at),
+    tenant_id uuid REFERENCES tenants(id),
+    tenant_version bigint,
+    tenant_member_version bigint
 );
 
 CREATE UNIQUE INDEX ux_authorization_codes_code_hash
@@ -884,7 +956,10 @@ CREATE TABLE refresh_tokens (
     replaced_by_id uuid NULL,
 
     CONSTRAINT ck_refresh_tokens_expiry
-        CHECK (expires_at > created_at)
+        CHECK (expires_at > created_at),
+    tenant_id uuid REFERENCES tenants(id),
+    tenant_version bigint,
+    tenant_member_version bigint
 );
 
 ALTER TABLE refresh_tokens
@@ -991,7 +1066,9 @@ CREATE TABLE user_app_access (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
 
-    PRIMARY KEY (user_id, app_id)
+    PRIMARY KEY (user_id, app_id),
+    admission_origin text NOT NULL DEFAULT 'explicit'
+        CONSTRAINT ck_app_admission_origin CHECK (admission_origin IN ('explicit','organization'))
 );
 
 CREATE INDEX ix_user_app_access_app_id
@@ -1336,7 +1413,8 @@ INSERT INTO registration_policies(id,mode) VALUES ('00000000-0000-0000-0000-0000
 CREATE TABLE enrollments (
     id uuid PRIMARY KEY,
     app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
-    email citext NOT NULL,
+    email citext,
+    phone citext,
     invitation boolean NOT NULL DEFAULT false,
     invited_by uuid REFERENCES users(id),
     domain_exception boolean NOT NULL DEFAULT false,
@@ -1354,7 +1432,8 @@ CREATE TABLE enrollments (
     last_sent_at timestamptz NOT NULL DEFAULT now(),
     CHECK (invitation=(invited_by IS NOT NULL)),
     CHECK (NOT domain_exception OR invitation),
-    CHECK ((provider_id IS NULL)=(subject IS NULL))
+    CHECK ((provider_id IS NULL)=(subject IS NULL)),
+    CONSTRAINT ck_enrollment_contact CHECK (num_nonnulls(email,phone)=1)
 );
 CREATE INDEX ix_enrollments_pending ON enrollments(status,created_at);
 CREATE UNIQUE INDEX ux_enrollments_invitation ON enrollments(email,COALESCE(app_id,'00000000-0000-0000-0000-000000000000')) WHERE invitation AND status IN ('pending_verification','pending_approval','ready');
@@ -1365,6 +1444,8 @@ ALTER TABLE notification_outbox ADD CHECK (num_nonnulls(user_id,enrollment_id)=1
 -- Application admission is governed by registration_policies; remove the competing switch.
 
 CREATE INDEX ix_enrollments_email_created ON enrollments(email,created_at DESC,id DESC);
+CREATE INDEX ix_enrollments_phone_created ON enrollments(phone,created_at DESC,id DESC)
+    WHERE phone IS NOT NULL;
 CREATE INDEX ix_user_app_access_app_created ON user_app_access(app_id,created_at DESC,user_id);
 
 ALTER TABLE oauth_clients ADD CONSTRAINT ck_previous_client_secret CHECK ((previous_secret_hash IS NULL)=(previous_secret_expires_at IS NULL));
@@ -1491,11 +1572,12 @@ CREATE INDEX ON admin_app_permissions(app_id, user_id);
 
 
 -- Account synchronization carries identifiers only; applications fetch current state.
+-- Tenant identity is retained for downstream reconciliation, even after deletion.
 CREATE TABLE account_sync_deliveries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
     user_id uuid NOT NULL,
-    kind text NOT NULL CHECK (kind IN ('sync.requested','account.updated','account.status_changed','account.deleted','membership.granted','membership.revoked')),
+    kind text NOT NULL CHECK (kind IN ('sync.requested','account.updated','account.status_changed','account.deleted','membership.granted','membership.revoked','tenant.membership.changed')),
     endpoint text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL DEFAULT now()+interval '1 day',
@@ -1505,12 +1587,140 @@ CREATE TABLE account_sync_deliveries (
     leased_until timestamptz,
     delivered_at timestamptz,
     cancelled_at timestamptz,
-    last_error text
+    last_error text,
+    tenant_id uuid
 );
+COMMENT ON COLUMN account_sync_deliveries.tenant_id IS
+    'Tenant identity of a membership change, including deleted tenants; intentionally not a foreign key.';
 CREATE INDEX ON account_sync_deliveries(next_attempt_at)
 WHERE delivered_at IS NULL AND cancelled_at IS NULL;
 ALTER TABLE oauth_clients ADD CONSTRAINT ck_account_sync_confidential
 CHECK (account_sync_uri IS NULL OR type='confidential');
+
+-- ============================================================
+-- Organization application admission and history
+-- ============================================================
+
+CREATE TABLE tenant_app_grants (
+    tenant_id uuid NOT NULL REFERENCES tenants(id),
+    app_id uuid NOT NULL REFERENCES apps(id),
+    PRIMARY KEY (tenant_id,app_id)
+);
+CREATE INDEX ix_tenant_app_grants_app ON tenant_app_grants(app_id,tenant_id);
+
+-- One current application admission request per organization and app.
+CREATE TABLE tenant_app_requests (
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    requested_by uuid NOT NULL REFERENCES users(id),
+    status text NOT NULL CHECK (status IN ('pending','approved','rejected','withdrawn')),
+    reviewed_by uuid REFERENCES users(id),
+    reviewed_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(tenant_id,app_id)
+);
+CREATE INDEX ix_tenant_app_requests_pending ON tenant_app_requests(updated_at)
+    WHERE status='pending';
+
+CREATE TABLE tenant_app_history (
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    tenant_id uuid NOT NULL REFERENCES tenants(id),
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (app_id, tenant_id, user_id)
+);
+
+CREATE INDEX ix_tenant_app_history_tenant_user
+    ON tenant_app_history(tenant_id,user_id,app_id);
+
+CREATE INDEX ix_tenant_app_history_user_app
+    ON tenant_app_history(user_id,app_id,tenant_id);
+
+-- Personal workspaces are initialized atomically with new users.
+
+CREATE FUNCTION pero_create_personal_tenant() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE tid uuid;
+BEGIN
+    INSERT INTO tenants(kind,name,owner_user_id) VALUES ('personal',COALESCE(NEW.nickname, NEW.username::text),NEW.id)
+        RETURNING id INTO tid;
+    INSERT INTO tenant_members(tenant_id,user_id,role) VALUES(tid, NEW.id, 'owner');
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER tg_pero_personal_tenant AFTER INSERT ON users
+    FOR EACH ROW EXECUTE FUNCTION pero_create_personal_tenant();
+
+-- Admission history is recorded before downstream notification triggers.
+
+CREATE FUNCTION pero_record_tenant_app_history(
+    p_app uuid DEFAULT NULL, p_user uuid DEFAULT NULL, p_tenant uuid DEFAULT NULL
+) RETURNS void LANGUAGE sql AS $$
+    INSERT INTO tenant_app_history(app_id,tenant_id,user_id)
+    SELECT a.app_id,t.id,a.user_id
+    FROM user_app_access a
+    JOIN apps app ON app.id=a.app_id
+    JOIN users u ON u.id=a.user_id
+    JOIN tenant_members m ON m.user_id=a.user_id
+    JOIN tenants t ON t.id=m.tenant_id
+    WHERE (p_app IS NULL OR a.app_id=p_app)
+      AND (p_user IS NULL OR a.user_id=p_user)
+      AND (p_tenant IS NULL OR t.id=p_tenant)
+      AND NOT app.system AND app.status='active' AND a.status='active'
+      AND u.status='active' AND u.deleted_at IS NULL
+      AND t.status='active' AND m.status='active'
+      AND (app.tenant_mode='both' OR app.tenant_mode=t.kind)
+      AND (a.admission_origin='explicit' OR (
+          a.admission_origin='organization' AND app.organization_auto_access AND t.kind='organization'))
+      AND (t.kind='personal' OR app.organization_access='open'
+           OR EXISTS (SELECT 1 FROM tenant_app_grants g
+                      WHERE g.tenant_id=t.id AND g.app_id=app.id))
+    ON CONFLICT DO NOTHING;
+$$;
+
+CREATE FUNCTION pero_track_tenant_app_history() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    CASE TG_TABLE_NAME
+        WHEN 'user_app_access' THEN
+            PERFORM pero_record_tenant_app_history(NEW.app_id, NEW.user_id, NULL);
+        WHEN 'tenant_members' THEN
+            PERFORM pero_record_tenant_app_history(NULL, NEW.user_id, NEW.tenant_id);
+        WHEN 'tenants' THEN
+            PERFORM pero_record_tenant_app_history(NULL, NULL, NEW.id);
+        WHEN 'apps' THEN
+            PERFORM pero_record_tenant_app_history(NEW.id, NULL, NULL);
+        WHEN 'tenant_app_grants' THEN
+            PERFORM pero_record_tenant_app_history(NEW.app_id, NULL, NEW.tenant_id);
+        WHEN 'users' THEN
+            PERFORM pero_record_tenant_app_history(NULL, NEW.id, NULL);
+    END CASE;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER aa_tenant_app_history_access
+    AFTER INSERT OR UPDATE OF status,admission_origin ON user_app_access
+    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+CREATE TRIGGER aa_tenant_app_history_member
+    AFTER INSERT OR UPDATE OF status ON tenant_members
+    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+CREATE TRIGGER aa_tenant_app_history_tenant
+    AFTER INSERT OR UPDATE OF status ON tenants
+    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+CREATE TRIGGER aa_tenant_app_history_app
+    AFTER INSERT OR UPDATE OF status,tenant_mode,organization_access,organization_auto_access ON apps
+    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+CREATE TRIGGER aa_tenant_app_history_grant
+    AFTER INSERT ON tenant_app_grants
+    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+CREATE TRIGGER aa_tenant_app_history_user
+    AFTER UPDATE OF status,deleted_at ON users
+    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+
+-- Account synchronization and tenant membership notifications.
 
 CREATE FUNCTION enqueue_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE event_kind text;
@@ -1523,8 +1733,19 @@ BEGIN
     SELECT c.id,NEW.id,event_kind,c.account_sync_uri
     FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
     WHERE a.user_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+
+    IF (OLD.status,OLD.deleted_at) IS DISTINCT FROM (NEW.status,NEW.deleted_at) THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+        SELECT c.id,NEW.id,h.tenant_id,'tenant.membership.changed',c.account_sync_uri
+        FROM tenant_app_history h
+        JOIN oauth_clients c ON c.app_id=h.app_id
+        JOIN apps app ON app.id=h.app_id
+        WHERE h.user_id=NEW.id AND NOT app.system
+          AND c.status='active' AND c.account_sync_uri IS NOT NULL;
+    END IF;
     RETURN NEW;
 END $$;
+
 CREATE TRIGGER user_account_sync AFTER UPDATE ON users
 FOR EACH ROW WHEN (
     (OLD.username,OLD.nickname,OLD.avatar_url,OLD.email,OLD.email_verified_at,
@@ -1535,44 +1756,144 @@ FOR EACH ROW WHEN (
 
 CREATE FUNCTION enqueue_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status THEN RETURN NEW; END IF;
+    IF TG_OP='UPDATE' AND (OLD.status,OLD.admission_origin)
+        IS NOT DISTINCT FROM (NEW.status,NEW.admission_origin) THEN
+        RETURN NEW;
+    END IF;
     INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
     SELECT c.id,NEW.user_id,
-           CASE WHEN NEW.status='active' THEN 'membership.granted' ELSE 'membership.revoked' END,
+           CASE WHEN TG_OP='UPDATE' AND OLD.status IS NOT DISTINCT FROM NEW.status
+                THEN 'sync.requested'
+                WHEN NEW.status='active' THEN 'membership.granted'
+                ELSE 'membership.revoked' END,
            c.account_sync_uri
-    FROM oauth_clients c WHERE c.app_id=NEW.app_id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    FROM oauth_clients c
+    WHERE c.app_id=NEW.app_id AND c.account_sync_uri IS NOT NULL;
+
+    INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+    SELECT c.id,NEW.user_id,h.tenant_id,'tenant.membership.changed',c.account_sync_uri
+    FROM tenant_app_history h
+    JOIN oauth_clients c ON c.app_id=h.app_id
+    WHERE h.app_id=NEW.app_id AND h.user_id=NEW.user_id
+      AND c.status='active' AND c.account_sync_uri IS NOT NULL;
     RETURN NEW;
 END $$;
-CREATE TRIGGER membership_account_sync AFTER INSERT OR UPDATE OF status ON user_app_access
-FOR EACH ROW EXECUTE FUNCTION enqueue_membership_sync();
 
--- Enabling/changing the receiver also initializes existing members; old destinations stop retrying.
+CREATE TRIGGER membership_account_sync
+    AFTER INSERT OR UPDATE OF status,admission_origin ON user_app_access
+    FOR EACH ROW EXECUTE FUNCTION enqueue_membership_sync();
+
 CREATE FUNCTION configure_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='UPDATE' AND (OLD.account_sync_uri,OLD.scopes,OLD.status)
         IS NOT DISTINCT FROM (NEW.account_sync_uri,NEW.scopes,NEW.status) THEN RETURN NEW; END IF;
+
     UPDATE account_sync_deliveries SET cancelled_at=now(),lease_id=NULL,leased_until=NULL
     WHERE client_id=NEW.id AND delivered_at IS NULL AND cancelled_at IS NULL;
+
     IF NEW.account_sync_uri IS NOT NULL THEN
         INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
         SELECT NEW.id,a.user_id,'sync.requested',NEW.account_sync_uri
         FROM user_app_access a WHERE a.app_id=NEW.app_id;
+
+        IF NEW.status='active' THEN
+            INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+            SELECT NEW.id,h.user_id,h.tenant_id,'tenant.membership.changed',NEW.account_sync_uri
+            FROM tenant_app_history h WHERE h.app_id=NEW.app_id;
+        END IF;
     END IF;
     RETURN NEW;
 END $$;
+
 CREATE TRIGGER client_account_sync AFTER INSERT OR UPDATE OF account_sync_uri,scopes,status ON oauth_clients
 FOR EACH ROW EXECUTE FUNCTION configure_account_sync();
 
-
--- Application enablement contributes to the account projection's active flag.
 CREATE FUNCTION enqueue_app_account_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
     SELECT c.id,a.user_id,'sync.requested',c.account_sync_uri
     FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
     WHERE a.app_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+
+    INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+    SELECT c.id,h.user_id,h.tenant_id,'tenant.membership.changed',c.account_sync_uri
+    FROM tenant_app_history h JOIN oauth_clients c ON c.app_id=h.app_id
+    WHERE h.app_id=NEW.id AND c.status='active' AND c.account_sync_uri IS NOT NULL;
     RETURN NEW;
 END $$;
-CREATE TRIGGER app_account_sync AFTER UPDATE OF status ON apps
-FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
-EXECUTE FUNCTION enqueue_app_account_sync();
+
+CREATE TRIGGER app_account_sync
+    AFTER UPDATE OF status,tenant_mode,organization_access,organization_auto_access ON apps
+    FOR EACH ROW
+    WHEN ((OLD.status,OLD.tenant_mode,OLD.organization_access,OLD.organization_auto_access)
+          IS DISTINCT FROM
+          (NEW.status,NEW.tenant_mode,NEW.organization_access,NEW.organization_auto_access))
+    EXECUTE FUNCTION enqueue_app_account_sync();
+
+CREATE FUNCTION enqueue_tenant_membership_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='UPDATE' AND (OLD.status,OLD.auth_version)
+        IS NOT DISTINCT FROM (NEW.status,NEW.auth_version) THEN RETURN NEW; END IF;
+
+    INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+    SELECT c.id,NEW.user_id,NEW.tenant_id,'tenant.membership.changed',c.account_sync_uri
+    FROM tenant_app_history h
+    JOIN oauth_clients c ON c.app_id=h.app_id
+    WHERE h.user_id=NEW.user_id AND h.tenant_id=NEW.tenant_id
+      AND c.status='active' AND c.account_sync_uri IS NOT NULL;
+
+    IF TG_OP='INSERT' OR OLD.status IS DISTINCT FROM NEW.status THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+        SELECT c.id,h.user_id,'sync.requested',c.account_sync_uri
+        FROM tenant_app_history h
+        JOIN tenants t ON t.id=h.tenant_id
+        JOIN user_app_access a ON a.app_id=h.app_id AND a.user_id=h.user_id
+        JOIN apps app ON app.id=a.app_id
+        JOIN oauth_clients c ON c.app_id=a.app_id
+        WHERE h.user_id=NEW.user_id AND h.tenant_id=NEW.tenant_id
+          AND t.kind='organization' AND a.admission_origin='organization'
+          AND a.status='active' AND app.organization_auto_access
+          AND c.status='active' AND c.account_sync_uri IS NOT NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER tenant_membership_sync AFTER INSERT OR UPDATE OF status,auth_version ON tenant_members
+FOR EACH ROW EXECUTE FUNCTION enqueue_tenant_membership_sync();
+
+CREATE FUNCTION enqueue_tenant_status_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (OLD.status,OLD.auth_version,OLD.name,OLD.max_members)
+        IS NOT DISTINCT FROM
+       (NEW.status,NEW.auth_version,NEW.name,NEW.max_members) THEN RETURN NEW; END IF;
+
+    INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+    SELECT c.id,h.user_id,NEW.id,'tenant.membership.changed',c.account_sync_uri
+    FROM tenant_app_history h
+    JOIN oauth_clients c ON c.app_id=h.app_id
+    WHERE h.tenant_id=NEW.id AND c.status='active'
+      AND c.account_sync_uri IS NOT NULL;
+
+    -- Organization app-grant changes also advance the tenant authorization epoch.
+    IF NEW.kind='organization' AND (OLD.status,OLD.auth_version)
+        IS DISTINCT FROM (NEW.status,NEW.auth_version) THEN
+        INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
+        SELECT c.id,h.user_id,'sync.requested',c.account_sync_uri
+        FROM tenant_app_history h
+        JOIN user_app_access a ON a.app_id=h.app_id AND a.user_id=h.user_id
+        JOIN apps app ON app.id=a.app_id
+        JOIN oauth_clients c ON c.app_id=a.app_id
+        WHERE h.tenant_id=NEW.id AND a.admission_origin='organization'
+          AND a.status='active' AND app.organization_auto_access
+          AND c.status='active' AND c.account_sync_uri IS NOT NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER tenant_status_sync
+    AFTER UPDATE OF status, auth_version, name, max_members ON tenants
+    FOR EACH ROW
+    WHEN ((OLD.status, OLD.auth_version, OLD.name, OLD.max_members)
+          IS DISTINCT FROM
+          (NEW.status, NEW.auth_version, NEW.name, NEW.max_members))
+    EXECUTE FUNCTION enqueue_tenant_status_sync();

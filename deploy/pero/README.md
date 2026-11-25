@@ -72,7 +72,7 @@ bash scripts/package-production-config.sh
 # PERO_PYTHON=/可用Python路径 bash scripts/package-production-config.sh
 ```
 
-脚本以当前源码 default.toml 的结构生成 production.toml，迁入原匹配字段及受支持的可选配置（如 CORS、HTTP 客户端、SMTP/SMS）的值，新增字段使用最新默认值；旧 askama.static_dir 会迁入 frontend.static_dir。bootstrap 和 RSA 密钥保留。输出 `deploy/pero-config.tar.gz` 及 `.sha256` 校验文件。
+脚本以当前源码 default.toml 的结构生成 production.toml，迁入原匹配字段及受支持的可选配置（如 CORS、HTTP 客户端、SMTP/SMS）的值，新增字段使用最新默认值，不再转换废弃配置节。bootstrap 和 RSA 密钥保留。输出 `deploy/pero-config.tar.gz` 及 `.sha256` 校验文件。
 
 配置包包含真实密码和私钥，只通过 SSH 传输，不提交 Git。打包前确认本机配置与实际生产信息一致。已有服务更新时，按新版配置结构调整生产配置，避免用示例或过期的本机配置覆盖服务器上的有效值。
 
@@ -231,6 +231,6 @@ docker compose logs --tail=100 pero
 
 查看当前镜像可执行 `docker compose config --images`。需要回退时，将 `.env` 中的 `PERO_IMAGE_TAG` 改为服务器已保留的旧提交标签，再重新创建容器；数据库迁移历史必须与目标版本匹配。
 
-常规更新保留数据库和生产配置，不重复初始化。每次启动服务都会自动检查并迁移至镜像内最新版本，验收通过后才监听端口；无需单独运行迁移容器。迁移或验收失败则事务回滚，容器以失败状态退出，通过 `docker compose logs --tail=100 pero` 排查并修正原因后重启。此次合并初始迁移不接受旧 001–011 历史，旧环境应先备份并使用新库初始化、按需导入业务数据，不能直接覆盖迁移记录。配置结构变化时同步调整；Compose 有变化时同步模板。服务器 source 可保留用于同步源码，但运行服务不依赖它，不需要先 git pull，也不执行 docker compose build。
+常规更新保留数据库和生产配置，不重复初始化。每次启动服务都会自动检查并迁移至镜像内最新版本，验收通过后才监听端口；无需单独运行迁移容器。迁移或验收失败则事务回滚，容器以失败状态退出，通过 `docker compose logs --tail=100 pero` 排查并修正原因后重启。当前初始迁移不接受合并前的 001–022 历史，旧环境应先备份并使用新库初始化、按需导入业务数据，不能直接覆盖迁移记录。配置结构变化时同步调整；Compose 有变化时同步模板。服务器 source 可保留用于同步源码，但运行服务不依赖它，不需要先 git pull，也不执行 docker compose build。
 
 通用 Docker 文件、构建脚本、配置示例和本指南随代码追踪。local/ 下真实配置与私钥，以及 deploy 下的镜像包、配置包、校验文件、缓存和日志均不提交 Git。旧 scripts/deploy.sh 的 Zig 交叉编译入口独立保留，不用于此 Docker 部署。

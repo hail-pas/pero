@@ -1,10 +1,11 @@
+# One-time initialization. Copy to bootstrap.toml and supply private values.
 [provider]
 code = "local"
 name = "Local"
-# kid = "key-2026-01"  # 可选，默认自动生成
+# kid = "key-01" # Optional; generated automatically when omitted.
 
 [admin]
 username = "admin"
-password = "replace-with-a-strong-admin-password"
-email = "admin@example.com"  # 可选
-phone = "+8613800138000"     # 可选
+password = "" # Required; use a strong password.
+# email = "admin@example.com"
+# phone = "+12025550123"

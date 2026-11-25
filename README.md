@@ -50,7 +50,7 @@ Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机�
 
 数据库已合并为单个 `001_init.sql` 初始迁移。服务启动、bootstrap 和 `scripts/migrate.sh` 共用编译进程序的迁移实现，无需 psql；启动时在监听端口和启动后台任务之前完成检查。检查 PostgreSQL 18+、迁移历史顺序及 SHA-256，使用数据库事务锁串行处理并发启动；全部待执行迁移和版本记录在同一事务内完成，验收表字段、关键唯一索引、约束、注销/通知触发器、pgcrypto 和系统种子数据后提交。失败时回滚并终止启动，日志保留错误；修正原因后重新启动即可重试。
 
-这是新的空库基线：旧的 001–011 历史或旧 checksum 会被拒绝，不自动改写历史或清空数据。已有环境先备份，使用新库初始化并按需显式导入业务数据；不要直接删除旧库迁移记录。后续增加 `002_description.sql` 等递增文件，同时更新 `src/db/verify.sql` 的验收要求并重新构建；已发布的 SQL 不应修改。部署包包含迁移工具、公开默认值和示例，不包含真实配置或私钥。详见 [数据库迁移与失败恢复](docs/database-migrations.md)。
+这是新的空库基线：合并前的 001–022 历史或旧 checksum 会被拒绝，不自动改写历史或清空数据。已有环境先备份，使用新库初始化并按需显式导入业务数据；不要直接删除旧库迁移记录。后续增加 `002_description.sql` 等递增文件，同时更新 `src/db/verify.sql` 的验收要求并重新构建；已发布的 SQL 不应修改。部署包包含迁移工具、公开默认值和示例，不包含真实配置或私钥。详见 [数据库迁移与失败恢复](docs/database-migrations.md)。
 
 配置可选的 `notification.smtp`、`notification.sms`（Twilio）或 HTTP 网关后，服务将通知加密入库并由后台任务投递；数据库连接使用的 `app.encrypt_key` 必须保持一致。对应渠道未配置时，联系方式验证、注册邮件和密码恢复返回 503。详见[应用门户、发送渠道与密钥运维](docs/application-portal-and-delivery.md)。
 
@@ -60,7 +60,7 @@ OAuth 客户端密钥统一使用 Argon2id 哈希。已有 bcrypt 客户端密�
 
 前端位于 `frontend/`，使用 React + TypeScript + Vite、[Minimal Free](https://github.com/minimal-ui-kit/material-kit-react) MIT 主题和 MUI。首页、个人中心、Dash 管理、认证/授权/退出及 admin 示例均由同一个前端实现。Minimal 许可保留于 `frontend/LICENSE.minimal.md`。首页、认证页和工作空间顶部提供中英文切换，默认跟随浏览器，选择后会记住语言；切换时保留当前页面与未提交表单。
 
-开发时先启动 Rust 服务，再执行 `cd frontend && pnpm dev`，访问 `http://127.0.0.1:3039`；默认代理到 `http://127.0.0.1:8080`，可通过 `PERO_API_ORIGIN` 指定后端。生产构建使用 `bash scripts/build-frontend.sh`；Docker 自动构建前端并复制产物。配置节由 `[askama]` 改为 `[frontend]`，删除旧的页面字典 `[i18n]` 配置节；`static_dir` 指向构建产物，默认 `ui/static`，资源前缀固定为 `/static`，不再提供 `static_url_prefix` 配置项。日志格式统一使用 `[log].format`，移除旧的 `log.json` 开关和未使用的 `server.docs_servers` 配置。
+开发时先启动 Rust 服务，再执行 `cd frontend && pnpm dev`，访问 `http://127.0.0.1:3039`；默认代理到 `http://127.0.0.1:8080`，可通过 `PERO_API_ORIGIN` 指定后端。生产构建使用 `bash scripts/build-frontend.sh`；Docker 自动构建前端并复制产物。`[frontend].static_dir` 指向构建产物，默认 `ui/static`，资源前缀固定为 `/static`。配置按 `default.toml` → 运行环境配置（`local.toml` 或 `production.toml`）→ `PERO__` 环境变量顺序覆盖；公开默认文件包含通用参数，环境配置只填写必要的地址、凭据和覆盖项，`bootstrap.toml` 仅用于首次初始化。日志格式使用 `[log].format`。
 
 管理列表保留服务端创建时间顺序与分页，不提供仅排序当前页的名称排序。
 
@@ -164,7 +164,7 @@ MIT OR Apache-2.0
 
 通知表已包含在初始迁移中。后台 `/dashboard/notifications` 提供状态筛选、分页、脱敏收件人、尝试次数、最近失败类别及 HTTP 状态；沿用超级管理员门禁。重试操作复用 CSRF、15 分钟近期认证和管理审计。
 
-通知可通过 SMTP、Twilio 短信或 HTTPS 网关投递，复用数据库队列。队列和脱敏记录原子写入，投递成功后删除含凭据的加密载荷，只保留结果元数据。投递状态包括待投递、重试中、网关已接收、过期和取消；“网关已接收”仅表示网关返回 2xx，不代表邮件/短信最终送达。历史队列迁移时不解密收件信息，显示为 `unknown / ***`；升级前已删除的消息不能追溯。
+通知可通过 SMTP、Twilio 短信或 HTTPS 网关投递，复用数据库队列。队列和脱敏记录原子写入，投递成功后删除含凭据的加密载荷，只保留结果元数据。投递状态包括待投递、重试中、网关已接收、过期和取消；“网关已接收”仅表示网关返回 2xx，不代表邮件/短信最终送达。
 
 “立即重试”仅将尚未过期、至少尝试过一次、正在等待重试且没有有效投递租约的原消息提前排队，后台下一轮执行；不生成新验证码、不延长有效期，始终使用原通知 ID 作为 `Idempotency-Key`。网关必须按此键去重。已成功、取消或过期的消息不能重试；联系方式修改、密码恢复等原有撤销流程会同步标记取消。网关已经接收的在途请求无法撤回。
 

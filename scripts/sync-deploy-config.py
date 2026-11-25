@@ -7,18 +7,9 @@ from pathlib import Path
 import tomllib
 
 
-# Fields supplied by Rust defaults or optional configuration blocks are not
-# necessarily present in default.toml. Preserve them when explicitly configured.
+# Only genuinely optional settings are omitted from the public default template.
 OPTIONAL_FIELDS = {
-    ('server',): ('graceful_shutdown_timeout_secs', 'cleanup_interval_secs', 'cors'),
-    ('server', 'cors'): ('allow_origins', 'allow_methods', 'allow_headers',
-                         'allow_credentials', 'expose_headers', 'max_age_secs'),
-    ('database',): ('acquire_timeout_secs', 'idle_timeout_secs', 'max_lifetime_secs'),
-    ('redis',): ('connect_timeout_secs', 'command_timeout_secs'),
-    ('sso',): ('session_cookie_name', 'session_touch_interval_seconds', 'cookie_domain', 'cookie_path'),
-    ('http_config',): ('timeout_secs', 'connect_timeout_secs', 'pool_idle_timeout_secs',
-                       'pool_max_idle_per_host', 'user_agent', 'retry', 'max_response_bytes'),
-    ('http_config', 'retry'): ('enabled', 'max_retries', 'base_delay_millis', 'max_delay_millis'),
+    ('http_config',): ('user_agent',),
     ('notification',): ('smtp', 'sms'),
     ('notification', 'smtp'): ('host', 'port', 'username', 'password', 'from', 'security'),
     ('notification', 'sms'): ('account_sid', 'auth_token', 'from'),
@@ -68,11 +59,6 @@ def main():
     args = parser.parse_args()
     defaults = tomllib.loads(args.defaults.read_text())
     previous = tomllib.loads(args.previous.read_text())
-    # Preserve the deployed static path when migrating the legacy template section.
-    if 'frontend' in defaults and 'frontend' not in previous:
-        legacy = previous.get('askama', {})
-        if 'static_dir' in legacy:
-            previous['frontend'] = {'static_dir': legacy['static_dir']}
     result = refresh(defaults, previous)
     rendered = emit(result)
     assert tomllib.loads(rendered) == result

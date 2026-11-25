@@ -1,5 +1,8 @@
 # Private deployment overrides. Copy outside Git, e.g. local/deploy/pero/config/production.toml.
 # The packager overlays these values onto the current source default.toml.
+[log]
+dir = "./logs/prd"
+
 [database]
 url = "postgres://postgres:REPLACE_DATABASE_PASSWORD@127.0.0.1:5432/pero"
 encrypt_key = "REPLACE_DATABASE_ENCRYPTION_KEY"
@@ -21,8 +24,10 @@ signing_key = "REPLACE_WITH_A_DIFFERENT_RANDOM_SECRET_AT_LEAST_32_CHARS"
 [frontend]
 static_dir = "prd/ui/static"
 
-[log]
-dir = "./logs/prd"
+# Optional HTTP gateway for channels without a direct adapter.
+# [notification]
+# endpoint = "https://notifications.example.com/send"
+# bearer_token = "REPLACE_WITH_NOTIFICATION_GATEWAY_SECRET"
 
 # Optional direct delivery channels. Missing/invalid settings do not block startup;
 # requests requiring an unavailable channel return 503. See docs/application-portal-and-delivery.md.

@@ -61,7 +61,8 @@ BEGIN
         END IF;
     END LOOP;
     FOREACH object_name IN ARRAY ARRAY['assisted_recovery_pair','ck_previous_client_secret','ck_account_sync_confidential',
-                                      'ck_tenant_owner_shape', 'tenants_max_members_check'] LOOP
+                                      'ck_tenant_owner_shape', 'tenants_max_members_check', 'apps_organization_access_check',
+                                      'ck_app_admission_origin', 'ck_enrollment_contact', 'account_sync_deliveries_kind_check'] LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE connamespace=current_schema()::regnamespace
                        AND conname=object_name AND convalidated) THEN
             RAISE EXCEPTION 'Missing security constraint: %', object_name;

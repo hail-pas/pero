@@ -1,12 +1,14 @@
-[frontend]
-static_dir = "../../frontend/dist"
+# Local development only. Copy to local.toml after registering the OAuth client.
 
 [oauth2]
 issuer = "http://localhost:8080"
 client_id = "admin-panel-client"
-client_secret = "" # Set the registered client secret
+client_secret = "" # Required; use the registered client secret.
 redirect_uri = "http://localhost:3000/callback"
 post_logout_redirect_uri = "http://localhost:3000"
 
 [cookie]
 secure = false
+
+[frontend]
+static_dir = "../../frontend/dist"
