@@ -59,14 +59,26 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            for _ in 0..20 {
-                match deliver_one(&state).await {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    Err(error) => {
-                        tracing::error!(%error,"Account synchronization queue unavailable");
-                        break;
+            // Keep the batch bounded while allowing unrelated deliveries to proceed.
+            let mut workers = tokio::task::JoinSet::new();
+            for _ in 0..4 {
+                let state = state.clone();
+                workers.spawn(async move {
+                    for _ in 0..5 {
+                        match deliver_one(&state).await {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(error) => {
+                                tracing::error!(%error,"Account synchronization queue unavailable");
+                                break;
+                            }
+                        }
                     }
+                });
+            }
+            while let Some(result) = workers.join_next().await {
+                if let Err(error) = result {
+                    tracing::error!(%error, "Account synchronization worker stopped unexpectedly");
                 }
             }
         }
