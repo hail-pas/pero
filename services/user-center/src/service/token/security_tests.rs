@@ -1033,7 +1033,7 @@ async fn signing_key_rotation() {
     let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(
-        crate::db::helper::signing_key::require_active_signing_key(&db, 120)
+        crate::db::helper::signing_key::require_active_signing_key(&db)
             .await
             .unwrap()
             .kid,
@@ -2797,12 +2797,13 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
     else {
         panic!("valid refresh must rotate before consent withdrawal");
     };
-    let signing = crate::db::helper::signing_key::require_active_signing_key(
-        db,
-        i64::from(client.access_token_ttl_seconds),
-    )
-    .await
-    .unwrap();
+    let signing = crate::db::helper::signing_key::require_active_signing_key(db)
+        .await
+        .unwrap();
+    signing
+        .record_issuance(db, i64::from(client.access_token_ttl_seconds))
+        .await
+        .unwrap();
     let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
         .issue_access_token(fixture.user, "openid", Some(current), 0, Some(&tenant))
         .unwrap();
@@ -3544,9 +3545,10 @@ async fn lifecycle_guards_and_transactional_logout() {
         assert_eq!(claims[0]["sid"], rp_sid.to_string());
         assert_eq!(claims[0]["aud"], fixture.client.to_string());
     }
-    let key = crate::db::helper::signing_key::require_active_signing_key(db, 120)
+    let key = crate::db::helper::signing_key::require_active_signing_key(db)
         .await
         .unwrap();
+    key.record_issuance(db, 120).await.unwrap();
     sql(
         db,
         "UPDATE identity_provider_keys SET active=false WHERE kid=$1",
@@ -3565,6 +3567,7 @@ async fn lifecycle_guards_and_transactional_logout() {
             "key_still_needed_for_verification"
         ))
     ));
+    assert!(key.record_issuance(db, 120).await.is_err());
     sql(db,"UPDATE identity_provider_keys SET last_issued_until=now()-interval '1 second' WHERE kid=$1",vec![key.kid.clone().into()]).await;
     crate::service::keys::revoke(
         db,

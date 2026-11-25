@@ -297,7 +297,7 @@ impl TokenService<'_> {
         } else {
             client.access_token_ttl_seconds
         };
-        let signing = match require_active_signing_key(db, i64::from(ttl)).await {
+        let signing = match require_active_signing_key(db).await {
             Ok(k) => k,
             Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
         };
@@ -418,6 +418,13 @@ impl TokenService<'_> {
         {
             tracing::error!("RT insert: {e}");
             return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
+        }
+
+        if let Err(e) = signing.record_issuance(db, i64::from(ttl)).await {
+            tracing::error!("Signing key issuance: {e}");
+            return Err(TokenEndpointResult::error(
+                OAuth2ErrorCode::TemporarilyUnavailable,
+            ));
         }
 
         Ok(TokenSuccessBody {

@@ -242,12 +242,7 @@ impl TokenService<'_> {
             };
         let scopes_str = requested.join(" ");
         let session_id = Some(session_id);
-        let signing = match require_active_signing_key(
-            &txn,
-            i64::from(client.access_token_ttl_seconds),
-        )
-        .await
-        {
+        let signing = match require_active_signing_key(&txn).await {
             Ok(k) => k,
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };
@@ -309,6 +304,14 @@ impl TokenService<'_> {
         if let Err(e) = rev.update(&txn).await {
             tracing::error!("RT revoke: {e}");
             return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+        }
+
+        if let Err(e) = signing
+            .record_issuance(&txn, i64::from(client.access_token_ttl_seconds))
+            .await
+        {
+            tracing::error!("Signing key issuance: {e}");
+            return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
         }
 
         if let Err(e) = txn.commit().await {

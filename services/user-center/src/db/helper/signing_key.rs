@@ -19,6 +19,7 @@ pub struct SigningKeyRow {
 
 #[derive(Clone)]
 pub struct SigningKeyMaterial {
+    id: uuid::Uuid,
     pub kid: String,
     pub private_key: String,
 }
@@ -71,16 +72,12 @@ where
             .filter(ipk::Column::Use.eq(KeyUse::Sig))
             .filter(ipk::Column::Algorithm.eq(KeyAlgorithm::Rs256)),
     )
-    .lock_exclusive()
     .into_model::<SigningKeyRow>()
     .one(db)
     .await
 }
 
-pub async fn require_active_signing_key<C>(
-    db: &C,
-    ttl_seconds: i64,
-) -> Result<SigningKeyMaterial, DbErr>
+pub async fn require_active_signing_key<C>(db: &C) -> Result<SigningKeyMaterial, DbErr>
 where
     C: ConnectionTrait,
 {
@@ -90,15 +87,32 @@ where
     let private_key = row
         .private_key_pem
         .ok_or_else(|| DbErr::Custom("private key decrypt returned null".into()))?;
-    // Issuance holds this row lock until commit; rotation/revocation cannot race it.
-    // Track this issuance's lifetime plus clock skew, not unrelated client policies.
-    db.execute_raw(sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Postgres,
-        "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,clock_timestamp()+make_interval(secs=>$2::bigint+300)) WHERE id=$1",
-        [row.key.id.into(), ttl_seconds.into()])).await?;
     Ok(SigningKeyMaterial {
+        id: row.key.id,
         kid: row.key.kid,
         private_key,
     })
+}
+
+impl SigningKeyMaterial {
+    /// Finalize issuance just before commit, after signing and other grant writes.
+    /// Recheck key validity under the update's row lock so a concurrent rotation
+    /// or revocation cannot publish a token signed with a superseded key.
+    pub async fn record_issuance<C>(&self, db: &C, ttl_seconds: i64) -> Result<(), DbErr>
+    where
+        C: ConnectionTrait,
+    {
+        let result = db.execute_raw(sea_orm::Statement::from_sql_and_values(sea_orm::DbBackend::Postgres,
+            "UPDATE identity_provider_keys SET last_issued_until=GREATEST(last_issued_until,clock_timestamp()+make_interval(secs=>$2::bigint+300))
+             WHERE id=$1 AND active AND revoked_at IS NULL
+               AND (not_before IS NULL OR not_before<=clock_timestamp())
+               AND (expires_at IS NULL OR expires_at>clock_timestamp())",
+            [self.id.into(), ttl_seconds.into()])).await?;
+        if result.rows_affected() != 1 {
+            return Err(DbErr::Custom("signing key changed during issuance".into()));
+        }
+        Ok(())
+    }
 }
 
 pub async fn find_verification_key_by_kid<C>(db: &C, kid: &str) -> Result<Option<ipk::Model>, DbErr>
