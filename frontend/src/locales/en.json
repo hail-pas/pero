@@ -987,5 +987,11 @@
   "待审批的组织应用申请": "Pending organization application requests",
   "申请人": "Requested by",
   "处理申请": "Review request",
-  "重新认证身份": "Reauthenticate"
+  "重新认证身份": "Reauthenticate",
+  "最大登录设备数": "Maximum signed-in devices",
+  "0 表示关闭限制；达到上限后，确认登录将退出最早的设备。减少额度会保留最新设备。": "0 disables the limit. Confirmed sign-ins at the limit end the oldest device session. Reducing the limit keeps the newest devices.",
+  "不限制": "Unlimited",
+  "需要确认应用登录。继续后可能退出此应用的其他设备，不影响其他应用。": "Confirm sign-in to this application. Continuing may sign out other devices from this app without affecting other apps.",
+  "确认并继续登录": "Confirm and continue signing in",
+  "最大登录设备数必须为非负整数": "Maximum signed-in devices must be a nonnegative integer"
 }

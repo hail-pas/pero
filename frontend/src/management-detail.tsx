@@ -52,6 +52,7 @@ export function ManagementDetail({
     : isApp
       ? [
           [t("应用标识"), data.app.code],
+          [t("最大登录设备数"), data.app.max_sessions === 0 ? t("不限制") : String(data.app.max_sessions)],
           [t("主页"), data.app.homepage_url],
           [t("说明"), data.app.description],
         ]

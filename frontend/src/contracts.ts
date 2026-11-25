@@ -37,6 +37,7 @@ export interface AppSummary {
   tenant_mode: string;
   organization_access: string;
   organization_auto_access: boolean;
+  max_sessions: number;
   created_at: DateValue;
 }
 export interface UserSummary {
@@ -354,6 +355,7 @@ export interface ViewDataMap {
     success: string;
   };
   ConsentView: CsrfPage & {
+    session_takeover: boolean;
     request_token: string;
     client_name: string;
     client_url: string;

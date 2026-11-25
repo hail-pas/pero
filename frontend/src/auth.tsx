@@ -343,6 +343,11 @@ export function Auth({
   } else if (view === "ConsentView")
     content = (
       <>
+        {data.session_takeover && (
+          <Typography color="warning.main" sx={{ mb: 2 }}>
+            {t("需要确认应用登录。继续后可能退出此应用的其他设备，不影响其他应用。")}
+          </Typography>
+        )}
         <Typography color="text.secondary" sx={{ mb: 3 }}>
           <strong>{data.client_name}</strong>{" "}
           {t("希望访问以下账户信息。你当前以")} {data.user_name} {t("登录。")}
@@ -367,7 +372,7 @@ export function Auth({
         <FieldsForm
           fullWidthSubmit
           fields={[]}
-          label={t("允许访问")}
+          label={data.session_takeover ? t("确认并继续登录") : t("允许访问")}
           disabled={actionBusy}
           onBusyChange={(busy) => {
             setFormBusy(busy);
