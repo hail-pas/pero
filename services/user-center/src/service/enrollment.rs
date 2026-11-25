@@ -399,10 +399,22 @@ async fn start_contact(
     let (invitation, request, social) = match kind {
         StartKind::Portal(invitation) => (invitation, None, None),
         StartKind::SelfService { request, social } => {
+            // Application registration must retain its validated OAuth origin.
+            // Portal admission uses StartKind::Portal instead.
+            if app != request.map(|request| request.app_id) {
+                return Err(invalid());
+            }
             if let Some(request) = request {
-                if Some(request.app_id) != app {
-                    return Err(invalid());
-                }
+                crate::db::entity::authorization_requests::Entity::find_by_id(request.id)
+                    .one(&txn)
+                    .await?
+                    .filter(|current| {
+                        current.completed_at.is_none()
+                            && current.expires_at > OffsetDateTime::now_utc()
+                            && current.client_id == request.client_id
+                            && current.app_id == request.app_id
+                    })
+                    .ok_or_else(invalid)?;
                 crate::db::entity::oauth_clients::Entity::find_by_id(request.client_id)
                     .one(&txn)
                     .await?
