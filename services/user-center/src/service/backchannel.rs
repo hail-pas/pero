@@ -6,17 +6,6 @@ use uuid::Uuid;
 
 pub(super) const EVENT_TOKEN_TTL_SECONDS: i64 = 120;
 
-pub async fn remember<C: ConnectionTrait>(
-    db: &C,
-    session: Uuid,
-    client: Uuid,
-    user: Uuid,
-) -> Result<(), DbErr> {
-    db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "INSERT INTO oidc_rp_sessions(session_id,client_id,user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-        [session.into(),client.into(),user.into()])).await?;
-    Ok(())
-}
 #[derive(FromQueryResult)]
 struct Delivery {
     id: Uuid,

@@ -109,6 +109,16 @@ impl TokenService<'_> {
                 "Client mismatch",
             );
         }
+        let Some(client_session_id) = existing.client_session_id else {
+            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+        };
+        match crate::service::app_session::sso_for_client(
+            &txn, client_session_id, user_id, client.id, app_id, existing.tenant_id,
+        ).await {
+            Ok(Some(id)) if id == session_id => {}
+            Ok(_) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
+            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+        }
         if existing.revoked_at.is_some() {
             // Explicit withdrawal is not evidence of a rotation replay.
             if existing.revoke_reason.as_deref() != Some("rotation") {
@@ -133,20 +143,14 @@ impl TokenService<'_> {
                 Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
                 Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
             }
-            // Release issuance locks before the shared session-wide revocation path.
-            // A failed attempt remains retryable with this same revoked token.
-            if let Err(error) = txn.rollback().await {
-                tracing::error!(%error, "Refresh token replay rollback failed");
+            if let Err(error) = crate::service::app_session::revoke_client(
+                &txn, client_session_id, existing.user_id, client.id, "refresh_token_reuse",
+            ).await {
+                tracing::error!(%error, "Refresh token replay revocation failed");
                 return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
             }
-            if let Some(session_id) = existing.session_id
-                && let Err(error) = self
-                    .state
-                    .session_service()
-                    .revoke_login_state(session_id, "refresh_token_reuse")
-                    .await
-            {
-                tracing::error!(%error, "Refresh token replay revocation failed");
+            if let Err(error) = txn.commit().await {
+                tracing::error!(%error, "Refresh token replay commit failed");
                 return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
             }
             return TokenEndpointResult::error_desc(
@@ -216,7 +220,7 @@ impl TokenService<'_> {
         let access_token = match issuer.issue_access_token(
             user.id,
             &scopes_str,
-            session_id,
+            Some(client_session_id),
             access.token_version,
             tenant.as_ref(),
         ) {
@@ -249,6 +253,7 @@ impl TokenService<'_> {
             tenant_member_version: Set(existing.tenant_member_version),
             client_id: Set(client.id),
             session_id: Set(session_id),
+            client_session_id: Set(Some(client_session_id)),
             scopes: Set(existing.scopes.clone()),
             created_at: Set(now),
             expires_at: Set(rt_expires),

@@ -36,13 +36,18 @@ pub async fn prepare(
         },
         None => None,
     };
-    let matches_session = hint
-        .as_ref()
-        .zip(session)
-        .is_some_and(|((_, claims), session)| {
+    let matches_session = if let Some(((client, claims), session)) = hint.as_ref().zip(session) {
+        if let Some(sid) = claims.sid.as_deref().and_then(|v| uuid::Uuid::parse_str(v).ok()) {
+            // The signed hint identifies an RP session, not the browser cookie.
+            let tenant = claims.tenant_id.as_deref().and_then(|v| uuid::Uuid::parse_str(v).ok());
             claims.sub == session.user_id.to_string()
-                && claims.sid.as_deref() == Some(session.id.to_string().as_str())
-        });
+                && super::app_session::sso_for_client(&state.db, sid, session.user_id, client.id, client.app_id, tenant).await? == Some(session.id)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     // Even a valid token for the same user must not silently end another session.
     let needs_confirmation = session.is_some() && !matches_session;
     let redirect = hint.as_ref().and_then(|(client, _)| {

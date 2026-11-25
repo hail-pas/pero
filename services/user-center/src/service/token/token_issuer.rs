@@ -64,10 +64,11 @@ impl<'a> TokenIssuer<'a> {
         scopes: &[String],
         nonce: Option<&str>,
         session: &crate::db::entity::sso_sessions::Model,
+        client_session_id: uuid::Uuid,
         hashes: OidcHashes<'_>,
         tenant: Option<&crate::service::tenant_context::TenantContext>,
     ) -> Result<String, jsonwebtoken::errors::Error> {
-        let sid = session.id.to_string();
+        let sid = client_session_id.to_string();
         let tenant_id = tenant.map(|c| c.tenant_id.to_string());
         let id_user = crate::service::scope::user_claims(user, scopes);
         let access_hash = pero_utils::oauth::jwt::oidc_hash(hashes.access_token);
