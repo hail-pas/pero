@@ -37,11 +37,27 @@ pub async fn prepare(
         None => None,
     };
     let matches_session = if let Some(((client, claims), session)) = hint.as_ref().zip(session) {
-        if let Some(sid) = claims.sid.as_deref().and_then(|v| uuid::Uuid::parse_str(v).ok()) {
+        if let Some(sid) = claims
+            .sid
+            .as_deref()
+            .and_then(|v| uuid::Uuid::parse_str(v).ok())
+        {
             // The signed hint identifies an RP session, not the browser cookie.
-            let tenant = claims.tenant_id.as_deref().and_then(|v| uuid::Uuid::parse_str(v).ok());
+            let tenant = claims
+                .tenant_id
+                .as_deref()
+                .and_then(|v| uuid::Uuid::parse_str(v).ok());
             claims.sub == session.user_id.to_string()
-                && super::app_session::sso_for_client(&state.db, sid, session.user_id, client.id, client.app_id, tenant).await? == Some(session.id)
+                && super::app_session::sso_for_client(
+                    &state.db,
+                    sid,
+                    session.user_id,
+                    client.id,
+                    client.app_id,
+                    tenant,
+                )
+                .await?
+                    == Some(session.id)
         } else {
             false
         }

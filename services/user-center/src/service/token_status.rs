@@ -99,8 +99,15 @@ pub async fn active_access(
         return Ok(None);
     };
     let Some(sso_id) = super::app_session::sso_for_client(
-        &state.db, sid, id, client.id, client.app_id, tenant.as_ref().map(|t| t.tenant_id),
-    ).await? else {
+        &state.db,
+        sid,
+        id,
+        client.id,
+        client.app_id,
+        tenant.as_ref().map(|t| t.tenant_id),
+    )
+    .await?
+    else {
         return Ok(None);
     };
     let Some(session) = crate::db::helper::session::app_query(

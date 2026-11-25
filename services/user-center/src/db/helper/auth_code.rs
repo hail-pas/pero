@@ -30,7 +30,9 @@ where
     C: ConnectionTrait,
 {
     let now = OffsetDateTime::now_utc();
-    let admission = crate::service::app_session::latest(db, params.user_id, params.app_id, params.session_id).await?;
+    let admission =
+        crate::service::app_session::latest(db, params.user_id, params.app_id, params.session_id)
+            .await?;
     let model = authorization_codes::ActiveModel {
         id: Set(Uuid::now_v7()),
         code_hash: Set(params.code_hash),

@@ -113,8 +113,15 @@ impl TokenService<'_> {
             return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
         };
         match crate::service::app_session::sso_for_client(
-            &txn, client_session_id, user_id, client.id, app_id, existing.tenant_id,
-        ).await {
+            &txn,
+            client_session_id,
+            user_id,
+            client.id,
+            app_id,
+            existing.tenant_id,
+        )
+        .await
+        {
             Ok(Some(id)) if id == session_id => {}
             Ok(_) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
@@ -144,8 +151,14 @@ impl TokenService<'_> {
                 Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
             }
             if let Err(error) = crate::service::app_session::revoke_client(
-                &txn, client_session_id, existing.user_id, client.id, "refresh_token_reuse",
-            ).await {
+                &txn,
+                client_session_id,
+                existing.user_id,
+                client.id,
+                "refresh_token_reuse",
+            )
+            .await
+            {
                 tracing::error!(%error, "Refresh token replay revocation failed");
                 return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
             }
@@ -211,7 +224,12 @@ impl TokenService<'_> {
             };
         let scopes_str = requested.join(" ");
         let session_id = Some(session_id);
-        let signing = match require_active_signing_key(&txn, i64::from(client.access_token_ttl_seconds)).await {
+        let signing = match require_active_signing_key(
+            &txn,
+            i64::from(client.access_token_ttl_seconds),
+        )
+        .await
+        {
             Ok(k) => k,
             Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
         };

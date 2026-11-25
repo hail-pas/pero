@@ -320,10 +320,17 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
         let takeover_allowed = grant_consent && !has_prompt(auth_request.prompt.as_deref(), "none");
-        if !takeover_allowed && super::app_session::needs_confirmation(
-            &txn, session.user_id, auth_request.app_id, session.id,
-            self.sso_config.session_idle_ttl_seconds,
-        ).await.map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))? {
+        if !takeover_allowed
+            && super::app_session::needs_confirmation(
+                &txn,
+                session.user_id,
+                auth_request.app_id,
+                session.id,
+                self.sso_config.session_idle_ttl_seconds,
+            )
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+        {
             return Err(OAuthError::AccessDenied);
         }
         auth_code::create(

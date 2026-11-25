@@ -153,8 +153,17 @@ async fn inspect(
         return Ok(serde_json::json!({"active":false}));
     };
     if crate::service::app_session::sso_for_client(
-        &state.db, sid, rt.user_id, client.id, client.app_id, rt.tenant_id,
-    ).await? != rt.session_id || rt.session_id.is_none() {
+        &state.db,
+        sid,
+        rt.user_id,
+        client.id,
+        client.app_id,
+        rt.tenant_id,
+    )
+    .await?
+        != rt.session_id
+        || rt.session_id.is_none()
+    {
         return Ok(serde_json::json!({"active":false}));
     }
     let session = crate::db::helper::session::app_query(
@@ -234,7 +243,14 @@ pub async fn revoke(
             token_status::active_access(&state, &input.token)
                 .await?
                 .filter(|access| access.client.id == client.id)
-                .and_then(|access| access.claims.sid.as_deref().and_then(|sid| uuid::Uuid::parse_str(sid).ok()).map(|sid| (access.user.id, sid)))
+                .and_then(|access| {
+                    access
+                        .claims
+                        .sid
+                        .as_deref()
+                        .and_then(|sid| uuid::Uuid::parse_str(sid).ok())
+                        .map(|sid| (access.user.id, sid))
+                })
         };
         if let Some((user, sid)) = target {
             let txn = state.db.begin().await?;
@@ -251,10 +267,8 @@ pub async fn revoke(
                 .lock_exclusive()
                 .one(&txn)
                 .await?;
-            crate::service::app_session::revoke_client(
-                &txn, sid, user, client.id, "token_revoked",
-            )
-            .await?;
+            crate::service::app_session::revoke_client(&txn, sid, user, client.id, "token_revoked")
+                .await?;
             txn.commit().await?;
         }
         Ok::<_, sea_orm::DbErr>(())

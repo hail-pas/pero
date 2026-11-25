@@ -180,8 +180,12 @@ pub async fn revoke_account_app_sessions(
     let txn = db.begin().await?;
     lock_account_session(&txn, session, config).await?;
     match (device, app) {
-        (Some(id), None) => super::app_session::revoke_device(&txn, session.user_id, id, "user_revoked").await?,
-        (None, Some(id)) => super::app_session::revoke_other_devices(&txn, session.user_id, id, session.id).await?,
+        (Some(id), None) => {
+            super::app_session::revoke_device(&txn, session.user_id, id, "user_revoked").await?
+        }
+        (None, Some(id)) => {
+            super::app_session::revoke_other_devices(&txn, session.user_id, id, session.id).await?
+        }
         _ => return Err(ManagementError::Invalid("invalid_request")),
     }
     txn.commit().await?;
