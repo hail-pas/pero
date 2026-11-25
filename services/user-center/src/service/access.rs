@@ -215,14 +215,14 @@ pub async fn active_app_access<C: ConnectionTrait>(
         .await
 }
 
-pub(crate) struct GrantAccess {
-    pub user: users::Model,
-    pub app: apps_entity::Model,
-    pub token_version: i64,
+pub struct GrantAccess {
+    pub(crate) user: users::Model,
+    pub(crate) app: apps_entity::Model,
+    pub(crate) token_version: i64,
 }
 
 /// Lock policy rows before a grant row so revocation cannot miss a concurrent issuance.
-pub(crate) async fn lock_grant_access<C: ConnectionTrait>(
+pub async fn lock_grant_access<C: ConnectionTrait>(
     db: &C,
     user_id: Uuid,
     app_id: Uuid,
