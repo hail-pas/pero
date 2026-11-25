@@ -254,9 +254,9 @@ pub async fn update_member(
     }
     if role == "owner" && action != "owner" {
         let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-            "SELECT count(*)::bigint AS n FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.role='owner' AND m.status='active' AND u.status='active' AND u.deleted_at IS NULL",[tenant.into()])).await?.ok_or(Error::Invalid("not_found"))?;
+            "SELECT count(*)::bigint AS n FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.user_id<>$2 AND m.role='owner' AND m.status='active' AND u.status='active' AND u.deleted_at IS NULL",[tenant.into(),target.into()])).await?.ok_or(Error::Invalid("not_found"))?;
         let count: i64 = row.try_get("", "n")?;
-        if count <= 1 {
+        if count == 0 {
             return Err(Error::Invalid("last_tenant_owner"));
         }
     }

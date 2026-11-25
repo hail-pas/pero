@@ -102,15 +102,23 @@ pub async fn ensure_oauth_app_access(
     if !app.is_some_and(|a| a.status == CommonStatus::Active) {
         return Ok(false);
     }
-    if !super_admin && !super::tenant_context::auto_eligible(&txn, session.user_id, app_id).await? {
-        return Ok(false);
-    }
-    // An explicit disabled admission is a deny: organization auto-admission must not restore it.
+    // Recheck admission under the app/access locks: a concurrent grant may have
+    // completed since the initial read.
     let existing = uaa::Entity::find_by_id((session.user_id, app_id))
         .lock_exclusive()
         .one(&txn)
         .await?;
-    if !super_admin && existing.is_some() {
+    if existing
+        .as_ref()
+        .is_some_and(|access| access.status == CommonStatus::Active)
+    {
+        return Ok(true);
+    }
+    // An explicit disabled admission is a deny: organization auto-admission must not restore it.
+    if !super_admin
+        && (existing.is_some()
+            || !super::tenant_context::auto_eligible(&txn, session.user_id, app_id).await?)
+    {
         return Ok(false);
     }
     let user = users::Entity::find_by_id(session.user_id)

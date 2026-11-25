@@ -62,6 +62,9 @@ pub async fn clean_expired_sso_sessions(db: &DatabaseConnection) -> Result<u64, 
             .column(sso_sessions::Column::Id)
             .filter(sso_sessions::Column::ExpiresAt.lt(now))
             .order_by_asc(sso_sessions::Column::ExpiresAt)
+            .order_by_asc(sso_sessions::Column::Id)
+            // Match token issuance and logout: lock sessions before refresh grants.
+            .lock_exclusive()
             .limit(BATCH_SIZE)
             .into_tuple()
             .all(&txn)
