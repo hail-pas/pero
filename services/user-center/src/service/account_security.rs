@@ -253,8 +253,14 @@ pub async fn close_account(
     }
     SessionService::revoke_all_login_state_for_user_in_db(&txn, user.id, "account_closed").await?;
     super::contact::invalidate_contact_credentials(&txn, user.id, None).await?;
-    super::security::execute(&txn,"DELETE FROM notification_outbox WHERE user_id=$1 OR enrollment_id IN (SELECT id FROM enrollments WHERE email=$2)",vec![user.id.into(),user.email.clone().into()]).await?;
-    super::security::execute(&txn,"UPDATE enrollments SET status='revoked' WHERE email=$1 AND status IN ('pending_verification','pending_approval','ready')",vec![user.email.clone().into()]).await?;
+    super::security::execute(&txn,
+        "DELETE FROM notification_outbox WHERE user_id=$1 OR enrollment_id IN (SELECT id FROM enrollments WHERE email=$2 OR phone=$3)",
+        vec![user.id.into(), user.email.clone().into(), user.phone.clone().into()],
+    ).await?;
+    super::security::execute(&txn,
+        "UPDATE enrollments SET status='revoked' WHERE (email=$1 OR phone=$2) AND status IN ('pending_verification','pending_approval','ready')",
+        vec![user.email.clone().into(), user.phone.clone().into()],
+    ).await?;
     super::security::execute(&txn,"UPDATE user_app_access SET status='disabled',token_version=token_version+1,updated_at=now() WHERE user_id=$1",vec![user.id.into()]).await?;
     super::security::execute(
         &txn,
