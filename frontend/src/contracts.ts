@@ -320,6 +320,13 @@ export interface ViewDataMap {
     reason: string;
     social: boolean;
     sent: boolean;
+    tenant_name?: string;
+    tenant_invitation?: boolean;
+    existing_account?: boolean;
+    signed_in?: boolean;
+    matching_account?: boolean;
+    allowed_methods?: string[];
+    providers?: LoginPage["providers"];
   };
   EnrollmentAdminView: AccountPage &
     ProgressList & {

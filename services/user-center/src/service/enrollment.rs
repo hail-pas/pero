@@ -3,7 +3,7 @@ use super::{ManagementError as Error, password::PasswordIdentityService, securit
 use crate::{
     db::{
         entity::{apps, identities, user_app_access, users},
-        enums::{CommonStatus, IdentityKind, UserStatus},
+        enums::{CommonStatus, UserStatus},
     },
     state::{app::AppState, session::SsoSession},
 };
@@ -32,6 +32,8 @@ pub struct SocialProof {
     pub subject: String,
     pub proved_at: i64,
     pub app: Option<Uuid>,
+    #[serde(default)]
+    pub invitation_hash: Option<String>,
 }
 impl SocialProof {
     pub fn is_fresh(&self) -> bool {
@@ -40,6 +42,7 @@ impl SocialProof {
     }
     fn matches(&self, row: &Enrollment) -> bool {
         self.is_fresh()
+            && self.invitation_hash.is_none()
             && row.provider_id == Some(self.provider)
             && row.subject.as_deref() == Some(self.subject.as_str())
     }
@@ -642,50 +645,19 @@ pub async fn finalize(
         }
         user
     } else {
-        let user = users::ActiveModel {
-            id: Set(Uuid::now_v7()),
-            username: Set(username.trim().to_owned()),
-            email: Set(row.email.clone()),
-            email_verified_at: Set(row.email.as_ref().map(|_| now)),
-            phone: Set(row.phone.clone()),
-            phone_verified_at: Set(row.phone.as_ref().map(|_| now)),
-            status: Set(UserStatus::Active),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        }
-        .insert(&txn)
-        .await?;
-        identity = Some(if let Some(provider_id) = row.provider_id {
-            super::provider::require_enabled_social(&txn, provider_id).await?;
+        use super::user::RegistrationCredential;
+        let credential = if let Some(provider_id) = row.provider_id {
             if !social_proof.is_some_and(|proof| proof.matches(&row)) {
                 return Err(Error::Invalid("social_reauthentication_required"));
             }
-            identities::ActiveModel {
-                id: Set(Uuid::now_v7()),
-                user_id: Set(user.id),
-                provider_id: Set(provider_id),
-                kind: Set(IdentityKind::Oauth),
-                subject: Set(row.subject.clone().ok_or_else(invalid)?),
-                profile: Set(serde_json::json!({})),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
-            }
-            .insert(&txn)
-            .await?
+            RegistrationCredential::Social { provider_id, subject: row.subject.as_deref().ok_or_else(invalid)? }
         } else {
-            let provider = crate::db::helper::identity_provider::find_local_provider(&txn).await?;
-            PasswordIdentityService::create_hashed(
-                &txn,
-                user.id,
-                provider.id,
-                user.id.to_string(),
-                hash.ok_or_else(invalid)?,
-                now,
-            )
-            .await?
-        });
+            RegistrationCredential::Password(hash.ok_or_else(invalid)?)
+        };
+        let (user, created_identity) = super::user::create_verified_user(
+            &txn, username, row.email.clone(), row.phone.clone(), credential,
+        ).await?;
+        identity = Some(created_identity);
         user
     };
     if let Some(app) = row.app_id {

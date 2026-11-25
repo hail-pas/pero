@@ -177,6 +177,7 @@ CREATE TABLE tenant_invitations (
     invited_by uuid REFERENCES users(id) ON DELETE SET NULL,
     expires_at timestamptz NOT NULL,
     accepted_at timestamptz,
+    accepted_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ux_tenant_invitation_pending ON tenant_invitations(tenant_id,email) WHERE status='pending';
@@ -1400,6 +1401,8 @@ END;
 $$;
 CREATE TRIGGER notification_outbox_deleted AFTER DELETE ON notification_outbox
 FOR EACH ROW EXECUTE FUNCTION notification_outbox_deleted();
+
+ALTER TABLE tenant_invitations ADD COLUMN client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL;
 
 -- Platform defaults and explicit per-application overrides share one policy shape.
 CREATE TABLE registration_policies (

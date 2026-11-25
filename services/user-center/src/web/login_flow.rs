@@ -220,7 +220,10 @@ pub async fn finish_enrollment(
             Ok(Some(client)) if client.status == CommonStatus::Active && Some(client.app_id) == result.app_id => {
                 match apps::Entity::find_by_id(client.app_id).one(&state.db).await {
                     Ok(Some(app)) if app.status == CommonStatus::Active => {
-                        if let Some(uri) = client.login_uri.filter(|uri| uri.starts_with("https://") && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()) {
+                        if let Some(mut uri) = client.login_uri.filter(|uri| uri.starts_with("https://") && pero_utils::redirect::validate_oauth_redirect_uri(uri, false).is_ok()) {
+                            if let Some(tenant) = result.tenant_id {
+                                pero_utils::encode::append_query_param(&mut uri, "tenant_id", &tenant.to_string());
+                            }
                             return (jar, Redirect::to(&uri)).into_response();
                         }
                     }

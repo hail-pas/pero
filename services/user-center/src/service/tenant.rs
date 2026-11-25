@@ -315,7 +315,18 @@ pub async fn invite(
     email: &str,
     role: &str,
 ) -> Result<()> {
-    let email = email.trim().to_lowercase();
+    invite_from_client(state, user, id, email, role, None).await
+}
+
+pub async fn invite_from_client(
+    state: &crate::state::app::AppState,
+    user: Uuid,
+    id: Uuid,
+    email: &str,
+    role: &str,
+    client_id: Option<Uuid>,
+) -> Result<()> {
+    let email = super::enrollment::email(email)?;
     if !matches!(role, "admin" | "member")
         || email.len() > 254
         || !validator::ValidateEmail::validate_email(&email)
@@ -368,11 +379,10 @@ pub async fn invite(
     let hash = pero_utils::crypto::sha256_hex(&token);
     let expiry = time::OffsetDateTime::now_utc() + time::Duration::days(7);
     exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND email=$2 AND status='pending'",vec![id.into(),email.clone().into()]).await?;
-    exec(&txn,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at) VALUES($1,$2,$3,$4,$5,$6)",vec![id.into(),email.clone().into(),role.into(),hash.into(),user.into(),expiry.into()]).await?;
+    exec(&txn,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at,client_id) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![id.into(),email.clone().into(),role.into(),hash.into(),user.into(),expiry.into(),client_id.into()]).await?;
     let mut link =
-        pero_utils::oauth::url::issuer_endpoint(&state.config.sso.base_url, "account/invitations");
-    link.push('/');
-    link.push_str(&token);
+        pero_utils::oauth::url::issuer_endpoint(&state.config.sso.base_url, "sso/register");
+    pero_utils::encode::append_query_param(&mut link, "invitation", &token);
     super::notify::enqueue(
         &txn,
         user,
@@ -424,15 +434,27 @@ pub struct InviteDetail {
     pub tenant_name: String,
     pub email: String,
     pub role: String,
+    pub client_id: Option<Uuid>,
+    pub app_id: Option<Uuid>,
 }
 pub async fn invitation<C: ConnectionTrait>(db: &C, token: &str) -> Result<InviteDetail> {
     let hash = pero_utils::crypto::sha256_hex(token);
     InviteDetail::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id WHERE i.token_hash=$1 AND i.status='pending' AND i.expires_at>now() AND t.status='active'",
+        "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role,i.client_id,c.app_id FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id LEFT JOIN oauth_clients c ON c.id=i.client_id WHERE i.token_hash=$1 AND i.status='pending' AND i.expires_at>now() AND t.status='active'",
         [hash.into()])).one(db).await?.ok_or(Error::Invalid("not_found"))
 }
 pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<()> {
     let txn = db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    accept_in_transaction(&txn, user, token).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+async fn accept_in_transaction(txn: &sea_orm::DatabaseTransaction, user: Uuid, token: &str) -> Result<()> {
+    if super::enrollment::policy(txn, None).await?.emergency_stop {
+        return Err(Error::Invalid("registration_closed"));
+    }
     let hash = pero_utils::crypto::sha256_hex(token);
     let invitation = txn
         .query_one_raw(Statement::from_sql_and_values(
@@ -443,9 +465,9 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
         .await?
         .ok_or(Error::Invalid("invalid_invitation"))?;
     let tenant: Uuid = invitation.try_get("", "tenant_id")?;
-    lock_organization(&txn, tenant).await?;
+    lock_organization(txn, tenant).await?;
     let row=txn.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR i.status='accepted') AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL AND u.status='active' AND u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members inviter JOIN users issuer ON issuer.id=inviter.user_id WHERE inviter.tenant_id=i.tenant_id AND inviter.user_id=i.invited_by AND inviter.status='active' AND issuer.status='active' AND issuer.deleted_at IS NULL AND (inviter.role='owner' OR (inviter.role='admin' AND i.role='member'))) FOR UPDATE OF i",
+        "SELECT i.id,i.tenant_id,i.role,i.status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id JOIN users u ON u.id=$2 WHERE i.token_hash=$1 AND i.status IN ('pending','accepted') AND (i.expires_at>now() OR (i.status='accepted' AND i.accepted_user_id=$2)) AND t.status='active' AND t.kind='organization' AND u.email=i.email AND u.email_verified_at IS NOT NULL AND u.status='active' AND u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM tenant_members inviter JOIN users issuer ON issuer.id=inviter.user_id WHERE inviter.tenant_id=i.tenant_id AND inviter.user_id=i.invited_by AND inviter.status='active' AND issuer.status='active' AND issuer.deleted_at IS NULL AND (inviter.role='owner' OR (inviter.role='admin' AND i.role='member'))) FOR UPDATE OF i",
         [hash.into(),user.into()])).await?.ok_or(Error::Invalid("invalid_invitation"))?;
     let id: Uuid = row.try_get("", "id")?;
     let role: String = row.try_get("", "role")?;
@@ -463,26 +485,90 @@ pub async fn accept(db: &DatabaseConnection, user: Uuid, token: &str) -> Result<
         };
     }
     if !joined {
-        if !can_invite(&txn, tenant).await? {
+        if !can_invite(txn, tenant).await? {
             return Err(Error::Invalid("tenant_member_limit"));
         }
-        exec(&txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
+        exec(txn,"INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(tenant_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',auth_version=tenant_members.auth_version+1,updated_at=now()",vec![tenant.into(),user.into(),role.into()]).await?;
     }
     exec(
-        &txn,
-        "UPDATE tenant_invitations SET status='accepted',accepted_at=now() WHERE id=$1",
-        vec![id.into()],
+        txn,
+        "UPDATE tenant_invitations SET status='accepted',accepted_at=now(),accepted_user_id=$2 WHERE id=$1",
+        vec![id.into(), user.into()],
     )
     .await?;
     audit(
-        &txn,
+        txn,
         user,
         "tenant.invitation.accepted",
         &tenant.to_string(),
     )
     .await?;
-    txn.commit().await?;
     Ok(())
+}
+
+
+pub async fn finalize_invitation(
+    state: &crate::state::app::AppState,
+    token: &str,
+    username: &str,
+    password: &str,
+    session: Option<&crate::state::session::SsoSession>,
+    proof: Option<&super::enrollment::SocialProof>,
+) -> Result<super::enrollment::EnrollmentResult> {
+    use crate::db::{entity::users, enums::UserStatus};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use super::{enrollment, password::PasswordIdentityService, user::RegistrationCredential};
+    let initial = invitation(&state.db, token).await?;
+    let exists = users::Entity::find().filter(users::Column::Email.eq(initial.email.clone())).one(&state.db).await?.is_some();
+    let proof = proof.filter(|proof| proof.is_fresh() && proof.invitation_hash.as_deref() == Some(pero_utils::crypto::sha256_hex(token).as_str()));
+    let hash = if !exists && proof.is_none() {
+        state.config.password.validate_password(password).map_err(Error::Validation)?;
+        Some(PasswordIdentityService::hash_password(password).await?)
+    } else {
+        None
+    };
+    let txn = state.db.begin().await?;
+    super::admin::lock_policy(&txn).await?;
+    let policy = enrollment::policy(&txn, None).await?;
+    if policy.emergency_stop {
+        return Err(Error::Invalid("registration_closed"));
+    }
+    // Lock the organization before checking current invitation and member capacity.
+    lock_organization(&txn, initial.tenant_id).await?;
+    let invite = invitation(&txn, token).await?;
+    let existing = users::Entity::find().filter(users::Column::Email.eq(invite.email.clone())).one(&txn).await?;
+    let (user_id, identity) = if let Some(user) = existing {
+        let session = session.filter(|s| s.user_id == user.id).ok_or(Error::Invalid("existing_account_login_required"))?;
+        super::account_security::lock_account_session(&txn, session, &state.config.sso).await?;
+        let user = users::Entity::find_by_id(user.id).one(&txn).await?.ok_or(Error::Invalid("invalid_invitation"))?;
+        if user.status != UserStatus::Active || user.deleted_at.is_some() || user.email.as_deref().and_then(|email| enrollment::email(email).ok()).as_deref() != Some(invite.email.as_str()) {
+            return Err(Error::Invalid("invalid_invitation"));
+        }
+        if user.email_verified_at.is_none() {
+            exec(&txn, "UPDATE users SET email_verified_at=now(),updated_at=now() WHERE id=$1", vec![user.id.into()]).await?;
+        }
+        (user.id, None)
+    } else {
+        if policy.mode == "closed" {
+            return Err(Error::Invalid("registration_closed"));
+        }
+        if !can_invite(&txn, invite.tenant_id).await? {
+            return Err(Error::Invalid("tenant_member_limit"));
+        }
+        let credential = if let Some(proof) = proof {
+            RegistrationCredential::Social { provider_id: proof.provider, subject: &proof.subject }
+        } else {
+            RegistrationCredential::Password(hash.ok_or(Error::Invalid("invalid_request"))?)
+        };
+        let (user, identity) = super::user::create_verified_user(&txn, username, Some(invite.email.clone()), None, credential).await?;
+        (user.id, Some(identity))
+    };
+    accept_in_transaction(&txn, user_id, token).await?;
+    txn.commit().await?;
+    Ok(enrollment::EnrollmentResult {
+        user_id, identity, app_id: invite.app_id, client_id: invite.client_id,
+        auth_request_id: None, tenant_id: Some(invite.tenant_id),
+    })
 }
 
 /// Set an explicit target state so client retries cannot accidentally restore access.

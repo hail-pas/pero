@@ -20,18 +20,19 @@ fn bearer(h: &HeaderMap) -> Result<&str, StatusCode> {
     super::extract_bearer(h).ok_or(StatusCode::UNAUTHORIZED)
 }
 
-async fn actor(
+async fn actor_access(
     s: &AppState,
     h: &HeaderMap,
     tenant: Option<Uuid>,
     allow_disabled_recovery: bool,
-) -> Result<Uuid, Response> {
+) -> Result<ActiveAccess, Response> {
     let token = bearer(h).map_err(IntoResponse::into_response)?;
-    let ActiveAccess { claims, user, .. } = match token_status::active_access(s, token).await {
+    let access = match token_status::active_access(s, token).await {
         Ok(Some(v)) => v,
         Ok(None) => return Err(StatusCode::UNAUTHORIZED.into_response()),
         Err(e) => return Err(util::dependency_error(e)),
     };
+    let ActiveAccess { claims, user, .. } = &access;
     if !claims
         .scope
         .split_whitespace()
@@ -59,7 +60,11 @@ async fn actor(
             Err(error) => return Err(util::management_response(Err(error))),
         }
     }
-    Ok(user.id)
+    Ok(access)
+}
+
+async fn actor(s: &AppState, h: &HeaderMap, tenant: Option<Uuid>, allow_disabled_recovery: bool) -> Result<Uuid, Response> {
+    Ok(actor_access(s, h, tenant, allow_disabled_recovery).await?.user.id)
 }
 /// A logged-in application's user may enumerate their eligible workspaces without tenant.manage.
 pub async fn choices(State(s): State<AppState>, h: HeaderMap) -> Response {
@@ -189,11 +194,11 @@ pub async fn invite(
     Path(id): Path<Uuid>,
     Json(f): Json<Invite>,
 ) -> Response {
-    let user = match actor(&s, &h, Some(id), false).await {
+    let access = match actor_access(&s, &h, Some(id), false).await {
         Ok(v) => v,
         Err(e) => return e,
     };
-    util::management_response(svc::invite(&s, user, id, &f.email, &f.role).await)
+    util::management_response(svc::invite_from_client(&s, access.user.id, id, &f.email, &f.role, Some(access.client.id)).await)
 }
 #[derive(Deserialize)]
 pub struct Rename {

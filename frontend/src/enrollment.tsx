@@ -43,7 +43,12 @@ export function Enrollment({
 }) {
   const { error: failure, busy, run, clearError } = useAction();
   const [formBusy, setFormBusy] = useState(false);
-  const [channel, setChannel] = useState<"phone" | "email">("email");
+  const [preferredChannel, setChannel] = useState<"phone" | "email">("email");
+  const methods = data.allowed_methods ?? ["email", "phone"];
+  const channel = methods.includes(preferredChannel) ? preferredChannel : "email" === preferredChannel && methods.includes("phone") ? "phone" : "email";
+  const socialProviders = (data.providers ?? []).map((p) => (
+    <Button key={p.key} component="a" href={`/sso/social/${encodeURIComponent(p.key)}/login?redirect=%2Fsso%2Fregister`} disabled={busy || formBusy} variant="outlined">{p.name}</Button>
+  ));
   return (
     <Container
       component="main"
@@ -65,7 +70,7 @@ export function Enrollment({
       <Heading
         title={t("注册与应用准入")}
         description={
-          data.app
+          data.tenant_invitation ? data.tenant_name : data.app
             ? t("完成此应用的准入要求后获得访问资格。")
             : t("验证手机或邮箱并完成账户注册。")
         }
@@ -101,6 +106,22 @@ export function Enrollment({
                 {t("退出本次注册流程")}
               </Button>
             )}
+          </Stack>
+        ) : data.tenant_invitation ? (
+          <Stack spacing={2}>
+            <Typography>{data.tenant_name} · {data.email}</Typography>
+            {data.matching_account ? (
+              <Button variant="contained" disabled={busy} onClick={() => run(() => mutate("/sso/register", { action: "finalize" }))}>{t("加入组织")}</Button>
+            ) : data.existing_account || data.signed_in ? (
+              <Button component={RouterLink} to="/account/login?redirect=%2Fsso%2Fregister" onClick={data.signed_in ? (event) => { event.preventDefault(); run(() => mutate("/sso/register", { action: "switch" })); } : undefined}>{t("登录已有账户")}</Button>
+            ) : (
+              <>
+                <FieldsForm disabled={busy} onBusyChange={setFormBusy} fields={[{name:"username",label:t("用户名"),required:true}, ...(!data.social ? [{name:"password",label:t("密码"),type:"password" as const,required:true}] : [])]} submit={(v) => mutate("/sso/register", {...v,action:"finalize"})} label={t("完成注册或确认加入")}/>
+                {socialProviders}
+                <Button component={RouterLink} to="/account/login?redirect=%2Fsso%2Fregister">{t("登录已有账户")}</Button>
+              </>
+            )}
+            <Button disabled={busy || formBusy} onClick={() => run(() => mutate("/sso/register", {action:"reset"}))}>{t("退出本次注册流程")}</Button>
           </Stack>
         ) : data.status ? (
           <Stack spacing={3}>
@@ -193,10 +214,10 @@ export function Enrollment({
         ) : (
           <Stack spacing={2}>
             <Stack direction="row" spacing={1}>
-              <Button variant={channel === "phone" ? "contained" : "outlined"} onClick={() => setChannel("phone")}>{t("手机号注册")}</Button>
-              <Button variant={channel === "email" ? "contained" : "outlined"} onClick={() => setChannel("email")}>{t("邮箱注册")}</Button>
+              {methods.includes("phone") && <Button variant={channel === "phone" ? "contained" : "outlined"} onClick={() => setChannel("phone")}>{t("手机号注册")}</Button>}
+              {methods.includes("email") && <Button variant={channel === "email" ? "contained" : "outlined"} onClick={() => setChannel("email")}>{t("邮箱注册")}</Button>}
             </Stack>
-            <FieldsForm
+            {methods.length > 0 && <FieldsForm
               key={channel}
               fields={[channel === "phone" ? {
                 name:"phone",label:t("手机号（含国际区号，例如 +8613800000000）"),required:true,
@@ -205,7 +226,8 @@ export function Enrollment({
               }]}
               submit={(v) => mutate("/sso/register", { ...v, app:data.app })}
               label={t(channel === "phone" ? "发送验证短信" : "发送验证邮件")}
-            />
+            />}
+            {!data.social && socialProviders}
           </Stack>
         )}
       </Panel>
