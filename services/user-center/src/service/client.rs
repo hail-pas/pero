@@ -138,16 +138,16 @@ pub async fn create(
     {
         return Err(ManagementError::Invalid("identifier_exists"));
     }
-    let secret = (input.client_type == OauthClientType::Confidential).then(|| {
-        if input.secret.is_empty() {
-            pero_utils::crypto::generate_token()
-        } else {
-            input.secret.clone()
+    let (secret, hash) = match input.client_type {
+        OauthClientType::Public => (None, None),
+        OauthClientType::Confidential if input.secret.is_empty() => {
+            let (secret, hash) = pero_utils::crypto::generate_client_secret();
+            (Some(secret), Some(hash))
         }
-    });
-    let hash = match &secret {
-        Some(secret) => Some(pero_utils::crypto::hash_secret_async(secret).await?),
-        None => None,
+        OauthClientType::Confidential => (
+            Some(input.secret.clone()),
+            Some(pero_utils::crypto::hash_secret_async(&input.secret).await?),
+        ),
     };
     let mut active = oauth_clients::ActiveModel {
         id: Set(uuid::Uuid::now_v7()),
@@ -230,9 +230,9 @@ pub async fn reset_secret(
     if current.r#type == OauthClientType::Public {
         return Err(ManagementError::Invalid("invalid_client_type"));
     }
-    let secret = pero_utils::crypto::generate_token();
+    let (secret, hash) = pero_utils::crypto::generate_client_secret();
     let mut active: oauth_clients::ActiveModel = current.clone().into();
-    active.secret_hash = Set(Some(pero_utils::crypto::hash_secret_async(&secret).await?));
+    active.secret_hash = Set(Some(hash));
     active.previous_secret_hash = Set(None);
     active.previous_secret_expires_at = Set(None);
     active.updated_at = Set(time::OffsetDateTime::now_utc());
@@ -292,8 +292,7 @@ pub async fn rotate_secret(
     {
         return Err(ManagementError::Invalid("secret_rotation_pending"));
     }
-    let secret = pero_utils::crypto::generate_token();
-    let hash = pero_utils::crypto::hash_secret_async(&secret).await?;
+    let (secret, hash) = pero_utils::crypto::generate_client_secret();
     let mut active: oauth_clients::ActiveModel = current.clone().into();
     active.previous_secret_hash = Set(current.secret_hash.clone());
     active.previous_secret_expires_at = Set(Some(

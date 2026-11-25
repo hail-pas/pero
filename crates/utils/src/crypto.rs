@@ -16,6 +16,16 @@ pub fn generate_token() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+// Only server-generated, 256-bit random client secrets use a fast digest.
+// User-supplied secrets must continue to use a password hash.
+const CLIENT_SECRET_SHA256_PREFIX: &str = "sha256:";
+
+pub fn generate_client_secret() -> (String, String) {
+    let secret = generate_token();
+    let hash = format!("{CLIENT_SECRET_SHA256_PREFIX}{}", sha256_hex(&secret));
+    (secret, hash)
+}
+
 pub fn generate_code() -> String {
     let n: u32 = rand::random_range(0..1_000_000);
     format!("{n:06}")
@@ -33,6 +43,12 @@ pub fn hash_secret(secret: &str) -> Result<String, AppError> {
 }
 
 pub fn verify_secret(secret: &str, hash: &str) -> Result<bool, AppError> {
+    if let Some(digest) = hash.strip_prefix(CLIENT_SECRET_SHA256_PREFIX) {
+        return Ok(constant_time_eq(
+            sha256_hex(secret).as_bytes(),
+            digest.as_bytes(),
+        ));
+    }
     password::verify_password(secret, hash)
         .map_err(|_| AppError::internal("secret_verify_failed", "Failed to verify secret"))
 }
@@ -102,12 +118,25 @@ pub async fn hash_secret_async(secret: &str) -> Result<String, AppError> {
 }
 
 pub async fn verify_secret_async(secret: &str, hash: &str) -> Result<bool, AppError> {
+    if hash.starts_with(CLIENT_SECRET_SHA256_PREFIX) {
+        return verify_secret(secret, hash);
+    }
     let (secret, hash) = (secret.to_owned(), hash.to_owned());
     run_crypto(move || verify_secret(&secret, &hash)).await
 }
 
 #[cfg(test)]
 mod secret_tests {
+    #[tokio::test]
+    async fn generated_client_secrets_use_a_fast_digest() {
+        let (secret, hash) = super::generate_client_secret();
+        assert!(hash.starts_with("sha256:"));
+        assert_eq!(secret.len(), 43);
+        assert!(super::verify_secret_async(&secret, &hash).await.unwrap());
+        assert!(!super::verify_secret_async("wrong", &hash).await.unwrap());
+        assert!(!super::verify_secret_async(&hash, &hash).await.unwrap());
+    }
+
     #[test]
     fn client_secret_verification_checks_the_entire_input() {
         let prefix = "a".repeat(72);
