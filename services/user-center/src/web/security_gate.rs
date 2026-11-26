@@ -34,7 +34,10 @@ pub async fn gate(
         // expired MFA challenge, including accounts with only an upstream IdP.
         let primary_login = matches!(
             path,
-            "/sso/login" | "/account/login" | "/sso/select-account"
+            "/sso/login"
+                | "/account/login"
+                | "/sso/select-account"
+                | crate::web::sso::register::LOGIN_PATH
         ) || path.starts_with("/sso/social/")
             && matches!(path.rsplit('/').next(), Some("login" | "callback"));
         // Authorize validates the client and handles prompt=none itself. Its

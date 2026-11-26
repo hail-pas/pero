@@ -111,28 +111,18 @@ async fn delegated_user_invitations_follow_current_permissions() {
     // UsersCreate permits platform invitations, never app grants or domain exceptions.
     let address = format!("delegated-{}@example.test", Uuid::now_v7().simple());
     assert!(
-        enrollment::start(
-            &f.state,
-            &address,
-            Some(f.app),
-            Some((&actor.session, false, ""))
-        )
-        .await
-        .is_err()
+        enrollment::invite(&f.state, &address, Some(f.app), &actor.session, false, "")
+            .await
+            .is_err()
     );
     assert!(
-        enrollment::start(
-            &f.state,
-            &address,
-            None,
-            Some((&actor.session, true, "exception"))
-        )
-        .await
-        .is_err()
+        enrollment::invite(&f.state, &address, None, &actor.session, true, "exception")
+            .await
+            .is_err()
     );
     for complete in [true, false] {
         let address = format!("delegated-{}@example.test", Uuid::now_v7().simple());
-        enrollment::start(&f.state, &address, None, Some((&actor.session, false, "")))
+        enrollment::invite(&f.state, &address, None, &actor.session, false, "")
             .await
             .unwrap();
         let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
@@ -235,17 +225,38 @@ async fn organization_invitation_creates_account_and_membership_once() {
         vec![organization.into(), f.user.into()],
     )
     .await;
-    let token = pero_utils::crypto::generate_token();
     f.sql(
-        "INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at,client_id) VALUES($1,'invited@example.test','member',$2,$3,now()+interval '1 day',$4)",
-        vec![
-            organization.into(),
-            pero_utils::crypto::sha256_hex(&token).into(),
-            f.user.into(),
-            f.client.into(),
-        ],
+        "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
+        vec![f.client.into()],
     )
     .await;
+    let email = format!("invite-{}@example.test", organization.simple());
+    tenant::invite_from_client(
+        &f.state,
+        f.user,
+        organization,
+        &email,
+        "member",
+        Some(f.client),
+    )
+    .await
+    .unwrap();
+    let invitation = f.state.db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT n.id, pgp_sym_decrypt(n.payload_enc,current_setting('app.encrypt_key')) AS payload
+         FROM tenant_invitations i JOIN notification_outbox n ON n.id=i.notification_id WHERE i.tenant_id=$1",
+        [organization.into()],
+    )).await.unwrap().unwrap();
+    let notification: Uuid = invitation.try_get("", "id").unwrap();
+    let payload: Value =
+        serde_json::from_str(&invitation.try_get::<String>("", "payload").unwrap()).unwrap();
+    let link = url::Url::parse(payload["link"].as_str().unwrap()).unwrap();
+    let token = link
+        .query_pairs()
+        .find(|(key, _)| key == "invitation")
+        .unwrap()
+        .1
+        .into_owned();
     let result = tenant::finalize_invitation(
         &f.state,
         &token,
@@ -268,6 +279,18 @@ async fn organization_invitation_creates_account_and_membership_once() {
         assert_eq!(row.try_get::<i64>("", column).unwrap(), 1);
     }
     assert!(
+        f.state
+            .db
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 FROM notification_outbox WHERE id=$1",
+                [notification.into()],
+            ))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
         tenant::finalize_invitation(
             &f.state,
             &token,
@@ -279,6 +302,20 @@ async fn organization_invitation_creates_account_and_membership_once() {
         .await
         .is_err()
     );
+    tenant::invite(&f.state, f.user, organization, &email, "member")
+        .await
+        .unwrap();
+    tenant::update_member(&f.state.db, f.user, organization, result.user_id, "remove")
+        .await
+        .unwrap();
+    let reissued = f.state.db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT i.status, EXISTS(SELECT 1 FROM notification_outbox n WHERE n.id=i.notification_id) AS queued
+         FROM tenant_invitations i WHERE i.tenant_id=$1 AND i.notification_id<>$2",
+        [organization.into(), notification.into()],
+    )).await.unwrap().unwrap();
+    assert_eq!(reissued.try_get::<String>("", "status").unwrap(), "revoked");
+    assert!(!reissued.try_get::<bool>("", "queued").unwrap());
     f.cleanup().await;
 }
 
@@ -861,6 +898,9 @@ async fn expired_application_registration_returns_to_initiating_client() {
     )
     .await;
     let router = user_center::router::build(f.state.clone());
+    let (_, unavailable, _) = call(&router, "", "/sso/register?entry=application", None).await;
+    assert_eq!(unavailable["data"]["mode"], "closed");
+    assert_eq!(unavailable["data"]["error"], "enrollment_request_expired");
     let uri = format!(
         "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=create",
         f.client
@@ -882,8 +922,203 @@ async fn expired_application_registration_returns_to_initiating_client() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         redirect["redirect"],
-        "https://client.example.test/login?enrollment_status=cancelled"
+        "https://client.example.test/login?enrollment_status=expired"
     );
+
+    let (session, csrf, _, _) = f.login(f.user).await;
+    let with_session = |headers: &axum::http::HeaderMap| {
+        headers
+            .get_all("set-cookie")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .filter(|value| !value.contains("Max-Age=0"))
+            .filter_map(|value| value.split(';').next())
+            .fold(session.clone(), |cookies, pair| {
+                format!("{cookies}; {pair}")
+            })
+    };
+    let first = with_session(&headers);
+    let (_, page, _) = call(&router, &first, "/sso/register", None).await;
+    let (_, resume, _) = call(
+        &router,
+        &first,
+        "/sso/register",
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "use_account"),
+            ("flow", page["data"]["flow"].as_str().unwrap()),
+        ]),
+    )
+    .await;
+    let target = resume["redirect"].as_str().unwrap();
+    assert!(target.starts_with("/oauth2/authorize/resume?enrollment="));
+
+    let (_, _, second_headers) = call(&router, "", &uri, None).await;
+    let nonce_from = |headers: &axum::http::HeaderMap| {
+        let nonce_name = f.state.cookie_factory().nonce_cookie_name();
+        headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok()?.split(';').next())
+            .find(|pair| {
+                pair.split_once('=')
+                    .is_some_and(|(name, _)| name == nonce_name)
+            })
+            .unwrap()
+            .to_owned()
+    };
+    let first_nonce = nonce_from(&headers);
+    let second_nonce = nonce_from(&second_headers);
+    let (_, login, _) = call(&router, &first_nonce, "/sso/login", None).await;
+    let registration_url = login["data"]["registration_url"].as_str().unwrap();
+    let (_, entry, _) = call(&router, &first_nonce, registration_url, None).await;
+    assert_eq!(entry["redirect"], "/sso/register");
+    let (_, expired, _) = call(&router, "", registration_url, None).await;
+    assert_eq!(
+        expired["redirect"],
+        "https://client.example.test/login?enrollment_status=expired"
+    );
+    let (_, stale, _) = call(&router, &second_nonce, registration_url, None).await;
+    assert_eq!(stale["data"]["error"], "enrollment_flow_changed");
+
+    let second = with_session(&second_headers);
+    let (_, fallback, _) = call(&router, &second, target, None).await;
+    assert_eq!(fallback["redirect"], "https://client.example.test/login");
+    let stale_flow = page["data"]["flow"].as_str().unwrap();
+    let account_login = format!("/sso/register/login?redirect=%2Fsso%2Fregister&flow={stale_flow}");
+    let unsigned_browser = format!("{context}; {first_nonce}");
+    let (_, login, _) = call(&router, &unsigned_browser, &account_login, None).await;
+    assert_eq!(login["data"]["flow"], stale_flow);
+    let (_, stale_login, _) = call(&router, &second, &account_login, None).await;
+    assert_eq!(
+        stale_login["redirect"],
+        "/sso/register?error=enrollment_flow_changed"
+    );
+    let (_, social, _) = call(
+        &router,
+        &second,
+        &format!("/sso/social/old-provider/login?redirect=%2Fsso%2Fregister&existing=true&flow={stale_flow}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        social["redirect"],
+        "/sso/register?error=enrollment_flow_changed"
+    );
+    let (_, page, _) = call(&router, &second, "/sso/register", None).await;
+    assert_eq!(page["data"]["app"], f.app.to_string());
+    for path in [
+        "/sso/register?token=invalid",
+        "/sso/register?invitation=invalid",
+    ] {
+        let (_, unchanged, _) = call(&router, &second, path, None).await;
+        assert_eq!(unchanged["data"]["app"], f.app.to_string());
+        assert_eq!(unchanged["data"]["flow"], page["data"]["flow"]);
+    }
+
+    let (_, _, headers) = call(&router, "", &format!("{uri}&state=completed"), None).await;
+    let token = pero_utils::crypto::generate_token();
+    f.sql(
+        "INSERT INTO enrollments(id,app_id,client_id,auth_request_id,email,token_hash,status,verified_at,completed_user_id,expires_at)
+         SELECT $1,app_id,client_id,id,'member@example.test',$2,'completed',now(),$3,now()+interval '1 hour'
+         FROM authorization_requests WHERE client_id=$4 AND client_state='completed'",
+        vec![Uuid::now_v7().into(), pero_utils::crypto::sha256_hex(&token).into(), f.user.into(), f.client.into()],
+    )
+    .await;
+    let browser = format!("{}; pero_enrollment={token}", with_session(&headers));
+    let (_, completed, _) = call(&router, &browser, "/sso/register", None).await;
+    let (_, continued, _) = call(
+        &router,
+        &browser,
+        "/sso/register",
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "continue"),
+            ("flow", completed["data"]["flow"].as_str().unwrap()),
+        ]),
+    )
+    .await;
+    let continuation = continued["redirect"].as_str().unwrap();
+    let (other, _, _, _) = f.login(f.admin).await;
+    let nonce = nonce_from(&headers);
+    let (_, wrong_account, _) =
+        call(&router, &format!("{other}; {nonce}"), continuation, None).await;
+    assert_eq!(
+        wrong_account["redirect"],
+        "https://client.example.test/login"
+    );
+    let (_, resumed, _) = call(&router, &browser, continuation, None).await;
+    assert!(
+        resumed["redirect"]
+            .as_str()
+            .unwrap()
+            .starts_with("/oauth2/authorize/access?token=")
+    );
+
+    f.sql(
+        "UPDATE oauth_clients SET require_pkce=true WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let (_, fallback, _) = call(&router, &first, target, None).await;
+    assert_eq!(fallback["redirect"], "https://client.example.test/login");
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn portal_enrollment_keeps_the_client_after_the_recovery_request_expires() {
+    let f = Fixture::new().await;
+    let (cookies, csrf, _, _) = f.login(f.user).await;
+    let router = user_center::router::build(f.state.clone());
+    f.sql(
+        "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let authorize = format!(
+        "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid",
+        f.client
+    );
+    let (_, denied, _) = call(&router, &cookies, &authorize, None).await;
+    let access = denied["redirect"].as_str().unwrap();
+    let (_, denied, _) = call(&router, &cookies, access, None).await;
+    let recovery = denied["data"]["token"].as_str().unwrap();
+    f.sql(
+        "DELETE FROM authorization_requests WHERE client_id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let (_, expired, _) = call(&router, &cookies, access, None).await;
+    assert_eq!(expired["data"]["expired"], true);
+    assert_eq!(
+        expired["data"]["login_url"],
+        "https://client.example.test/login"
+    );
+    let (_, joined, _) = call(
+        &router,
+        &cookies,
+        &format!("/account/applications/{}", f.app),
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "join"),
+            ("recovery", recovery),
+        ]),
+    )
+    .await;
+    assert_eq!(joined["code"], 0);
+    let row = f
+        .state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT client_id FROM enrollments WHERE requested_user_id=$1 AND app_id=$2",
+            [f.user.into(), f.app.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.try_get::<Uuid>("", "client_id").unwrap(), f.client);
     f.cleanup().await;
 }
 
@@ -904,7 +1139,7 @@ async fn organization_only_apps_reject_self_service_enrollment_from_the_portal()
         vec![Uuid::now_v7().into(), f.app.into(), pero_utils::crypto::sha256_hex(&token).into()],
     )
     .await;
-    let (_, _, _, raw) = f.login(f.user).await;
+    let (cookies, csrf, _, raw) = f.login(f.user).await;
     let session = f
         .state
         .session_service()
@@ -912,10 +1147,16 @@ async fn organization_only_apps_reject_self_service_enrollment_from_the_portal()
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(
-        enrollment::start(&f.state, "member@example.test", Some(f.app), None).await,
-        Err(ManagementError::Invalid("enrollment_unavailable"))
-    ));
+    let router = user_center::router::build(f.state.clone());
+    let (status, joined, _) = call(
+        &router,
+        &cookies,
+        &format!("/account/applications/{}", f.app),
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(joined["error"], "enrollment_unavailable");
     assert!(matches!(
         enrollment::finalize(&f.state, &token, "", "", Some(&session), None).await,
         Err(ManagementError::Invalid("enrollment_unavailable"))
@@ -992,6 +1233,298 @@ async fn enrollment_approval_tracks_effective_policy() {
         assert_eq!(row.status, "ready");
         assert!(row.approved_by.is_none());
     }
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn existing_account_enrollment_reuses_the_request_and_keeps_progress() {
+    use user_center::service::{ManagementError, enrollment};
+
+    let f = Fixture::new().await;
+    let (cookies, csrf, _, raw) = f.login(f.user).await;
+    let session = f
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let router = user_center::router::build(f.state.clone());
+    f.sql(
+        "UPDATE users SET email='portal-registration@example.test' WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    f.sql(
+        "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let tenant = f
+        .state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM tenants WHERE owner_user_id=$1 AND kind='personal'",
+            [f.user.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<Uuid>("", "id")
+        .unwrap();
+    let authorize = format!(
+        "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&tenant_id={tenant}",
+        f.client
+    );
+    let (_, denied, _) = call(&router, &cookies, &authorize, None).await;
+    let access = denied["redirect"].as_str().unwrap();
+    assert!(access.starts_with("/oauth2/authorize/access?token="));
+    let (_, denied, _) = call(&router, &cookies, access, None).await;
+    let recovery = denied["data"]["token"].as_str().unwrap();
+    for _ in 0..2 {
+        let (_, joined, _) = call(
+            &router,
+            &cookies,
+            &format!("/account/applications/{}", f.app),
+            Some(&[
+                ("csrf_token", &csrf),
+                ("action", "join"),
+                ("recovery", recovery),
+            ]),
+        )
+        .await;
+        assert_eq!(joined["code"], 0);
+    }
+    let rows = f.state.db.query_all_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT e.id, pgp_sym_decrypt(n.payload_enc,current_setting('app.encrypt_key')) AS payload
+         FROM enrollments e JOIN notification_outbox n ON n.enrollment_id=e.id WHERE e.requested_user_id=$1",
+        [f.user.into()],
+    )).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let id: Uuid = rows[0].try_get("", "id").unwrap();
+    let original = enrollment::progress(&f.state.db, id).await.unwrap();
+    assert_eq!(original.tenant_id, Some(tenant));
+    let (_, denied, _) = call(
+        &router,
+        &cookies,
+        &format!("{authorize}&state=second"),
+        None,
+    )
+    .await;
+    let (_, denied, _) = call(
+        &router,
+        &cookies,
+        denied["redirect"].as_str().unwrap(),
+        None,
+    )
+    .await;
+    let (_, joined, _) = call(
+        &router,
+        &cookies,
+        &format!("/account/applications/{}", f.app),
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "join"),
+            ("recovery", denied["data"]["token"].as_str().unwrap()),
+        ]),
+    )
+    .await;
+    assert_eq!(joined["code"], 0);
+    let count = f
+        .state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM enrollments WHERE requested_user_id=$1",
+            [f.user.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "count")
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        enrollment::progress(&f.state.db, id)
+            .await
+            .unwrap()
+            .auth_request_id,
+        original.auth_request_id
+    );
+    let payload: Value =
+        serde_json::from_str(&rows[0].try_get::<String>("", "payload").unwrap()).unwrap();
+    let link = url::Url::parse(payload["link"].as_str().unwrap()).unwrap();
+    let (status, _, headers) = call(
+        &router,
+        &cookies,
+        &format!("{}?{}", link.path(), link.query().unwrap()),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let browser = headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| {
+            let value = value.to_str().ok()?;
+            (!value.contains("Max-Age=0") && value.starts_with("pero_enrollment"))
+                .then(|| value.split(';').next().unwrap())
+        })
+        .fold(cookies, |cookies, pair| format!("{cookies}; {pair}"));
+    let (_, ready, headers) = call(&router, &browser, "/sso/register", None).await;
+    assert_eq!(ready["data"]["status"], "pending_verification");
+    let flow = ready["data"]["flow"].as_str().unwrap();
+    assert!(headers.get("location").is_none());
+    let (_, invalid_invitation, _) =
+        call(&router, &browser, "/sso/register?invitation=invalid", None).await;
+    assert_eq!(invalid_invitation["data"]["status"], "pending_verification");
+    assert_eq!(invalid_invitation["data"]["flow"], flow);
+    assert_eq!(invalid_invitation["data"]["error"], "invalid_invitation");
+    let (status, _, _) = call(
+        &router,
+        &browser,
+        "/sso/register",
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "verify"),
+            ("flow", "another-flow"),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (_, verified, _) = call(
+        &router,
+        &browser,
+        "/sso/register",
+        Some(&[("csrf_token", &csrf), ("action", "verify"), ("flow", flow)]),
+    )
+    .await;
+    assert_eq!(verified["data"]["status"], "pending_approval");
+    assert_eq!(verified["data"]["can_resend"], true);
+    let (_, stale, _) = call(&router, &browser, "/sso/register", None).await;
+    assert_eq!(stale["data"]["can_resend"], false);
+    let (status, _, _) = call(
+        &router,
+        &browser,
+        "/sso/register",
+        Some(&[("csrf_token", &csrf), ("action", "resend"), ("flow", flow)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let token = link
+        .query_pairs()
+        .find(|(key, _)| key == "token")
+        .unwrap()
+        .1
+        .into_owned();
+    f.sql(
+        "UPDATE users SET email='moved@example.test' WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    assert!(matches!(
+        enrollment::finalize(&f.state, &token, "", "", Some(&session), None).await,
+        Err(ManagementError::Invalid("enrollment_contact_changed"))
+    ));
+    f.sql(
+        "UPDATE users SET email='portal-registration@example.test' WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+        vec![f.user.into(), f.app.into()],
+    )
+    .await;
+    let current_token = enrollment::owner_action(&f.state, &session, id, "continue")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(current_token, token);
+    let (_, pending, _) = call(&router, &browser, "/sso/register", None).await;
+    assert_eq!(pending["data"]["status"], "pending_approval");
+    assert_eq!(pending["data"]["can_act"], false);
+    let browser_with_token = format!(
+        "{}; pero_enrollment={current_token}",
+        browser
+            .split("; ")
+            .filter(|pair| !pair.starts_with("pero_enrollment="))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+    let (_, ready, _) = call(&router, &browser_with_token, "/sso/register", None).await;
+    let finalize = [
+        ("csrf_token", csrf.as_str()),
+        ("action", "finalize"),
+        ("flow", ready["data"]["flow"].as_str().unwrap()),
+    ];
+    f.sql(
+        "UPDATE sso_sessions SET mfa_required=true WHERE id=$1",
+        vec![session.id.into()],
+    )
+    .await;
+    let (_, mfa, _) = call(
+        &router,
+        &browser_with_token,
+        "/sso/register",
+        Some(&finalize),
+    )
+    .await;
+    assert_eq!(mfa["redirect"], "/sso/mfa?redirect=%2Fsso%2Fregister");
+    f.sql(
+        "UPDATE sso_sessions SET mfa_verified_at=now() WHERE id=$1",
+        vec![session.id.into()],
+    )
+    .await;
+    let (_, resumed, _) = call(
+        &router,
+        &browser_with_token,
+        "/sso/register",
+        Some(&finalize),
+    )
+    .await;
+    assert_eq!(resumed["redirect"], "/sso/consent");
+    assert_eq!(
+        enrollment::progress(&f.state.db, id).await.unwrap().status,
+        "completed"
+    );
+    let (_, completed, _) = call(&router, &browser, "/sso/register", None).await;
+    assert_eq!(completed["data"]["status"], "completed");
+    let flow = completed["data"]["flow"].as_str().unwrap();
+    let (_, continued, _) = call(
+        &router,
+        &browser,
+        "/sso/register",
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "continue"),
+            ("flow", flow),
+        ]),
+    )
+    .await;
+    assert_eq!(continued["redirect"], "/sso/consent");
+
+    let (other, other_csrf, _, _) = f.login(f.admin).await;
+    let other_browser = browser
+        .split("; ")
+        .filter(|pair| pair.starts_with("pero_enrollment"))
+        .fold(other, |cookies, pair| format!("{cookies}; {pair}"));
+    let (status, _, _) = call(
+        &router,
+        &other_browser,
+        "/sso/register",
+        Some(&[
+            ("csrf_token", &other_csrf),
+            ("action", "continue"),
+            ("flow", flow),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     f.cleanup().await;
 }
 

@@ -160,7 +160,9 @@ impl TokenService<'_> {
             ));
         }
 
-        if client.require_pkce && auth_code.code_challenge.is_none() {
+        if (client.require_pkce || client.r#type == crate::db::enums::OauthClientType::Public)
+            && auth_code.code_challenge.is_none()
+        {
             return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "PKCE is required for this client",

@@ -17,38 +17,6 @@ async fn sql(db: &sea_orm::DatabaseConnection, q: &str, v: Vec<sea_orm::Value>) 
         .await
         .unwrap();
 }
-fn jwt(
-    issuer: &str,
-    sub: Uuid,
-    aud: &str,
-    sid: Uuid,
-    scope: Option<&str>,
-    at_hash: Option<String>,
-    tenant: &user_center::service::tenant_context::TenantContext,
-) -> String {
-    let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let mut c = serde_json::json!({"iss":issuer,"sub":sub.to_string(),"aud":aud,"sid":sid.to_string(),"exp":now+3600,"iat":now});
-    if let Some(s) = scope {
-        c["scope"] = s.into();
-        c["client_version"] = 0.into();
-        c["access_version"] = 0.into();
-        c["tenant_id"] = tenant.tenant_id.to_string().into();
-        c["tenant_kind"] = tenant.tenant_kind.clone().into();
-        c["tenant_version"] = tenant.tenant_version.into();
-        c["tenant_member_version"] = tenant.tenant_member_version.into();
-    }
-    if let Some(s) = at_hash {
-        c["at_hash"] = s.into();
-    }
-    let mut h = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-    h.kid = Some("review".into());
-    jsonwebtoken::encode(
-        &h,
-        &c,
-        &jsonwebtoken::EncodingKey::from_rsa_pem(PRIVATE.as_bytes()).unwrap(),
-    )
-    .unwrap()
-}
 #[tokio::test]
 #[ignore = "requires dedicated PERO_TEST_DATABASE_URL and PERO_TEST_REDIS_URL"]
 async fn authorization_and_recovery_regressions() {
@@ -121,15 +89,25 @@ async fn authorization_and_recovery_regressions() {
         .unwrap();
     let rp_sid =
         database::client_session(&db, user, app_a, client_a, sid_old, Some(tenant.tenant_id)).await;
-    let old_at = jwt(
-        &issuer,
-        user,
-        "admin-client",
-        rp_sid,
-        Some("openid"),
-        None,
-        &tenant,
-    );
+    let old_at = pero_utils::oauth::jwt::sign_access_token_with_key(
+        &pero_utils::oauth::jwt::AccessTokenParams {
+            issuer: &issuer,
+            user_id: &user.to_string(),
+            client_identifier: "admin-client",
+            scopes: "openid",
+            client_version: 0,
+            access_version: 0,
+            tenant_id: Some(&tenant.tenant_id.to_string()),
+            tenant_kind: Some(tenant.tenant_kind),
+            tenant_version: Some(tenant.tenant_version),
+            tenant_member_version: Some(tenant.tenant_member_version),
+            ttl_seconds: 3600,
+            session_id: Some(&rp_sid.to_string()),
+            kid: Some("review"),
+        },
+        &jsonwebtoken::EncodingKey::from_rsa_pem(PRIVATE.as_bytes()).unwrap(),
+    )
+    .unwrap();
     // Authorize max_age=0 using a minute-old session and existing consent.
     sql(
         &db,
@@ -719,6 +697,18 @@ async fn authorization_and_recovery_regressions() {
             .unwrap()
             .is_none()
     );
+    let (jar, csrf_token) = state.web_security().ensure_csrf(CookieJar::new());
+    let response = user_center::web::sso::register::get(
+        State(state.clone()),
+        jar.clone(),
+        axum::extract::Query(Default::default()),
+    )
+    .await;
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let view: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let flow = view["data"]["flow"].as_str().unwrap().to_owned();
     guard.shutdown().await;
     assert!(matches!(
         user_center::service::contact::ContactVerificationService::new(&state)
@@ -726,7 +716,6 @@ async fn authorization_and_recovery_regressions() {
             .await,
         Err(user_center::service::contact::ContactError::ServiceUnavailable)
     ));
-    let (jar, csrf_token) = state.web_security().ensure_csrf(CookieJar::new());
     let response = user_center::web::sso::register::post(
         State(state.clone()),
         jar,
@@ -739,6 +728,7 @@ async fn authorization_and_recovery_regressions() {
         HeaderMap::new(),
         Form(user_center::web::sso::register::Input {
             csrf_token,
+            flow,
             email: format!("dependency-{user}@example.com"),
             ..Default::default()
         }),

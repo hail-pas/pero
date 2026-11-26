@@ -22,6 +22,10 @@ pub fn routes() -> Router<AppState> {
         .route("/sso/login", get(login::get).post(login::post))
         .route("/sso/register", get(register::get).post(register::post))
         .route(
+            register::LOGIN_PATH,
+            get(crate::web::account::login::get).post(crate::web::account::login::post),
+        )
+        .route(
             "/sso/forgot-password",
             get(forgot_password::get_forgot).post(forgot_password::post_forgot),
         )

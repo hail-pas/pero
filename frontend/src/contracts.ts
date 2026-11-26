@@ -302,14 +302,15 @@ export interface ViewDataMap {
     username: string;
     system: boolean;
     expired: boolean;
+    login_url?: string | null;
   };
   SelectAccountView: CsrfPage & {
     token: string;
     username: string;
     redirect: string;
   };
-  LoginView: LoginPage;
-  AccountLoginView: LoginPage & { redirect: string };
+  LoginView: LoginPage & { registration_url: string };
+  AccountLoginView: LoginPage & { redirect: string; flow: string | null };
   EnrollmentView: CsrfPage & {
     mode: string;
     app: string | null;
@@ -319,7 +320,6 @@ export interface ViewDataMap {
     status: string;
     reason: string;
     social: boolean;
-    sent: boolean;
     tenant_name?: string;
     tenant_invitation?: boolean;
     existing_account?: boolean;
@@ -327,6 +327,12 @@ export interface ViewDataMap {
     matching_account?: boolean;
     allowed_methods?: string[];
     providers?: LoginPage["providers"];
+    flow: string;
+    can_act?: boolean;
+    can_resend?: boolean;
+    already_admitted?: boolean;
+    error?: string;
+    expires_at?: string | null;
   };
   EnrollmentAdminView: AccountPage &
     ProgressList & {
@@ -355,14 +361,20 @@ export interface ViewDataMap {
       status: string | null;
       organization_admission: boolean;
       organization_only: boolean;
+      self_service_open?: boolean;
       require_mfa: boolean;
     }[];
   };
-  ForgotPasswordView: CsrfPage & { error: string; success: boolean };
+  ForgotPasswordView: CsrfPage & {
+    error: string;
+    success: boolean;
+    registration?: boolean;
+  };
   ResetPasswordView: CsrfPage & {
     token: string;
     error: string;
     success: string;
+    registration?: boolean;
   };
   ConsentView: CsrfPage & {
     session_takeover: boolean;

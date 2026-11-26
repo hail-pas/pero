@@ -18,7 +18,6 @@ use pero_http_client_core::HttpClientHandle;
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::db::entity::users;
 use crate::db::helper::provider::ProviderWithSecret;
 
 pub struct SocialLoginService<'a> {
@@ -41,17 +40,17 @@ pub enum SocialLoginError {
 }
 
 pub enum IdentityResolution {
-    Resolved {
-        user: users::Model,
-        identity_id: Uuid,
-    },
-    NeedsAccountLink {
-        nonce: String,
-    },
-    NeedsRegistration {
-        info: SocialUserInfo,
-        auth_request_id: Option<Uuid>,
-    },
+    Resolved { user_id: Uuid, identity_id: Uuid },
+    AlreadyBound,
+    NeedsAccountLink { nonce: String },
+    NeedsRegistration,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum LoginPurpose {
+    Login,
+    ExistingAccount,
+    Registration,
 }
 
 pub struct SocialUserInfo {

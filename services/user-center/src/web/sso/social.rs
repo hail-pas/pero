@@ -8,17 +8,27 @@ use uuid::Uuid;
 
 use crate::db::enums::UserStatus;
 use crate::service::login::LoginService;
-use crate::service::social::{IdentityResolution, SocialLinkError, SocialLoginError};
+use crate::service::social::{IdentityResolution, LoginPurpose, SocialLinkError, SocialLoginError};
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, verify_password_for_user};
 use crate::web::security::SOCIAL_LINK_COOKIE;
 use crate::web::sso::dto::{SocialLinkForm, SocialLinkView};
-use crate::web::sso::utility::resolve_auth_request_id;
 
 #[derive(serde::Deserialize)]
 pub struct LoginQuery {
     #[serde(default)]
     pub redirect: String,
+    #[serde(default)]
+    pub existing: bool,
+    pub flow: Option<String>,
+}
+
+fn registration_target(redirect: &str) -> (&str, bool) {
+    redirect
+        .strip_suffix("?existing=1")
+        .or_else(|| redirect.strip_suffix("&existing=1"))
+        .filter(|target| *target == "/sso/register" || target.starts_with("/sso/register?"))
+        .map_or((redirect, false), |target| (target, true))
 }
 
 pub async fn login(
@@ -28,6 +38,11 @@ pub async fn login(
     Path(provider_code): Path<String>,
     Query(query): Query<LoginQuery>,
 ) -> Response {
+    let redirect = pero_utils::redirect::safe_site_redirect(&query.redirect, "/account/profile");
+    let registration = redirect.split('?').next() == Some("/sso/register");
+    if registration && !super::register::flow_matches(&state, &jar, query.flow.as_deref()) {
+        return social_error(jar, true, "enrollment_flow_changed");
+    }
     if let Err(status) = crate::web::login_flow::check_login_start_rate_limit(&state, source).await
     {
         return status.into_response();
@@ -36,52 +51,50 @@ pub async fn login(
 
     let provider = match svc.find_provider_by_code(&provider_code).await {
         Ok(p) => p,
-        Err(_) => return Redirect::to("/sso/error?code=unknown_provider").into_response(),
+        Err(_) => return social_error(jar, registration, "unknown_provider"),
     };
 
-    let auth_request_id = match resolve_auth_request_id(&state, &jar).await {
-        Ok(id) => id,
-        Err(error) => {
-            tracing::error!(%error, "Pending authorization lookup failed");
-            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-    };
-
-    let redirect = if query.redirect == "/sso/register" {
-        super::register::social_flow_redirect(&jar).unwrap_or(query.redirect)
-    } else {
-        query.redirect
-    };
-    let mut jar = jar;
-    let auth_request_id = if redirect.starts_with("/sso/register?") {
-        None
-    } else if redirect == "/sso/register" {
-        match super::register::active_request(&state, &jar).await {
-            Ok(Some(request)) => {
-                match super::register::request_context_cookie(&state, request.client_id) {
-                    Ok(cookie) => jar = jar.add(cookie),
-                    Err(e) => return crate::web::util::management_response(Err(e)),
-                }
-                Some(request.id)
-            }
+    let auth_request_id = if registration && !super::register::has_registration(&state, &jar) {
+        match super::register::registration_request(&state, &jar).await {
+            Ok(Some(request)) => Some(request.id),
             Ok(None) if super::register::request_context_client(&state, &jar).is_some() => {
                 return Redirect::to("/sso/register").into_response();
             }
             Ok(None) => None,
             Err(e) => return crate::web::util::management_response(Err(e)),
         }
+    } else if query.redirect.is_empty() {
+        match super::register::active_request(&state, &jar).await {
+            Ok(request) => request.map(|request| request.id),
+            Err(error) => {
+                tracing::error!(%error, "Pending authorization lookup failed");
+                return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        }
     } else {
-        auth_request_id
+        None
     };
+    let mut redirect = redirect;
+    if registration {
+        redirect = "/sso/register".to_owned();
+        pero_utils::encode::append_query_param(
+            &mut redirect,
+            "flow",
+            query.flow.as_deref().unwrap_or_default(),
+        );
+        if query.existing {
+            pero_utils::encode::append_query_param(&mut redirect, "existing", "1");
+        }
+    }
     let prepared = match svc
         .prepare_login_state(&provider, &provider_code, auth_request_id, &redirect, None)
         .await
     {
         Ok(p) => p,
         Err(SocialLoginError::ProviderMisconfigured) => {
-            return Redirect::to("/sso/error?code=provider_misconfigured").into_response();
+            return social_error(jar, registration, "provider_misconfigured");
         }
-        Err(_) => return Redirect::to("/sso/error?code=internal_error").into_response(),
+        Err(_) => return social_error(jar, registration, "internal_error"),
     };
 
     let cookies = state.cookie_factory();
@@ -106,15 +119,6 @@ pub async fn callback(
     headers: axum::http::HeaderMap,
     Query(params): Query<CallbackParams>,
 ) -> Response {
-    if let Some(err) = params.error {
-        tracing::warn!("Social callback error from {provider_code}: {err}");
-        return Redirect::to("/sso/error?code=provider_error").into_response();
-    }
-
-    let code = match &params.code {
-        Some(c) => c.clone(),
-        None => return Redirect::to("/sso/error?code=missing_code").into_response(),
-    };
     let state_token = match &params.state {
         Some(s) => s.clone(),
         None => return Redirect::to("/sso/error?code=invalid_state").into_response(),
@@ -138,13 +142,29 @@ pub async fn callback(
         .await
     {
         Ok(s) => s,
-        Err(_) => return Redirect::to("/sso/error?code=invalid_state").into_response(),
+        Err(_) => {
+            let registration = super::register::has_registration(&state, &jar)
+                || super::register::request_context_client(&state, &jar).is_some();
+            return social_error(jar, registration, "invalid_state");
+        }
     };
+    let (registration_redirect, existing_only) =
+        registration_target(&cb_state.social_value.redirect);
+    let return_to_registration = registration_redirect.split('?').next() == Some("/sso/register");
+    if params.error.is_some() || params.code.is_none() {
+        let error = if params.error.is_some() {
+            "provider_error"
+        } else {
+            "missing_code"
+        };
+        return social_error(jar, return_to_registration, error);
+    }
+    let code = params.code.as_deref().unwrap_or_default();
 
     let token_result = match svc
         .exchange_code(
             &cb_state.provider,
-            &code,
+            code,
             &cb_state.social_value.code_verifier,
         )
         .await
@@ -152,9 +172,9 @@ pub async fn callback(
         Ok(t) => t,
         Err(SocialLoginError::TokenExchangeFailed(e)) => {
             tracing::error!("Token exchange: {e}");
-            return Redirect::to("/sso/error?code=token_exchange_failed").into_response();
+            return social_error(jar, return_to_registration, "token_exchange_failed");
         }
-        Err(_) => return Redirect::to("/sso/error?code=token_exchange_failed").into_response(),
+        Err(_) => return social_error(jar, return_to_registration, "token_exchange_failed"),
     };
 
     let user_info = match svc
@@ -173,9 +193,9 @@ pub async fn callback(
         }
         Err(SocialLoginError::UserinfoFailed(e)) => {
             tracing::error!("Userinfo: {e}");
-            return Redirect::to("/sso/error?code=userinfo_failed").into_response();
+            return social_error(jar, return_to_registration, "userinfo_failed");
         }
-        Err(_) => return Redirect::to("/sso/error?code=userinfo_failed").into_response(),
+        Err(_) => return social_error(jar, return_to_registration, "userinfo_failed"),
     };
 
     if let Some(session_id) = cb_state.social_value.reauth_session {
@@ -253,7 +273,7 @@ pub async fn callback(
         return (jar, Redirect::to(target)).into_response();
     }
 
-    if let Err(response) = validate_login_context(
+    let request = match validate_login_context(
         &state,
         &jar,
         &cb_state.social_value.redirect,
@@ -261,8 +281,9 @@ pub async fn callback(
     )
     .await
     {
-        return *response;
-    }
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
     let authenticated_at = user_info.authenticated_at;
     let resolution = match svc
         .resolve_identity(
@@ -270,28 +291,38 @@ pub async fn callback(
             &user_info,
             cb_state.auth_request_id,
             &cb_state.social_value.redirect,
+            if existing_only {
+                LoginPurpose::ExistingAccount
+            } else if return_to_registration {
+                LoginPurpose::Registration
+            } else {
+                LoginPurpose::Login
+            },
         )
         .await
     {
         Ok(r) => r,
         Err(SocialLoginError::Internal(e)) => {
             tracing::error!("Identity: {e}");
-            return Redirect::to("/sso/error?code=identity_error").into_response();
+            return social_error(jar, return_to_registration, "identity_error");
         }
-        Err(_) => return Redirect::to("/sso/error?code=identity_error").into_response(),
+        Err(_) => return social_error(jar, return_to_registration, "identity_error"),
     };
 
     match resolution {
-        IdentityResolution::Resolved { user, identity_id } => {
+        IdentityResolution::Resolved {
+            user_id,
+            identity_id,
+        } => {
             finish_social_login(
                 &state,
                 jar,
-                user,
+                user_id,
                 identity_id,
                 cb_state.provider.provider.id,
                 &SocialLoginContext {
                     redirect: cb_state.social_value.redirect,
-                    auth_request_id: cb_state.auth_request_id,
+                    request: request.as_ref(),
                     ip,
                     authenticated_at,
                     user_agent: crate::web::util::user_agent(&headers),
@@ -299,6 +330,7 @@ pub async fn callback(
             )
             .await
         }
+        IdentityResolution::AlreadyBound => social_error(jar, true, "social_identity_taken"),
         IdentityResolution::NeedsAccountLink { nonce } => {
             // Continue the verified callback only in the initiating browser.
             let cookie = cookies.build_short_lived_cookie(
@@ -308,25 +340,20 @@ pub async fn callback(
             );
             (jar.add(cookie), Redirect::to("/sso/social/link")).into_response()
         }
-        IdentityResolution::NeedsRegistration {
-            info,
-            auth_request_id,
-        } => {
-            let request = match super::register::active_request(&state, &jar).await {
-                Ok(request) => request,
-                Err(e) => return crate::web::util::management_response(Err(e)),
-            };
-            let has_flow = cb_state.social_value.redirect.starts_with("/sso/register?");
-            if !has_flow && request.as_ref().map(|r| r.id) != auth_request_id {
-                return Redirect::to("/sso/error?code=enrollment_unavailable").into_response();
+        IdentityResolution::NeedsRegistration => {
+            if existing_only {
+                return social_error(jar, true, "existing_identity_required");
             }
             // Only callbacks started for a specific enrollment or invitation
             // may reuse its cookies. A normal login starts a new enrollment.
-            let jar = if !has_flow && cb_state.social_value.redirect != "/sso/register" {
+            let jar = if !return_to_registration {
                 let jar = super::register::clear_flow(jar);
                 if let Some(request) = &request {
-                    match super::register::request_context_cookie(&state, request.client_id) {
+                    match super::register::application_context_cookie(&state, request).await {
                         Ok(cookie) => jar.add(cookie),
+                        Err(crate::service::ManagementError::Invalid(code)) => {
+                            return social_error(jar, true, code);
+                        }
                         Err(e) => return crate::web::util::management_response(Err(e)),
                     }
                 } else {
@@ -335,14 +362,12 @@ pub async fn callback(
             } else {
                 jar
             };
-            let app = request.as_ref().map(|r| r.app_id);
             super::register::social(
                 &state,
                 jar,
                 cb_state.provider.provider.id,
-                info,
-                app,
-                &cb_state.social_value.redirect,
+                user_info,
+                request.as_ref(),
             )
             .await
         }
@@ -400,11 +425,11 @@ pub async fn link_post(
         None => None,
     };
 
-    if let Err(response) =
-        validate_login_context(&state, &jar, &link.redirect, auth_request_id).await
+    let request = match validate_login_context(&state, &jar, &link.redirect, auth_request_id).await
     {
-        return *response;
-    }
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
 
     let user = match crate::db::entity::users::Entity::find_by_id(user_id)
         .one(&state.db)
@@ -462,12 +487,12 @@ pub async fn link_post(
     finish_social_login(
         &state,
         jar,
-        user,
+        user.id,
         identity_id,
         provider_id,
         &SocialLoginContext {
             redirect: link.redirect,
-            auth_request_id,
+            request: request.as_ref(),
             ip,
             authenticated_at: None,
             user_agent: crate::web::util::user_agent(&headers),
@@ -488,27 +513,45 @@ async fn validate_login_context(
     jar: &CookieJar,
     redirect: &str,
     auth_request_id: Option<Uuid>,
-) -> Result<(), Box<Response>> {
-    let matches_flow = super::register::social_flow_matches(jar, redirect);
-    let matches_request = if let Some(id) = auth_request_id {
-        super::register::active_request(state, jar)
-            .await
-            .map_err(|e| Box::new(crate::web::util::management_response(Err(e))))?
-            .is_some_and(|request| request.id == id)
-    } else {
-        redirect != "/sso/register" || super::register::request_context_client(state, jar).is_none()
-    };
-    if !matches_flow || !matches_request {
-        return Err(Box::new(
-            Redirect::to("/sso/error?code=enrollment_unavailable").into_response(),
-        ));
+) -> Result<Option<crate::db::entity::authorization_requests::Model>, Box<Response>> {
+    let (redirect, _) = registration_target(redirect);
+    let registration = redirect.split('?').next() == Some("/sso/register");
+    let flow_matches = !registration
+        || super::register::flow_matches(state, jar, redirect.strip_prefix("/sso/register?flow="));
+    if flow_matches {
+        if let Some(id) = auth_request_id {
+            let request = super::register::active_request(state, jar)
+                .await
+                .map_err(|e| Box::new(crate::web::util::management_response(Err(e))))?;
+            if let Some(request) = request.filter(|request| request.id == id) {
+                return Ok(Some(request));
+            }
+        } else {
+            return Ok(None);
+        }
     }
-    Ok(())
+    Err(Box::new(social_error(
+        jar.clone(),
+        registration,
+        "enrollment_unavailable",
+    )))
 }
 
-struct SocialLoginContext {
+fn social_error(jar: CookieJar, registration: bool, code: &str) -> Response {
+    let mut target = if registration {
+        "/sso/register"
+    } else {
+        "/sso/error"
+    }
+    .to_owned();
+    let key = if registration { "error" } else { "code" };
+    pero_utils::encode::append_query_param(&mut target, key, code);
+    (jar, Redirect::to(&target)).into_response()
+}
+
+struct SocialLoginContext<'a> {
     redirect: String,
-    auth_request_id: Option<Uuid>,
+    request: Option<&'a crate::db::entity::authorization_requests::Model>,
     ip: Option<ipnetwork::IpNetwork>,
     authenticated_at: Option<time::OffsetDateTime>,
     user_agent: Option<String>,
@@ -517,15 +560,15 @@ struct SocialLoginContext {
 async fn finish_social_login(
     state: &AppState,
     jar: CookieJar,
-    user: crate::db::entity::users::Model,
+    user_id: Uuid,
     identity_id: Uuid,
     provider_id: Uuid,
-    ctx: &SocialLoginContext,
+    ctx: &SocialLoginContext<'_>,
 ) -> Response {
     let session_svc = state.session_service();
     let (token, _) = match session_svc
         .create_social(
-            user.id,
+            user_id,
             identity_id,
             provider_id,
             ctx.ip,
@@ -543,8 +586,11 @@ async fn finish_social_login(
 
     let redirect_target = if ctx.redirect.split('?').next() == Some("/sso/register") {
         "/sso/register".to_owned()
-    } else if ctx.auth_request_id.is_some() {
-        "/oauth2/authorize/resume".to_owned()
+    } else if let Some(request) = ctx.request {
+        match crate::web::login_flow::enrollment_resume_target(state, request, None, Some(&token)) {
+            Ok(target) => target,
+            Err(error) => return crate::web::util::dependency_error(error),
+        }
     } else {
         crate::web::util::safe_redirect(&ctx.redirect)
     };

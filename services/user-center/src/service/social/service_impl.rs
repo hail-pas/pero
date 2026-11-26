@@ -372,6 +372,7 @@ impl<'a> SocialLoginService<'a> {
         info: &SocialUserInfo,
         auth_request_id: Option<Uuid>,
         redirect: &str,
+        purpose: LoginPurpose,
     ) -> Result<IdentityResolution, SocialLoginError> {
         let existing = identities::Entity::find()
             .filter(identities::Column::ProviderId.eq(provider.provider.id))
@@ -382,6 +383,9 @@ impl<'a> SocialLoginService<'a> {
             .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
 
         if let Some(identity) = existing {
+            if purpose == LoginPurpose::Registration {
+                return Ok(IdentityResolution::AlreadyBound);
+            }
             let user = users::Entity::find_by_id(identity.user_id)
                 .one(self.db)
                 .await
@@ -399,7 +403,7 @@ impl<'a> SocialLoginService<'a> {
                 .await
                 .map_err(|e| SocialLoginError::Internal(e.to_string()))?;
             return Ok(IdentityResolution::Resolved {
-                user,
+                user_id: user.id,
                 identity_id: id,
             });
         }
@@ -408,25 +412,16 @@ impl<'a> SocialLoginService<'a> {
             return Err(SocialLoginError::Internal("no subject".into()));
         }
 
-        if let Some(user) = self.find_social_link_user(info).await? {
+        if purpose == LoginPurpose::Login
+            && let Some(user) = self.find_social_link_user(info).await?
+        {
             let nonce = self
                 .create_social_link(provider, info, &user, auth_request_id, redirect)
                 .await?;
             return Ok(IdentityResolution::NeedsAccountLink { nonce });
         }
 
-        Ok(IdentityResolution::NeedsRegistration {
-            info: SocialUserInfo {
-                authenticated_at: info.authenticated_at,
-                sub: info.sub.clone(),
-                email: info.email.clone(),
-                email_verified: info.email_verified,
-                name: info.name.clone(),
-                avatar_url: info.avatar_url.clone(),
-                profile_extra: info.profile_extra.clone(),
-            },
-            auth_request_id,
-        })
+        Ok(IdentityResolution::NeedsRegistration)
     }
 
     pub async fn find_social_link_user(

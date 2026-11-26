@@ -13,7 +13,7 @@ from urllib.parse import quote_plus, urlencode
 import jwt
 import redis
 import requests
-from flask import Flask, abort, redirect, request
+from flask import Flask, abort, make_response, redirect, request, url_for
 from jwt import PyJWKClient
 
 ISSUER = os.environ["PERO_ISSUER"].rstrip("/")
@@ -82,7 +82,13 @@ def introspect(data):
     return value
 
 
-def start_login(tenant=None):
+def with_browser_session(response, sid):
+    response.set_cookie(COOKIE, sid, httponly=True, secure=SECURE_COOKIE,
+                        samesite="Lax", max_age=7 * 24 * 3600, path="/")
+    return response
+
+
+def start_login(tenant=None, create=False):
     previous_sid = cookie_id()
     sid = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
@@ -91,7 +97,7 @@ def start_login(tenant=None):
     state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     store.setex("pero-demo:flow:" + state, 600, json.dumps(
         {"sid": sid, "previous_sid": previous_sid, "verifier": verifier, "nonce": nonce,
-         "tenant_id": tenant}))
+         "tenant_id": tenant, "create": create}))
     params = {
         "client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI, "response_type": "code",
         "scope": SCOPES, "state": state, "nonce": nonce,
@@ -99,32 +105,61 @@ def start_login(tenant=None):
     }
     if tenant:
         params["tenant_id"] = tenant
-    response = redirect(discovery()["authorization_endpoint"] + "?" + urlencode(params))
-    response.set_cookie(COOKIE, sid, httponly=True, secure=SECURE_COOKIE,
-                        samesite="Lax", max_age=7 * 24 * 3600, path="/")
-    return response
+    if create:
+        params["prompt"] = "create"
+    return with_browser_session(
+        redirect(discovery()["authorization_endpoint"] + "?" + urlencode(params)), sid)
 
 
 @app.get("/login")
 def login():
-    # Cross-site navigation to /login must not replace an active tenant session.
+    tenant = request.args.get("tenant_id")
+    if tenant and not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", tenant):
+        abort(400)
+    status = request.args.get("enrollment_status")
+    if status in ("cancelled", "expired"):
+        message = "Registration cancelled." if status == "cancelled" else "Registration authorization expired."
+        return ('<p>' + message + '</p><a href="' + escape(url_for("login", tenant_id=tenant)) + '">Sign in</a> · '
+                '<a href="/register">Start registration</a>')
+    # Use the existing CSRF-protected switch when a signed-in user follows an invitation.
     _sid, data, _status = verified()
     if data:
+        if tenant and tenant != data["tenant_id"]:
+            return ('<form method="post" action="/switch">'
+                    '<input type="hidden" name="csrf" value="' + escape(data["csrf"]) + '">'
+                    '<input type="hidden" name="tenant" value="' + escape(tenant) + '">'
+                    '<button type="submit">Continue to the invited workspace</button></form>')
         return redirect("/")
-    return start_login()
+    return start_login(tenant)
+
+
+@app.get("/register")
+def register():
+    _sid, data, _status = verified()
+    return redirect("/") if data else start_login(create=True)
 
 
 @app.get("/callback")
 def callback():
     state = request.args.get("state", "")
-    if not state or request.args.get("error"):
-        return ("Authorization declined or missing state", 400)
-    value = store.getdel("pero-demo:flow:" + state)
+    if not state:
+        return ("Missing authorization state", 400)
+    key = "pero-demo:flow:" + state
+    value = store.get(key)
     if not value:
         return ("Expired authorization", 400)
     flow = json.loads(value)
-    if not cookie_id() or cookie_id() != flow["sid"]:
+    if cookie_id() != flow["sid"]:
         return ("Browser session changed", 403)
+    if not store.getdel(key):
+        return ("Expired authorization", 400)
+    if error := request.args.get("error"):
+        response = (redirect(url_for("login", enrollment_status="cancelled", tenant_id=flow["tenant_id"]))
+                    if error == "access_denied" and flow["create"]
+                    else make_response("Authorization declined", 400))
+        if previous_sid := flow["previous_sid"]:
+            return with_browser_session(response, previous_sid)
+        return response
     if not request.args.get("code"):
         return ("Missing authorization code", 400)
     tokens = client_post("token_endpoint", {
@@ -182,7 +217,7 @@ def verified():
 def home():
     _sid, data, status = verified()
     if not data:
-        return '<a href="/login">Sign in with Pero</a>'
+        return '<a href="/login">Sign in with Pero</a> · <a href="/register">Create an account</a>'
     try:
         choices = http.get(ISSUER + "/api/tenants/choices",
                            headers={"Authorization": "Bearer " + data["access_token"]},

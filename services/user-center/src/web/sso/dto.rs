@@ -14,6 +14,7 @@ pub struct LoginView {
     pub error: String,
     pub providers: Vec<SocialProvider>,
     pub csrf_token: String,
+    pub registration_url: String,
 }
 
 /// EP-03: POST /sso/login 表单
@@ -26,6 +27,7 @@ pub struct LoginForm {
     pub password: String,
     #[serde(default)]
     pub redirect: String,
+    pub flow: Option<String>,
 }
 
 /// 忘记密码页模板
@@ -34,6 +36,7 @@ pub struct ForgotPasswordView {
     pub error: String,
     pub success: bool,
     pub csrf_token: String,
+    pub registration: bool,
 }
 
 /// EP-07: POST /sso/forgot-password 表单
@@ -51,6 +54,7 @@ pub struct ResetPasswordView {
     pub error: String,
     pub success: String,
     pub csrf_token: String,
+    pub registration: bool,
 }
 
 /// EP-09: POST /sso/reset-password 表单
@@ -122,6 +126,7 @@ pub struct AccountLoginView {
     pub providers: Vec<SocialProvider>,
     pub csrf_token: String,
     pub redirect: String,
+    pub flow: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]

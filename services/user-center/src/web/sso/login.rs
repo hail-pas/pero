@@ -6,7 +6,7 @@ use pero_api_axum::extractor::ClientIp;
 use crate::state::app::AppState;
 use crate::web::login_flow::{LoginFormError, authenticate_password_form};
 use crate::web::session::extract_session;
-use crate::web::sso::dto::{LoginForm, LoginView, SocialProvider};
+use crate::web::sso::dto::{LoginForm, LoginView};
 use crate::web::sso::utility::find_enabled_social_providers;
 
 /// GET /sso/login 查询参数
@@ -35,11 +35,7 @@ pub async fn get(
             let oauth = state.oauth_service();
             match oauth.pending_request_requires_login(&nonce, &session).await {
                 Ok(true) => {
-                    let providers = match find_enabled_social_providers(&state).await {
-                        Ok(providers) => providers,
-                        Err(error) => return crate::web::util::dependency_error(error),
-                    };
-                    return render_login(jar, &state, &providers, query.error.unwrap_or_default());
+                    return render_login(jar, &state, query.error.unwrap_or_default()).await;
                 }
                 Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
                 Ok(false) => {}
@@ -55,12 +51,7 @@ pub async fn get(
         return (jar, Redirect::to("/account/applications")).into_response();
     }
 
-    let providers = match find_enabled_social_providers(&state).await {
-        Ok(providers) => providers,
-        Err(error) => return crate::web::util::dependency_error(error),
-    };
-    let error = query.error.unwrap_or_default();
-    render_login(jar, &state, &providers, error)
+    render_login(jar, &state, query.error.unwrap_or_default()).await
 }
 
 /// EP-03: POST /sso/login
@@ -91,8 +82,8 @@ pub async fn post(
             return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
         Err(error) => {
-            let key = error.message_key().unwrap_or("invalid_credentials");
-            return render_login_error_page(&state, jar, key).await;
+            let error = error.message_key().unwrap_or("invalid_credentials");
+            return render_login(jar, &state, error.to_owned()).await;
         }
     };
 
@@ -117,25 +108,21 @@ pub async fn post(
     crate::web::login_flow::finish_login(&state, jar, &token, &redirect_target).await
 }
 
-fn render_login(
-    jar: CookieJar,
-    state: &AppState,
-    providers: &[SocialProvider],
-    error: String,
-) -> Response {
-    state
-        .web_security()
-        .view_with_csrf(jar, "LoginView", |csrf_token| LoginView {
-            error,
-            providers: providers.to_owned(),
-            csrf_token,
-        })
-}
-
-async fn render_login_error_page(state: &AppState, jar: CookieJar, error: &str) -> Response {
+async fn render_login(jar: CookieJar, state: &AppState, error: String) -> Response {
     let providers = match find_enabled_social_providers(state).await {
         Ok(providers) => providers,
         Err(error) => return crate::web::util::dependency_error(error),
     };
-    render_login(jar, state, &providers, error.to_owned())
+    let registration_url = match super::register::login_registration_url(state, &jar).await {
+        Ok(url) => url,
+        Err(error) => return crate::web::util::management_response(Err(error)),
+    };
+    state
+        .web_security()
+        .view_with_csrf(jar, "LoginView", |csrf_token| LoginView {
+            error,
+            providers,
+            csrf_token,
+            registration_url,
+        })
 }

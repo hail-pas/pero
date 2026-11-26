@@ -67,6 +67,7 @@ export default defineConfig(({ command }) => ({
                 "/account/profile/verify-contact",
                 "/sso/login",
                 "/sso/register",
+                "/sso/register/login",
                 "/sso/forgot-password",
                 "/sso/reset-password",
                 "/sso/consent",

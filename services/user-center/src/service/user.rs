@@ -199,7 +199,8 @@ pub(crate) async fn create_verified_user(
         ..Default::default()
     }
     .insert(txn)
-    .await?;
+    .await
+    .map_err(registration_conflict)?;
     let identity = match credential {
         RegistrationCredential::Password(hash) => {
             let provider = crate::db::helper::identity_provider::find_local_provider(txn).await?;
@@ -230,8 +231,32 @@ pub(crate) async fn create_verified_user(
                 ..Default::default()
             }
             .insert(txn)
-            .await?
+            .await
+            .map_err(registration_conflict)?
         }
     };
     Ok((user, identity))
+}
+
+fn registration_conflict(error: DbErr) -> ManagementError {
+    use sea_orm::{RuntimeErr, sqlx};
+
+    if let DbErr::Exec(RuntimeErr::SqlxError(inner)) | DbErr::Query(RuntimeErr::SqlxError(inner)) =
+        &error
+        && let sqlx::Error::Database(database) = &**inner
+    {
+        match database.constraint() {
+            Some("ux_users_username_alive") => {
+                return ManagementError::Invalid("enrollment_username_taken");
+            }
+            Some("ux_users_email_alive" | "ux_users_phone_alive") => {
+                return ManagementError::Invalid("existing_account_login_required");
+            }
+            Some("ux_identities_provider_subject_bound") => {
+                return ManagementError::Invalid("social_identity_taken");
+            }
+            _ => {}
+        }
+    }
+    error.into()
 }

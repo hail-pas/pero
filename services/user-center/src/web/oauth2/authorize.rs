@@ -365,7 +365,7 @@ async fn authorize_request(
 
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create") {
         let (jar, _) = pending_redirect(&state, &jar, auth_request.id).await?;
-        let context = crate::web::sso::register::request_context_cookie(&state, client.id)
+        let context = crate::web::sso::register::request_context_cookie(&state, &auth_request)
             .map_err(|_| OAuthError::Unavailable)?;
         return Ok((
             crate::web::sso::register::clear_flow(jar).add(context),
@@ -393,56 +393,125 @@ async fn authorize_request(
 ///
 /// 安全设计：不直接从 URL 读取 request_id，而是通过 nonce cookie
 /// 消费 Redis pending request 获取 auth_request_id，防止 request_id 被枚举
+#[derive(serde::Deserialize)]
+pub struct ResumeQuery {
+    enrollment: Option<String>,
+}
+
 pub async fn resume(
     State(state): State<AppState>,
     jar: CookieJar,
+    Query(query): Query<ResumeQuery>,
 ) -> Result<(CookieJar, Response), OAuthError> {
-    let cookies = state.cookie_factory();
-    let nonce_name = cookies.nonce_cookie_name();
-    let nonce =
-        jar.get(&nonce_name)
-            .map(|c| c.value().to_owned())
-            .ok_or(OAuthError::BadRequest(
-                "Missing authentication nonce".to_owned(),
-            ))?;
+    let target = query
+        .enrollment
+        .as_deref()
+        .map(|raw| {
+            crate::web::login_flow::enrollment_continuation(&state, raw)
+                .ok_or_else(|| OAuthError::BadRequest("Invalid registration continuation".into()))
+        })
+        .transpose()?;
+    if let Some(target) = target
+        .as_ref()
+        .filter(|target| !target.matches_session(&state, &jar))
+    {
+        let uri = crate::web::login_flow::enrollment_fallback(&state, target, None).await;
+        return Ok((jar, Redirect::to(&uri).into_response()));
+    }
+    let expected_request = target.as_ref().map(|target| target.request_id);
+    let request = take_pending_authorization(&state, &jar, expected_request).await;
+    let jar = if request.is_ok() {
+        let cookies = state.cookie_factory();
+        jar.add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+    } else {
+        jar
+    };
+    let result = match request {
+        Ok(request) => {
+            let require_session = target
+                .as_ref()
+                .is_some_and(|target| target.requires_session());
+            resolve_pending_authorization(&state, &jar, &request, require_session).await
+        }
+        Err(error) => Err(error),
+    };
+    match result {
+        Err(OAuthError::BadRequest(_)) if let Some(target) = target => {
+            let uri = crate::web::login_flow::enrollment_fallback(&state, &target, None).await;
+            Ok((jar, Redirect::to(&uri).into_response()))
+        }
+        result => result,
+    }
+}
 
-    let oauth = state.oauth_service();
-    let auth_request_id = oauth
-        .consume_pending_request(&nonce)
+pub(crate) async fn resolve_pending_authorization(
+    state: &AppState,
+    jar: &CookieJar,
+    request: &authorization_requests::Model,
+    require_session: bool,
+) -> Result<(CookieJar, Response), OAuthError> {
+    state
+        .oauth_service()
+        .validate_pending_authorization(request)
+        .await?;
+    resolve_authorization_inner(state, jar, request, require_session).await
+}
+
+async fn take_pending_authorization(
+    state: &AppState,
+    jar: &CookieJar,
+    expected_request: Option<Uuid>,
+) -> Result<authorization_requests::Model, OAuthError> {
+    let nonce_name = state.cookie_factory().nonce_cookie_name();
+    let nonce = jar
+        .get(&nonce_name)
+        .ok_or_else(|| OAuthError::BadRequest("Missing authentication nonce".into()))?;
+
+    // Check a bound continuation before consuming the nonce for a different request.
+    let prefetched = if let Some(id) = expected_request {
+        Some(
+            crate::web::sso::register::active_request(state, jar)
+                .await
+                .map_err(|_| OAuthError::Unavailable)?
+                .filter(|request| request.id == id)
+                .ok_or_else(|| {
+                    OAuthError::BadRequest("Registration authorization changed or expired".into())
+                })?,
+        )
+    } else {
+        None
+    };
+    let id = state
+        .oauth_service()
+        .consume_pending_request(nonce.value())
         .await
         .map_err(OAuthError::Internal)?
-        .ok_or(OAuthError::BadRequest(
-            "Invalid or expired pending request".to_owned(),
-        ))?;
-
-    let auth_request = authorization_requests::Entity::find_by_id(auth_request_id)
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            OAuthError::Internal(
-                pero_error::AppError::internal("db_error", "Database error").with_source(e),
-            )
-        })?
-        .ok_or(OAuthError::BadRequest(
-            "Authorization request not found".to_owned(),
-        ))?;
-
-    if auth_request.completed_at.is_some() {
+        .ok_or_else(|| OAuthError::BadRequest("Invalid or expired pending request".into()))?;
+    let request = if let Some(request) = prefetched {
+        if request.id != id {
+            return Err(OAuthError::BadRequest(
+                "Registration authorization changed".into(),
+            ));
+        }
+        request
+    } else {
+        authorization_requests::Entity::find_by_id(id)
+            .one(&state.db)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+            .ok_or_else(|| OAuthError::BadRequest("Authorization request not found".into()))?
+    };
+    if request.completed_at.is_some() {
         return Err(OAuthError::BadRequest(
-            "Authorization request already completed".to_owned(),
+            "Authorization request already completed".into(),
         ));
     }
-
-    let now = time::OffsetDateTime::now_utc();
-    if auth_request.expires_at < now {
+    if request.expires_at <= time::OffsetDateTime::now_utc() {
         return Err(OAuthError::BadRequest(
-            "Authorization request expired".to_owned(),
+            "Authorization request expired".into(),
         ));
     }
-
-    let clear = cookies.clear_cookie(&nonce_name);
-
-    resolve_authorization(&state, &jar.add(clear), &auth_request).await
+    Ok(request)
 }
 
 /// 授权决策逻辑（authorize 和 resume 共享）
@@ -458,11 +527,25 @@ pub(crate) async fn resolve_authorization(
     jar: &CookieJar,
     auth_request: &authorization_requests::Model,
 ) -> Result<(CookieJar, Response), OAuthError> {
+    resolve_authorization_inner(state, jar, auth_request, false).await
+}
+
+async fn resolve_authorization_inner(
+    state: &AppState,
+    jar: &CookieJar,
+    auth_request: &authorization_requests::Model,
+    require_session: bool,
+) -> Result<(CookieJar, Response), OAuthError> {
     let session = extract_session(state, jar)
         .await
         .map_err(|_| OAuthError::Unavailable)?;
 
     let Some(session) = session else {
+        if require_session {
+            return Err(OAuthError::BadRequest(
+                "Authorization session expired".into(),
+            ));
+        }
         return pending_redirect(state, jar, auth_request.id).await;
     };
 
@@ -483,7 +566,7 @@ pub(crate) async fn resolve_authorization(
         .ensure_app_access(&session, auth_request.app_id)
         .await?
     {
-        return super::access::redirect(state, jar.clone(), auth_request.id, session.id);
+        return super::access::redirect(state, jar.clone(), auth_request, session.id);
     }
 
     if !app_session_ready(state, session.id, auth_request.app_id).await? {
@@ -525,7 +608,13 @@ pub(crate) async fn resolve_authorization(
             .await
             .map_err(|_| OAuthError::Unavailable)?
             .ok_or(OAuthError::BadRequest("Tenant access denied".into()))?;
-            return Box::pin(resolve_authorization(state, jar, &request)).await;
+            return Box::pin(resolve_authorization_inner(
+                state,
+                jar,
+                &request,
+                require_session,
+            ))
+            .await;
         }
         if crate::service::tenant_context::active(
             &state.db,

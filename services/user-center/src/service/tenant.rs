@@ -192,7 +192,7 @@ pub async fn invitations<C: ConnectionTrait>(
 ) -> Result<Vec<Invitation>> {
     governance(db, user, id).await?;
     Ok(Invitation::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT id,email::text,role,CASE WHEN status='pending' AND expires_at<=now() THEN 'expired' ELSE status END AS status,expires_at FROM tenant_invitations WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 100",[id.into()])).all(db).await?)
+        "SELECT i.id,i.email::text,i.role,CASE WHEN i.status='pending' AND i.expires_at<=now() THEN 'expired' WHEN i.status='pending' AND t.status='deleted' THEN 'revoked' WHEN i.status='pending' AND t.status='disabled' THEN 'blocked' ELSE i.status END AS status,i.expires_at FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id WHERE i.tenant_id=$1 ORDER BY i.created_at DESC LIMIT 100",[id.into()])).all(db).await?)
 }
 async fn governance<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<String> {
     let t = get(db, user, id).await?;
@@ -485,11 +485,10 @@ pub async fn invite_from_client(
     let hash = pero_utils::crypto::sha256_hex(&token);
     let expiry = time::OffsetDateTime::now_utc() + time::Duration::days(7);
     exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND email=$2 AND status='pending'",vec![id.into(),email.clone().into()]).await?;
-    exec(&txn,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at,client_id) VALUES($1,$2,$3,$4,$5,$6,$7)",vec![id.into(),email.clone().into(),role.into(),hash.into(),user.into(),expiry.into(),client_id.into()]).await?;
     let mut link =
         pero_utils::oauth::url::issuer_endpoint(&state.config.sso.base_url, "sso/register");
     pero_utils::encode::append_query_param(&mut link, "invitation", &token);
-    super::notify::enqueue(
+    let notification = super::notify::enqueue(
         &txn,
         user,
         &super::notify::Notification {
@@ -502,6 +501,7 @@ pub async fn invite_from_client(
         expiry,
     )
     .await?;
+    exec(&txn,"INSERT INTO tenant_invitations(tenant_id,email,role,token_hash,invited_by,expires_at,client_id,notification_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",vec![id.into(),email.clone().into(),role.into(),hash.into(),user.into(),expiry.into(),client_id.into(),notification.into()]).await?;
     audit(&txn, user, "tenant.invitation.created", &id.to_string()).await?;
     txn.commit().await?;
     Ok(())
@@ -543,6 +543,8 @@ pub struct InviteDetail {
     pub client_id: Option<Uuid>,
     pub app_id: Option<Uuid>,
     pub status: String,
+    #[serde(skip)]
+    pub(crate) accepted_user_id: Option<Uuid>,
 }
 pub async fn invitation<C: ConnectionTrait>(db: &C, token: &str) -> Result<InviteDetail> {
     let invite = invitation_progress(db, token).await?;
@@ -555,7 +557,7 @@ pub async fn invitation<C: ConnectionTrait>(db: &C, token: &str) -> Result<Invit
 pub async fn invitation_progress<C: ConnectionTrait>(db: &C, token: &str) -> Result<InviteDetail> {
     let hash = pero_utils::crypto::sha256_hex(token);
     InviteDetail::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role,i.client_id,c.app_id,CASE WHEN i.status='pending' AND i.expires_at<=now() THEN 'expired' WHEN i.status='pending' AND t.status<>'active' THEN 'revoked' ELSE i.status END AS status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id LEFT JOIN oauth_clients c ON c.id=i.client_id WHERE i.token_hash=$1",
+        "SELECT i.tenant_id,t.name AS tenant_name,i.email::text,i.role,i.client_id,c.app_id,i.accepted_user_id,CASE WHEN i.status='pending' AND i.expires_at<=now() THEN 'expired' WHEN i.status='pending' AND t.status='deleted' THEN 'revoked' WHEN i.status='pending' AND t.status='disabled' THEN 'blocked' ELSE i.status END AS status FROM tenant_invitations i JOIN tenants t ON t.id=i.tenant_id LEFT JOIN oauth_clients c ON c.id=i.client_id WHERE i.token_hash=$1",
         [hash.into()])).one(db).await?.ok_or(Error::Invalid("not_found"))
 }
 async fn accept_in_transaction(
@@ -609,6 +611,9 @@ pub async fn finalize_invitation(
         .one(&state.db)
         .await?
         .is_some();
+    if !exists && session.is_some() {
+        return Err(Error::Invalid("enrollment_sign_out_required"));
+    }
     let proof = proof.filter(|proof| {
         proof.is_fresh()
             && proof.invitation_hash.as_deref()
@@ -682,6 +687,9 @@ pub async fn finalize_invitation(
         }
         (user.id, None)
     } else {
+        if session.is_some() {
+            return Err(Error::Invalid("enrollment_sign_out_required"));
+        }
         if policy.mode == "closed" {
             return Err(Error::Invalid("registration_closed"));
         }
@@ -714,6 +722,7 @@ pub async fn finalize_invitation(
         app_id: invite.app_id,
         client_id: invite.client_id,
         auth_request_id: None,
+        resume_portal: false,
         tenant_id: Some(invite.tenant_id),
     })
 }

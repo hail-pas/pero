@@ -43,6 +43,7 @@ function invitationStatus(status: string) {
     accepted: "已加入",
     revoked: "已撤销",
     expired: "已过期",
+    blocked: "组织已停用",
   };
   return t(labels[status] ?? status);
 }
@@ -607,7 +608,7 @@ export function Tenants({
                 <Typography>
                   {inv.email} · {tenantRole(inv.role)} · {invitationStatus(inv.status)}
                 </Typography>
-                {inv.status === "pending" && (isOwner || inv.role === "member") && (
+                {["pending", "blocked"].includes(inv.status) && (isOwner || inv.role === "member") && (
                   <Button
                     size="small"
                     color="error"

@@ -15,13 +15,13 @@ import {
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { FieldsForm } from "./forms";
 import { Heading, Panel, type Actions } from "./shared";
-import { date, type Values } from "./api";
+import { date, errorText, type Values } from "./api";
 import type { ProgressList, ViewDataMap } from "./contracts";
 import { t } from "./i18n";
 
 function admissionStatus(status: string) {
   const labels: Record<string, string> = {
-    pending_verification: t("待验证邮箱"),
+    pending_verification: t("待验证联系方式"),
     pending_approval: t("待审批"),
     ready: t("待完成"),
     completed: t("已完成"),
@@ -44,12 +44,34 @@ export function Enrollment({
   const { error: failure, busy, run, clearError } = useAction();
   const [formBusy, setFormBusy] = useState(false);
   const [preferredChannel, setChannel] = useState<"phone" | "email">("email");
+  const submit = (values: Values) =>
+    mutate("/sso/register", { ...values, flow: data.flow });
+  const perform = (action: string) => run(() => submit({ action }));
+  const completed = data.status === "completed";
+  const terminal = ["completed", "rejected", "revoked", "expired"].includes(
+    data.status,
+  );
+  const blocked = data.mode === "closed" || data.status === "blocked";
+  const hasFlow = Boolean(data.status || data.app || data.tenant_invitation);
+  const canAct = data.can_act !== false;
+  const loginQuery = `redirect=%2Fsso%2Fregister&flow=${encodeURIComponent(data.flow)}`;
+  const loginHref = `/sso/register/login?${loginQuery}`;
   const methods = data.allowed_methods ?? ["email", "phone"];
   const channel = methods.includes(preferredChannel)
     ? preferredChannel
-    : methods.includes("phone") ? "phone" : "email";
+    : methods.includes("phone")
+      ? "phone"
+      : "email";
   const socialProviders = (data.providers ?? []).map((p) => (
-    <Button key={p.key} component="a" href={`/sso/social/${encodeURIComponent(p.key)}/login?redirect=%2Fsso%2Fregister`} disabled={busy || formBusy} variant="outlined">{p.name}</Button>
+    <Button
+      key={p.key}
+      component="a"
+      href={`/sso/social/${encodeURIComponent(p.key)}/login?${loginQuery}`}
+      disabled={busy || formBusy}
+      variant="outlined"
+    >
+      {p.name}
+    </Button>
   ));
   return (
     <Container
@@ -61,69 +83,168 @@ export function Enrollment({
         py: { xs: 4, sm: 6, md: 8 },
       }}
     >
-      {failure && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {failure}
+      {(failure || data.error) && (
+        <Alert
+          severity={
+            data.error === "enrollment_completed_login_required"
+              ? "info"
+              : "error"
+          }
+          sx={{ mb: 3 }}
+        >
+          {failure || errorText(data.error || "")}
         </Alert>
       )}
-      <Button component={RouterLink} to="/sso/login" sx={{ mb: 3 }}>
-        {t("返回登录")}
-      </Button>
+      {!hasFlow && (
+        <Button component={RouterLink} to="/sso/login" sx={{ mb: 3 }}>
+          {t("返回登录")}
+        </Button>
+      )}
       <Heading
         title={t("注册与应用准入")}
         description={
-          data.tenant_invitation ? data.tenant_name : data.app
-            ? t("完成此应用的准入要求后获得访问资格。")
-            : t("验证手机或邮箱并完成账户注册。")
+          data.tenant_invitation
+            ? data.tenant_name
+            : data.app
+              ? t("完成此应用的准入要求后获得访问资格。")
+              : t("验证手机或邮箱并完成账户注册。")
         }
       />
       <Panel title={t("注册进度")}>
-        {["completed", "rejected", "revoked", "expired"].includes(
-          data.status,
-        ) ? (
+        {terminal ? (
           <Stack spacing={2}>
-            <Alert severity={data.status === "completed" ? "success" : "info"}>
+            <Alert severity={completed ? "success" : "info"}>
               {admissionStatus(data.status)}
             </Alert>
             {data.reason && <Typography>{data.reason}</Typography>}
-            <Button
-              disabled={busy || formBusy}
-              onClick={() =>
-                run(() => mutate("/sso/register", { action: "reset" }))
-              }
-            >
-              {t("退出本次注册流程")}
-            </Button>
+            {completed &&
+              (data.matching_account ? (
+                <Button disabled={busy} onClick={() => perform("continue")}>
+                  {t("继续")}
+                </Button>
+              ) : data.signed_in ? (
+                <Button disabled={busy} onClick={() => perform("switch")}>
+                  {t("登录已有账户")}
+                </Button>
+              ) : (
+                <Button component={RouterLink} to={loginHref}>
+                  {t("登录后继续")}
+                </Button>
+              ))}
           </Stack>
-        ) : data.mode === "closed" ? (
+        ) : blocked ? (
           <Stack spacing={2}>
-            <Alert severity="info">{t("注册已关闭")}</Alert>
-            {data.status && (
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  run(() => mutate("/sso/register", { action: "reset" }))
-                }
-              >
-                {t("退出本次注册流程")}
+            {!data.error && <Alert severity="info">{t("注册已关闭")}</Alert>}
+            {data.error === "enrollment_contact_changed" && (
+              <Button component={RouterLink} to="/account/applications">
+                {t("返回应用列表重新申请")}
               </Button>
             )}
           </Stack>
-        ) : data.tenant_invitation || (data.status === "ready" && data.existing_account) ? (
+        ) : data.status && !canAct ? (
           <Stack spacing={2}>
-            <Typography>{[data.tenant_name || data.app_name, data.phone || data.email].filter(Boolean).join(" · ")}</Typography>
-            {data.matching_account ? (
-              <Button variant="contained" disabled={busy || formBusy} onClick={() => run(() => mutate("/sso/register", { action: "finalize" }))}>{data.tenant_invitation ? t("加入组织") : t("完成注册或确认加入")}</Button>
-            ) : data.existing_account || data.signed_in ? (
-              <Button component={RouterLink} to="/account/login?redirect=%2Fsso%2Fregister" onClick={data.signed_in ? (event) => { event.preventDefault(); run(() => mutate("/sso/register", { action: "switch" })); } : undefined}>{t("登录已有账户")}</Button>
+            <Typography>
+              {[data.phone || data.email, data.app_name]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+            <Alert severity="info">
+              {data.status === "pending_verification"
+                ? t("申请已排队，请检查短信或邮件并继续。")
+                : admissionStatus(data.status)}
+              {data.status === "ready" && (
+                <Typography>{t("请打开最新的通知链接继续办理。")}</Typography>
+              )}
+            </Alert>
+            {data.expires_at && (
+              <Typography variant="body2">
+                {t("到期时间")} {date(data.expires_at)}
+              </Typography>
+            )}
+          </Stack>
+        ) : data.tenant_invitation ||
+          (data.existing_account &&
+            (data.status === "ready" || data.status === "pending_approval")) ? (
+          <Stack spacing={2}>
+            <Typography>
+              {[data.tenant_name || data.app_name, data.phone || data.email]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+            {data.already_admitted && (
+              <Alert severity="info">
+                {t(
+                  data.tenant_invitation
+                    ? "你已在此组织"
+                    : data.app
+                      ? "你已拥有此应用的访问资格"
+                      : "你已有账户",
+                )}
+              </Alert>
+            )}
+            {data.matching_account &&
+            (data.status !== "pending_approval" || data.already_admitted) ? (
+              <Button
+                variant="contained"
+                disabled={busy || formBusy}
+                onClick={() => perform("finalize")}
+              >
+                {t(
+                  data.already_admitted
+                    ? "确认并继续"
+                    : data.tenant_invitation
+                      ? "加入组织"
+                      : "确认加入应用",
+                )}
+              </Button>
+            ) : data.matching_account ? (
+              <Alert severity="info">{t("待审批")}</Alert>
+            ) : data.existing_account ? (
+              <Button
+                component={RouterLink}
+                to={loginHref}
+                onClick={
+                  data.signed_in
+                    ? (event) => {
+                        event.preventDefault();
+                        perform("switch");
+                      }
+                    : undefined
+                }
+              >
+                {t("登录已有账户")}
+              </Button>
+            ) : data.signed_in ? (
+              <Button disabled={busy} onClick={() => perform("sign_out")}>
+                {t("退出当前账户后继续注册")}
+              </Button>
             ) : (
               <>
-                <FieldsForm disabled={busy} onBusyChange={setFormBusy} fields={[{name:"username",label:t("用户名"),required:true}, ...(!data.social ? [{name:"password",label:t("密码"),type:"password" as const,required:true}] : [])]} submit={(v) => mutate("/sso/register", {...v,action:"finalize"})} label={t("完成注册或确认加入")}/>
+                <FieldsForm
+                  disabled={busy}
+                  onBusyChange={setFormBusy}
+                  fields={[
+                    { name: "username", label: t("用户名"), required: true },
+                    ...(!data.social
+                      ? [
+                          {
+                            name: "password",
+                            label: t("密码"),
+                            type: "password" as const,
+                            required: true,
+                          },
+                        ]
+                      : []),
+                  ]}
+                  submit={(v) => submit({ ...v, action: "finalize" })}
+                  label={t("完成注册或确认加入")}
+                />
                 {socialProviders}
-                <Button component={RouterLink} to="/account/login?redirect=%2Fsso%2Fregister">{t("登录已有账户")}</Button>
+                <Button component={RouterLink} to={loginHref}>
+                  {t("登录已有账户")}
+                </Button>
               </>
             )}
-            <Button disabled={busy || formBusy} onClick={() => run(() => mutate("/sso/register", {action:"reset"}))}>{t("退出本次注册流程")}</Button>
           </Stack>
         ) : data.status ? (
           <Stack spacing={3}>
@@ -134,13 +255,13 @@ export function Enrollment({
             {data.status === "pending_verification" && (
               <>
                 <Alert severity="info">
-                  {data.phone ? t("请确认从短信验证链接进入此页面。") : t("请确认验证此邮箱。邀请仅授予邮件所指定的应用资格。")}
+                  {data.phone
+                    ? t("请确认从短信验证链接进入此页面。")
+                    : t("请确认验证此邮箱。邀请仅授予邮件所指定的应用资格。")}
                 </Alert>
                 <Button
                   disabled={busy || formBusy}
-                  onClick={() =>
-                    run(() => mutate("/sso/register", { action: "verify" }))
-                  }
+                  onClick={() => perform("verify")}
                 >
                   {t(data.phone ? "确认手机并继续" : "确认邮箱并继续")}
                 </Button>
@@ -148,20 +269,26 @@ export function Enrollment({
             )}
             {data.status === "pending_approval" && (
               <Alert severity="info">
-                {t(data.phone ? "手机号已验证，等待管理员审批。审批后将收到短信。" : "邮箱已验证，等待管理员审批。审批后将收到邮件。")}
+                {t(
+                  data.phone
+                    ? "手机号已验证，等待管理员审批。审批后将收到短信。"
+                    : "邮箱已验证，等待管理员审批。审批后将收到邮件。",
+                )}
               </Alert>
             )}
-            {data.status === "ready" && (
+            {data.status === "ready" && data.signed_in && (
+              <Button disabled={busy} onClick={() => perform("sign_out")}>
+                {t("退出当前账户后继续注册")}
+              </Button>
+            )}
+            {data.status === "ready" && !data.signed_in && (
               <>
                 <Alert severity="info">
                   {t(
                     "已有账户请先登录，再返回此页面确认加入。新用户请设置用户名和凭据。",
                   )}
                 </Alert>
-                <Button
-                  component={RouterLink}
-                  to="/account/login?redirect=%2Fsso%2Fregister"
-                >
+                <Button component={RouterLink} to={loginHref}>
                   {t("登录已有账户")}
                 </Button>
                 {data.social && socialProviders}
@@ -183,9 +310,7 @@ export function Enrollment({
                         ]
                       : []),
                   ]}
-                  submit={(v) =>
-                    mutate("/sso/register", { ...v, action: "finalize" })
-                  }
+                  submit={(v) => submit({ ...v, action: "finalize" })}
                   label={t("完成注册或确认加入")}
                 />
                 {data.social && (
@@ -197,32 +322,36 @@ export function Enrollment({
                 )}
               </>
             )}
-            <Button
-              disabled={busy || formBusy}
-              onClick={() =>
-                run(() => mutate("/sso/register", { action: "reset" }))
-              }
-            >
-              {t("退出本次注册流程")}
-            </Button>
           </Stack>
-        ) : data.sent ? (
-          <Alert severity="success">
-            {t("申请已排队，请检查短信或邮件并继续。")}
-          </Alert>
         ) : data.mode === "invite_only" ? (
           <Alert severity="info">
             {t("仅限邀请注册，请联系管理员获取邀请。")}
           </Alert>
         ) : methods.length === 0 ? (
           <Alert severity="warning">
-            {t("当前没有可用的邮箱或短信验证渠道，暂时无法自助注册。请联系管理员。")}
+            {t(
+              "当前没有可用的邮箱或短信验证渠道，暂时无法自助注册。请联系管理员。",
+            )}
           </Alert>
         ) : (
           <Stack spacing={2}>
             <Stack direction="row" spacing={1}>
-              {methods.includes("phone") && <Button variant={channel === "phone" ? "contained" : "outlined"} onClick={() => setChannel("phone")}>{t("手机号注册")}</Button>}
-              {methods.includes("email") && <Button variant={channel === "email" ? "contained" : "outlined"} onClick={() => setChannel("email")}>{t("邮箱注册")}</Button>}
+              {methods.includes("phone") && (
+                <Button
+                  variant={channel === "phone" ? "contained" : "outlined"}
+                  onClick={() => setChannel("phone")}
+                >
+                  {t("手机号注册")}
+                </Button>
+              )}
+              {methods.includes("email") && (
+                <Button
+                  variant={channel === "email" ? "contained" : "outlined"}
+                  onClick={() => setChannel("email")}
+                >
+                  {t("邮箱注册")}
+                </Button>
+              )}
             </Stack>
             <FieldsForm
               key={channel}
@@ -233,17 +362,48 @@ export function Enrollment({
                       label: t("手机号（含国际区号，例如 +8613800000000）"),
                       required: true,
                     }
-                  : { name: "email", label: t("邮箱"), type: "email", required: true },
+                  : {
+                      name: "email",
+                      label: t("邮箱"),
+                      type: "email",
+                      required: true,
+                    },
               ]}
-              submit={(v) => mutate("/sso/register", { ...v, app: data.app })}
+              submit={(v) => submit({ ...v, app: data.app })}
               label={t(channel === "phone" ? "发送验证短信" : "发送验证邮件")}
             />
             {!data.social && socialProviders}
           </Stack>
         )}
+        {data.status && !completed && (
+          <Stack spacing={2} sx={{ mt: 2 }}>
+            {!terminal &&
+              (blocked || !canAct || data.status === "pending_approval") && (
+                <Button component="a" href="/sso/register">
+                  {t("刷新申请进度")}
+                </Button>
+              )}
+            {!terminal && !blocked && data.can_resend && (
+              <Button disabled={busy || formBusy} onClick={() => perform("resend")}>
+                {t("重发办理链接")}
+              </Button>
+            )}
+            <Button disabled={busy || formBusy} onClick={() => perform("reset")}>
+              {t("退出本次注册流程")}
+            </Button>
+          </Stack>
+        )}
       </Panel>
+      {!data.status && data.app && (
+        <Button
+          disabled={busy || formBusy}
+          onClick={() => perform("use_account")}
+        >
+          {t("使用已有账号继续")}
+        </Button>
+      )}
       {!data.status && (
-        <Button disabled={busy || formBusy} onClick={() => run(() => mutate("/sso/register", { action: "reset" }))}>
+        <Button disabled={busy || formBusy} onClick={() => perform("reset")}>
           {t("退出本次注册流程")}
         </Button>
       )}
@@ -378,6 +538,8 @@ export function Admission({
   ask,
   editor,
 }: { data: ViewDataMap["AdmissionView"] } & Actions) {
+  const [params] = useSearchParams();
+  const recovery = params.get("recovery");
   const { error: failure, busy, run } = useAction();
   const [search, setSearch] = useState("");
   const apps = data.rows.filter(
@@ -494,20 +656,24 @@ export function Admission({
                 {r.name} ·{" "}
                 {r.status ? admissionStatus(r.status) : t("尚未加入")}
               </Typography>
-              {r.status === "active" && r.organization_admission && !r.organization_only && (
-                <Button
-                  disabled={busy}
-                  onClick={() =>
-                    run(() =>
-                      mutate(`/account/applications/${r.id}`, {
-                        action: "join",
-                      }),
-                    )
-                  }
-                >
-                  {t("申请独立准入（联系方式验证）")}
-                </Button>
-              )}
+              {r.status === "active" &&
+                r.organization_admission &&
+                !r.organization_only &&
+                r.self_service_open !== false && (
+                  <Button
+                    disabled={busy}
+                    onClick={() =>
+                      run(() =>
+                        mutate(`/account/applications/${r.id}`, {
+                          action: "join",
+                          recovery,
+                        }),
+                      )
+                    }
+                  >
+                    {t("申请独立准入（联系方式验证）")}
+                  </Button>
+                )}
               {r.status === "active" ? (
                 <Button
                   color="error"
@@ -522,7 +688,11 @@ export function Admission({
               ) : r.status === "disabled" ? (
                 <Typography>{t("请联系管理员重新授权")}</Typography>
               ) : r.organization_only ? (
-                <Typography>{t("仅限邀请注册，请联系管理员获取邀请。")}</Typography>
+                <Typography>
+                  {t("仅限邀请注册，请联系管理员获取邀请。")}
+                </Typography>
+              ) : r.self_service_open === false ? (
+                <Typography>{t("此应用暂未开放自助申请。")}</Typography>
               ) : (
                 <Button
                   disabled={busy}
@@ -530,6 +700,7 @@ export function Admission({
                     run(() =>
                       mutate(`/account/applications/${r.id}`, {
                         action: "join",
+                        recovery,
                       }),
                     )
                   }
