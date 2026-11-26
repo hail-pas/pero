@@ -3045,15 +3045,17 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     let sibling = Uuid::now_v7();
     let foreign_app = Uuid::now_v7();
     let foreign_native = Uuid::now_v7();
+    let mfa_client = Uuid::now_v7();
     f.sql(
         "INSERT INTO apps(id,code,name) VALUES($1,'foreign-native-app','Foreign')",
         vec![foreign_app.into()],
     )
     .await;
+    // Only the second app requires MFA, so the original token stays active until rotation.
     for app in [f.app, foreign_app] {
         f.sql(
-            "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
-            vec![f.user.into(), app.into()],
+            "INSERT INTO user_app_access(user_id,app_id,require_mfa) VALUES($1,$2,$3)",
+            vec![f.user.into(), app.into(), (app == foreign_app).into()],
         )
         .await;
     }
@@ -3061,23 +3063,52 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
         f.sql("INSERT INTO oauth_clients(id,app_id,identifier,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'public',ARRAY['com.example.native:/oauth2/callback'],ARRAY['openid']::text[],true)", vec![id.into(),app.into(),id.to_string().into()]).await;
     }
     f.sql("INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,type,redirect_uris,scopes,require_pkce) VALUES($1,$2,$3,'private-sibling-hash','confidential',ARRAY['https://sibling.example.test/callback'],ARRAY['openid']::text[],false)", vec![sibling.into(),f.app.into(),sibling.to_string().into()]).await;
-    let (_, _, sid, raw) = f.login(f.user).await;
+    let redirect_uri = "https://client.example.test/callback";
+    f.sql(
+        "INSERT INTO oauth_clients(id,app_id,identifier,secret_hash,type,redirect_uris,scopes,require_pkce)
+         SELECT $1,$2,$3,secret_hash,type,ARRAY[$4],scopes,false FROM oauth_clients WHERE id=$5",
+        vec![mfa_client.into(), foreign_app.into(), mfa_client.to_string().into(), redirect_uri.into(), f.client.into()],
+    ).await;
+    f.sql(
+        "INSERT INTO user_consents(user_id,client_id,scopes) VALUES($1,$2,ARRAY['openid'])",
+        vec![f.user.into(), mfa_client.into()],
+    )
+    .await;
+    let key = user_center::db::helper::signing_key::find_active_signing_key(&f.state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    user_center::db::crypto_expr::update_signing_key_private_key(
+        &f.state.db,
+        include_str!("../../../tests/fixtures/rsa-private.pem"),
+        key.key.id,
+    )
+    .await
+    .unwrap();
+    let totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    f.sql(
+        "INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt($2,current_setting('app.encrypt_key')),true)",
+        vec![f.user.into(), totp_secret.into()],
+    ).await;
+    let (cookies, csrf, sid, raw) = f.login(f.user).await;
     let token = f.token_for(sid, &native.to_string()).await;
     let router = user_center::router::build(f.state.clone());
     let backend = f.client.to_string();
-    let inspect = async |token: &str| {
+    let mfa_client = mfa_client.to_string();
+    let inspect_for = async |client: &str, token: &str| {
         call(
             &router,
             "",
             "/api/oauth2/introspect",
             Some(&[
-                ("client_id", &backend),
+                ("client_id", client),
                 ("client_secret", &f.secret),
                 ("token", token),
             ]),
         )
         .await
     };
+    let inspect = async |token: &str| inspect_for(&backend, token).await;
     let (status, result, headers) = inspect(&token).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(result["active"], true);
@@ -3085,6 +3116,7 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     assert_eq!(result["aud"], native.to_string());
     assert_eq!(result["sub"], f.user.to_string());
     assert_eq!(result["is_superadmin"], false);
+    assert_eq!(result["mfa_verified"], false);
     assert_eq!(headers["cache-control"], "no-store");
     assert_eq!(inspect(&f.token(sid).await).await.1["active"], true);
 
@@ -3093,7 +3125,7 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     f.sql("INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,ARRAY['openid']::text[],now()+interval '1 hour')", vec![pero_utils::crypto::sha256_hex(refresh).into(),f.user.into(),f.app.into(),native.into(),sid.into()]).await;
     assert_eq!(inspect(refresh).await.1, json!({"active":false}));
 
-    // A role grant alone cannot elevate a primary-only application session.
+    // The live role grant is visible before the session completes MFA.
     f.sql(
         "INSERT INTO admin_roles(user_id,role) VALUES($1,'super_admin')",
         vec![f.user.into()],
@@ -3101,30 +3133,112 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
     .await;
     let primary_only = inspect(&token).await.1;
     assert_eq!(primary_only["active"], true);
-    assert_eq!(primary_only["is_superadmin"], false);
-    f.sql(
-        "UPDATE sso_sessions SET mfa_verified_at=now() WHERE id=$1",
-        vec![sid.into()],
+    assert_eq!(primary_only["is_superadmin"], true);
+    assert_eq!(primary_only["mfa_verified"], false);
+    let (_, _, other_sid, _) = f.login(f.user).await;
+    let other_token = f.token_for(other_sid, &native.to_string()).await;
+
+    let authorize = format!(
+        "/oauth2/authorize?client_id={mfa_client}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid"
+    );
+    let (_, challenge, headers) = call(&router, &cookies, &authorize, None).await;
+    assert_eq!(
+        challenge["redirect"],
+        "/sso/mfa?redirect=%2Foauth2%2Fauthorize%2Fresume"
+    );
+    let nonce_name = f.state.cookie_factory().nonce_cookie_name();
+    let nonce = headers
+        .get_all("set-cookie")
+        .iter()
+        .find_map(|header| {
+            let cookie = Cookie::parse(header.to_str().unwrap()).unwrap();
+            (cookie.name() == nonce_name).then(|| cookie.value().to_owned())
+        })
+        .unwrap();
+    let otp = user_center::service::security::totp(totp_secret, "workflow_user")
+        .unwrap()
+        .generate_current()
+        .to_string();
+    let (_, verified, headers) = call(
+        &router,
+        &cookies,
+        "/sso/mfa",
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "verify"),
+            ("code", &otp),
+            ("redirect", "/oauth2/authorize/resume"),
+        ]),
     )
     .await;
-    // The next request observes both MFA assurance and the current role.
-    assert_eq!(inspect(&token).await.1["is_superadmin"], true);
+    let resume = verified["redirect"].as_str().unwrap();
+    assert_eq!(resume, "/oauth2/authorize/resume");
+    assert_eq!(inspect(&token).await.1, json!({"active":false}));
+    let session_cookie = Cookie::parse(headers["set-cookie"].to_str().unwrap()).unwrap();
+    let resumed_cookies = format!(
+        "{}={}; {nonce_name}={nonce}",
+        session_cookie.name(),
+        session_cookie.value()
+    );
+    let (_, authorized, _) = call(&router, &resumed_cookies, resume, None).await;
+    let callback = url::Url::parse(authorized["redirect"].as_str().unwrap()).unwrap();
+    let code = callback
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .unwrap()
+        .1;
+    let (status, tokens, _) = call(
+        &router,
+        "",
+        "/api/oauth2/token",
+        Some(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", &mfa_client),
+            ("client_secret", &f.secret),
+            ("code", &code),
+            ("redirect_uri", redirect_uri),
+        ]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let new_token = tokens["access_token"].as_str().unwrap();
+    let after_mfa = inspect_for(&mfa_client, new_token).await.1;
+    assert_eq!(after_mfa["active"], true);
+    assert_eq!(after_mfa["is_superadmin"], true);
+    assert_eq!(after_mfa["mfa_verified"], true);
+    let other_session = inspect(&other_token).await.1;
+    assert_eq!(other_session["active"], true);
+    assert_eq!(other_session["is_superadmin"], true);
+    assert_eq!(other_session["mfa_verified"], false);
+
     f.sql(
         "UPDATE admin_roles SET role='admin' WHERE user_id=$1",
         vec![f.user.into()],
     )
     .await;
-    assert_eq!(inspect(&token).await.1["is_superadmin"], false);
+    let after_demotion = inspect_for(&mfa_client, new_token).await.1;
+    assert_eq!(after_demotion["is_superadmin"], false);
+    assert_eq!(after_demotion["mfa_verified"], true);
     f.sql(
         "DELETE FROM admin_roles WHERE user_id=$1",
         vec![f.user.into()],
     )
     .await;
-    assert_eq!(inspect(&token).await.1["is_superadmin"], false);
+    assert_eq!(
+        inspect_for(&mfa_client, new_token).await.1["is_superadmin"],
+        false
+    );
 
+    let verified_session = f
+        .state
+        .session_service()
+        .validate(session_cookie.value())
+        .await
+        .unwrap()
+        .unwrap();
     for client in [foreign_native, sibling] {
         assert_eq!(
-            inspect(&f.token_for(sid, &client.to_string()).await)
+            inspect(&f.token_for(verified_session.id, &client.to_string()).await)
                 .await
                 .1,
             json!({"active":false})
@@ -3135,7 +3249,7 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
             &router,
             "",
             "/api/oauth2/introspect",
-            Some(&[("client_id", &native.to_string()), ("token", &token),])
+            Some(&[("client_id", &native.to_string()), ("token", &other_token),])
         )
         .await
         .0,
@@ -3149,7 +3263,7 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
             Some(&[
                 ("client_id", &backend),
                 ("client_secret", "wrong-secret"),
-                ("token", &token),
+                ("token", &other_token),
             ])
         )
         .await
@@ -3159,10 +3273,13 @@ async fn native_introspection_shares_live_roles_only_with_the_same_app_backend()
 
     f.state
         .session_service()
-        .revoke_login_state(sid, "native-test")
+        .revoke_login_state(verified_session.id, "native-test")
         .await
         .unwrap();
-    assert_eq!(inspect(&token).await.1, json!({"active":false}));
+    assert_eq!(
+        inspect_for(&mfa_client, new_token).await.1,
+        json!({"active":false})
+    );
     assert!(
         f.state
             .session_service()

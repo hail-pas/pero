@@ -46,7 +46,7 @@ Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机�
 
 数据库以 `001_init.sql` 为初始迁移，已部署数据库通过增量迁移升级。服务启动、bootstrap 和 `scripts/migrate.sh` 共用编译进程序的迁移实现，无需 psql；启动时在监听端口和启动后台任务之前完成检查。检查 PostgreSQL 18+、迁移历史顺序及 SHA-256，使用数据库事务锁串行处理并发启动；全部待执行迁移和版本记录在同一事务内完成，验收表字段、关键唯一索引、约束、注销/通知触发器、pgcrypto 和系统种子数据后提交。失败时回滚并终止启动，日志保留错误；修正原因后重新启动即可重试。
 
-这是新的空库基线：合并前的 001–022 历史或旧 checksum 会被拒绝，不自动改写历史或清空数据。已有环境先备份，使用新库初始化并按需显式导入业务数据；不要直接删除旧库迁移记录。后续增加 `002_description.sql` 等递增文件，同时更新 `src/db/verify.sql` 的验收要求并重新构建；已发布的 SQL 不应修改。部署包包含迁移工具、公开默认值和示例，不包含真实配置或私钥。详见 [数据库迁移与失败恢复](docs/database-migrations.md)。
+初始基线用于空库。迁移历史或校验和不匹配时，启动失败并保留现有数据。后续迁移使用递增编号，同时更新 `src/db/verify.sql` 的验收要求并重新构建。部署包包含迁移工具、公开默认值和示例。详见 [数据库迁移与失败恢复](docs/database-migrations.md)。
 
 配置可选的 `notification.smtp`、`notification.sms`（Twilio）或 HTTP 网关后，服务将通知加密入库并由后台任务投递；数据库连接使用的 `app.encrypt_key` 必须保持一致。对应渠道未配置时，联系方式验证、注册邮件和密码恢复返回 503。详见[应用门户、发送渠道与密钥运维](docs/application-portal-and-delivery.md)。
 
@@ -196,7 +196,7 @@ MIT OR Apache-2.0
 
 Revocation 接受本客户端的 access token 或 refresh token；采用应用授权级撤销，使该用户在目标应用的既有令牌及未使用授权码失效，保留应用访问资格、SSO 会话和其他应用授权。未知、已撤销或其他客户端的令牌统一返回 200。旧刷新令牌的主动撤销不会触发刷新重放导致的 SSO 全局退出。
 
-Access Token 的 introspection 响应额外返回严格布尔值 `is_superadmin`，仅在当前有效会话已完成 MFA 且用户实时持有 `super_admin` 平台角色时为 `true`，不从令牌或调用方参数推断。仅完成主身份认证的超级管理员仍可登录不要求 MFA 的普通应用，但不会获得此管理权限标记；需要该标记的应用应要求用户完成 MFA。仅认证通过的 confidential 客户端可按上述应用和客户端边界查询；public 客户端自身仍不能调用 introspection。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`，不扩大未授权资料范围。业务端可据此映射本系统角色，撤销中心角色后下一次在线校验即生效。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
+有效 Access Token 的 introspection 响应返回两个布尔值。`is_superadmin` 表示用户当前持有 `super_admin` 平台角色，`mfa_verified` 表示当前 SSO 会话已完成 MFA。业务端可根据 `is_superadmin` 映射本系统角色，撤销中心角色后下一次在线校验即生效。此前只检查 `is_superadmin` 来授权超级管理员操作的业务端，需要同时检查 `mfa_verified`，以保留原有的 MFA 门禁。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
 
 业务应用应在每次受保护请求时调用 introspection，检查 `active`、`sub`、`aud` / `client_id` 与本地会话绑定是否一致；`active=false` 时清除本地登录态，503 时返回暂不可用并保留 Cookie。长连接应用应在敏感操作或定期续期时再次校验。中心撤销不主动清理其他域名的 Cookie。仅在登录时离线验签无法获得即时撤销效果。
 

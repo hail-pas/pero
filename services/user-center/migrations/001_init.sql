@@ -170,23 +170,6 @@ CREATE INDEX ix_tenant_members_user_active ON tenant_members(user_id, tenant_id)
 CREATE INDEX ix_tenant_members_active_roster
     ON tenant_members(tenant_id, (role='owner') DESC, joined_at, user_id)
     WHERE status='active';
-CREATE TABLE tenant_invitations (
-    id uuid PRIMARY KEY DEFAULT uuidv7(),
-    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    email citext NOT NULL,
-    role text NOT NULL CHECK (role IN ('admin','member')),
-    token_hash text NOT NULL UNIQUE,
-    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','revoked','expired')),
-    invited_by uuid REFERENCES users(id) ON DELETE SET NULL,
-    expires_at timestamptz NOT NULL,
-    accepted_at timestamptz,
-    accepted_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX ux_tenant_invitation_pending ON tenant_invitations(tenant_id,email) WHERE status='pending';
-CREATE INDEX ix_tenant_invitation_expiry ON tenant_invitations(expires_at) WHERE status='pending';
-CREATE INDEX ix_tenant_invitations_tenant_created ON tenant_invitations(tenant_id,created_at DESC);
-CREATE INDEX ix_tenant_invitations_cleanup ON tenant_invitations(expires_at);
 CREATE INDEX ix_tenants_created_by ON tenants(created_by) WHERE kind='organization';
 COMMENT ON COLUMN tenants.status IS 'deleted is an irreversible tombstone; existing references remain valid for history.';
 COMMENT ON COLUMN tenants.max_members IS 'Maximum active memberships, including owners. Lowering the value never evicts existing members.';
@@ -380,6 +363,26 @@ COMMENT ON COLUMN oauth_clients.id_token_ttl_seconds IS
 
 COMMENT ON COLUMN oauth_clients.status IS
 'Client 状态。disabled 时拒绝 authorize 和 token 请求。';
+
+CREATE TABLE tenant_invitations (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    email citext NOT NULL,
+    role text NOT NULL CHECK (role IN ('admin','member')),
+    token_hash text NOT NULL UNIQUE,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','revoked','expired')),
+    invited_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    expires_at timestamptz NOT NULL,
+    accepted_at timestamptz,
+    accepted_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL,
+    notification_id uuid
+);
+CREATE UNIQUE INDEX ux_tenant_invitation_pending ON tenant_invitations(tenant_id,email) WHERE status='pending';
+CREATE INDEX ix_tenant_invitation_expiry ON tenant_invitations(expires_at) WHERE status='pending';
+CREATE INDEX ix_tenant_invitations_tenant_created ON tenant_invitations(tenant_id,created_at DESC);
+CREATE INDEX ix_tenant_invitations_cleanup ON tenant_invitations(expires_at);
 
 -- ============================================================
 -- 4. identity_providers
@@ -1436,7 +1439,17 @@ $$;
 CREATE TRIGGER notification_outbox_deleted AFTER DELETE ON notification_outbox
 FOR EACH ROW EXECUTE FUNCTION notification_outbox_deleted();
 
-ALTER TABLE tenant_invitations ADD COLUMN client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL;
+CREATE FUNCTION cancel_tenant_invitation_notification() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM notification_outbox WHERE id=OLD.notification_id;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER tenant_invitation_notification_cancelled
+    AFTER UPDATE OF status ON tenant_invitations
+    FOR EACH ROW
+    WHEN (OLD.status='pending' AND NEW.status<>'pending' AND OLD.notification_id IS NOT NULL)
+    EXECUTE FUNCTION cancel_tenant_invitation_notification();
 
 -- Platform defaults and explicit per-application overrides share one policy shape.
 CREATE TABLE registration_policies (
@@ -1472,6 +1485,9 @@ CREATE TABLE enrollments (
     created_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL,
     last_sent_at timestamptz NOT NULL DEFAULT now(),
+    requested_user_id uuid REFERENCES users(id),
+    tenant_id uuid REFERENCES tenants(id) ON DELETE SET NULL,
+    authorization_session_id uuid REFERENCES sso_sessions(id) ON DELETE SET NULL,
     CHECK (invitation=(invited_by IS NOT NULL)),
     CHECK (NOT domain_exception OR invitation),
     CHECK ((provider_id IS NULL)=(subject IS NULL)),
@@ -1484,6 +1500,10 @@ CREATE INDEX ix_enrollments_pending_expiry ON enrollments(expires_at)
 CREATE INDEX ix_enrollments_app ON enrollments(app_id);
 CREATE INDEX ix_enrollments_completed_user ON enrollments(completed_user_id) WHERE completed_user_id IS NOT NULL;
 CREATE INDEX ix_enrollments_auth_request ON enrollments(auth_request_id) WHERE auth_request_id IS NOT NULL;
+CREATE INDEX ix_enrollments_requested_user ON enrollments(requested_user_id,created_at DESC)
+    WHERE requested_user_id IS NOT NULL;
+CREATE INDEX ix_enrollments_authorization_session ON enrollments(authorization_session_id)
+    WHERE authorization_session_id IS NOT NULL;
 CREATE UNIQUE INDEX ux_enrollments_invitation ON enrollments(email,COALESCE(app_id,'00000000-0000-0000-0000-000000000000')) WHERE invitation AND status IN ('pending_verification','pending_approval','ready');
 
 ALTER TABLE notification_outbox ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE CASCADE;

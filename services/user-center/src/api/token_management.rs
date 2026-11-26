@@ -86,13 +86,10 @@ async fn inspect(
     {
         // A confidential backend may validate its own app's native/public access tokens.
         // Public callers, other apps and sibling confidential clients remain isolated.
-        // A primary-only session may access an ordinary app, but must not
-        // confer administrator privileges on a downstream service.
-        let is_superadmin = mfa_verified
-            && crate::service::security::role(&state.db, user.id)
-                .await?
-                .as_deref()
-                == Some("super_admin");
+        let is_superadmin = crate::service::security::role(&state.db, user.id)
+            .await?
+            .as_deref()
+            == Some("super_admin");
         let scopes = claims
             .scope
             .split_whitespace()
@@ -101,7 +98,7 @@ async fn inspect(
         let mut response = serde_json::json!({
             "active":true,"client_id":owner.identifier,"sub":claims.sub,"scope":claims.scope,
             "exp":claims.exp,"iat":claims.iat,"iss":claims.iss,"aud":claims.aud,"sid":claims.sid,"token_type":"Bearer",
-            "is_superadmin":is_superadmin,
+            "is_superadmin":is_superadmin,"mfa_verified":mfa_verified,
             "tenant_id":claims.tenant_id,"tenant_kind":claims.tenant_kind
         });
         if let Some(context) = tenant {

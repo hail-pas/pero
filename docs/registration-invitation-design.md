@@ -14,7 +14,7 @@
 
 ## 生命周期及数据
 
-注册申请有效期 24 小时，平台或应用邀请 72 小时，组织邀请 7 天；第三方注册证明短期有效。授权请求默认 600 秒，授权码默认 120 秒。注册事务创建用户、身份及应用资格或组织成员，并消费申请/邀请；事务提交后建立会话，不在注册服务签发 OAuth token。注册申请保存 client_id 与可空 auth_request_id，组织邀请保存 client_id 与 accepted_user_id；OAuth client 保存 login_uri。注册续接相关字段通过 `002_registration_continuation.sql` 升级。门户申请绑定发起账号。组织邀请关联当前投递任务。
+注册申请有效期 24 小时，平台或应用邀请 72 小时，组织邀请 7 天；第三方注册证明短期有效。授权请求默认 600 秒，授权码默认 120 秒。注册事务创建用户、身份及应用资格或组织成员，并消费申请/邀请；事务提交后建立会话，不在注册服务签发 OAuth token。注册申请保存 client_id 与可空 auth_request_id，组织邀请保存 client_id 与 accepted_user_id；OAuth client 保存 login_uri。门户申请绑定发起账号。组织邀请关联当前投递任务。
 
 ## 安全与失败处理
 
