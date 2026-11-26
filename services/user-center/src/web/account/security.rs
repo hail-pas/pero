@@ -543,7 +543,7 @@ pub async fn identities(
     let mut providers = match crate::web::sso::utility::find_enabled_social_providers(&state).await
     {
         Ok(providers) => providers,
-        Err(response) => return response,
+        Err(error) => return crate::web::util::dependency_error(error),
     };
     providers.retain(|provider| {
         !identities.iter().any(|(id, p)| {

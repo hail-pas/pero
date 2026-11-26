@@ -383,15 +383,13 @@ async fn refresh_downscoping() {
     request.scope = Some("admin".into());
     assert!(matches!(
         service.handle_refresh_token(&request, &scoped_client).await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidScope,
             ..
-        }
+        })
     ));
     request.scope = Some("openid".into());
-    let TokenEndpointResult::Success(result) =
-        service.handle_refresh_token(&request, &scoped_client).await
-    else {
+    let Ok(result) = service.handle_refresh_token(&request, &scoped_client).await else {
         panic!("downscoping failed")
     };
     assert_eq!(result.scope, "openid");
@@ -403,7 +401,7 @@ async fn refresh_downscoping() {
     )
     .unwrap();
     assert_eq!(claims.scope, "openid");
-    let TokenEndpointResult::Success(restored) = service
+    let Ok(restored) = service
         .handle_refresh_token(
             &refresh_form(client, result.refresh_token.as_deref().unwrap()),
             &scoped_client,
@@ -451,10 +449,7 @@ async fn refresh_replay() {
     let result = service
         .handle_refresh_token(&refresh_form(client, &raw), &client_model)
         .await;
-    assert!(
-        matches!(result, TokenEndpointResult::Success(_)),
-        "valid refresh must work"
-    );
+    assert!(result.is_ok(), "valid refresh must work");
     // Revocation failures must be retryable, rather than claiming replay handling completed.
     db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON client_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
         .await.unwrap();
@@ -462,10 +457,10 @@ async fn refresh_replay() {
         service
             .handle_refresh_token(&refresh_form(client, &raw), &client_model)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::TemporarilyUnavailable,
             ..
-        }
+        })
     ));
     let row = refresh_tokens::Entity::find_by_id(rt)
         .one(&db)
@@ -488,10 +483,10 @@ async fn refresh_replay() {
         service
             .handle_refresh_token(&refresh_form(client, &raw), &client_model)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     let row = refresh_tokens::Entity::find_by_id(rt)
         .one(&db)
@@ -540,7 +535,7 @@ async fn refresh_concurrent_replay() {
     assert_eq!(
         [first, second]
             .iter()
-            .filter(|result| matches!(result, TokenEndpointResult::Success(_)))
+            .filter(|result| result.is_ok())
             .count(),
         1
     );
@@ -592,10 +587,10 @@ async fn expired_sessions_deny_refresh() {
                     service
                         .handle_refresh_token(&refresh_form(client, &raw), &client_model)
                         .await,
-                    TokenEndpointResult::Error {
+                    Err(TokenEndpointError::OAuth {
                         code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
                         ..
-                    }
+                    })
                 ),
                 "{kind}, cleanup={after_cleanup}"
             );
@@ -647,7 +642,7 @@ async fn authorization_code_claims_and_scope() {
         code_verifier: Some(pkce.code_verifier.clone()),
         ..refresh_form(client, "")
     };
-    let TokenEndpointResult::Success(tokens) = service
+    let Ok(tokens) = service
         .handle_authorization_code(&successful_form, &client_model)
         .await
     else {
@@ -678,10 +673,10 @@ async fn authorization_code_claims_and_scope() {
         service
             .handle_authorization_code(&successful_form, &client_model)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     assert_eq!(
         crate::api::userinfo::userinfo(axum::extract::State(state.clone()), headers.clone())
@@ -695,10 +690,10 @@ async fn authorization_code_claims_and_scope() {
         service
             .handle_authorization_code(&successful_form, &client_model)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     assert_eq!(
         crate::api::userinfo::userinfo(axum::extract::State(state.clone()), headers)
@@ -713,10 +708,10 @@ async fn authorization_code_claims_and_scope() {
                 &client_model
             )
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
 
     // Revoked scope cannot be recovered by redeeming a previously issued authorization code.
@@ -738,10 +733,10 @@ async fn authorization_code_claims_and_scope() {
         service
             .handle_authorization_code(&code_form, &client_model)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
 
     fixture.cleanup().await;
@@ -1056,47 +1051,62 @@ async fn notification_retries_and_leases() {
     let db = state.db.clone();
     let user = fixture.user;
     // Notification failures remain queued and retries carry the same idempotency key.
-    let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let observed = attempts.clone();
-    let started = std::sync::Arc::new(tokio::sync::Notify::new());
-    let release = std::sync::Arc::new(tokio::sync::Notify::new());
-    let handler_started = started.clone();
-    let handler_release = release.clone();
-    let gateway = axum::Router::new().route(
-        "/send",
-        axum::routing::post(
-            move |headers: axum::http::HeaderMap,
-                  axum::Json(body): axum::Json<serde_json::Value>| {
-                let observed = observed.clone();
-                let started = handler_started.clone();
-                let release = handler_release.clone();
-                async move {
-                    assert_eq!(headers["authorization"], "Bearer test-gateway-secret");
-                    assert_eq!(body["code"], "123456");
-                    let first = {
-                        let mut requests = observed.lock().unwrap();
-                        requests.push(headers["idempotency-key"].to_str().unwrap().to_owned());
-                        requests.len() == 1
-                    };
-                    if first {
-                        started.notify_one();
-                        release.notified().await;
-                        axum::http::StatusCode::SERVICE_UNAVAILABLE
-                    } else {
-                        axum::http::StatusCode::ACCEPTED
-                    }
-                }
-            },
-        ),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/send", listener.local_addr().unwrap());
-    let gateway_task = tokio::spawn(async move { axum::serve(listener, gateway).await.unwrap() });
+    #[derive(Default)]
+    struct Gateway {
+        attempts: std::sync::Mutex<Vec<String>>,
+        started: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl pero_http_client_core::HttpClient for Gateway {
+        async fn send(
+            &self,
+            request: http::Request<Vec<u8>>,
+        ) -> pero_http_client_core::HttpClientResult<pero_http_client_core::HttpResponse> {
+            assert_eq!(request.uri(), "https://notifications.example.test/send");
+            assert_eq!(request.method(), http::Method::POST);
+            assert_eq!(
+                request.headers()[http::header::CONTENT_TYPE],
+                "application/json"
+            );
+            assert_eq!(
+                request.headers()["authorization"],
+                "Bearer test-gateway-secret"
+            );
+            let body: serde_json::Value = serde_json::from_slice(request.body()).unwrap();
+            assert_eq!(body["code"], "123456");
+            let first = {
+                let mut attempts = self.attempts.lock().unwrap();
+                attempts.push(
+                    request.headers()["idempotency-key"]
+                        .to_str()
+                        .unwrap()
+                        .to_owned(),
+                );
+                attempts.len() == 1
+            };
+            let status = if first {
+                self.started.notify_one();
+                self.release.notified().await;
+                http::StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                http::StatusCode::ACCEPTED
+            };
+            Ok(pero_http_client_core::HttpResponse {
+                status,
+                headers: Default::default(),
+                body: Vec::new(),
+            })
+        }
+    }
+
+    let gateway = std::sync::Arc::new(Gateway::default());
     let mut delivery_state = state.clone();
-    let delivery_config = std::sync::Arc::make_mut(&mut delivery_state.config);
-    delivery_config.notification.endpoint = endpoint;
-    delivery_config.notification.bearer_token =
-        pero_types::SecretString::new("test-gateway-secret");
+    std::sync::Arc::make_mut(&mut delivery_state.config)
+        .notification
+        .endpoint = "https://notifications.example.test/send".into();
+    delivery_state.http_client = gateway.clone();
     crate::service::notify::enqueue_verification(
         &db,
         user,
@@ -1111,9 +1121,12 @@ async fn notification_retries_and_leases() {
     let worker_state = delivery_state.clone();
     let worker =
         tokio::spawn(async move { crate::service::notify::deliver_one(&worker_state).await });
-    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        gateway.started.notified(),
+    )
+    .await
+    .unwrap();
     // No database row lock survives the HTTP request and another worker cannot take the live lease.
     let lock_probe = db.begin().await.unwrap();
     lock_probe
@@ -1126,7 +1139,7 @@ async fn notification_retries_and_leases() {
             .await
             .unwrap()
     );
-    release.notify_one();
+    gateway.release.notify_one();
     assert!(worker.await.unwrap().unwrap());
     let row = db
         .query_one_raw(Statement::from_string(
@@ -1215,7 +1228,7 @@ async fn notification_retries_and_leases() {
             .unwrap()
     );
     {
-        let requests = attempts.lock().unwrap();
+        let requests = gateway.attempts.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0], requests[1]);
     }
@@ -1283,7 +1296,7 @@ async fn notification_retries_and_leases() {
         );
     }
     // A stalled delivery must not block another message in the same batch.
-    attempts.lock().unwrap().clear();
+    gateway.attempts.lock().unwrap().clear();
     for nonce in ["parallel-first", "parallel-second"] {
         crate::service::notify::enqueue_verification(
             &db,
@@ -1301,9 +1314,9 @@ async fn notification_retries_and_leases() {
     let batch =
         tokio::spawn(async move { crate::service::notify::deliver_batch(&worker_state).await });
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        started.notified().await;
+        gateway.started.notified().await;
         loop {
-            if attempts.lock().unwrap().len() == 2 {
+            if gateway.attempts.lock().unwrap().len() == 2 {
                 break;
             }
             tokio::task::yield_now().await;
@@ -1312,17 +1325,16 @@ async fn notification_retries_and_leases() {
     .await
     .unwrap();
     assert!(!batch.is_finished());
-    release.notify_one();
+    gateway.release.notify_one();
     tokio::time::timeout(std::time::Duration::from_secs(5), batch)
         .await
         .unwrap()
         .unwrap();
     {
-        let requests = attempts.lock().unwrap();
+        let requests = gateway.attempts.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_ne!(requests[0], requests[1]);
     }
-    gateway_task.abort();
     fixture.cleanup().await;
 }
 
@@ -2132,9 +2144,7 @@ async fn concurrent_first_consents_both_issue_codes() {
         service.handle_authorization_code(&first, &client),
         service.handle_authorization_code(&second, &client),
     );
-    let (TokenEndpointResult::Success(first), TokenEndpointResult::Success(second)) =
-        (first, second)
-    else {
+    let (Ok(first), Ok(second)) = (first, second) else {
         panic!("concurrent same-device grants must both succeed");
     };
     let first = crate::service::token_status::active_access(&fixture.state, &first.access_token)
@@ -2337,7 +2347,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
             redirect_uri: Some("https://client.example.test/callback".into()),
             ..refresh_form(client_id, "")
         };
-        let TokenEndpointResult::Success(tokens) = TokenService::new(state)
+        let Ok(tokens) = TokenService::new(state)
             .handle_authorization_code(&form, &client)
             .await
         else {
@@ -2368,10 +2378,10 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
             TokenService::new(state)
                 .handle_authorization_code(&form, &client)
                 .await,
-            TokenEndpointResult::Error {
+            Err(TokenEndpointError::OAuth {
                 code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
                 ..
-            }
+            })
         ));
         assert!(
             state
@@ -2441,7 +2451,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
         .await
         .unwrap()
         .unwrap();
-    let TokenEndpointResult::Success(refreshed) = TokenService::new(state)
+    let Ok(refreshed) = TokenService::new(state)
         .handle_refresh_token(
             &refresh_form(fixture.client, rotated.refresh_token.as_ref().unwrap()),
             &client,
@@ -2783,15 +2793,24 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         .await
         .unwrap()
         .expect("single personal workspace");
+    let client_session = database::client_session(
+        db,
+        fixture.user,
+        fixture.app,
+        fixture.client,
+        current,
+        Some(tenant.tenant_id),
+    )
+    .await;
     let refresh_raw = pero_utils::crypto::generate_token();
-    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at,tenant_id,tenant_version,tenant_member_version) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day',$6,$7,$8)",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into(),tenant.tenant_id.into(),tenant.tenant_version.into(),tenant.tenant_member_version.into()]).await;
+    sql(db,"INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,scopes,expires_at,tenant_id,tenant_version,tenant_member_version,client_session_id) VALUES($1,$2,$3,$4,$5,ARRAY['openid'],now()+interval '1 day',$6,$7,$8,$9)",vec![pero_utils::crypto::sha256_hex(&refresh_raw).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),current.into(),tenant.tenant_id.into(),tenant.tenant_version.into(),tenant.tenant_member_version.into(),client_session.into()]).await;
     let client = oauth_clients::Entity::find_by_id(fixture.client)
         .one(db)
         .await
         .unwrap()
         .unwrap();
     let token_service = TokenService::new(&state);
-    let TokenEndpointResult::Success(rotated) = token_service
+    let Ok(rotated) = token_service
         .handle_refresh_token(&refresh_form(fixture.client, &refresh_raw), &client)
         .await
     else {
@@ -2805,7 +2824,13 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
         .await
         .unwrap();
     let old_token = super::token_issuer::TokenIssuer::new(&state, &client, &signing)
-        .issue_access_token(fixture.user, "openid", Some(current), 0, Some(&tenant))
+        .issue_access_token(
+            fixture.user,
+            "openid",
+            Some(client_session),
+            0,
+            Some(&tenant),
+        )
         .unwrap();
     let userinfo = |token: String| {
         let state = state.clone();
@@ -2846,10 +2871,10 @@ async fn account_security_pages_enforce_ownership_and_revoke_grants() {
             token_service
                 .handle_refresh_token(&refresh_form(fixture.client, &revoked_token), &client)
                 .await,
-            TokenEndpointResult::Error {
+            Err(TokenEndpointError::OAuth {
                 code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
                 ..
-            }
+            })
         ));
         assert!(
             sso_sessions::Entity::find_by_id(current)
@@ -3843,9 +3868,7 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
         redirect_uri: Some("https://client.example.test/callback".into()),
         ..refresh_form(fixture.client, "")
     };
-    let TokenEndpointResult::Success(tokens) =
-        service.handle_authorization_code(&request, &client).await
-    else {
+    let Ok(tokens) = service.handle_authorization_code(&request, &client).await else {
         panic!("ordinary application must accept primary login")
     };
     assert!(
@@ -3854,7 +3877,7 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
             .unwrap()
             .is_some()
     );
-    let TokenEndpointResult::Success(refreshed) = service
+    let Ok(refreshed) = service
         .handle_refresh_token(
             &refresh_form(fixture.client, tokens.refresh_token.as_deref().unwrap()),
             &client,
@@ -3883,10 +3906,10 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
                 &client
             )
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     let blocked_code = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,$4,$5,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![pero_utils::crypto::sha256_hex(&blocked_code).into(),fixture.user.into(),fixture.app.into(),fixture.client.into(),sid.into()]).await;
@@ -3899,10 +3922,10 @@ async fn personal_app_mfa_is_optional_scoped_and_enforced_for_tokens() {
         service
             .handle_authorization_code(&blocked_request, &client)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     sql(
         db,
@@ -4137,10 +4160,12 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .unwrap();
     let service = TokenService::new(&fixture.state);
     let request = refresh_form(fixture.client, &raw);
-    assert!(matches!(
-        service.handle_refresh_token(&request, &client).await,
-        TokenEndpointResult::Success(_)
-    ));
+    assert!(
+        service
+            .handle_refresh_token(&request, &client)
+            .await
+            .is_ok()
+    );
     let code = pero_utils::crypto::generate_token();
     sql(db,"INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,tenant_id,tenant_version,tenant_member_version,redirect_uri,scopes,expires_at,consumed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'https://client.example.test/callback',ARRAY['openid']::text[],now()+interval '5 minutes',now())",vec![pero_utils::crypto::sha256_hex(&code).into(),member.into(),fixture.app.into(),fixture.client.into(),session.into(),organization.id.into(),prior.tenant_version.into(),prior.tenant_member_version.into()]).await;
     let code_request = TokenRequest {
@@ -4156,19 +4181,19 @@ async fn tenant_membership_changes_revoke_only_the_affected_workspace() {
         .unwrap();
     assert!(matches!(
         service.handle_refresh_token(&request, &client).await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     assert!(matches!(
         service
             .handle_authorization_code(&code_request, &client)
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     assert!(
         fixture
@@ -4412,26 +4437,24 @@ async fn application_device_limit_and_takeover() {
     );
     let (winner, loser, original) = match (a, b) {
         (
-            TokenEndpointResult::Success(tokens),
-            TokenEndpointResult::Error {
+            Ok(tokens),
+            Err(TokenEndpointError::OAuth {
                 code: OAuth2ErrorCode::InvalidGrant,
                 ..
-            },
+            }),
         ) => (first, second, tokens),
         (
-            TokenEndpointResult::Error {
+            Err(TokenEndpointError::OAuth {
                 code: OAuth2ErrorCode::InvalidGrant,
                 ..
-            },
-            TokenEndpointResult::Success(tokens),
+            }),
+            Ok(tokens),
         ) => (second, first, tokens),
         _ => panic!("one device must win the unconfirmed admission"),
     };
     let stale = request(winner, false).await;
     let takeover = request(loser, true).await;
-    let TokenEndpointResult::Success(replacement) =
-        service.handle_authorization_code(&takeover, &client).await
-    else {
+    let Ok(replacement) = service.handle_authorization_code(&takeover, &client).await else {
         panic!("confirmed takeover failed");
     };
     assert!(
@@ -4448,10 +4471,10 @@ async fn application_device_limit_and_takeover() {
     );
     assert!(matches!(
         service.handle_authorization_code(&stale, &client).await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     assert!(matches!(
         service
@@ -4460,10 +4483,10 @@ async fn application_device_limit_and_takeover() {
                 &client
             )
             .await,
-        TokenEndpointResult::Error {
+        Err(TokenEndpointError::OAuth {
             code: OAuth2ErrorCode::InvalidGrant,
             ..
-        }
+        })
     ));
     assert!(
         crate::service::app_session::needs_confirmation(db, fixture.user, fixture.app, winner, 60)
@@ -4484,9 +4507,7 @@ async fn application_device_limit_and_takeover() {
     )
     .await;
     let reentry = request(winner, true).await;
-    let TokenEndpointResult::Success(reentered) =
-        service.handle_authorization_code(&reentry, &client).await
-    else {
+    let Ok(reentered) = service.handle_authorization_code(&reentry, &client).await else {
         panic!("second device failed");
     };
     assert_eq!(count().await, 2);
@@ -4509,9 +4530,7 @@ async fn application_device_limit_and_takeover() {
         .await
         .unwrap();
     let unlimited = request(third, false).await;
-    let TokenEndpointResult::Success(latest) =
-        service.handle_authorization_code(&unlimited, &client).await
-    else {
+    let Ok(latest) = service.handle_authorization_code(&unlimited, &client).await else {
         panic!("unlimited admission failed");
     };
     assert_eq!(count().await, 3);

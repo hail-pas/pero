@@ -56,7 +56,7 @@ pub async fn introspect(
     .await
     {
         Ok(c) => c,
-        Err(e) => return e,
+        Err(e) => return e.into_response(),
     };
     // Public clients cannot inspect tokens: possession of client_id is not authentication.
     if client.r#type != crate::db::enums::OauthClientType::Confidential {
@@ -209,7 +209,7 @@ pub async fn revoke(
     .await
     {
         Ok(c) => c,
-        Err(e) => return e,
+        Err(e) => return e.into_response(),
     };
     let _ = &input.token_type_hint; // A hint never prevents trying both supported token types.
     let result = async {

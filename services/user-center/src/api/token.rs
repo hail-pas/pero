@@ -1,11 +1,20 @@
 use axum::extract::State;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use pero_api_axum::oauth::{
     token_error_response, token_error_unauthorized_response, token_success_response,
 };
 
-use crate::service::token::{TokenEndpointResult, TokenRequest, TokenService};
+use crate::service::token::{TokenEndpointError, TokenRequest, TokenService};
 use crate::state::app::AppState;
+
+impl IntoResponse for TokenEndpointError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::OAuth { code, desc } => token_error_response(code, desc.as_deref()),
+            Self::Unauthorized(desc) => token_error_unauthorized_response(&desc),
+        }
+    }
+}
 
 pub async fn token(
     State(state): State<AppState>,
@@ -22,8 +31,7 @@ pub async fn token(
         .token(&form, &source.for_rate_limit())
         .await
     {
-        TokenEndpointResult::Success(body) => token_success_response(body),
-        TokenEndpointResult::Error { code, desc } => token_error_response(code, desc.as_deref()),
-        TokenEndpointResult::Unauthorized(desc) => token_error_unauthorized_response(&desc),
+        Ok(body) => token_success_response(body),
+        Err(error) => error.into_response(),
     }
 }

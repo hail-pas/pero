@@ -29,7 +29,7 @@ pub async fn get(
 
     let providers = match find_enabled_social_providers(&state).await {
         Ok(providers) => providers,
-        Err(response) => return response,
+        Err(error) => return crate::web::util::dependency_error(error),
     };
     let error = query.get("error").cloned().unwrap_or_default();
     state
@@ -80,7 +80,7 @@ pub async fn post(
 async fn render_error(state: &AppState, jar: CookieJar, error: &str, redirect: &str) -> Response {
     let providers = match find_enabled_social_providers(state).await {
         Ok(providers) => providers,
-        Err(response) => return response,
+        Err(error) => return crate::web::util::dependency_error(error),
     };
     state
         .web_security()

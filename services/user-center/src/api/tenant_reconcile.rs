@@ -44,17 +44,19 @@ async fn client(
     headers: &HeaderMap,
     client_id: &mut String,
     client_secret: &mut Option<String>,
-) -> Result<crate::db::entity::oauth_clients::Model, Response> {
-    let c = super::client_auth::authenticate(s, headers, client_id, client_secret, source).await?;
+) -> Result<crate::db::entity::oauth_clients::Model, Box<Response>> {
+    let c = super::client_auth::authenticate(s, headers, client_id, client_secret, source)
+        .await
+        .map_err(IntoResponse::into_response)?;
     if c.r#type != crate::db::enums::OauthClientType::Confidential || c.account_sync_uri.is_none() {
-        return Err(StatusCode::FORBIDDEN.into_response());
+        return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
     }
     let app = crate::db::entity::apps::Entity::find_by_id(c.app_id)
         .one(&s.db)
         .await
         .map_err(crate::web::util::dependency_error)?;
     if app.is_none_or(|a| a.system) {
-        return Err(StatusCode::FORBIDDEN.into_response());
+        return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
     }
     Ok(c)
 }
@@ -123,7 +125,8 @@ pub async fn membership(
             &mut f.client_id,
             &mut f.client_secret,
         )
-        .await?;
+        .await
+        .map_err(|error| *error)?;
         let row = MemberRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!("{MEMBERSHIP_SELECT} AND tenant_id=$2 AND sub=$3"),
@@ -156,7 +159,8 @@ pub async fn memberships(
             &mut f.client_id,
             &mut f.client_secret,
         )
-        .await?;
+        .await
+        .map_err(|error| *error)?;
         let mut rows = MemberRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!(
@@ -199,7 +203,8 @@ pub async fn accounts(
             &mut f.client_id,
             &mut f.client_secret,
         )
-        .await?;
+        .await
+        .map_err(|error| *error)?;
         let (rows, next) = crate::service::account_sync::page(&s.db, c.id, f.after_user_id)
             .await
             .map_err(crate::web::util::dependency_error)?;
@@ -303,7 +308,8 @@ pub async fn tenant(
             &mut f.client_id,
             &mut f.client_secret,
         )
-        .await?;
+        .await
+        .map_err(|error| *error)?;
         let row = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!("{TENANT_SELECT} AND t.id=$2"),
@@ -336,7 +342,8 @@ pub async fn tenants(
             &mut f.client_id,
             &mut f.client_secret,
         )
-        .await?;
+        .await
+        .map_err(|error| *error)?;
         let mut rows = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!(

@@ -28,7 +28,8 @@ pub async fn snapshot(
             &mut input.client_secret,
             &format!("account-sync:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         if client.r#type != crate::db::enums::OauthClientType::Confidential
             || client.account_sync_uri.is_none()
         {

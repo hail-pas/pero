@@ -58,7 +58,7 @@ async fn load(
     s: &AppState,
     jar: &CookieJar,
     token: &str,
-) -> Result<(SsoSession, authorization_requests::Model), Response> {
+) -> Result<(SsoSession, authorization_requests::Model), Box<Response>> {
     let ticket: Ticket = pero_utils::crypto::decode_signed_json(token, key(s))
         .map_err(|_| pero_api_axum::json_error("invalid_request"))?;
     let session = extract_session(s, jar)
@@ -66,7 +66,7 @@ async fn load(
         .map_err(IntoResponse::into_response)?
         .ok_or_else(|| Redirect::to("/account/login").into_response())?;
     if session.id != ticket.session_id {
-        return Err(pero_api_axum::json_error("invalid_request"));
+        return Err(Box::new(pero_api_axum::json_error("invalid_request")));
     }
     let req = authorization_requests::Entity::find_by_id(ticket.request_id)
         .one(&s.db)
@@ -77,13 +77,13 @@ async fn load(
                 && r.completed_at.is_none()
                 && r.expires_at > time::OffsetDateTime::now_utc()
         })
-        .ok_or_else(|| pero_api_axum::json_error("invalid_request"))?;
+        .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))?;
     Ok((session, req))
 }
 pub async fn get(State(s): State<AppState>, jar: CookieJar, Query(p): Query<Params>) -> Response {
     let (session, req) = match load(&s, &jar, &p.token).await {
         Ok(v) => v,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let choices =
         match crate::service::tenant_context::choices(&s.db, session.user_id, req.app_id).await {
@@ -103,7 +103,7 @@ pub async fn post(State(s): State<AppState>, jar: CookieJar, Form(p): Form<Choic
     }
     let (session, req) = match load(&s, &jar, &p.token).await {
         Ok(v) => v,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     match crate::service::tenant_context::active(&s.db, session.user_id, req.app_id, p.tenant_id)
         .await

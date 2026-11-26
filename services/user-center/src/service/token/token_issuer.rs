@@ -7,7 +7,8 @@ pub(super) struct TokenIssuer<'a> {
     signing: &'a crate::db::helper::signing_key::SigningKeyMaterial,
 }
 
-pub(super) struct OidcHashes<'a> {
+pub(super) struct AuthorizationCodeClaims<'a> {
+    pub nonce: Option<&'a str>,
     pub access_token: &'a str,
     pub authorization_code: &'a str,
 }
@@ -62,23 +63,22 @@ impl<'a> TokenIssuer<'a> {
         &self,
         user: &crate::db::entity::users::Model,
         scopes: &[String],
-        nonce: Option<&str>,
         session: &crate::db::entity::sso_sessions::Model,
         client_session_id: uuid::Uuid,
-        hashes: OidcHashes<'_>,
+        claims: AuthorizationCodeClaims<'_>,
         tenant: Option<&crate::service::tenant_context::TenantContext>,
     ) -> Result<String, jsonwebtoken::errors::Error> {
         let sid = client_session_id.to_string();
         let tenant_id = tenant.map(|c| c.tenant_id.to_string());
         let id_user = crate::service::scope::user_claims(user, scopes);
-        let access_hash = pero_utils::oauth::jwt::oidc_hash(hashes.access_token);
-        let code_hash = pero_utils::oauth::jwt::oidc_hash(hashes.authorization_code);
+        let access_hash = pero_utils::oauth::jwt::oidc_hash(claims.access_token);
+        let code_hash = pero_utils::oauth::jwt::oidc_hash(claims.authorization_code);
         pero_utils::oauth::jwt::sign_id_token_with_key(
             &pero_utils::oauth::jwt::IdTokenParams {
                 issuer: &self.state.config.oidc.issuer,
                 user_id: &user.id.to_string(),
                 client_identifier: &self.client.identifier,
-                nonce,
+                nonce: claims.nonce,
                 tenant_id: tenant_id.as_deref(),
                 auth_time: Some(session.authenticated_at.unix_timestamp()),
                 at_hash: Some(&access_hash),

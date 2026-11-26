@@ -7,7 +7,7 @@ use crate::{
     },
     service::{
         ManagementError,
-        token::{TokenEndpointResult, TokenRequest, TokenService},
+        token::{TokenEndpointError, TokenRequest, TokenService},
     },
     state::{app::AppState, session::SsoSession},
 };
@@ -173,13 +173,13 @@ pub async fn finish(
         },
     };
     let token = match TokenService::new(state).token(&request, source).await {
-        TokenEndpointResult::Success(token) => token,
-        TokenEndpointResult::Unauthorized(_) => {
+        Ok(token) => token,
+        Err(TokenEndpointError::Unauthorized(_)) => {
             // Client authentication failed before any authorization code was used.
             state.cache.set(ticket_key, &value).await?;
             return Err(ManagementError::Invalid("integration_invalid_secret"));
         }
-        TokenEndpointResult::Error { code, .. } => {
+        Err(TokenEndpointError::OAuth { code, .. }) => {
             if matches!(
                 code,
                 pero_error::protocol::oauth::OAuth2ErrorCode::TemporarilyUnavailable

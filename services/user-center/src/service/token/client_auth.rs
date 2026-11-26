@@ -1,7 +1,7 @@
 use pero_error::protocol::oauth::OAuth2ErrorCode;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect};
 
-use super::{TokenEndpointResult, TokenRequest, TokenService};
+use super::{TokenEndpointError, TokenRequest, TokenService};
 use crate::db::entity::oauth_clients as oc;
 use crate::db::enums::{CommonStatus, OauthClientType};
 
@@ -10,14 +10,14 @@ impl TokenService<'_> {
         &self,
         db: &C,
         authenticated: &oc::Model,
-    ) -> Result<(), TokenEndpointResult> {
+    ) -> Result<(), TokenEndpointError> {
         let current = oc::Entity::find_by_id(authenticated.id)
             .lock_shared()
             .one(db)
             .await
-            .map_err(|_| TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?;
+            .map_err(|_| TokenEndpointError::error(OAuth2ErrorCode::ServerError))?;
         if current.as_ref() != Some(authenticated) {
-            return Err(TokenEndpointResult::unauthorized(
+            return Err(TokenEndpointError::unauthorized(
                 "Client policy changed; authenticate again",
             ));
         }
@@ -27,7 +27,7 @@ impl TokenService<'_> {
     pub(super) async fn authenticate_client(
         &self,
         form: &TokenRequest,
-    ) -> Result<oc::Model, TokenEndpointResult> {
+    ) -> Result<oc::Model, TokenEndpointError> {
         let client_identifier = form.client_id.trim();
         let client = oc::Entity::find()
             .filter(oc::Column::Identifier.eq(client_identifier))
@@ -35,12 +35,12 @@ impl TokenService<'_> {
             .await
             .map_err(|e| {
                 tracing::error!("Client query: {e}");
-                TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable)
+                TokenEndpointError::error(OAuth2ErrorCode::TemporarilyUnavailable)
             })?
-            .ok_or_else(|| TokenEndpointResult::unauthorized("Client not found"))?;
+            .ok_or_else(|| TokenEndpointError::unauthorized("Client not found"))?;
 
         if client.status != CommonStatus::Active {
-            return Err(TokenEndpointResult::unauthorized("Client is disabled"));
+            return Err(TokenEndpointError::unauthorized("Client is disabled"));
         }
 
         match client.r#type {
@@ -51,7 +51,7 @@ impl TokenService<'_> {
                     pero_utils::crypto::verify_secret_async(secret, &hash)
                         .await
                         .map_err(|_| {
-                            TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable)
+                            TokenEndpointError::error(OAuth2ErrorCode::TemporarilyUnavailable)
                         })
                 };
                 let mut valid = !hash.is_empty() && verify(hash).await?;
@@ -64,12 +64,12 @@ impl TokenService<'_> {
                     valid = verify(previous).await?;
                 }
                 if !valid {
-                    return Err(TokenEndpointResult::unauthorized("Invalid client secret"));
+                    return Err(TokenEndpointError::unauthorized("Invalid client secret"));
                 }
             }
             OauthClientType::Public => {
                 if form.client_secret.is_some() {
-                    return Err(TokenEndpointResult::unauthorized(
+                    return Err(TokenEndpointError::unauthorized(
                         "Public client must not send secret",
                     ));
                 }
@@ -81,7 +81,7 @@ impl TokenService<'_> {
             "authorization_code" | "refresh_token"
         ) && !client.grant_types.contains(&form.grant_type)
         {
-            return Err(TokenEndpointResult::error(
+            return Err(TokenEndpointError::error(
                 OAuth2ErrorCode::UnauthorizedClient,
             ));
         }

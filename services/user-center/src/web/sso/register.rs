@@ -104,11 +104,11 @@ pub(crate) fn request_context_client(state: &AppState, jar: &CookieJar) -> Optio
         pero_utils::crypto::decode_signed_json(
             cookie.value(),
             state
-            .config
-            .sso
-            .cookie_signing_secret
-            .expose_secret()
-            .as_bytes(),
+                .config
+                .sso
+                .cookie_signing_secret
+                .expose_secret()
+                .as_bytes(),
         )
         .ok()
     })
@@ -662,7 +662,7 @@ pub async fn post(
     if input.action == "switch" {
         let jar = match crate::web::oauth2::select_account::switch(&state, jar).await {
             Ok(jar) => jar.remove(Cookie::build(SOCIAL_COOKIE).path("/sso").build()),
-            Err(e) => return e,
+            Err(e) => return *e,
         };
         return (
             jar,
@@ -845,10 +845,10 @@ pub async fn social(
     } else {
         app
     };
-    if let Some(token) = tenant_token(&jar) {
-        if let Err(e) = crate::service::tenant::invitation(&state.db, token).await {
-            return util::management_response(Err(e));
-        }
+    if let Some(token) = tenant_token(&jar)
+        && let Err(e) = crate::service::tenant::invitation(&state.db, token).await
+    {
+        return util::management_response(Err(e));
     }
     let proof = SocialProof {
         invitation_hash,

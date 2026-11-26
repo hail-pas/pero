@@ -284,6 +284,79 @@ async fn organization_invitation_creates_account_and_membership_once() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn delegated_member_roster_retains_rows_beyond_the_first_page() {
+    use user_center::service::tenant::{MemberFilter, members};
+
+    let f = Fixture::new().await;
+    let organization = Uuid::now_v7();
+    f.sql(
+        "INSERT INTO tenants(id,kind,name,slug) VALUES($1,'organization','Roster Org','roster-org')",
+        vec![organization.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO tenant_members(tenant_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![organization.into(), f.user.into()],
+    )
+    .await;
+    f.sql(
+        "WITH added AS (INSERT INTO users(username) SELECT 'roster_member_'||n FROM generate_series(1,20) n RETURNING id) INSERT INTO tenant_members(tenant_id,user_id,role) SELECT $1,id,'member' FROM added",
+        vec![organization.into()],
+    )
+    .await;
+    f.sql(
+        "UPDATE apps SET tenant_mode='both' WHERE id=$1",
+        vec![f.app.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+        vec![f.user.into(), f.app.into()],
+    )
+    .await;
+    f.sql(
+        "UPDATE oauth_clients SET scopes=ARRAY['openid','tenant.manage']::text[] WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+
+    let (_, _, sid, _) = f.login(f.user).await;
+    let token = f
+        .token_for_workspace(
+            sid,
+            &f.client.to_string(),
+            Some(organization),
+            "tenant.manage",
+        )
+        .await;
+    let response = user_center::router::build(f.state.clone())
+        .oneshot(
+            Request::get(format!("/api/tenants/{organization}/members"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    let roster: Value = serde_json::from_slice(&body).unwrap();
+    let rows = roster["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 21);
+    assert_eq!(rows[0]["user_id"], f.user.to_string());
+
+    let page = members(&f.state.db, f.user, organization, &MemberFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(page.rows.len(), 20);
+    assert_eq!(page.total_pages, 2);
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
     use user_center::service::{access, tenant_context};
 
@@ -453,7 +526,11 @@ async fn expired_delivery_jobs_leave_the_queue_without_losing_recent_history() {
 
     let f = Fixture::new().await;
     for (table, extra_columns, extra_values) in [
-        ("backchannel_logout_deliveries", "session_id", "gen_random_uuid()"),
+        (
+            "backchannel_logout_deliveries",
+            "session_id",
+            "gen_random_uuid()",
+        ),
         ("account_sync_deliveries", "kind", "'sync.requested'"),
     ] {
         f.sql(
@@ -670,15 +747,25 @@ impl Fixture {
         self.token_for(sid, &self.client.to_string()).await
     }
     async fn token_for(&self, sid: Uuid, client_identifier: &str) -> String {
+        self.token_for_workspace(sid, client_identifier, None, "openid")
+            .await
+    }
+    async fn token_for_workspace(
+        &self,
+        sid: Uuid,
+        client_identifier: &str,
+        workspace: Option<Uuid>,
+        scopes: &str,
+    ) -> String {
         let tenant = user_center::service::tenant_context::resolve(
             &self.state.db,
             self.user,
             self.app,
-            None,
+            workspace,
         )
         .await
         .unwrap()
-        .expect("user has one personal workspace");
+        .expect("user has an eligible workspace");
         let tenant_id = tenant.tenant_id.to_string();
         let client_id = Uuid::parse_str(client_identifier).unwrap();
         let client = user_center::db::entity::oauth_clients::Entity::find_by_id(client_id)
@@ -704,7 +791,7 @@ impl Fixture {
                 issuer: &self.state.config.oidc.issuer,
                 user_id: &self.user.to_string(),
                 client_identifier,
-                scopes: "openid",
+                scopes,
                 client_version: 0,
                 access_version: 0,
                 tenant_id: Some(&tenant_id),
@@ -778,9 +865,9 @@ async fn expired_application_registration_returns_to_initiating_client() {
         "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=create",
         f.client
     );
-    let (status, _, headers) = call(&router, "", &uri, None).await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers["location"], "/sso/register");
+    let (status, redirect, headers) = call(&router, "", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(redirect["redirect"], "/sso/register");
     let context = headers
         .get_all("set-cookie")
         .iter()
@@ -791,10 +878,10 @@ async fn expired_application_registration_returns_to_initiating_client() {
         .next()
         .unwrap();
     // The browser still has the registration context, but its OAuth nonce is gone.
-    let (status, _, headers) = call(&router, context, "/sso/register", None).await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, redirect, _) = call(&router, context, "/sso/register", None).await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        headers["location"],
+        redirect["redirect"],
         "https://client.example.test/login?enrollment_status=cancelled"
     );
     f.cleanup().await;

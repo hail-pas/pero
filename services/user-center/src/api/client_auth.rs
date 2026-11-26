@@ -52,10 +52,9 @@ pub(super) async fn authenticate(
     client_id: &mut String,
     client_secret: &mut Option<String>,
     source: &str,
-) -> Result<crate::db::entity::oauth_clients::Model, axum::response::Response> {
-    use crate::service::token::{TokenEndpointResult, TokenRequest, TokenService};
-    apply(headers, client_id, client_secret)
-        .map_err(pero_api_axum::oauth::token_error_unauthorized_response)?;
+) -> Result<crate::db::entity::oauth_clients::Model, crate::service::token::TokenEndpointError> {
+    use crate::service::token::{TokenEndpointError, TokenRequest, TokenService};
+    apply(headers, client_id, client_secret).map_err(TokenEndpointError::unauthorized)?;
     let request = TokenRequest {
         grant_type: String::new(),
         code: None,
@@ -69,15 +68,6 @@ pub(super) async fn authenticate(
     TokenService::new(state)
         .authenticate_endpoint(&request, source, 6000)
         .await
-        .map_err(|error| match error {
-            TokenEndpointResult::Error { code, desc } => {
-                pero_api_axum::oauth::token_error_response(code, desc.as_deref())
-            }
-            TokenEndpointResult::Unauthorized(desc) => {
-                pero_api_axum::oauth::token_error_unauthorized_response(&desc)
-            }
-            TokenEndpointResult::Success(_) => unreachable!(),
-        })
 }
 
 #[cfg(test)]

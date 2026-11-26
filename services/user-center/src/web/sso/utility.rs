@@ -45,10 +45,9 @@ pub(crate) async fn resolve_auth_request_id(
 
 pub(crate) async fn find_enabled_social_providers(
     state: &AppState,
-) -> Result<Vec<SocialProvider>, Response> {
+) -> Result<Vec<SocialProvider>, sea_orm::DbErr> {
     Ok(provider::enabled_social(&state.db)
-        .await
-        .map_err(crate::web::util::dependency_error)?
+        .await?
         .into_iter()
         .map(|provider| SocialProvider {
             icon: provider::normalize_icon(

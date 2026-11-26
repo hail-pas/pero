@@ -400,7 +400,8 @@ pub async fn link_post(
         None => None,
     };
 
-    if let Err(response) = validate_login_context(&state, &jar, &link.redirect, auth_request_id).await
+    if let Err(response) =
+        validate_login_context(&state, &jar, &link.redirect, auth_request_id).await
     {
         return *response;
     }
@@ -495,8 +496,7 @@ async fn validate_login_context(
             .map_err(|e| Box::new(crate::web::util::management_response(Err(e))))?
             .is_some_and(|request| request.id == id)
     } else {
-        redirect != "/sso/register"
-            || super::register::request_context_client(state, jar).is_none()
+        redirect != "/sso/register" || super::register::request_context_client(state, jar).is_none()
     };
     if !matches_flow || !matches_request {
         return Err(Box::new(

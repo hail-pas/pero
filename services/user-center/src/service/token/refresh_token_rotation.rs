@@ -5,7 +5,7 @@ use sea_orm::{
 };
 
 use super::token_issuer::TokenIssuer;
-use super::{TokenEndpointResult, TokenRequest, TokenService};
+use super::{TokenEndpointError, TokenEndpointResult, TokenRequest, TokenService};
 use crate::db::entity::oauth_clients as oc;
 
 use crate::db::helper::signing_key::require_active_signing_key;
@@ -21,10 +21,10 @@ impl TokenService<'_> {
         let rt_raw = match &form.refresh_token {
             Some(t) => t.clone(),
             None => {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidRequest,
                     "refresh_token is required",
-                );
+                ));
             }
         };
 
@@ -34,13 +34,11 @@ impl TokenService<'_> {
             Ok(txn) => txn,
             Err(e) => {
                 tracing::error!("RT rotation transaction begin: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
 
-        if let Err(error) = self.revalidate_client(&txn, client).await {
-            return error;
-        }
+        self.revalidate_client(&txn, client).await?;
 
         let owner = rt::Entity::find()
             .filter(rt::Column::TokenHash.eq(&rt_hash))
@@ -60,19 +58,19 @@ impl TokenService<'_> {
             .await;
         let (user_id, app_id, session_id, tenant_id) = match owner {
             Ok(Some(owner)) => owner,
-            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
         let access = match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
             Ok(Some(access)) => access,
-            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
 
         // Lock the session before the grant row: logout updates the session first,
         // then revokes refresh tokens and queues backchannel notifications.
         let Some(session_id) = session_id else {
-            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
         };
         let _active_session = match crate::db::helper::session::app_query(
             time::OffsetDateTime::now_utc(),
@@ -86,20 +84,20 @@ impl TokenService<'_> {
         .await
         {
             Ok(Some(session)) => session,
-            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
 
         match crate::service::tenant_context::lock_context(&txn, user_id, tenant_id).await {
             Ok(true) => {}
-            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(false) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         }
         if crate::service::app_session::lock_devices(&txn, user_id, app_id, Some(session_id))
             .await
             .is_err()
         {
-            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
         let existing = match rt::Entity::find()
@@ -110,25 +108,25 @@ impl TokenService<'_> {
         {
             Ok(Some(r)) => r,
             Ok(None) => {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidGrant,
                     "Refresh token not found",
-                );
+                ));
             }
             Err(e) => {
                 tracing::error!("RT lookup: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
 
         if existing.client_id != client.id {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Client mismatch",
-            );
+            ));
         }
         let Some(client_session_id) = existing.client_session_id else {
-            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
         };
         match crate::service::app_session::sso_for_client(
             &txn,
@@ -141,16 +139,16 @@ impl TokenService<'_> {
         .await
         {
             Ok(Some(id)) if id == session_id => {}
-            Ok(_) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         }
         if existing.revoked_at.is_some() {
             // Explicit withdrawal is not evidence of a rotation replay.
             if existing.revoke_reason.as_deref() != Some("rotation") {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidGrant,
                     "Refresh token revoked",
-                );
+                ));
             }
             // Tenant policy changes also invalidate rotation predecessors. Do not
             // turn a withdrawn tenant grant into a logout across applications.
@@ -165,8 +163,8 @@ impl TokenService<'_> {
             .await
             {
                 Ok(true) => {}
-                Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+                Ok(false) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+                Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
             }
             if let Err(error) = crate::service::app_session::revoke_client(
                 &txn,
@@ -178,23 +176,27 @@ impl TokenService<'_> {
             .await
             {
                 tracing::error!(%error, "Refresh token replay revocation failed");
-                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+                return Err(TokenEndpointError::error(
+                    OAuth2ErrorCode::TemporarilyUnavailable,
+                ));
             }
             if let Err(error) = txn.commit().await {
                 tracing::error!(%error, "Refresh token replay commit failed");
-                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+                return Err(TokenEndpointError::error(
+                    OAuth2ErrorCode::TemporarilyUnavailable,
+                ));
             }
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Refresh token revoked",
-            );
+            ));
         }
         let now = time::OffsetDateTime::now_utc();
         if existing.expires_at <= now {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Refresh token expired",
-            );
+            ));
         }
         if !crate::service::scope::allowed(&existing.scopes, &client.scopes) {
             let mut rev: rt::ActiveModel = existing.clone().into();
@@ -202,16 +204,16 @@ impl TokenService<'_> {
             rev.revoke_reason = Set(Some("scope_revoked".to_owned()));
             if let Err(e) = rev.update(&txn).await {
                 tracing::error!("RT revoke after scope change: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
             if let Err(e) = txn.commit().await {
                 tracing::error!("RT scope revoke transaction commit: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Refresh token scope is no longer allowed",
-            );
+            ));
         }
 
         let user = &access.user;
@@ -220,31 +222,31 @@ impl TokenService<'_> {
                 .await
             {
                 Ok(Some(ctx)) => ctx,
-                Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+                Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+                Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
             };
             if Some(ctx.tenant_version) != existing.tenant_version
                 || Some(ctx.tenant_member_version) != existing.tenant_member_version
             {
-                return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
             }
             Some(ctx)
         } else {
             None
         };
         if !access.app.system && tenant.is_none() {
-            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
         }
         let requested =
             match crate::service::scope::refresh_scopes(form.scope.as_deref(), &existing.scopes) {
                 Some(scopes) => scopes,
-                None => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidScope),
+                None => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidScope)),
             };
         let scopes_str = requested.join(" ");
         let session_id = Some(session_id);
         let signing = match require_active_signing_key(&txn).await {
             Ok(k) => k,
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
 
         let issuer = TokenIssuer::new(self.state, client, &signing);
@@ -258,17 +260,17 @@ impl TokenService<'_> {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("AT sign: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
 
         // Recheck expiry after policy and signing-key lookups, using the rotation time.
         let now = time::OffsetDateTime::now_utc();
         if existing.expires_at <= now {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Refresh token expired",
-            );
+            ));
         }
         let rt_raw_new = pero_utils::crypto::generate_token();
         let rt_hash_new = pero_utils::crypto::sha256_hex(&rt_raw_new);
@@ -294,7 +296,7 @@ impl TokenService<'_> {
         };
         if let Err(e) = new_rt.insert(&txn).await {
             tracing::error!("RT insert: {e}");
-            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
         let mut rev: rt::ActiveModel = existing.into();
@@ -303,7 +305,7 @@ impl TokenService<'_> {
         rev.replaced_by_id = Set(Some(new_rt_id));
         if let Err(e) = rev.update(&txn).await {
             tracing::error!("RT revoke: {e}");
-            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
         if let Err(e) = signing
@@ -311,15 +313,17 @@ impl TokenService<'_> {
             .await
         {
             tracing::error!("Signing key issuance: {e}");
-            return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+            return Err(TokenEndpointError::error(
+                OAuth2ErrorCode::TemporarilyUnavailable,
+            ));
         }
 
         if let Err(e) = txn.commit().await {
             tracing::error!("RT rotation transaction commit: {e}");
-            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
-        TokenEndpointResult::Success(TokenSuccessBody {
+        Ok(TokenSuccessBody {
             access_token,
             token_type: "Bearer".to_owned(),
             expires_in: client.access_token_ttl_seconds as i64,

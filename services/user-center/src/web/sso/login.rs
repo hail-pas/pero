@@ -37,7 +37,7 @@ pub async fn get(
                 Ok(true) => {
                     let providers = match find_enabled_social_providers(&state).await {
                         Ok(providers) => providers,
-                        Err(response) => return response,
+                        Err(error) => return crate::web::util::dependency_error(error),
                     };
                     return render_login(jar, &state, &providers, query.error.unwrap_or_default());
                 }
@@ -57,7 +57,7 @@ pub async fn get(
 
     let providers = match find_enabled_social_providers(&state).await {
         Ok(providers) => providers,
-        Err(response) => return response,
+        Err(error) => return crate::web::util::dependency_error(error),
     };
     let error = query.error.unwrap_or_default();
     render_login(jar, &state, &providers, error)
@@ -135,7 +135,7 @@ fn render_login(
 async fn render_login_error_page(state: &AppState, jar: CookieJar, error: &str) -> Response {
     let providers = match find_enabled_social_providers(state).await {
         Ok(providers) => providers,
-        Err(response) => return response,
+        Err(error) => return crate::web::util::dependency_error(error),
     };
     render_login(jar, state, &providers, error.to_owned())
 }

@@ -44,11 +44,11 @@ struct SecurityView {
     providers: Vec<crate::web::sso::dto::SocialProvider>,
     readiness: crate::service::recovery::Readiness,
 }
-async fn session(state: &AppState, jar: &CookieJar) -> Result<sso_sessions::Model, Response> {
+async fn session(state: &AppState, jar: &CookieJar) -> Result<sso_sessions::Model, Box<Response>> {
     crate::web::session::extract_browser_session(state, jar)
         .await
         .map_err(IntoResponse::into_response)?
-        .ok_or_else(|| Redirect::to("/account/login").into_response())
+        .ok_or_else(|| Box::new(Redirect::to("/account/login").into_response()))
 }
 async fn page(
     state: &AppState,
@@ -99,7 +99,7 @@ async fn page(
     };
     let mut providers = match crate::web::sso::utility::find_enabled_social_providers(state).await {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(error) => return crate::web::util::dependency_error(error),
     };
     use crate::db::{
         entity::{identities, identity_providers},
@@ -166,7 +166,7 @@ pub async fn get(
 ) -> Response {
     let s = match session(&state, &jar).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let pending = s.mfa_required && s.mfa_verified_at.is_none() && !s.recovery_pending;
     let challenge_expired = crate::service::mfa::challenge_expired(&s);
@@ -214,7 +214,7 @@ pub async fn post(
     }
     let s = match session(&state, &jar).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let result = change(&state, &s, &input.action, &input.code, &input.password).await;
     let jar = match result.as_ref().ok().and_then(|r| r.token.as_deref()) {
@@ -261,7 +261,7 @@ pub async fn oidc(
     }
     let s = match session(&state, &jar).await {
         Ok(s) => s,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(e) = crate::service::mfa::ensure_oidc_reauthentication_allowed(&state.db, &s).await {
         return util::management_response(Err(e));

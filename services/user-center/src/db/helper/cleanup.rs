@@ -59,7 +59,14 @@ async fn delete_expired(
     table: &str,
     condition: &str,
 ) -> Result<u64, sea_orm::DbErr> {
-    delete_before(db, table, condition, "expires_at", OffsetDateTime::now_utc()).await
+    delete_before(
+        db,
+        table,
+        condition,
+        "expires_at",
+        OffsetDateTime::now_utc(),
+    )
+    .await
 }
 
 macro_rules! clean_expired {

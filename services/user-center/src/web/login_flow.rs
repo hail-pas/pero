@@ -233,7 +233,9 @@ pub async fn finish_enrollment(
         .filter(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id)
     {
         match crate::web::sso::register::active_request(state, &jar).await {
-            Ok(current) => current.filter(|r| r.id == request.id && r.client_id == request.client_id),
+            Ok(current) => {
+                current.filter(|r| r.id == request.id && r.client_id == request.client_id)
+            }
             Err(error) => {
                 tracing::error!(%error, "Registration authorization lookup failed");
                 None

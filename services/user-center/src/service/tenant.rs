@@ -89,11 +89,24 @@ pub async fn members<C: ConnectionTrait>(
     id: Uuid,
     input: &MemberFilter,
 ) -> Result<Members> {
-    let t = get(db, user, id).await?;
-    if t.kind != "organization" {
+    require_organization_membership(db, user, id).await?;
+    list_members(db, id, input).await
+}
+
+pub async fn all_members<C: ConnectionTrait>(db: &C, user: Uuid, id: Uuid) -> Result<Vec<Member>> {
+    require_organization_membership(db, user, id).await?;
+    member_rows(db, id, "", None).await
+}
+
+async fn require_organization_membership<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+    id: Uuid,
+) -> Result<()> {
+    if get(db, user, id).await?.kind != "organization" {
         return Err(Error::Invalid("forbidden"));
     }
-    list_members(db, id, input).await
+    Ok(())
 }
 
 #[derive(Default, Deserialize)]
@@ -108,6 +121,23 @@ pub struct Members {
     pub page: u64,
     pub total_pages: u64,
     pub q: String,
+}
+
+const MEMBER_PAGE_SIZE: i64 = 20;
+const FILTERED_MEMBERS: &str = "FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.status='active' AND ($2='' OR u.username::text ILIKE '%'||$2||'%' OR u.nickname ILIKE '%'||$2||'%')";
+
+async fn member_rows<C: ConnectionTrait>(
+    db: &C,
+    tenant: Uuid,
+    query: &str,
+    offset: Option<i64>,
+) -> Result<Vec<Member>> {
+    let limit = offset.map(|_| MEMBER_PAGE_SIZE);
+    Ok(Member::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!("SELECT m.user_id,u.username::text,COALESCE(u.nickname,u.username::text) AS name,m.role,m.status {FILTERED_MEMBERS} ORDER BY (m.role='owner') DESC,m.joined_at,m.user_id LIMIT $3 OFFSET $4"),
+        [tenant.into(), query.into(), limit.into(), offset.into()],
+    )).all(db).await?)
 }
 
 /// Shared roster query; callers must authorize access to the organization first.
@@ -125,7 +155,6 @@ pub async fn list_members<C: ConnectionTrait>(
         .chars()
         .take(100)
         .collect::<String>();
-    let from = " FROM tenant_members m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.status='active' AND ($2='' OR u.username::text ILIKE '%'||$2||'%' OR u.nickname ILIKE '%'||$2||'%')";
     let count_query = if q.is_empty() {
         Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -135,8 +164,8 @@ pub async fn list_members<C: ConnectionTrait>(
     } else {
         Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("SELECT count(*)::bigint AS n{from}"),
-            [tenant.into(), q.clone().into()],
+            format!("SELECT count(*)::bigint AS n {FILTERED_MEMBERS}"),
+            [tenant.into(), q.as_str().into()],
         )
     };
     let total: i64 = db
@@ -144,12 +173,9 @@ pub async fn list_members<C: ConnectionTrait>(
         .await?
         .ok_or(Error::Invalid("not_found"))?
         .try_get("", "n")?;
-    let total_pages = (total.max(0) as u64).div_ceil(20);
+    let total_pages = (total.max(0) as u64).div_ceil(MEMBER_PAGE_SIZE as u64);
     let page = page.min(total_pages.max(1));
-    let rows = Member::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!("SELECT m.user_id,u.username::text,COALESCE(u.nickname,u.username::text) AS name,m.role,m.status{from} ORDER BY (m.role='owner') DESC,m.joined_at,m.user_id LIMIT 20 OFFSET $3"),
-        [tenant.into(),q.clone().into(),(((page-1)*20) as i64).into()])).all(db).await?;
+    let rows = member_rows(db, tenant, &q, Some((page as i64 - 1) * MEMBER_PAGE_SIZE)).await?;
     Ok(Members {
         rows,
         total,

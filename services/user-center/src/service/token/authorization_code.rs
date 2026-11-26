@@ -6,7 +6,7 @@ use sea_orm::{
 };
 
 use super::token_issuer::TokenIssuer;
-use super::{TokenEndpointResult, TokenRequest, TokenService};
+use super::{TokenEndpointError, TokenEndpointResult, TokenRequest, TokenService};
 use crate::db::entity::oauth_clients as oc;
 use crate::db::enums::CodeChallengeMethod;
 use crate::service::access::GrantAccess;
@@ -24,19 +24,19 @@ impl TokenService<'_> {
         let code = match &form.code {
             Some(c) => c,
             None => {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidRequest,
                     "code is required",
-                );
+                ));
             }
         };
         let redirect_uri = match &form.redirect_uri {
             Some(r) => r,
             None => {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidRequest,
                     "redirect_uri is required",
-                );
+                ));
             }
         };
 
@@ -45,13 +45,11 @@ impl TokenService<'_> {
             Ok(txn) => txn,
             Err(e) => {
                 tracing::error!("Auth code token transaction begin: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
 
-        if let Err(error) = self.revalidate_client(&txn, client).await {
-            return error;
-        }
+        self.revalidate_client(&txn, client).await?;
 
         let owner = ac::Entity::find()
             .filter(ac::Column::CodeHash.eq(&code_hash))
@@ -71,19 +69,19 @@ impl TokenService<'_> {
             .await;
         let (user_id, app_id, session_id, tenant_id) = match owner {
             Ok(Some(owner)) => owner,
-            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
         let access = match crate::service::access::lock_grant_access(&txn, user_id, app_id).await {
             Ok(Some(access)) => access,
-            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
 
         // Lock the session before the grant row: logout updates the session first,
         // then revokes refresh tokens and queues backchannel notifications.
         let Some(session_id) = session_id else {
-            return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
         };
         let active_session = match crate::db::helper::session::app_query(
             time::OffsetDateTime::now_utc(),
@@ -97,20 +95,20 @@ impl TokenService<'_> {
         .await
         {
             Ok(Some(session)) => session,
-            Ok(None) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(None) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
 
         match crate::service::tenant_context::lock_context(&txn, user_id, tenant_id).await {
             Ok(true) => {}
-            Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-            Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+            Ok(false) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         }
         if crate::service::app_session::lock_devices(&txn, user_id, app_id, None)
             .await
             .is_err()
         {
-            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
         let auth_code = match ac::Entity::find()
@@ -123,14 +121,14 @@ impl TokenService<'_> {
         {
             Ok(Some(c)) => c,
             Ok(None) => {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidGrant,
                     "Authorization code not found or expired",
-                );
+                ));
             }
             Err(e) => {
                 tracing::error!("Auth code lookup: {e}");
-                return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
 
@@ -145,35 +143,35 @@ impl TokenService<'_> {
                 CodeChallengeMethod::Plain => "plain",
             };
             if !pero_utils::oauth::pkce::verify_pkce(verifier, challenge, method_str) {
-                return TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidGrant,
                     "PKCE verification failed",
-                );
+                ));
             }
         } else if auth_code.code_challenge.is_some() {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "code_verifier is required",
-            );
+            ));
         } else if form.code_verifier.is_some() {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "code_verifier not expected",
-            );
+            ));
         }
 
         if client.require_pkce && auth_code.code_challenge.is_none() {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "PKCE is required for this client",
-            );
+            ));
         }
 
         // Only a replay with the correct client, redirect URI and PKCE proof may revoke
         // the affected authorization session.
         if auth_code.consumed_at.is_some() {
             let Some(sid) = auth_code.client_session_id else {
-                return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant);
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
             };
             match crate::service::app_session::sso_for_client(
                 &txn,
@@ -186,8 +184,8 @@ impl TokenService<'_> {
             .await
             {
                 Ok(Some(id)) if id == session_id => {}
-                Ok(_) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+                Ok(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+                Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
             }
             // A consumed code from a withdrawn tenant grant cannot revoke SSO.
             match crate::service::tenant_context::grant_context_is_current(
@@ -201,8 +199,8 @@ impl TokenService<'_> {
             .await
             {
                 Ok(true) => {}
-                Ok(false) => return TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant),
-                Err(_) => return TokenEndpointResult::error(OAuth2ErrorCode::ServerError),
+                Ok(false) => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant)),
+                Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
             }
             if let Err(error) = crate::service::app_session::revoke_client(
                 &txn,
@@ -214,39 +212,39 @@ impl TokenService<'_> {
             .await
             {
                 tracing::error!(%error, "Authorization code replay revocation failed");
-                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+                return Err(TokenEndpointError::error(
+                    OAuth2ErrorCode::TemporarilyUnavailable,
+                ));
             }
             if let Err(error) = txn.commit().await {
                 tracing::error!(%error, "Authorization code replay commit failed");
-                return TokenEndpointResult::error(OAuth2ErrorCode::TemporarilyUnavailable);
+                return Err(TokenEndpointError::error(
+                    OAuth2ErrorCode::TemporarilyUnavailable,
+                ));
             }
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Authorization code already used",
-            );
+            ));
         }
 
         if auth_code.expires_at <= time::OffsetDateTime::now_utc() {
-            return TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Authorization code expired",
-            );
+            ));
         }
 
-        let body = match self
+        let body = self
             .issue_tokens_from_auth_code(&txn, client, &auth_code, code, &access, &active_session)
-            .await
-        {
-            Ok(body) => body,
-            Err(result) => return result,
-        };
+            .await?;
 
         if let Err(e) = txn.commit().await {
             tracing::error!("Auth code token transaction commit: {e}");
-            return TokenEndpointResult::error(OAuth2ErrorCode::ServerError);
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
-        TokenEndpointResult::Success(body)
+        Ok(body)
     }
 
     async fn issue_tokens_from_auth_code<C>(
@@ -257,7 +255,7 @@ impl TokenService<'_> {
         raw_code: &str,
         access: &GrantAccess,
         active_session: &crate::db::entity::sso_sessions::Model,
-    ) -> Result<TokenSuccessBody, TokenEndpointResult>
+    ) -> TokenEndpointResult
     where
         C: ConnectionTrait,
     {
@@ -267,24 +265,24 @@ impl TokenService<'_> {
         let tenant = if let Some(id) = auth_code.tenant_id {
             let ctx = crate::service::tenant_context::active(db, user.id, client.app_id, id)
                 .await
-                .map_err(|_| TokenEndpointResult::error(OAuth2ErrorCode::ServerError))?
-                .ok_or(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant))?;
+                .map_err(|_| TokenEndpointError::error(OAuth2ErrorCode::ServerError))?
+                .ok_or(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant))?;
             if Some(ctx.tenant_version) != auth_code.tenant_version
                 || Some(ctx.tenant_member_version) != auth_code.tenant_member_version
             {
-                return Err(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant));
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
             }
             Some(ctx)
         } else {
             None
         };
         if !access.app.system && tenant.is_none() {
-            return Err(TokenEndpointResult::error(OAuth2ErrorCode::InvalidGrant));
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
         }
         if !crate::service::scope::allowed(&auth_code.scopes, &client.scopes)
             || !client.redirect_uris.contains(&auth_code.redirect_uri)
         {
-            return Err(TokenEndpointResult::error_desc(
+            return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Authorization policy changed",
             ));
@@ -299,7 +297,7 @@ impl TokenService<'_> {
         };
         let signing = match require_active_signing_key(db).await {
             Ok(k) => k,
-            Err(_) => return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError)),
+            Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
         };
         let session_id = crate::service::app_session::admit(
             db,
@@ -311,9 +309,9 @@ impl TokenService<'_> {
         .await
         .map_err(|error| {
             tracing::error!(%error, "Application session admission failed");
-            TokenEndpointResult::error(OAuth2ErrorCode::ServerError)
+            TokenEndpointError::error(OAuth2ErrorCode::ServerError)
         })?
-        .ok_or(TokenEndpointResult::error_desc(
+        .ok_or(TokenEndpointError::error_desc(
             OAuth2ErrorCode::InvalidGrant,
             "Application session changed; authorize again",
         ))?;
@@ -329,7 +327,7 @@ impl TokenService<'_> {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("AT sign: {e}");
-                return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
 
@@ -338,10 +336,10 @@ impl TokenService<'_> {
             id_token = match issuer.issue_id_token(
                 user,
                 &auth_code.scopes,
-                auth_code.nonce.as_deref(),
                 active_session,
                 session_id,
-                super::token_issuer::OidcHashes {
+                super::token_issuer::AuthorizationCodeClaims {
+                    nonce: auth_code.nonce.as_deref(),
                     access_token: &access_token,
                     authorization_code: raw_code,
                 },
@@ -350,7 +348,7 @@ impl TokenService<'_> {
                 Ok(t) => Some(t),
                 Err(e) => {
                     tracing::error!("ID sign: {e}");
-                    return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
+                    return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
                 }
             };
         }
@@ -402,14 +400,14 @@ impl TokenService<'_> {
         {
             Ok(true) => {}
             Ok(false) => {
-                return Err(TokenEndpointResult::error_desc(
+                return Err(TokenEndpointError::error_desc(
                     OAuth2ErrorCode::InvalidGrant,
                     "Authorization code already used",
                 ));
             }
             Err(e) => {
                 tracing::error!("Auth code consume: {e}");
-                return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
+                return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         }
 
@@ -417,12 +415,12 @@ impl TokenService<'_> {
             && let Err(e) = rt_model.insert(db).await
         {
             tracing::error!("RT insert: {e}");
-            return Err(TokenEndpointResult::error(OAuth2ErrorCode::ServerError));
+            return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
         }
 
         if let Err(e) = signing.record_issuance(db, i64::from(ttl)).await {
             tracing::error!("Signing key issuance: {e}");
-            return Err(TokenEndpointResult::error(
+            return Err(TokenEndpointError::error(
                 OAuth2ErrorCode::TemporarilyUnavailable,
             ));
         }

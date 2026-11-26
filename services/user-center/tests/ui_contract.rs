@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 use user_center::db::entity::{
     apps, identity_provider_keys, identity_providers, oauth_clients, users,
 };
+use user_center::db::enums::CommonStatus;
 
 #[test]
 fn browser_dtos_never_serialize_backend_credential_material() {
@@ -27,12 +28,22 @@ fn browser_dtos_never_serialize_backend_credential_material() {
         "active":false,"created_at":now,"updated_at":now
     }))
     .unwrap();
-    let app: apps::Model = serde_json::from_value(json!({
-        "id":id,"code":"test-app","name":"Test App","status":"Active",
-        "system":false,"tenant_mode":"personal","organization_access":"open",
-        "organization_auto_access":false,"created_at":now,"updated_at":now
-    }))
-    .unwrap();
+    let app = apps::Model {
+        id,
+        code: "test-app".into(),
+        name: "Test App".into(),
+        description: None,
+        homepage_url: None,
+        logo_url: None,
+        status: CommonStatus::Active,
+        system: false,
+        max_sessions: 1,
+        tenant_mode: "personal".into(),
+        organization_access: "open".into(),
+        organization_auto_access: false,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
     let user: users::Model = serde_json::from_value(json!({
         "id":id,"username":"test-user","status":"Active","created_at":now,"updated_at":now,
         "email_verified_at":now,"deleted_at":now

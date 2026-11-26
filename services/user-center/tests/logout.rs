@@ -429,7 +429,7 @@ async fn logout_confirmation_expiry_and_form_contract() {
         StatusCode::NOT_FOUND
     );
     if std::env::var("PERO_BROWSER_TEST").as_deref() == Ok("1") {
-        browser_flow(&state, router.clone(), user, provider).await;
+        browser_flow(&state, router.clone(), user, provider, app, client).await;
     }
     // An unavailable signing-key database is not a successful or invalid logout.
     guard.shutdown().await;
@@ -454,6 +454,8 @@ async fn browser_flow(
     router: axum::Router,
     user: Uuid,
     provider: Uuid,
+    app: Uuid,
+    client: Uuid,
 ) {
     let other = Uuid::now_v7();
     sql(
@@ -481,7 +483,8 @@ async fn browser_flow(
         async move {
             let raw=jar.get("pero_sso").unwrap().value();
             let session=state.session_service().validate(raw).await.unwrap().unwrap();
-            axum::Json(serde_json::json!({"fresh":token(session.user_id,Some(session.id),false),"expired":token(session.user_id,Some(session.id),true)}))
+            let sid = database::client_session(&state.db, session.user_id, app, client, session.id, None).await;
+            axum::Json(serde_json::json!({"fresh":token(session.user_id,Some(sid),false),"expired":token(session.user_id,Some(sid),true)}))
         }
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

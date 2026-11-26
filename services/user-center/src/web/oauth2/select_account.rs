@@ -66,7 +66,7 @@ pub async fn redirect(
 async fn request(
     state: &AppState,
     raw: &str,
-) -> Result<(Choice, authorization_requests::Model), Response> {
+) -> Result<(Choice, authorization_requests::Model), Box<Response>> {
     let choice: Choice = pero_utils::crypto::decode_signed_json(raw, key(state))
         .map_err(|_| pero_api_axum::json_error("invalid_request"))?;
     let request = authorization_requests::Entity::find_by_id(choice.request_id)
@@ -78,7 +78,7 @@ async fn request(
                 && r.expires_at > time::OffsetDateTime::now_utc()
                 && has_prompt(r.prompt.as_deref(), "select_account")
         })
-        .ok_or_else(|| pero_api_axum::json_error("invalid_request"))?;
+        .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))?;
     Ok((choice, request))
 }
 pub async fn get(
@@ -89,7 +89,7 @@ pub async fn get(
     if !params.token.is_empty()
         && let Err(e) = request(&state, &params.token).await
     {
-        return e;
+        return *e;
     }
     let session = match extract_session(&state, &jar).await {
         Ok(s) => s,
@@ -123,7 +123,7 @@ pub async fn post(
         }
         let jar = match switch(&state, jar).await {
             Ok(j) => j,
-            Err(e) => return e,
+            Err(e) => return *e,
         };
         let mut url = "/account/login".to_string();
         pero_utils::encode::append_query_param(
@@ -135,7 +135,7 @@ pub async fn post(
     }
     let (choice, request) = match request(&state, &input.token).await {
         Ok(v) => v,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     if input.action == "current" {
         let session = match extract_session(&state, &jar).await {
@@ -166,7 +166,7 @@ pub async fn post(
     let result = if input.action == "other" {
         let jar = match switch(&state, jar).await {
             Ok(j) => j,
-            Err(e) => return e,
+            Err(e) => return *e,
         };
         super::authorize::pending_redirect(&state, &jar, updated.id).await
     } else {
@@ -177,7 +177,7 @@ pub async fn post(
         Err(e) => e.into_response(),
     }
 }
-pub(crate) async fn switch(state: &AppState, jar: CookieJar) -> Result<CookieJar, Response> {
+pub(crate) async fn switch(state: &AppState, jar: CookieJar) -> Result<CookieJar, Box<Response>> {
     // Switching must also revoke incomplete MFA and recovery sessions. The
     // authenticated extractor intentionally excludes these browser credentials.
     let session = crate::web::session::extract_browser_session(state, &jar)

@@ -20,26 +20,28 @@ async fn resolve_consent_context(
     jar: &CookieJar,
     session: &SsoSession,
     request_token: &str,
-) -> Result<ConsentContext, Response> {
+) -> Result<ConsentContext, Box<Response>> {
+    let invalid_request =
+        || Box::new(Redirect::to("/sso/error?code=invalid_request").into_response());
     let cookie_value = state
         .cookie_factory()
         .decode_auth_request(request_token)
-        .map_err(|_| Redirect::to("/sso/error?code=invalid_request").into_response())?;
+        .map_err(|_| invalid_request())?;
 
     if cookie_value.user_id != session.user_id || cookie_value.session_id != session.id {
-        return Err(Redirect::to("/sso/error?code=invalid_request").into_response());
+        return Err(invalid_request());
     }
 
     let auth_request = authorization_requests::Entity::find_by_id(cookie_value.auth_request_id)
         .one(&state.db)
         .await
-        .map_err(|_| Redirect::to("/sso/error?code=invalid_request").into_response())?
-        .ok_or_else(|| Redirect::to("/sso/error?code=invalid_request").into_response())?;
+        .map_err(|_| invalid_request())?
+        .ok_or_else(invalid_request)?;
 
     if auth_request.completed_at.is_some()
         || auth_request.expires_at < time::OffsetDateTime::now_utc()
     {
-        return Err(Redirect::to("/sso/error?code=invalid_request").into_response());
+        return Err(invalid_request());
     }
 
     if crate::service::oauth::requires_reauthentication(
@@ -60,7 +62,7 @@ async fn resolve_consent_context(
             Ok((jar, response)) => (jar, response).into_response(),
             Err(error) => error.into_response(),
         };
-        return Err(response);
+        return Err(Box::new(response));
     }
 
     Ok(ConsentContext { auth_request })
@@ -83,7 +85,7 @@ pub async fn get(State(state): State<AppState>, jar: CookieJar) -> Response {
     let request_token = cookie.value().to_owned();
     let ctx = match resolve_consent_context(&state, &jar, &session, &request_token).await {
         Ok(c) => c,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
 
     let client = match oauth_clients::Entity::find_by_id(ctx.auth_request.client_id)
@@ -172,7 +174,7 @@ pub async fn post(
 
     let ctx = match resolve_consent_context(&state, &jar, &session, &form.request_token).await {
         Ok(c) => c,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
 
     let cookies = state.cookie_factory();

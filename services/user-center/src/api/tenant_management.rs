@@ -132,7 +132,7 @@ pub async fn members(State(s): State<AppState>, h: HeaderMap, Path(id): Path<Uui
         Ok(v) => v.user.id,
         Err(e) => return *e,
     };
-    match svc::members(&s.db, user, id).await {
+    match svc::all_members(&s.db, user, id).await {
         Ok(rows) => Json(serde_json::json!({"rows":rows})).into_response(),
         Err(e) => util::management_response(Err(e)),
     }

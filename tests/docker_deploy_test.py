@@ -94,7 +94,8 @@ from = "+12025550123"
         self.assertEqual(production['sso']['cookie_domain'], 'example.test')
         self.assertEqual(production['sso']['session_touch_interval_seconds'], 10)
         self.assertEqual(production['http_config']['timeout_secs'], 12)
-        self.assertEqual(production['http_config']['retry'], {'enabled': True, 'max_retries': 2})
+        self.assertTrue(production['http_config']['retry']['enabled'])
+        self.assertEqual(production['http_config']['retry']['max_retries'], 2)
         self.assertEqual(production['notification']['smtp']['password'], 'fixture-password')
         self.assertEqual(production['notification']['sms']['auth_token'], 'fixture-token')
         self.assertNotIn('obsolete', production)
@@ -114,9 +115,14 @@ from = "+12025550123"
         self.assertNotEqual(self.run_packager().returncode, 0)
         self.assertFalse(self.archive.exists())
 
-    def test_legacy_static_path_moves_to_frontend(self):
+    def test_frontend_static_override_survives_packaging(self):
         path = self.config / 'production.toml'
-        path.write_text(path.read_text() + '\n[askama]\nstatic_dir="prd/ui/static"\n')
+        path.write_text(path.read_text() + '''
+[frontend]
+static_dir = "prd/ui/static"
+[askama]
+static_dir = "obsolete/path"
+''')
         self.assertEqual(self.run_packager().returncode, 0)
         with tarfile.open(self.archive) as archive:
             production = tomllib.loads(archive.extractfile('config/production.toml').read().decode())

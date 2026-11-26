@@ -3,7 +3,7 @@ mod database;
 use axum::{
     Form,
     extract::{Path, State},
-    http::Request,
+    http::{HeaderMap, Request},
     response::IntoResponse,
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -736,6 +736,7 @@ async fn authorization_and_recovery_regressions() {
                 .parse()
                 .unwrap(),
         )),
+        HeaderMap::new(),
         Form(user_center::web::sso::register::Input {
             csrf_token,
             email: format!("dependency-{user}@example.com"),

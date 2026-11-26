@@ -26,28 +26,29 @@ pub struct TokenRequest {
     pub client_secret: Option<String>,
 }
 
-pub enum TokenEndpointResult {
-    Success(TokenSuccessBody),
-    Error {
+pub type TokenEndpointResult = Result<TokenSuccessBody, TokenEndpointError>;
+
+pub enum TokenEndpointError {
+    OAuth {
         code: OAuth2ErrorCode,
         desc: Option<Cow<'static, str>>,
     },
     Unauthorized(Cow<'static, str>),
 }
 
-impl TokenEndpointResult {
+impl TokenEndpointError {
     pub(super) fn error(code: OAuth2ErrorCode) -> Self {
-        Self::Error { code, desc: None }
+        Self::OAuth { code, desc: None }
     }
 
     pub(super) fn error_desc(code: OAuth2ErrorCode, desc: impl Into<Cow<'static, str>>) -> Self {
-        Self::Error {
+        Self::OAuth {
             code,
             desc: Some(desc.into()),
         }
     }
 
-    pub(super) fn unauthorized(desc: impl Into<Cow<'static, str>>) -> Self {
+    pub(crate) fn unauthorized(desc: impl Into<Cow<'static, str>>) -> Self {
         Self::Unauthorized(desc.into())
     }
 }
@@ -66,25 +67,25 @@ impl<'a> TokenService<'a> {
         form: &TokenRequest,
         source: &str,
         limit: u64,
-    ) -> Result<crate::db::entity::oauth_clients::Model, TokenEndpointResult> {
+    ) -> Result<crate::db::entity::oauth_clients::Model, TokenEndpointError> {
         // Unauthenticated traffic must not consume another client's shared quota.
         let client_rate_limit_key =
             format!("source:{limit}:{}", pero_utils::crypto::sha256_hex(source));
         let Ok(key) = rl_token.key(&client_rate_limit_key) else {
-            return Err(TokenEndpointResult::error(
+            return Err(TokenEndpointError::error(
                 OAuth2ErrorCode::TemporarilyUnavailable,
             ));
         };
         match enforce_rate_limit(&self.state.cache, &key, limit).await {
             Ok(()) => {}
             Err(RateLimitError::Denied { .. }) => {
-                return Err(TokenEndpointResult::error(
+                return Err(TokenEndpointError::error(
                     OAuth2ErrorCode::TemporarilyUnavailable,
                 ));
             }
             Err(RateLimitError::Redis(e)) => {
                 tracing::error!(error = %e, "rate_limit_check redis error");
-                return Err(TokenEndpointResult::error(
+                return Err(TokenEndpointError::error(
                     OAuth2ErrorCode::TemporarilyUnavailable,
                 ));
             }
@@ -94,14 +95,13 @@ impl<'a> TokenService<'a> {
     }
 
     pub async fn token(&self, form: &TokenRequest, source: &str) -> TokenEndpointResult {
-        let client = match self.authenticate_endpoint(form, source, 60).await {
-            Ok(c) => c,
-            Err(e) => return e,
-        };
+        let client = self.authenticate_endpoint(form, source, 60).await?;
         match form.grant_type.as_str() {
             "authorization_code" => self.handle_authorization_code(form, &client).await,
             "refresh_token" => self.handle_refresh_token(form, &client).await,
-            _ => TokenEndpointResult::error(OAuth2ErrorCode::UnsupportedGrantType),
+            _ => Err(TokenEndpointError::error(
+                OAuth2ErrorCode::UnsupportedGrantType,
+            )),
         }
     }
 }
