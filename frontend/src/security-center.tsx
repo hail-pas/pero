@@ -19,7 +19,7 @@ import {
   Link as RouterLink,
 } from "react-router-dom";
 import { FieldsForm } from "./forms";
-import { Empty, Heading, Panel, type Actions } from "./shared";
+import { Copyable, Empty, Heading, Panel, type Actions } from "./shared";
 import type { ViewDataMap } from "./contracts";
 import { t, useLocale } from "./i18n";
 import { errorText } from "./api";
@@ -50,11 +50,12 @@ export function SecurityCenter({
       sx={
         standalone
           ? {
-              minHeight: "100vh",
-              bgcolor: "background.neutral",
+              minHeight: "100dvh",
               display: "grid",
               placeItems: "center",
               p: { xs: 2, sm: 4 },
+              background:
+                "linear-gradient(160deg,#f7f9fc 0%,#eef4ff 55%,#f8f6ff 100%)",
             }
           : { maxWidth: 720, mx: "auto" }
       }
@@ -67,8 +68,10 @@ export function SecurityCenter({
                 maxWidth: 480,
                 bgcolor: "background.paper",
                 borderRadius: 3,
+                border: 1,
+                borderColor: "divider",
                 p: { xs: 3, sm: 4 },
-                boxShadow: 3,
+                boxShadow: "0 24px 60px -24px rgba(16,24,40,.18)",
               }
             : {}
         }
@@ -157,12 +160,7 @@ export function SecurityCenter({
             <Alert severity="warning">
               {t("恢复码仅显示一次，请离线保存。每个恢复码只能使用一次。")}
             </Alert>
-            <Box
-              component="pre"
-              sx={{ whiteSpace: "pre-wrap", userSelect: "all" }}
-            >
-              {d.codes.join("\n")}
-            </Box>
+            <Copyable value={d.codes.join("\n")} block />
             <Button component={RouterLink} to={d.redirect}>
               {t("已保存，继续")}
             </Button>
@@ -285,12 +283,7 @@ export function SecurityCenter({
                   alt={t("验证器二维码")}
                   sx={{ width: 220, maxWidth: "100%", alignSelf: "center" }}
                 />
-                <Box
-                  component="pre"
-                  sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-                >
-                  {d.secret}
-                </Box>
+                <Copyable value={d.secret} block />
                 <FieldsForm
                   disabled={busy}
                   onBusyChange={setBusy}
@@ -338,6 +331,7 @@ export function SecurityCenter({
                     ]}
                     submit={(v) => submit("disable", v)}
                     label={t("关闭双重验证")}
+                    submitColor="warning"
                   />
                 )}
               </Stack>

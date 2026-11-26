@@ -9,8 +9,12 @@ import { Tenants } from "./tenants";
 import { Integration } from "./integration";
 import { Notifications } from "./notifications";
 import { SecurityCenter, AdminRoles } from "./security-center";
-import { Alert } from "@mui/material";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Alert, Button, Stack } from "@mui/material";
+import {
+  Link as RouterLink,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import type { ViewEnvelope } from "./contracts";
 import { Security, AuditDetail } from "./security";
 import { Profile } from "./account";
@@ -61,7 +65,28 @@ export function PageContent({
     case "SecurityView":
       return <SecurityCenter data={data} mutate={mutate} />;
     case "DashboardEmptyView":
-      return <div>{t("尚未分配权限，可返回个人中心。")}</div>;
+      return (
+        <>
+          <Heading
+            title={t("管理控制台")}
+            description={t("管理工作空间中的用户、应用与安全策略。")}
+          />
+          <Panel title={t("访问权限")}>
+            <Stack spacing={2} sx={{ alignItems: "flex-start" }}>
+              <Alert severity="info" sx={{ width: "100%" }}>
+                {t("尚未分配权限，可返回个人中心。")}
+              </Alert>
+              <Button
+                component={RouterLink}
+                to="/account/profile"
+                variant="contained"
+              >
+                {t("返回个人中心")}
+              </Button>
+            </Stack>
+          </Panel>
+        </>
+      );
     case "AdminRolesView":
       return <AdminRoles data={data} mutate={mutate} ask={actions.ask} />;
     case "AuditDetailView":
@@ -123,13 +148,15 @@ export function PageContent({
                   label: t("确认新密码"),
                   type: "password",
                   required: true,
+                  validate: (value, values) =>
+                    value && value !== values.new_password
+                      ? t("两次输入的密码不一致")
+                      : undefined,
                 },
               ]}
-              submit={async (values) => {
-                if (values.new_password !== values.confirm_password)
-                  throw new Error(t("两次输入的密码不一致"));
-                await mutate(path, values, () => follow("/account/login"));
-              }}
+              submit={(values) =>
+                mutate(path, values, () => follow("/account/login"))
+              }
             />
           </Panel>
         </>

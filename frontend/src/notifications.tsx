@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   MenuItem,
-  Pagination,
   Stack,
   Table,
   TableBody,
@@ -11,11 +10,13 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Typography,
 } from "@mui/material";
-import { useSearchParams } from "react-router-dom";
+import { useRevalidator, useSearchParams } from "react-router-dom";
 import type { ViewDataMap } from "./contracts";
 import { date } from "./api";
-import { Heading, Panel, type Actions } from "./shared";
+import { Label } from "./components/label";
+import { Heading, Panel, PaginationFooter, type Actions } from "./shared";
 import { t, useLocale } from "./i18n";
 
 export function Notifications({
@@ -24,6 +25,14 @@ export function Notifications({
 }: { data: ViewDataMap["NotificationListView"] } & Actions) {
   useLocale();
   const [params, setParams] = useSearchParams();
+  const revalidator = useRevalidator();
+  const tones: Record<string, "success" | "info" | "warning" | "default"> = {
+    queued: "info",
+    retrying: "warning",
+    delivered: "success",
+    expired: "default",
+    cancelled: "default",
+  };
   const statuses: Record<string, string> = {
     queued: t("待投递"),
     retrying: t("重试中"),
@@ -91,7 +100,11 @@ export function Notifications({
             direction="row"
             sx={{ alignItems: "center", flexWrap: "wrap", gap: 2 }}
           >
-            <Button onClick={() => window.location.reload()}>
+            <Button
+              color="inherit"
+              disabled={revalidator.state !== "idle"}
+              onClick={() => revalidator.revalidate()}
+            >
               {t("刷新")}
             </Button>
             <TextField
@@ -163,7 +176,11 @@ export function Notifications({
                         : row.channel}{" "}
                     {row.recipient}
                   </TableCell>
-                  <TableCell>{statuses[row.status] || row.status}</TableCell>
+                  <TableCell>
+                    <Label color={tones[row.status] ?? "default"}>
+                      {statuses[row.status] || row.status}
+                    </Label>
+                  </TableCell>
                   <TableCell>{row.attempts}</TableCell>
                   <TableCell>
                     {row.last_error
@@ -215,7 +232,11 @@ export function Notifications({
                 <TableRow key={row.id}>
                   <TableCell>{date(row.created_at)}</TableCell>
                   <TableCell>{row.identifier}</TableCell>
-                  <TableCell>{statuses[row.status] || row.status}</TableCell>
+                  <TableCell>
+                    <Label color={tones[row.status] ?? "default"}>
+                      {statuses[row.status] || row.status}
+                    </Label>
+                  </TableCell>
                   <TableCell>{row.attempts}</TableCell>
                   <TableCell>{row.last_error || "—"}</TableCell>
                   <TableCell>
@@ -236,6 +257,11 @@ export function Notifications({
             </TableBody>
           </Table>
         </Box>
+        {!data.logout_rows?.length && (
+          <Typography variant="body2" color="text.secondary" sx={{ px: 3 }}>
+            {t("暂无记录。")}
+          </Typography>
+        )}
       </Panel>
       <Panel title={t("账户同步通知（最近 100 条）")}>
         <Box sx={{ overflowX: "auto" }}>
@@ -266,7 +292,11 @@ export function Notifications({
                     {row.kind}
                     <Box color="text.secondary">{row.id}</Box>
                   </TableCell>
-                  <TableCell>{statuses[row.status] || row.status}</TableCell>
+                  <TableCell>
+                    <Label color={tones[row.status] ?? "default"}>
+                      {statuses[row.status] || row.status}
+                    </Label>
+                  </TableCell>
                   <TableCell>{row.attempts}</TableCell>
                   <TableCell>{row.last_error || "—"}</TableCell>
                   <TableCell>
@@ -287,19 +317,22 @@ export function Notifications({
             </TableBody>
           </Table>
         </Box>
+        {!data.sync_rows?.length && (
+          <Typography variant="body2" color="text.secondary" sx={{ px: 3 }}>
+            {t("暂无记录。")}
+          </Typography>
+        )}
       </Panel>
       {data.total_pages > 1 && (
-        <Stack sx={{ mt: 3, alignItems: "flex-end" }}>
-          <Pagination
-            page={data.page}
-            count={data.total_pages}
-            onChange={(_, page) => {
-              const next = new URLSearchParams(params);
-              next.set("page", String(page));
-              setParams(next);
-            }}
-          />
-        </Stack>
+        <PaginationFooter
+          page={data.page}
+          totalPages={data.total_pages}
+          onChange={(page) => {
+            const next = new URLSearchParams(params);
+            next.set("page", String(page));
+            setParams(next);
+          }}
+        />
       )}
     </>
   );

@@ -1,4 +1,5 @@
 import {
+  Avatar,
   Box,
   Button,
   Card,
@@ -11,11 +12,40 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { ChevronRightRounded } from "@mui/icons-material";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import type { ViewEnvelope } from "./contracts";
 import type { Actions } from "./shared";
 import { Heading, Panel } from "./shared";
 import { t, useLocale } from "./i18n";
+
+function tenantStatus(status: string) {
+  const labels: Record<string, string> = {
+    active: "正常",
+    disabled: "已停用",
+    deleted: "已删除",
+  };
+  return t(labels[status] ?? status);
+}
+
+function tenantRole(role: string) {
+  const labels: Record<string, string> = {
+    owner: "所有者",
+    admin: "管理员",
+    member: "成员",
+  };
+  return t(labels[role] ?? role);
+}
+
+function invitationStatus(status: string) {
+  const labels: Record<string, string> = {
+    pending: "待接受",
+    accepted: "已加入",
+    revoked: "已撤销",
+    expired: "已过期",
+  };
+  return t(labels[status] ?? status);
+}
 
 type TenantPage = ViewEnvelope<
   | "TenantAdminView"
@@ -66,7 +96,7 @@ export function Tenants({
           <TextField select size="small" label={t("状态")} value={data.tenants.status}
             onChange={e => setQuery("status",e.target.value)} sx={{ minWidth: 140 }}>
             <MenuItem value="">{t("全部")}</MenuItem>
-            {["active","disabled","deleted"].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+            {["active","disabled","deleted"].map(s => <MenuItem key={s} value={s}>{tenantStatus(s)}</MenuItem>)}
           </TextField>
         </Stack>
         <Panel title={t("组织租户")}>
@@ -77,7 +107,7 @@ export function Tenants({
                 <Box>
                   <Typography sx={{ fontWeight: 600 }}>{row.name} ({row.slug || "—"})</Typography>
                   <Typography color="text.secondary" variant="body2">
-                    {t("所有者")}：{row.owner_name || "—"} · {row.members}/{row.max_members} {t("名成员")} · {row.status}{row.platform_suspended ? ` · ${t("平台停用")}` : ""}
+                    {t("所有者")}：{row.owner_name || "—"} · {row.members}/{row.max_members} {t("名成员")} · {tenantStatus(row.status)}{row.platform_suspended ? ` · ${t("平台停用")}` : ""}
                   </Typography>
                 </Box>
                 <Stack direction="row" spacing={1}>
@@ -106,7 +136,7 @@ export function Tenants({
     return (
       <>
         <Heading title={tenant.name} back="/dashboard/tenants"
-          description={`${tenant.slug || "—"} · ${tenant.status}${tenant.platform_suspended ? ` · ${t("平台停用")}` : ""} · ${t("所有者")}：${tenant.owner_name || "—"}`} />
+          description={`${tenant.slug || "—"} · ${tenantStatus(tenant.status)}${tenant.platform_suspended ? ` · ${t("平台停用")}` : ""} · ${t("所有者")}：${tenant.owner_name || "—"}`} />
         <Panel title={t("组织设置")}>
           <Stack direction={{ xs: "column", sm: "row" }} sx={{ alignItems: { sm: "center" } }} spacing={2}>
             <Typography>{t("成员")}：{tenant.members}/{tenant.max_members}</Typography>
@@ -139,7 +169,9 @@ export function Tenants({
                 <Box><Typography>{app.name} ({app.code})</Typography>
                   <Typography variant="caption" color="text.secondary">
                     {app.organization_access === "open" ? t("允许所有组织") :
-                      app.granted ? t("已开通") : t("未开通")} · {app.status}{app.request_status === "pending" ? ` · ${t("待审批")}` : ""}
+                      app.granted ? t("已开通") : t("未开通")} ·{" "}
+                    {app.status === "active" ? t("已启用") : t("已停用")}
+                    {app.request_status === "pending" ? ` · ${t("待审批")}` : ""}
                   </Typography></Box>
                 {app.request_status === "pending" && !app.granted && tenant.status === "active" && <Stack direction="row" spacing={1}>
                     <Button onClick={() => ask(t("批准应用申请"),`/dashboard/tenants/${tenant.id}/applications/${app.id}`,{action:"approve"})}>{t("批准")}</Button>
@@ -166,7 +198,7 @@ export function Tenants({
             {members.rows.map(m => (
               <Stack key={m.user_id} direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
                 <Box><Typography>{m.name} ({m.username})</Typography>
-                  <Typography color="text.secondary" variant="caption">{m.role}</Typography></Box>
+                  <Typography color="text.secondary" variant="caption">{tenantRole(m.role)}</Typography></Box>
                 {tenant.status !== "deleted" && m.role !== "owner" && (
                   <Button onClick={() => ask(t("设为组织所有者"),
                     `/dashboard/tenants/${tenant.id}/owner/${m.user_id}`)}>
@@ -255,18 +287,52 @@ export function Tenants({
             : t("当前未获组织创建权限；已建立的组织仍可管理。")}
         </Typography>
         <Panel title={t("已加入的工作空间")}>
-          <Stack spacing={1}>
+          <Stack spacing={1.5}>
             {data.tenants.map((space) => (
-              <Button
+              <Stack
                 key={space.id}
                 component={RouterLink}
                 to={`/account/tenants/${space.id}`}
-                variant="outlined"
-                sx={{ justifyContent: "space-between", textAlign: "left" }}
+                direction="row"
+                spacing={2}
+                sx={{
+                  alignItems: "center",
+                  p: 2,
+                  border: 1,
+                  borderColor: "divider",
+                  borderRadius: 2,
+                  color: "text.primary",
+                  transition: "background-color .15s ease, border-color .15s ease",
+                  "&:hover": {
+                    bgcolor: "background.neutral",
+                    borderColor: "rgba(145,158,171,.28)",
+                  },
+                }}
               >
-                {space.name} ({space.kind === "personal" ? t("个人") : t("组织")}) ·{" "}
-                {space.role}
-              </Button>
+                <Avatar
+                  variant="rounded"
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    bgcolor: "primary.lighter",
+                    color: "primary.dark",
+                  }}
+                >
+                  {space.name.slice(0, 1)}
+                </Avatar>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography variant="subtitle2" sx={{ overflowWrap: "anywhere" }}>
+                    {space.name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {space.kind === "personal" ? t("个人") : t("组织")}
+                  </Typography>
+                </Box>
+                <Chip size="small" label={tenantRole(space.role)} />
+                <ChevronRightRounded
+                  sx={{ color: "text.disabled", fontSize: 20, flexShrink: 0 }}
+                />
+              </Stack>
             ))}
           </Stack>
         </Panel>
@@ -288,8 +354,8 @@ export function Tenants({
       />
       <Panel title={t("组织资料")}>
         <Stack direction="row" spacing={2} sx={{ alignItems: "center", mb: 2 }}>
-          <Chip label={tenant.role} />
-          <Chip variant="outlined" label={tenant.status} />
+          <Chip label={tenantRole(tenant.role)} />
+          <Chip variant="outlined" label={tenantStatus(tenant.status)} />
           {isOrganization && <Chip variant="outlined" label={`${t("成员上限")}：${member_count}/${tenant.max_members}`} />}
           {tenant.slug && (
             <Typography color="text.secondary">/{tenant.slug}</Typography>
@@ -437,7 +503,7 @@ export function Tenants({
                       {member.name} ({member.username})
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {member.role}
+                      {tenantRole(member.role)}
                     </Typography>
                   </Box>
                   {(isOwner ||
@@ -539,7 +605,7 @@ export function Tenants({
                 sx={{ alignItems: "center", justifyContent: "space-between" }}
               >
                 <Typography>
-                  {inv.email} · {inv.role} · {inv.status}
+                  {inv.email} · {tenantRole(inv.role)} · {invitationStatus(inv.status)}
                 </Typography>
                 {inv.status === "pending" && (isOwner || inv.role === "member") && (
                   <Button

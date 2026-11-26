@@ -7,9 +7,9 @@ import {
   Button,
   Chip,
   Divider,
-  MenuItem,
   Stack,
-  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { useState } from "react";
@@ -220,6 +220,10 @@ export function Auth({
               label: t("确认新密码"),
               type: "password",
               required: true,
+              validate: (value, values) =>
+                value && value !== values.new_password
+                  ? t("两次输入的密码不一致")
+                  : undefined,
             },
           ];
     content = (
@@ -239,26 +243,35 @@ export function Auth({
           </Alert>
         )}
         {login && (
-          <TextField
-            select
+          <ToggleButtonGroup
+            exclusive
             fullWidth
             size="small"
-            label={t("登录方式")}
             value={identifierType}
             disabled={actionBusy || formBusy}
-            onChange={(e) => setIdentifierType(e.target.value)}
-            sx={{ mb: 3 }}
+            onChange={(_, value) => value && setIdentifierType(value)}
+            aria-label={t("登录方式")}
+            sx={{
+              mb: 3,
+              "& .MuiToggleButton-root": {
+                py: 0.75,
+                fontWeight: 600,
+                fontSize: 13,
+                textTransform: "none",
+                borderColor: "divider",
+              },
+            }}
           >
             {[
               ["username", t("用户名")],
               ["email", t("邮箱")],
               ["phone", t("手机号")],
-            ].map(([v, l]) => (
-              <MenuItem key={v} value={v}>
-                {t(l)}
-              </MenuItem>
+            ].map(([value, label]) => (
+              <ToggleButton key={value} value={value}>
+                {label}
+              </ToggleButton>
             ))}
-          </TextField>
+          </ToggleButtonGroup>
         )}
         {resetUnavailable && (
           <Stack spacing={2}>
@@ -284,8 +297,6 @@ export function Auth({
             }}
             fields={fields}
             submit={async (values) => {
-              if (reset && values.new_password !== values.confirm_password)
-                throw new Error(t("两次输入的密码不一致"));
               await mutate(location.pathname + location.search, {
                 ...values,
                 identifier_type: identifierType,
@@ -506,86 +517,161 @@ export function Auth({
   return (
     <Box
       sx={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         display: "grid",
         gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+        bgcolor: "background.default",
       }}
     >
       <Stack
         sx={{
           display: { xs: "none", md: "flex" },
-          background: "linear-gradient(160deg,#f4f6f8 25%,#edf4fa)",
-          p: 5,
+          position: "relative",
+          overflow: "hidden",
+          p: 6,
+          background:
+            "linear-gradient(155deg,#f2f7ff 0%,#eef3ff 48%,#f8f5ff 100%)",
+          borderRight: 1,
+          borderColor: "divider",
         }}
       >
-        <Brand />
+        <Box
+          aria-hidden
+          sx={{
+            position: "absolute",
+            width: 520,
+            height: 520,
+            borderRadius: "50%",
+            border: "1px solid rgba(24,119,242,.10)",
+            top: -160,
+            right: -180,
+          }}
+        />
+        <Box
+          aria-hidden
+          sx={{
+            position: "absolute",
+            width: 320,
+            height: 320,
+            borderRadius: "50%",
+            border: "1px solid rgba(99,102,241,.12)",
+            bottom: -120,
+            left: -100,
+          }}
+        />
+        <Box sx={{ position: "relative" }}>
+          <Brand />
+        </Box>
         <Stack
-          sx={{ flex: 1, maxWidth: 440, mx: "auto", justifyContent: "center" }}
-          spacing={3}
+          sx={{
+            position: "relative",
+            flex: 1,
+            maxWidth: 460,
+            mx: "auto",
+            justifyContent: "center",
+            width: "100%",
+          }}
+          spacing={2.5}
         >
-          <Chip label="PERO IDENTITY" sx={{ alignSelf: "flex-start" }} />
-          <Typography variant="h2">
+          <Chip
+            label="PERO IDENTITY"
+            sx={{
+              alignSelf: "flex-start",
+              bgcolor: "rgba(255,255,255,.72)",
+              border: 1,
+              borderColor: "divider",
+            }}
+          />
+          <Typography variant="h2" sx={{ fontSize: { md: 40, lg: 44 } }}>
             {t("一个账户，")}
             <br />
             {t("连接你的世界。")}
           </Typography>
-          <Typography color="text.secondary">
+          <Typography color="text.secondary" sx={{ maxWidth: 380 }}>
             {t("从身份验证到日常管理，让每一次访问都简单、安全。")}
           </Typography>
-          <Box sx={{ py: 3, display: "flex", justifyContent: "center" }}>
+          <Box sx={{ py: 2, display: "flex", justifyContent: "center" }}>
             <IdentityGraphic variant="auth" />
           </Box>
         </Stack>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ position: "relative" }}
+        >
           OAuth 2.0 · OpenID Connect · Single Sign-On
         </Typography>
       </Stack>
-      <Stack
+      <Box
         sx={{
-          p: { xs: 3, md: 6 },
-          justifyContent: "center",
-          maxWidth: 520,
-          width: "100%",
-          mx: "auto",
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
         }}
       >
-        <Box sx={{ display: { md: "none" }, mb: 5 }}>
-          <Brand />
+        <Stack
+          direction="row"
+          sx={{
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 2,
+            px: { xs: 2.5, sm: 3, md: 4 },
+            py: { xs: 2, md: 2.5 },
+            minHeight: 64,
+          }}
+        >
+          <Box sx={{ display: { md: "none" }, minWidth: 0 }}>
+            <Brand />
+          </Box>
+          <Box sx={{ ml: "auto", flexShrink: 0 }}>
+            <LanguageSwitcher />
+          </Box>
+        </Stack>
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            px: { xs: 2.5, sm: 3 },
+            pb: { xs: 5, md: 8 },
+          }}
+        >
+          <Box sx={{ width: "100%", maxWidth: 440, minWidth: 0 }}>
+            <Typography variant="h3" sx={{ mb: 1, fontSize: { xs: 26, md: 30 } }}>
+              {t(title)}
+            </Typography>
+            <Typography color="text.secondary" sx={{ mb: 4 }}>
+              {error
+                ? t("检查访问地址或联系管理员。")
+                : done
+                  ? t("感谢使用 Pero。")
+                  : t("你的数字身份，从这里开始。")}
+            </Typography>
+            {actionFailure && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {t(actionFailure)}
+              </Alert>
+            )}
+            {content}
+            {!done && !error && view !== "AppAccessDeniedView" && (
+              <Button
+                component={RouterLink}
+                to="/"
+                size="small"
+                color="inherit"
+                sx={{ display: "flex", mx: "auto", mt: 4 }}
+              >
+                {t("返回首页")}
+              </Button>
+            )}
+            <Box component="footer" sx={{ mt: 4, textAlign: "center" }}>
+              <FilingLink />
+            </Box>
+          </Box>
         </Box>
-        <Box sx={{ position: "absolute", right: { xs: 16, md: 40 }, top: 24 }}>
-          <LanguageSwitcher />
-        </Box>
-        <Typography variant="h4" sx={{ mb: 1 }}>
-          {t(title)}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-          {error
-            ? t("检查访问地址或联系管理员。")
-            : done
-              ? t("感谢使用 Pero。")
-              : t("你的数字身份，从这里开始。")}
-        </Typography>
-        {actionFailure && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {t(actionFailure)}
-          </Alert>
-        )}
-        {content}
-        {!done && !error && view !== "AppAccessDeniedView" && (
-          <Button
-            component={RouterLink}
-            to="/"
-            size="small"
-            color="inherit"
-            sx={{ alignSelf: "center", mt: 5 }}
-          >
-            {t("返回首页")}
-          </Button>
-        )}
-        <Box component="footer" sx={{ mt: 3, textAlign: "center" }}>
-          <FilingLink />
-        </Box>
-      </Stack>
+      </Box>
     </Box>
   );
 }

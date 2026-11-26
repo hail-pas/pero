@@ -6,10 +6,14 @@ import SvgIcon from "@mui/material/SvgIcon";
 
 // ----------------------------------------------------------------------
 
+const hairline = (theme: Theme) =>
+  varAlpha(theme.vars.palette.grey["500Channel"], 0.16);
+
 const MuiBackdrop: Components<Theme>["MuiBackdrop"] = {
   styleOverrides: {
     root: ({ theme }) => ({
-      backgroundColor: varAlpha(theme.vars.palette.grey["900Channel"], 0.8),
+      backgroundColor: varAlpha(theme.vars.palette.grey["900Channel"], 0.64),
+      backdropFilter: "blur(2px)",
     }),
     invisible: {
       background: "transparent",
@@ -23,6 +27,12 @@ const MuiButton: Components<Theme>["MuiButton"] = {
   },
   styleOverrides: {
     root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.25,
+      fontWeight: theme.typography.fontWeightSemiBold,
+      transition: theme.transitions.create(
+        ["background-color", "border-color", "color", "box-shadow"],
+        { duration: theme.transitions.duration.shorter },
+      ),
       variants: [
         {
           props: { variant: "contained", color: "inherit" },
@@ -31,15 +41,70 @@ const MuiButton: Components<Theme>["MuiButton"] = {
             backgroundColor: theme.vars.palette.grey[800],
             "&:hover": {
               color: theme.vars.palette.common.white,
-              backgroundColor: theme.vars.palette.grey[800],
+              backgroundColor: theme.vars.palette.grey[900],
+            },
+          },
+        },
+        {
+          props: { variant: "contained", color: "primary" },
+          style: {
+            boxShadow: `0 1px 2px 0 ${varAlpha(theme.vars.palette.primary.mainChannel, 0.24)}`,
+            "&:hover": {
+              boxShadow: `0 4px 12px -2px ${varAlpha(theme.vars.palette.primary.mainChannel, 0.32)}`,
+            },
+          },
+        },
+        {
+          props: { variant: "outlined", color: "inherit" },
+          style: {
+            borderColor: hairline(theme),
+            color: theme.vars.palette.text.primary,
+            "&:hover": {
+              borderColor: varAlpha(theme.vars.palette.grey["500Channel"], 0.32),
+              backgroundColor: varAlpha(
+                theme.vars.palette.grey["500Channel"],
+                0.04,
+              ),
+            },
+          },
+        },
+        {
+          props: { variant: "text", color: "inherit" },
+          style: {
+            color: theme.vars.palette.text.secondary,
+            "&:hover": {
+              color: theme.vars.palette.text.primary,
+              backgroundColor: varAlpha(
+                theme.vars.palette.grey["500Channel"],
+                0.08,
+              ),
             },
           },
         },
       ],
     }),
+    sizeSmall: {
+      minHeight: 34,
+      paddingInline: 12,
+      fontSize: 13,
+    },
+    sizeMedium: {
+      minHeight: 40,
+      paddingInline: 16,
+    },
     sizeLarge: {
       minHeight: 48,
+      paddingInline: 22,
+      fontSize: 15,
     },
+  },
+};
+
+const MuiIconButton: Components<Theme>["MuiIconButton"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.25,
+    }),
   },
 };
 
@@ -48,8 +113,9 @@ const MuiCard: Components<Theme>["MuiCard"] = {
     root: ({ theme }) => ({
       zIndex: 0,
       position: "relative",
-      boxShadow: theme.vars.customShadows.card,
       borderRadius: Number(theme.shape.borderRadius) * 2,
+      border: `1px solid ${hairline(theme)}`,
+      boxShadow: `0 1px 2px 0 ${varAlpha(theme.vars.palette.grey["900Channel"], 0.04)}`,
     }),
   },
 };
@@ -68,10 +134,52 @@ const MuiCardHeader: Components<Theme>["MuiCardHeader"] = {
   },
 };
 
+const MuiCardContent: Components<Theme>["MuiCardContent"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      padding: theme.spacing(3),
+      "&:last-child": { paddingBottom: theme.spacing(3) },
+    }),
+  },
+};
+
 const MuiOutlinedInput: Components<Theme>["MuiOutlinedInput"] = {
   styleOverrides: {
-    notchedOutline: ({ theme }) => ({
-      borderColor: varAlpha(theme.vars.palette.grey["500Channel"], 0.2),
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.25,
+      backgroundColor: theme.vars.palette.background.paper,
+      transition: theme.transitions.create(["box-shadow", "border-color"], {
+        duration: theme.transitions.duration.shorter,
+      }),
+      "& .MuiOutlinedInput-notchedOutline": {
+        borderColor: varAlpha(theme.vars.palette.grey["500Channel"], 0.24),
+      },
+      "&:hover .MuiOutlinedInput-notchedOutline": {
+        borderColor: varAlpha(theme.vars.palette.grey["500Channel"], 0.4),
+      },
+      "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+        borderWidth: 1,
+      },
+      "&.Mui-focused": {
+        boxShadow: `0 0 0 3px ${varAlpha(theme.vars.palette.primary.mainChannel, 0.12)}`,
+      },
+    }),
+  },
+};
+
+const MuiInputLabel: Components<Theme>["MuiInputLabel"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      fontSize: theme.typography.pxToRem(14),
+    }),
+  },
+};
+
+const MuiFormHelperText: Components<Theme>["MuiFormHelperText"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      marginTop: theme.spacing(0.75),
+      lineHeight: 1.5,
     }),
   },
 };
@@ -81,18 +189,46 @@ const MuiPaper: Components<Theme>["MuiPaper"] = {
   styleOverrides: {
     root: { backgroundImage: "none" },
     outlined: ({ theme }) => ({
-      borderColor: varAlpha(theme.vars.palette.grey["500Channel"], 0.16),
+      borderColor: hairline(theme),
+    }),
+    rounded: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.5,
     }),
   },
 };
 
 const MuiTableCell: Components<Theme>["MuiTableCell"] = {
   styleOverrides: {
-    head: ({ theme }) => ({
+    root: ({ theme }) => ({
       fontSize: theme.typography.pxToRem(14),
+      padding: theme.spacing(1.5, 2),
+      borderBottom: `1px solid ${hairline(theme)}`,
+      "&:first-of-type": { paddingLeft: theme.spacing(3) },
+      "&:last-of-type": { paddingRight: theme.spacing(3) },
+    }),
+    head: ({ theme }) => ({
       color: theme.vars.palette.text.secondary,
       fontWeight: theme.typography.fontWeightSemiBold,
+      fontSize: theme.typography.pxToRem(12),
+      letterSpacing: "0.04em",
+      textTransform: "uppercase",
       backgroundColor: theme.vars.palette.background.neutral,
+      height: 44,
+      whiteSpace: "nowrap",
+    }),
+    sizeSmall: ({ theme }) => ({
+      padding: theme.spacing(1, 1.5),
+    }),
+  },
+};
+
+const MuiTableRow: Components<Theme>["MuiTableRow"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      transition: theme.transitions.create("background-color", {
+        duration: theme.transitions.duration.shortest,
+      }),
+      "&:last-of-type td": { borderBottom: 0 },
     }),
   },
 };
@@ -101,12 +237,43 @@ const MuiMenuItem: Components<Theme>["MuiMenuItem"] = {
   styleOverrides: {
     root: ({ theme }) => ({
       ...theme.typography.body2,
+      borderRadius: Number(theme.shape.borderRadius),
+      minHeight: 38,
+      marginInline: theme.spacing(0.5),
+      "&.Mui-selected": {
+        fontWeight: theme.typography.fontWeightSemiBold,
+      },
+    }),
+  },
+};
+
+const MuiMenu: Components<Theme>["MuiMenu"] = {
+  styleOverrides: {
+    paper: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.5,
+      border: `1px solid ${hairline(theme)}`,
+      boxShadow: theme.vars.customShadows.dropdown,
+      padding: theme.spacing(0.75, 0),
+      marginTop: theme.spacing(0.5),
+    }),
+  },
+};
+
+const MuiPopover: Components<Theme>["MuiPopover"] = {
+  styleOverrides: {
+    paper: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.5,
+      border: `1px solid ${hairline(theme)}`,
+      boxShadow: theme.vars.customShadows.dropdown,
     }),
   },
 };
 
 const MuiLink: Components<Theme>["MuiLink"] = {
   defaultProps: { underline: "hover" },
+  styleOverrides: {
+    root: { fontWeight: 500 },
+  },
 };
 
 const MuiFormControlLabel: Components<Theme>["MuiFormControlLabel"] = {
@@ -162,19 +329,193 @@ const MuiRadio: Components<Theme>["MuiRadio"] = {
   },
 };
 
+const MuiChip: Components<Theme>["MuiChip"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius),
+      fontWeight: theme.typography.fontWeightSemiBold,
+      fontSize: theme.typography.pxToRem(12),
+      height: 26,
+    }),
+    label: {
+      paddingInline: 10,
+    },
+  },
+};
+
+const MuiAlert: Components<Theme>["MuiAlert"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.25,
+      padding: theme.spacing(1.25, 2),
+      alignItems: "center",
+    }),
+    message: {
+      paddingBlock: 2,
+    },
+  },
+};
+
+const MuiDialog: Components<Theme>["MuiDialog"] = {
+  styleOverrides: {
+    paper: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 2,
+      boxShadow: theme.vars.customShadows.dialog,
+    }),
+  },
+};
+
+const MuiDialogTitle: Components<Theme>["MuiDialogTitle"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      ...theme.typography.h5,
+      padding: theme.spacing(3, 3, 1),
+    }),
+  },
+};
+
+const MuiDialogContent: Components<Theme>["MuiDialogContent"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      padding: theme.spacing(2, 3),
+    }),
+  },
+};
+
+const MuiDialogActions: Components<Theme>["MuiDialogActions"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      padding: theme.spacing(2, 3, 3),
+      gap: theme.spacing(1),
+    }),
+  },
+};
+
+const MuiAccordion: Components<Theme>["MuiAccordion"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.5,
+      border: `1px solid ${hairline(theme)}`,
+      boxShadow: "none",
+      "&:before": { display: "none" },
+      "&.Mui-expanded": { margin: 0 },
+    }),
+  },
+};
+
+const MuiAccordionSummary: Components<Theme>["MuiAccordionSummary"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      minHeight: 52,
+      paddingInline: theme.spacing(2.5),
+      "&.Mui-expanded": { minHeight: 52 },
+    }),
+  },
+};
+
+const MuiAccordionDetails: Components<Theme>["MuiAccordionDetails"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      padding: theme.spacing(0, 2.5, 2.5),
+    }),
+  },
+};
+
+const MuiPaginationItem: Components<Theme>["MuiPaginationItem"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius),
+      fontWeight: theme.typography.fontWeightMedium,
+    }),
+  },
+};
+
+const MuiTooltip: Components<Theme>["MuiTooltip"] = {
+  styleOverrides: {
+    tooltip: ({ theme }) => ({
+      backgroundColor: theme.vars.palette.grey[800],
+      borderRadius: Number(theme.shape.borderRadius),
+      fontSize: theme.typography.pxToRem(12),
+      padding: theme.spacing(0.75, 1.25),
+    }),
+  },
+};
+
+const MuiAvatar: Components<Theme>["MuiAvatar"] = {
+  styleOverrides: {
+    root: {
+      fontWeight: 600,
+      fontSize: "0.875rem",
+    },
+  },
+};
+
+const MuiLinearProgress: Components<Theme>["MuiLinearProgress"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: 999,
+      backgroundColor: varAlpha(theme.vars.palette.primary.mainChannel, 0.08),
+    }),
+    bar: {
+      borderRadius: 999,
+    },
+  },
+};
+
+const MuiListItemButton: Components<Theme>["MuiListItemButton"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderRadius: Number(theme.shape.borderRadius) * 1.25,
+      transition: theme.transitions.create(["background-color", "color"], {
+        duration: theme.transitions.duration.shortest,
+      }),
+    }),
+  },
+};
+
+const MuiDivider: Components<Theme>["MuiDivider"] = {
+  styleOverrides: {
+    root: ({ theme }) => ({
+      borderColor: hairline(theme),
+    }),
+  },
+};
+
 // ----------------------------------------------------------------------
 
 export const components = {
   MuiCard,
   MuiLink,
+  MuiMenu,
   MuiPaper,
   MuiRadio,
+  MuiAlert,
   MuiButton,
+  MuiDialog,
+  MuiDivider,
+  MuiAccordion,
   MuiBackdrop,
-  MuiMenuItem,
-  MuiCheckbox,
-  MuiTableCell,
   MuiCardHeader,
+  MuiCardContent,
+  MuiCheckbox,
+  MuiChip,
+  MuiMenuItem,
+  MuiPopover,
+  MuiAvatar,
+  MuiIconButton,
+  MuiTableCell,
+  MuiTableRow,
+  MuiTooltip,
+  MuiDialogTitle,
+  MuiInputLabel,
   MuiOutlinedInput,
+  MuiDialogActions,
+  MuiDialogContent,
+  MuiPaginationItem,
+  MuiLinearProgress,
+  MuiListItemButton,
+  MuiFormHelperText,
+  MuiAccordionSummary,
+  MuiAccordionDetails,
   MuiFormControlLabel,
 };

@@ -15,7 +15,7 @@ import {
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { FieldsForm } from "./forms";
 import { Heading, Panel, type Actions } from "./shared";
-import { date } from "./api";
+import { date, type Values } from "./api";
 import type { ProgressList, ViewDataMap } from "./contracts";
 import { t } from "./i18n";
 
@@ -214,22 +214,30 @@ export function Enrollment({
           <Alert severity="info">
             {t("仅限邀请注册，请联系管理员获取邀请。")}
           </Alert>
+        ) : methods.length === 0 ? (
+          <Alert severity="warning">
+            {t("当前没有可用的邮箱或短信验证渠道，暂时无法自助注册。请联系管理员。")}
+          </Alert>
         ) : (
           <Stack spacing={2}>
             <Stack direction="row" spacing={1}>
               {methods.includes("phone") && <Button variant={channel === "phone" ? "contained" : "outlined"} onClick={() => setChannel("phone")}>{t("手机号注册")}</Button>}
               {methods.includes("email") && <Button variant={channel === "email" ? "contained" : "outlined"} onClick={() => setChannel("email")}>{t("邮箱注册")}</Button>}
             </Stack>
-            {methods.length > 0 && <FieldsForm
+            <FieldsForm
               key={channel}
-              fields={[channel === "phone" ? {
-                name:"phone",label:t("手机号（含国际区号，例如 +8613800000000）"),required:true,
-              } : {
-                name:"email",label:t("邮箱"),type:"email",required:true,
-              }]}
-              submit={(v) => mutate("/sso/register", { ...v, app:data.app })}
+              fields={[
+                channel === "phone"
+                  ? {
+                      name: "phone",
+                      label: t("手机号（含国际区号，例如 +8613800000000）"),
+                      required: true,
+                    }
+                  : { name: "email", label: t("邮箱"), type: "email", required: true },
+              ]}
+              submit={(v) => mutate("/sso/register", { ...v, app: data.app })}
               label={t(channel === "phone" ? "发送验证短信" : "发送验证邮件")}
-            />}
+            />
             {!data.social && socialProviders}
           </Stack>
         )}
@@ -249,6 +257,10 @@ export function EnrollmentAdmin({
   editor,
 }: { data: ViewDataMap["EnrollmentAdminView"] } & Actions) {
   const p = data.policy;
+  const inherited = (values: Values) => Boolean(values.inherit);
+  const notInherited = (values: Values) => !values.inherit;
+  const selfService = (values: Values) =>
+    !values.inherit && values.mode === "self_service";
   return (
     <>
       <Heading
@@ -269,27 +281,49 @@ export function EnrollmentAdmin({
                     name: "inherit",
                     label: t("继承平台默认策略"),
                     type: "checkbox",
+                    group: "策略来源",
+                    hint: t(
+                      "继承后使用平台默认的注册模式、域名限制与审批要求。",
+                    ),
+                  },
+                  {
+                    name: "inherit_notice",
+                    label: t("当前应用继承平台默认策略。取消勾选后可单独配置。"),
+                    type: "notice",
+                    group: "策略来源",
+                    visibleWhen: inherited,
                   },
                 ]
               : []),
             {
               name: "mode",
               label: t("注册模式"),
+              group: "准入规则",
+              required: true,
+              visibleWhen: notInherited,
               options: [
                 ["closed", t("关闭")],
                 ["invite_only", t("仅邀请")],
                 ["self_service", t("自助注册")],
               ],
+              hint: t(
+                "自助注册允许访客提交申请；仅邀请需要管理员发送邀请；关闭后不接受新成员。",
+              ),
             },
             {
               name: "domains",
               label: t("允许的邮箱域名"),
+              group: "准入规则",
+              visibleWhen: selfService,
               hint: t("逗号分隔，空表示不限制；精确匹配域名。"),
             },
             {
               name: "approval_required",
               label: t("自助准入需要审批"),
+              group: "准入规则",
               type: "checkbox",
+              visibleWhen: selfService,
+              hint: t("开启后，自助申请需管理员批准才能获得访问资格。"),
             },
             ...(!p.app_id
               ? [
@@ -297,6 +331,8 @@ export function EnrollmentAdmin({
                     name: "emergency_stop",
                     label: t("紧急停止所有注册及邀请接受"),
                     type: "checkbox",
+                    group: "安全开关",
+                    hint: t("开启后立即停止所有应用的注册与邀请接受。"),
                   },
                 ]
               : []),
@@ -530,6 +566,7 @@ export function Admission({
             return Promise.resolve();
           }}
           label={t("注销账户")}
+          submitColor="error"
         />
       </Panel>
     </>

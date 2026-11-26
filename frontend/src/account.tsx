@@ -42,57 +42,83 @@ export function Profile({
       <Heading
         title={t("个人资料")}
         description={t("你的身份信息与联系方式，尽在一处。")}
+        action={
+          <Button
+            component={RouterLink}
+            to="/account/security"
+            color="inherit"
+            variant="outlined"
+          >
+            {t("账户安全")}
+          </Button>
+        }
       />
       <Card
         sx={{
           mb: 3,
-          background:
-            "linear-gradient(115deg,#edf7ff 0%,#f1f0ff 68%,#e6f7f3 100%)",
-          color: "text.primary",
           position: "relative",
           overflow: "hidden",
+          borderColor: "rgba(145,158,171,.16)",
+          background:
+            "linear-gradient(115deg,#eef7ff 0%,#f3f1ff 62%,#ecf8f4 100%)",
           boxShadow: "none",
-          border: "1px solid rgba(145,158,171,.12)",
         }}
       >
         <FingerprintRounded
+          aria-hidden
           sx={{
             position: "absolute",
-            right: 40,
-            top: 16,
-            fontSize: 160,
+            right: 32,
+            top: 8,
+            fontSize: 168,
             color: "primary.main",
-            opacity: 0.08,
+            opacity: 0.07,
             transform: "rotate(-15deg)",
             display: { xs: "none", md: "block" },
           }}
         />
         <Stack
-          direction="row"
-
-          spacing={3}
-          sx={{ alignItems: "center", p: { xs: 3, md: 4 } }}
+          direction={{ xs: "column", sm: "row" }}
+          spacing={{ xs: 2, sm: 3 }}
+          sx={{
+            position: "relative",
+            alignItems: { xs: "flex-start", sm: "center" },
+            p: { xs: 3, md: 4 },
+          }}
         >
           <Avatar
             src={u.avatar_url}
             sx={{
               flexShrink: 0,
-              width: 84,
-              height: 84,
+              width: { xs: 64, sm: 80 },
+              height: { xs: 64, sm: 80 },
               bgcolor: "primary.lighter",
               color: "primary.dark",
-              fontSize: 30,
-              border: "4px solid white",
-              boxShadow: "0 8px 16px rgba(145,158,171,.16)",
+              fontSize: 28,
+              border: "3px solid white",
+              boxShadow: "0 8px 20px rgba(145,158,171,.18)",
             }}
           >
             {(u.nickname || u.username).slice(0, 1)}
           </Avatar>
-          <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
-            <Typography variant="h4">{u.nickname || u.username}</Typography>
-            <Typography sx={{ color: "text.secondary", mt: 1, fontSize: 14 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h4" sx={{ fontSize: { xs: 24, sm: 28 } }}>
+              {u.nickname || u.username}
+            </Typography>
+            <Typography
+              color="text.secondary"
+              sx={{ mt: 0.75, fontSize: 14, overflowWrap: "anywhere" }}
+            >
               @{u.username} {t("· 加入于")} {date(u.created_at).slice(0, 10)}
             </Typography>
+          </Box>
+          <Box sx={{ ml: { sm: "auto!important" }, flexShrink: 0 }}>
+            <Label
+              color={completed === 3 ? "success" : "info"}
+              sx={{ height: 28 }}
+            >
+              {t("资料完成度")} {completed}/3
+            </Label>
           </Box>
         </Stack>
       </Card>
@@ -101,13 +127,13 @@ export function Profile({
           display: "grid",
           gridTemplateColumns: {
             xs: "minmax(0, 1fr)",
-            md: "minmax(0, 1.1fr) minmax(0, 1fr)",
+            md: "minmax(0, 1.05fr) minmax(0, 1fr)",
           },
           gap: 3,
           alignItems: "start",
         }}
       >
-        <Box sx={{ "& > :last-child": { mb: 0 } }}>
+        <Box sx={{ "& > :last-child": { mb: 0 }, minWidth: 0 }}>
           <Panel title={t("基本资料")}>
             <FieldsForm
               fields={userFields.filter((f) =>
@@ -128,7 +154,7 @@ export function Profile({
             <LinearProgress
               variant="determinate"
               value={(completed / 3) * 100}
-              sx={{ height: 6, borderRadius: 3, mb: 2.5, bgcolor: "#edf3fa" }}
+              sx={{ height: 6, mb: 2.5 }}
               aria-label={t("账户设置进度")}
             />
             <Stack spacing={1.5}>
@@ -166,7 +192,7 @@ export function Profile({
             </Stack>
           </Panel>
         </Box>
-        <Box sx={{ "& > :last-child": { mb: 0 } }}>
+        <Box sx={{ "& > :last-child": { mb: 0 }, minWidth: 0 }}>
           <Panel title={t("联系方式")}>
             {(["email", "phone"] as const).map((channel, i) => {
               const nonce = u[`pending_${channel}_nonce`],
@@ -178,30 +204,30 @@ export function Profile({
                   {i > 0 && <Divider sx={{ my: 3 }} />}
                   <Stack
                     direction="row"
-
                     sx={{
                       justifyContent: "space-between",
-                      alignItems: "center",
+                      alignItems: "flex-start",
                       gap: 2,
                     }}
                   >
-                    <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                    <Box sx={{ minWidth: 0 }}>
                       <Typography variant="subtitle2">{label}</Typography>
                       <Typography
                         color="text.secondary"
                         variant="body2"
-                        sx={{ mt: 0.5 }}
+                        sx={{ mt: 0.5, overflowWrap: "anywhere" }}
                       >
                         {u[channel] || t("尚未绑定{{0}}", { "0": t(label) })}
                       </Typography>
                     </Box>
-                    <Label color={verified ? "success" : "warning"}>
+                    <Label color={verified ? "success" : "warning"} sx={{ flexShrink: 0 }}>
                       {verified ? t("已验证") : t("未验证")}
                     </Label>
                   </Stack>
-                  <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+                  <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: "wrap", gap: 1 }}>
                     <Button
                       size="small"
+                      color="inherit"
                       onClick={() =>
                         editor(
                           t("更换{{0}}", { "0": t(label) }),
@@ -224,6 +250,7 @@ export function Profile({
                     {u[channel] && !verified && (
                       <Button
                         size="small"
+                        color="inherit"
                         onClick={() =>
                           ask(
                             t("发送{{0}}验证码", { "0": t(label) }),
@@ -241,40 +268,43 @@ export function Profile({
                         {t("等待验证：")}
                         {pending}
                       </Typography>
-                      <Button
-                        size="small"
-                        onClick={() =>
-                          editor(
-                            t("验证联系方式"),
-                            "/account/profile/verify-contact",
-                            [
+                      <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: "wrap", gap: 1 }}>
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            editor(
+                              t("验证联系方式"),
+                              "/account/profile/verify-contact",
+                              [
+                                {
+                                  name: "code",
+                                  label: t("验证码"),
+                                  required: true,
+                                },
+                              ],
+                              {},
+                              { nonce },
+                            )
+                          }
+                        >
+                          {t("输入验证码")}
+                        </Button>
+                        <Button
+                          size="small"
+                          color="inherit"
+                          onClick={() =>
+                            ask(
+                              t("取消验证"),
+                              "/account/profile/cancel-contact",
                               {
-                                name: "code",
-                                label: t("验证码"),
-                                required: true,
+                                nonce,
                               },
-                            ],
-                            {},
-                            { nonce },
-                          )
-                        }
-                      >
-                        {t("输入验证码")}
-                      </Button>
-                      <Button
-                        size="small"
-                        onClick={() =>
-                          ask(
-                            t("取消验证"),
-                            "/account/profile/cancel-contact",
-                            {
-                              nonce,
-                            },
-                          )
-                        }
-                      >
-                        {t("取消验证")}
-                      </Button>
+                            )
+                          }
+                        >
+                          {t("取消验证")}
+                        </Button>
+                      </Stack>
                     </Alert>
                   )}
                 </Box>
@@ -283,8 +313,20 @@ export function Profile({
           </Panel>
           <Panel title={t("登录安全")}>
             <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
-              <ShieldRounded color="primary" />
-              <Box sx={{ flex: 1 }}>
+              <Box
+                sx={{
+                  display: "grid",
+                  placeItems: "center",
+                  width: 40,
+                  height: 40,
+                  borderRadius: 1.5,
+                  bgcolor: "rgba(24,119,242,.08)",
+                  flexShrink: 0,
+                }}
+              >
+                <ShieldRounded color="primary" sx={{ fontSize: 20 }} />
+              </Box>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="subtitle2">
                   {u.has_password ? t("已设置登录密码") : t("尚未设置本地密码")}
                 </Typography>
@@ -292,7 +334,13 @@ export function Profile({
                   {t("定期更新密码，保护账户访问。")}
                 </Typography>
               </Box>
-              <Button component={RouterLink} to="/account/change-password">
+              <Button
+                component={RouterLink}
+                to="/account/change-password"
+                size="small"
+                color="inherit"
+                sx={{ flexShrink: 0 }}
+              >
                 {t("管理")}
               </Button>
             </Stack>

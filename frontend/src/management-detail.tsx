@@ -1,12 +1,35 @@
 import { can, isSuper } from "./permissions";
-import { AddRounded, EditRounded } from "@mui/icons-material";
-import { Alert, Box, Button, Card, Stack, Typography } from "@mui/material";
+import {
+  AddRounded,
+  EditRounded,
+  MoreHorizRounded,
+} from "@mui/icons-material";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  Divider,
+  Menu,
+  MenuItem,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { date, lower, errorText } from "./api";
-import type { ViewEnvelope, DetailView } from "./contracts";
+import type { ViewEnvelope, DetailView, ViewDataMap } from "./contracts";
 import { clientFields, keyFields } from "./forms";
 import { t, useLocale } from "./i18n";
-import { Empty, Heading, Panel, Status, names, type Actions } from "./shared";
+import {
+  Empty,
+  Heading,
+  MetaGrid,
+  Panel,
+  Status,
+  names,
+  type Actions,
+} from "./shared";
 
 export function ManagementDetail({
   page,
@@ -52,7 +75,14 @@ export function ManagementDetail({
     : isApp
       ? [
           [t("应用标识"), data.app.code],
-          [t("最大登录设备数"), data.app.max_sessions === 0 ? t("不限制") : String(data.app.max_sessions)],
+          [
+            t("最大登录设备数"),
+            data.app.max_sessions === 0
+              ? t("不限制")
+              : data.app.max_sessions == null
+                ? "—"
+                : String(data.app.max_sessions),
+          ],
           [t("主页"), data.app.homepage_url],
           [t("说明"), data.app.description],
         ]
@@ -62,6 +92,11 @@ export function ManagementDetail({
           ["Issuer", data.provider.issuer],
           ["Client ID", data.provider.client_id],
         ];
+  const editAction = isApp
+    ? allowed("apps.manage")
+    : isUser
+      ? allowed("users.update") || allowed("users.contact.update")
+      : superAdmin && !system;
   return (
     <>
       <Heading
@@ -72,16 +107,12 @@ export function ManagementDetail({
         })}
         back={`/dashboard/${kind}`}
         action={
-          (isApp
-            ? allowed("apps.manage")
-            : isUser
-              ? allowed("users.update") || allowed("users.contact.update")
-              : superAdmin && !system) && (
+          editAction && (
             <Button
               component={RouterLink}
               to={`${base}/edit`}
               variant="contained"
-              color="inherit"
+              color="primary"
               startIcon={<EditRounded />}
             >
               {t("编辑")}
@@ -94,18 +125,77 @@ export function ManagementDetail({
           {errorText(data.error)}
         </Alert>
       )}
+      {(isUser || isApp) && (
+        <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1, mb: 3 }}>
+          {isUser && superAdmin && (
+            <Button
+              component={RouterLink}
+              to={`${base}/security`}
+              variant="outlined"
+              color="inherit"
+              size="small"
+            >
+              {t("会话与登录锁定")}
+            </Button>
+          )}
+          {isApp && superAdmin && (
+            <Button
+              component={RouterLink}
+              to={`${base}/integration`}
+              variant="outlined"
+              color="inherit"
+              size="small"
+            >
+              {t("接入向导与诊断")}
+            </Button>
+          )}
+          {isApp &&
+            !system &&
+            [
+              ["/dashboard/registration?app=" + row.id, t("注册策略与邀请"), superAdmin],
+              [
+                `/dashboard/apps/${row.id}/members`,
+                t("本应用成员"),
+                allowed("apps.members.read"),
+              ],
+            ]
+              .filter(([, , visible]) => visible)
+              .map(([to, label]) => (
+                <Button
+                  key={String(to)}
+                  component={RouterLink}
+                  to={String(to)}
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                >
+                  {label}
+                </Button>
+              ))}
+        </Stack>
+      )}
       {isUser && superAdmin && data.tenant_creation_policy && (
         <Panel
           title={t("组织创建权限")}
           action={
             <Button
+              color="inherit"
               onClick={() =>
                 editor(
                   t("调整组织创建权限"),
                   `${base}/tenant-policy`,
                   [
-                    { name: "enabled", label: t("允许创建组织"), type: "checkbox" },
-                    { name: "max_tenants", label: t("最多创建组织数"), type: "number", required: true },
+                    {
+                      name: "enabled",
+                      label: t("允许创建组织"),
+                      type: "checkbox",
+                    },
+                    {
+                      name: "max_tenants",
+                      label: t("最多创建组织数"),
+                      type: "number",
+                      required: true,
+                    },
                   ],
                   {
                     enabled: data.tenant_creation_policy!.enabled,
@@ -118,79 +208,37 @@ export function ManagementDetail({
             </Button>
           }
         >
-          <Typography variant="body2">
-            {data.tenant_creation_policy.enabled ? t("已开启") : t("已禁用")}
-            {" · "}{t("已创建")} {data.tenant_creation_policy.tenant_count}
-            {" / "}{data.tenant_creation_policy.max_tenants}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {t("关闭创建权限只阻止新建组织；降低额度不会影响或删除已创建的组织，成员管理独立受组织成员上限约束。")}
-          </Typography>
+          <Stack spacing={1}>
+            <MetaGrid
+              columns={3}
+              items={[
+                [
+                  t("创建权限"),
+                  data.tenant_creation_policy.enabled
+                    ? t("已开启")
+                    : t("已禁用"),
+                ],
+                [t("已创建组织"), data.tenant_creation_policy.tenant_count],
+                [t("最多创建组织数"), data.tenant_creation_policy.max_tenants],
+              ]}
+            />
+            <Typography variant="body2" color="text.secondary">
+              {t(
+                "关闭创建权限只阻止新建组织；降低额度不会影响或删除已创建的组织，成员管理独立受组织成员上限约束。",
+              )}
+            </Typography>
+          </Stack>
         </Panel>
       )}
-      {isUser && superAdmin && (
-        <Button component={RouterLink} to={`${base}/security`} sx={{ mb: 2 }}>
-          {t("会话与登录锁定")}
-        </Button>
-      )}
-      {isApp && superAdmin && (
-        <Button
-          component={RouterLink}
-          to={`${base}/integration`}
-          sx={{ mb: 2 }}
-        >
-          {t("接入向导与诊断")}
-        </Button>
-      )}
-      {isApp && !system && (
-        <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-          <Button
-            sx={{ display: superAdmin ? undefined : "none" }}
-            component={RouterLink}
-            to={`/dashboard/registration?app=${row.id}`}
-          >
-            {t("注册策略与邀请")}
-          </Button>
-          <Button
-            component={RouterLink}
-            sx={{ display: allowed("apps.members.read") ? undefined : "none" }}
-            to={`/dashboard/apps/${row.id}/members`}
-          >
-            {t("本应用成员")}
-          </Button>
-        </Stack>
-      )}
       <Panel title={t("基本信息")} action={<Status value={status} />}>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "minmax(0, 1fr)",
-              md: "repeat(2, minmax(0, 1fr))",
-            },
-            gap: 3,
-          }}
-        >
-          {props.map(([label, value]) => (
-            <Box key={t(label)}>
-              <Typography
-                variant="caption"
-
-                color="text.secondary"
-                sx={{ display: "block" }}
-              >
-                {t(label)}
-              </Typography>
-              <Typography sx={{ mt: 0.5, overflowWrap: "anywhere" }}>
-                {value || "—"}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
+        <MetaGrid items={props} />
       </Panel>
       {isApp && allowed("clients.read") && (
         <Panel
           title={t("OAuth 客户端")}
+          description={t(
+            "管理接入应用的客户端、回调地址与密钥轮换。",
+          )}
           action={
             <Button
               sx={{ display: allowed("clients.manage") ? undefined : "none" }}
@@ -210,230 +258,75 @@ export function ManagementDetail({
           }
         >
           {!data.clients?.length && <Empty text={t("尚未配置客户端")} />}
-          {data.clients?.map((client) => (
-            <Card
-              key={client.id}
-              variant="outlined"
-              sx={{ p: 2.5, mb: 2, boxShadow: "none" }}
-            >
-              <Stack
-                direction="row"
-                sx={{ justifyContent: "space-between", gap: 2 }}
+          <Stack spacing={2}>
+            {data.clients?.map((client) => (
+              <Card
+                key={client.id}
+                variant="outlined"
+                sx={{ p: { xs: 2, sm: 2.5 }, boxShadow: "none" }}
               >
-                <Box sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                  <Typography variant="subtitle1">
-                    {client.name || client.identifier}
-                  </Typography>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.5}
+                  sx={{ justifyContent: "space-between" }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      sx={{ alignItems: "center", flexWrap: "wrap", gap: 1 }}
+                    >
+                      <Typography variant="subtitle1">
+                        {client.name || client.identifier}
+                      </Typography>
+                      <Status value={client.status} />
+                    </Stack>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "block", mt: 0.5 }}
+                    >
+                      {client.identifier} ·{" "}
+                      {lower(client.type) === "public"
+                        ? t("公开客户端")
+                        : t("机密客户端")}
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Box
+                  sx={{
+                    my: 2,
+                    p: 1.5,
+                    borderRadius: 1.5,
+                    bgcolor: "background.neutral",
+                  }}
+                >
                   <Typography
                     variant="caption"
-
                     color="text.secondary"
-                    sx={{ display: "block" }}
+                    sx={{ display: "block", mb: 0.5 }}
                   >
-                    {client.identifier} · {lower(client.type)}
+                    {t("回调地址：")}
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontFamily: "monospace", fontSize: 12.5 }}
+                  >
+                    {client.redirect_uris?.join(" · ") || "—"}
                   </Typography>
                 </Box>
-                <Status value={client.status} />
-              </Stack>
-              <Typography
-                variant="body2"
-                sx={{
-                  my: 2,
-                  color: "text.secondary",
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {t("回调地址：")}
-                {client.redirect_uris?.join(" · ") || "—"}
-              </Typography>
-              <Stack
-                direction="row"
-                sx={{ flexWrap: "wrap", alignItems: "center", gap: 1 }}
-              >
-                <Button
-                  sx={{
-                    display: allowed("clients.manage") ? undefined : "none",
-                  }}
-                  size="small"
-                  onClick={() =>
-                    editor(
-                      t("编辑 OAuth 客户端"),
-                      `/dashboard/clients/${client.id}/edit`,
-                      clientFields
-                        .filter(
-                          (field) =>
-                            field.name !== "identifier" &&
-                            (field.name !== "secret" ||
-                              canRotateSecret(client.account_sync_uri)),
-                        )
-                        .map((field) =>
-                          client.account_sync_uri &&
-                          !isSuper(data.layout) &&
-                          ["scopes", "client_type"].includes(field.name)
-                            ? {
-                                ...field,
-                                disabled: true,
-                                hint: t(
-                                  "账户同步已启用，请由超级管理员调整类型和 scope。",
-                                ),
-                              }
-                            : field,
-                        ),
-                      {
-                        name: client.name,
-                        client_type: lower(client.type),
-                        secret: "",
-                        login_uri: client.login_uri || "",
-                         redirect_uris: client.redirect_uris?.join("\n"),
-                        post_logout_redirect_uris:
-                          client.post_logout_redirect_uris?.join("\n"),
-                        scopes: client.scopes?.join(","),
-                        grant_types: client.grant_types?.join(","),
-                        require_pkce: client.require_pkce,
-                        access_token_ttl: client.access_token_ttl_seconds,
-                        refresh_token_ttl: client.refresh_token_ttl_seconds,
-                        id_token_ttl: client.id_token_ttl_seconds,
-                      },
-                    )
-                  }
-                >
-                  {t("编辑配置")}
-                </Button>
-                <Button
-                  sx={{
-                    display: allowed("clients.manage") ? undefined : "none",
-                  }}
-                  size="small"
-                  onClick={() =>
-                    editor(
-                      t("应用注销通知"),
-                      `/dashboard/clients/${client.id}/backchannel-logout`,
-                      [
-                        {
-                          name: "backchannel_logout_uri",
-                          label: t("Back-channel Logout 地址"),
-                          hint: t("应用接收注销令牌的 HTTPS 地址；留空停用"),
-                        },
-                      ],
-                      {
-                        backchannel_logout_uri:
-                          client.backchannel_logout_uri || "",
-                      },
-                    )
-                  }
-                >
-                  {t("应用注销通知")}
-                </Button>
-                {!system &&
-                  isSuper(data.layout) &&
-                  lower(client.type) === "confidential" && (
-                    <Button
-                      size="small"
-                      onClick={() =>
-                        editor(
-                          t("账户生命周期同步"),
-                          `/dashboard/clients/${client.id}/account-sync`,
-                          [
-                            {
-                              name: "account_sync_uri",
-                              label: t("账户同步地址"),
-                              hint: t(
-                                "应用接收签名事件的 HTTPS 地址；保存后同步现有成员，留空停用。资料按客户端 scope 提供。",
-                              ),
-                            },
-                          ],
-                          { account_sync_uri: client.account_sync_uri || "" },
-                        )
-                      }
-                    >
-                      {t("账户生命周期同步")}
-                    </Button>
-                  )}
-                <Button
-                  size="small"
-                  disabled={
-                    !canRotateSecret(client.account_sync_uri) ||
-                    lower(client.type) === "public"
-                  }
-                  onClick={() =>
-                    editor(
-                      t("平滑轮换密钥"),
-                      `/dashboard/clients/${client.id}/rotate-secret`,
-                      [
-                        {
-                          name: "grace_seconds",
-                          label: t("旧密钥保留时间"),
-                          options: [
-                            ["3600", t("1 小时")],
-                            ["86400", t("24 小时")],
-                            ["604800", t("7 天")],
-                          ],
-                        },
-                      ],
-                      { grace_seconds: "86400" },
-                    )
-                  }
-                >
-                  {t("平滑轮换密钥")}
-                </Button>
-                {client.previous_secret_expires_at && (
-                  <>
-                    <Typography variant="caption">
-                      {t("旧密钥到期")}：
-                      {date(client.previous_secret_expires_at)}
-                    </Typography>
-                    <Button
-                      sx={{
-                        display: canRotateSecret(client.account_sync_uri)
-                          ? undefined
-                          : "none",
-                      }}
-                      size="small"
-                      onClick={() =>
-                        ask(
-                          t("立即停用旧密钥"),
-                          `/dashboard/clients/${client.id}/retire-secret`,
-                        )
-                      }
-                    >
-                      {t("停用旧密钥")}
-                    </Button>
-                  </>
-                )}
-                <Button
-                  size="small"
-                  disabled={
-                    !canRotateSecret(client.account_sync_uri) ||
-                    lower(client.type) === "public"
-                  }
-                  onClick={() =>
-                    ask(
-                      t("重置客户端密钥"),
-                      `/dashboard/clients/${client.id}/reset-secret`,
-                      {},
-                      t("现有密钥将立即失效，使用该密钥的应用需要更新配置。"),
-                    )
-                  }
-                >
-                  {t("紧急重置密钥")}
-                </Button>
-                <Button
-                  sx={{
-                    display: allowed("clients.manage") ? undefined : "none",
-                  }}
-                  size="small"
-                  onClick={() =>
-                    ask(
-                      t("切换客户端状态"),
-                      `/dashboard/clients/${client.id}/toggle`,
-                    )
-                  }
-                >
-                  {t("切换状态")}
-                </Button>
-              </Stack>
-            </Card>
-          ))}
+                <ClientActions
+                  client={client}
+                  data={data}
+                  allowed={allowed}
+                  ask={ask}
+                  editor={editor}
+                  canRotateSecret={canRotateSecret}
+                  system={system}
+                />
+              </Card>
+            ))}
+          </Stack>
         </Panel>
       )}
       {isUser && (
@@ -463,45 +356,49 @@ export function ManagementDetail({
             }
           >
             {!data.access_list?.length && <Empty text={t("尚无应用授权")} />}
-            {data.access_list?.map((access) => (
-              <Stack
-                key={access.app_id}
-                direction="row"
-
-                sx={{
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  py: 1.5,
-                }}
-              >
-                <Typography variant="subtitle2">{access.app_name}</Typography>
+            <Stack divider={<Divider />}>
+              {data.access_list?.map((access) => (
                 <Stack
+                  key={access.app_id}
                   direction="row"
-                  spacing={2}
-                  sx={{ alignItems: "center" }}
+                  sx={{
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    py: 1.5,
+                    gap: 2,
+                  }}
                 >
-                  <Status value={access.status} />
-                  <Button
-                    size="small"
-                    color="error"
-                    disabled={
-                      !can(data.layout, "apps.members.manage", access.app_id) ||
-                      lower(access.status) !== "active"
-                    }
-                    onClick={() =>
-                      ask(
-                        t("撤销应用权限"),
-                        `${base}/revoke-app`,
-                        { app_id: access.app_id },
-                        t("撤销后，该用户与此应用相关的授权及令牌将失效。"),
-                      )
-                    }
+                  <Typography variant="subtitle2" sx={{ minWidth: 0 }}>
+                    {access.app_name}
+                  </Typography>
+                  <Stack
+                    direction="row"
+                    spacing={2}
+                    sx={{ alignItems: "center", flexShrink: 0 }}
                   >
-                    {t("撤销权限")}
-                  </Button>
+                    <Status value={access.status} />
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={
+                        !can(data.layout, "apps.members.manage", access.app_id) ||
+                        lower(access.status) !== "active"
+                      }
+                      onClick={() =>
+                        ask(
+                          t("撤销应用权限"),
+                          `${base}/revoke-app`,
+                          { app_id: access.app_id },
+                          t("撤销后，该用户与此应用相关的授权及令牌将失效。"),
+                        )
+                      }
+                    >
+                      {t("撤销权限")}
+                    </Button>
+                  </Stack>
                 </Stack>
-              </Stack>
-            ))}
+              ))}
+            </Stack>
           </Panel>
           <Panel
             title={t("登录身份")}
@@ -516,32 +413,37 @@ export function ManagementDetail({
             }
           >
             {data.identities?.length ? (
-              data.identities.map((identity) => (
-                <Stack
-                  key={identity.id}
-                  direction="row"
-
-                  sx={{ justifyContent: "space-between", py: 1.5 }}
-                >
-                  <Box>
-                    <Typography variant="subtitle2">
-                      {identity.provider_name}
+              <Stack divider={<Divider />}>
+                {data.identities.map((identity) => (
+                  <Stack
+                    key={identity.id}
+                    direction="row"
+                    sx={{
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      py: 1.5,
+                      gap: 2,
+                    }}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="subtitle2">
+                        {identity.provider_name}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block" }}
+                      >
+                        {lower(identity.kind)}
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" color="text.secondary">
+                      {t("最近登录")}
+                      {date(identity.last_login_at)}
                     </Typography>
-                    <Typography
-                      variant="caption"
-
-                      color="text.secondary"
-                      sx={{ display: "block" }}
-                    >
-                      {lower(identity.kind)}
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    {t("最近登录")}
-                    {date(identity.last_login_at)}
-                  </Typography>
-                </Stack>
-              ))
+                  </Stack>
+                ))}
+              </Stack>
             ) : (
               <Empty text={t("暂无登录身份")} />
             )}
@@ -551,6 +453,9 @@ export function ManagementDetail({
       {!isApp && !isUser && superAdmin && (
         <Panel
           title={t("签名密钥")}
+          description={t(
+            "先添加并计划激活新密钥，旧公钥保留至安全撤销时间；撤销会停止旧令牌验签。",
+          )}
           action={
             <Button
               startIcon={<AddRounded />}
@@ -580,140 +485,175 @@ export function ManagementDetail({
                   : t("当前签名能力正常")}
             </Alert>
           )}
-          <Typography variant="body2">
-            {t(
-              "先添加并计划激活新密钥，旧公钥保留至安全撤销时间；撤销会停止旧令牌验签。",
-            )}
-          </Typography>
           {!data.keys?.length && <Empty text={t("尚未配置密钥")} />}
-          {data.keys?.map((key) => (
-            <Stack
-              key={key.id}
-              direction={{ xs: "column", sm: "row" }}
-
-              spacing={2}
-              sx={{ justifyContent: "space-between", py: 2 }}
-            >
-              <Box>
-                <Typography variant="subtitle2">{key.kid}</Typography>
-                <Typography variant="body2">
-                  {t("到期时间")}：{date(key.expires_at)}
-                </Typography>
-                <Typography variant="body2">
-                  {t("计划激活")}：{date(key.activate_at)}
-                </Typography>
-                <Typography variant="body2">
-                  {key.active
-                    ? t("先激活替代密钥后再退役")
-                    : `${t("可安全撤销时间")}：${key.safe_revoke_at ? date(key.safe_revoke_at) : t("现在")}`}
-                </Typography>
-                <Typography
-                  variant="caption"
-
-                  color="text.secondary"
-                  sx={{ display: "block" }}
+          <Stack spacing={2}>
+            {data.keys?.map((key) => (
+              <Box
+                key={key.id}
+                sx={{
+                  border: 1,
+                  borderColor: "divider",
+                  borderRadius: 1.5,
+                  p: 2,
+                }}
+              >
+                <Stack
+                  direction={{ xs: "column", md: "row" }}
+                  spacing={2}
+                  sx={{ justifyContent: "space-between" }}
                 >
-                  {key.algorithm} ·{" "}
-                  {key.revoked_at
-                    ? t("已撤销")
-                    : key.active
-                      ? t("已激活")
-                      : t("未激活")}
-                </Typography>
-              </Box>
-              <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
-                {key.activate_at && (
-                  <Button
-                    onClick={() =>
-                      ask(
-                        t("取消轮换计划"),
-                        `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
-                        { activate_at: "" },
-                      )
-                    }
+                  <Box sx={{ minWidth: 0 }}>
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      sx={{ alignItems: "center", flexWrap: "wrap", gap: 1 }}
+                    >
+                      <Typography variant="subtitle2">{key.kid}</Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontFamily: "monospace" }}
+                      >
+                        {key.algorithm}
+                      </Typography>
+                      <Status
+                        value={
+                          key.revoked_at
+                            ? "revoked"
+                            : key.active
+                              ? "active"
+                              : "pending"
+                        }
+                      />
+                    </Stack>
+                    <Stack
+                      direction={{ xs: "column", sm: "row" }}
+                      spacing={{ xs: 0.5, sm: 3 }}
+                      sx={{ mt: 1, flexWrap: "wrap", gap: 1 }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        {t("到期时间")}：{date(key.expires_at)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t("计划激活")}：{date(key.activate_at)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {key.active
+                          ? t("先激活替代密钥后再退役")
+                          : `${t("可安全撤销时间")}：${key.safe_revoke_at ? date(key.safe_revoke_at) : t("现在")}`}
+                      </Typography>
+                    </Stack>
+                  </Box>
+                  <Stack
+                    direction="row"
+                    sx={{
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                      gap: 1,
+                      flexShrink: 0,
+                    }}
                   >
-                    {t("取消轮换计划")}
-                  </Button>
-                )}
-                <Button
-                  disabled={!!key.revoked_at || key.active}
-                  onClick={() =>
-                    editor(
-                      t("轮换计划"),
-                      `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
-                      [
-                        {
-                          name: "activate_at",
-                          label: t("计划激活时间（RFC3339，带时区）"),
-                          required: true,
-                        },
-                      ],
-                      { activate_at: key.activate_at || "" },
-                    )
-                  }
-                >
-                  {t("轮换计划")}
-                </Button>
-                <Button
-                  disabled={!!key.revoked_at || key.active}
-                  onClick={() =>
-                    ask(
-                      t("激活密钥"),
-                      `${base}/keys/${encodeURIComponent(key.kid!)}/activate`,
-                    )
-                  }
-                >
-                  {t("激活")}
-                </Button>
-                <Button
-                  color="error"
-                  disabled={
-                    !!key.revoked_at ||
-                    key.active ||
-                    (!!key.safe_revoke_at &&
-                      Date.parse(key.safe_revoke_at) > Date.now())
-                  }
-                  onClick={() =>
-                    ask(
-                      t("撤销密钥"),
-                      `${base}/keys/${encodeURIComponent(key.kid!)}/revoke`,
-                      {},
-                      t(
-                        "撤销会从公钥集移除此密钥，旧令牌将无法验签。确认已超过安全撤销时间？",
-                      ),
-                    )
-                  }
-                >
-                  {t("撤销")}
-                </Button>
-                <Button
-                  color="error"
-                  disabled={!!key.revoked_at}
-                  onClick={() =>
-                    ask(
-                      t("紧急撤销泄露密钥"),
-                      `${base}/keys/${encodeURIComponent(key.kid)}/revoke`,
-                      { emergency: true },
-                      t(
-                        "仅限密钥泄露：立即停止签名并移除公钥，所有旧令牌验签会失败，可能中断登录。确认继续？",
-                      ),
-                    )
-                  }
-                >
-                  {t("紧急撤销")}
-                </Button>
-              </Stack>
-            </Stack>
-          ))}
+                    {key.activate_at && (
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={() =>
+                          ask(
+                            t("取消轮换计划"),
+                            `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
+                            { activate_at: "" },
+                          )
+                        }
+                      >
+                        {t("取消轮换计划")}
+                      </Button>
+                    )}
+                    <Button
+                      size="small"
+                      disabled={!!key.revoked_at || key.active}
+                      onClick={() =>
+                        editor(
+                          t("轮换计划"),
+                          `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
+                          [
+                            {
+                              name: "activate_at",
+                              label: t("计划激活时间（RFC3339，带时区）"),
+                              required: true,
+                            },
+                          ],
+                          { activate_at: key.activate_at || "" },
+                        )
+                      }
+                    >
+                      {t("轮换计划")}
+                    </Button>
+                    <Button
+                      size="small"
+                      disabled={!!key.revoked_at || key.active}
+                      onClick={() =>
+                        ask(
+                          t("激活密钥"),
+                          `${base}/keys/${encodeURIComponent(key.kid!)}/activate`,
+                        )
+                      }
+                    >
+                      {t("激活")}
+                    </Button>
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={
+                        !!key.revoked_at ||
+                        key.active ||
+                        (!!key.safe_revoke_at &&
+                          Date.parse(key.safe_revoke_at) > Date.now())
+                      }
+                      onClick={() =>
+                        ask(
+                          t("撤销密钥"),
+                          `${base}/keys/${encodeURIComponent(key.kid!)}/revoke`,
+                          {},
+                          t(
+                            "撤销会从公钥集移除此密钥，旧令牌将无法验签。确认已超过安全撤销时间？",
+                          ),
+                        )
+                      }
+                    >
+                      {t("撤销")}
+                    </Button>
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={!!key.revoked_at}
+                      onClick={() =>
+                        ask(
+                          t("紧急撤销泄露密钥"),
+                          `${base}/keys/${encodeURIComponent(key.kid)}/revoke`,
+                          { emergency: true },
+                          t(
+                            "仅限密钥泄露：立即停止签名并移除公钥，所有旧令牌验签会失败，可能中断登录。确认继续？",
+                          ),
+                        )
+                      }
+                    >
+                      {t("紧急撤销")}
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
         </Panel>
       )}
       <Panel title={t("状态与安全")}>
         {isUser ? (
-          <Stack direction="row" sx={{ flexWrap: "wrap", gap: 2 }}>
+          <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
             <Button
               sx={{
                 display: allowed("users.status.update") ? undefined : "none",
               }}
+              color="inherit"
               onClick={() =>
                 editor(t("修改用户状态"), `${base}/set-status`, [
                   {
@@ -768,5 +708,232 @@ export function ManagementDetail({
         )}
       </Panel>
     </>
+  );
+}
+
+type Client = ViewDataMap["AppDetailView"]["clients"][number];
+
+function ClientActions({
+  client,
+  data,
+  allowed,
+  ask,
+  editor,
+  canRotateSecret,
+  system,
+}: {
+  client: Client;
+  data: ViewDataMap["AppDetailView"];
+  allowed: (permission: string) => boolean;
+  ask: Actions["ask"];
+  editor: Actions["editor"];
+  canRotateSecret: (syncUri: string | null) => boolean;
+  system: boolean;
+}) {
+  useLocale();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const close = () => setAnchor(null);
+  const confidential = lower(client.type) === "confidential";
+  const canManage = allowed("clients.manage");
+  const canRotate = canRotateSecret(client.account_sync_uri) && confidential;
+  const secondary = [
+    canManage
+      ? {
+          key: "backchannel",
+          label: t("应用注销通知"),
+          onClick: () =>
+            editor(
+              t("应用注销通知"),
+              `/dashboard/clients/${client.id}/backchannel-logout`,
+              [
+                {
+                  name: "backchannel_logout_uri",
+                  label: t("Back-channel Logout 地址"),
+                  hint: t("应用接收注销令牌的 HTTPS 地址；留空停用"),
+                },
+              ],
+              { backchannel_logout_uri: client.backchannel_logout_uri || "" },
+            ),
+        }
+      : null,
+    !system && isSuper(data.layout) && confidential
+      ? {
+          key: "sync",
+          label: t("账户生命周期同步"),
+          onClick: () =>
+            editor(
+              t("账户生命周期同步"),
+              `/dashboard/clients/${client.id}/account-sync`,
+              [
+                {
+                  name: "account_sync_uri",
+                  label: t("账户同步地址"),
+                  hint: t(
+                    "应用接收签名事件的 HTTPS 地址；保存后同步现有成员，留空停用。资料按客户端 scope 提供。",
+                  ),
+                },
+              ],
+              { account_sync_uri: client.account_sync_uri || "" },
+            ),
+        }
+      : null,
+    client.previous_secret_expires_at && canRotate
+      ? {
+          key: "retire",
+          label: t("停用旧密钥"),
+          onClick: () =>
+            ask(
+              t("立即停用旧密钥"),
+              `/dashboard/clients/${client.id}/retire-secret`,
+            ),
+        }
+      : null,
+    canRotate
+      ? {
+          key: "rotate",
+          label: t("平滑轮换密钥"),
+          onClick: () =>
+            editor(
+              t("平滑轮换密钥"),
+              `/dashboard/clients/${client.id}/rotate-secret`,
+              [
+                {
+                  name: "grace_seconds",
+                  label: t("旧密钥保留时间"),
+                  options: [
+                    ["3600", t("1 小时")],
+                    ["86400", t("24 小时")],
+                    ["604800", t("7 天")],
+                  ],
+                },
+              ],
+              { grace_seconds: "86400" },
+            ),
+        }
+      : null,
+    canRotate
+      ? {
+          key: "reset",
+          label: t("紧急重置密钥"),
+          danger: true,
+          onClick: () =>
+            ask(
+              t("重置客户端密钥"),
+              `/dashboard/clients/${client.id}/reset-secret`,
+              {},
+              t("现有密钥将立即失效，使用该密钥的应用需要更新配置。"),
+            ),
+        }
+      : null,
+    canManage
+      ? {
+          key: "toggle",
+          label: t("切换状态"),
+          onClick: () =>
+            ask(
+              t("切换客户端状态"),
+              `/dashboard/clients/${client.id}/toggle`,
+            ),
+        }
+      : null,
+  ].filter((item): item is NonNullable<typeof item> => !!item);
+  return (
+    <Stack
+      direction="row"
+      sx={{ alignItems: "center", flexWrap: "wrap", gap: 1 }}
+    >
+      {canManage && (
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={() =>
+            editor(
+              t("编辑 OAuth 客户端"),
+              `/dashboard/clients/${client.id}/edit`,
+              clientFields
+                .filter(
+                  (field) =>
+                    field.name !== "identifier" &&
+                    (field.name !== "secret" ||
+                      canRotateSecret(client.account_sync_uri)),
+                )
+                .map((field) =>
+                  client.account_sync_uri &&
+                  !isSuper(data.layout) &&
+                  ["scopes", "client_type"].includes(field.name)
+                    ? {
+                        ...field,
+                        disabled: true,
+                        hint: t(
+                          "账户同步已启用，请由超级管理员调整类型和 scope。",
+                        ),
+                      }
+                    : field,
+                ),
+              {
+                name: client.name,
+                client_type: lower(client.type),
+                secret: "",
+                login_uri: client.login_uri || "",
+                redirect_uris: client.redirect_uris?.join("\n"),
+                post_logout_redirect_uris:
+                  client.post_logout_redirect_uris?.join("\n"),
+                scopes: client.scopes?.join(","),
+                grant_types: client.grant_types?.join(","),
+                require_pkce: client.require_pkce,
+                access_token_ttl: client.access_token_ttl_seconds,
+                refresh_token_ttl: client.refresh_token_ttl_seconds,
+                id_token_ttl: client.id_token_ttl_seconds,
+              },
+            )
+          }
+        >
+          {t("编辑配置")}
+        </Button>
+      )}
+      {secondary.length > 0 && (
+        <>
+          <Button
+            size="small"
+            color="inherit"
+            startIcon={<MoreHorizRounded />}
+            aria-haspopup="menu"
+            aria-expanded={!!anchor}
+            onClick={(e) => setAnchor(e.currentTarget)}
+          >
+            {t("更多操作")}
+          </Button>
+          <Menu
+            anchorEl={anchor}
+            open={!!anchor}
+            onClose={close}
+            slotProps={{ paper: { sx: { minWidth: 200 } } }}
+          >
+            {secondary.map((item) => (
+              <MenuItem
+                key={item.key}
+                onClick={() => {
+                  close();
+                  item.onClick();
+                }}
+                sx={
+                  "danger" in item && item.danger
+                    ? { color: "error.main" }
+                    : undefined
+                }
+              >
+                {item.label}
+              </MenuItem>
+            ))}
+          </Menu>
+        </>
+      )}
+      {client.previous_secret_expires_at && (
+        <Typography variant="caption" color="text.secondary">
+          {t("旧密钥到期")}：{date(client.previous_secret_expires_at)}
+        </Typography>
+      )}
+    </Stack>
   );
 }

@@ -1,8 +1,8 @@
-import { Alert, Button, Stack, Typography, Pagination } from "@mui/material";
+import { Alert, Box, Button, Divider, Pagination, Stack, Typography } from "@mui/material";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import type { ViewDataMap } from "./contracts";
 import { date } from "./api";
-import { Heading, Panel, type Actions } from "./shared";
+import { Heading, MetaGrid, Panel, type Actions } from "./shared";
 import { t, useLocale } from "./i18n";
 
 export function UserSecurity({
@@ -101,43 +101,77 @@ export function UserSecurity({
         <Stack spacing={2}>
           {!data.rows.length && <Typography>{t("暂无有效会话")}</Typography>}
           {data.rows.map((s) => (
-            <Stack
-              key={s.id}
-              spacing={1}
-              sx={{ borderBottom: 1, borderColor: "divider", pb: 2 }}
-            >
-              <Typography sx={{ overflowWrap: "anywhere" }}>
-                {s.user_agent || t("未知设备")}
-              </Typography>
-              <Typography variant="body2">
-                {s.ip || "—"} · {date(s.last_seen_at)} ·{" "}
-                {s.current
-                  ? t("当前会话")
-                  : s.authentication_pending
-                    ? t("待完成身份验证")
-                    : t("已完成身份验证")}
-              </Typography>
-              <Typography variant="caption">
-                {t("创建时间")} {date(s.created_at)} · {t("到期时间")}{" "}
-                {date(s.expires_at)}
-              </Typography>
-               {s.app_sessions?.map((app) => (
-                 <Stack key={app.id} direction="row" sx={{ gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                   <Typography variant="body2" sx={{ flex: 1 }}>
-                     {app.app_name} · {t("最大登录设备数")}：{app.max_sessions === 0 ? t("不限制") : app.max_sessions}
-                     {" · "}{date(app.created_at)}
-                   </Typography>
-                   <Button size="small" color="warning" onClick={() => intervene(
-                     "revoke_app_session", t("退出此应用设备"), app.id,
-                   )}>{t("退出此应用设备")}</Button>
-                 </Stack>
-               ))}
-              <Button
-                color="warning"
-                onClick={() => intervene("revoke_one", t("退出此会话"), s.id)}
+            <Stack key={s.id} spacing={1.5} sx={{ pb: 2 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1}
+                sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
               >
-                {t("退出此会话")}
-              </Button>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="subtitle2" sx={{ overflowWrap: "anywhere" }}>
+                    {s.user_agent || t("未知设备")}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {s.current
+                      ? t("当前会话")
+                      : s.authentication_pending
+                        ? t("待完成身份验证")
+                        : t("已完成身份验证")}
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  color="warning"
+                  onClick={() => intervene("revoke_one", t("退出此会话"), s.id)}
+                >
+                  {t("退出此会话")}
+                </Button>
+              </Stack>
+              <MetaGrid
+                columns={2}
+                items={[
+                  [t("IP 地址"), s.ip || "—"],
+                  [t("最近活动"), date(s.last_seen_at)],
+                  [t("创建时间"), date(s.created_at)],
+                  [t("到期时间"), date(s.expires_at)],
+                ]}
+              />
+              {!!s.app_sessions?.length && (
+                <Stack spacing={1}>
+                  {s.app_sessions.map((app) => (
+                    <Stack
+                      key={app.id}
+                      direction={{ xs: "column", sm: "row" }}
+                      spacing={1}
+                      sx={{
+                        border: 1,
+                        borderColor: "divider",
+                        borderRadius: 1.5,
+                        p: 1.5,
+                        alignItems: { sm: "center" },
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ flex: 1, overflowWrap: "anywhere" }}>
+                        {app.app_name} · {t("最大登录设备数")}：
+                        {app.max_sessions === 0 ? t("不限制") : app.max_sessions}
+                        {" · "}
+                        {date(app.created_at)}
+                      </Typography>
+                      <Button
+                        size="small"
+                        color="warning"
+                        onClick={() =>
+                          intervene("revoke_app_session", t("退出此应用设备"), app.id)
+                        }
+                      >
+                        {t("退出此应用设备")}
+                      </Button>
+                    </Stack>
+                  ))}
+                </Stack>
+              )}
+              <Divider />
             </Stack>
           ))}
         </Stack>

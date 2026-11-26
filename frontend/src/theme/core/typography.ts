@@ -46,8 +46,12 @@ function responsiveFontSizes(
 
 // ----------------------------------------------------------------------
 
-const primaryFont = setFont(themeConfig.fontFamily.primary);
-const secondaryFont = setFont(themeConfig.fontFamily.secondary);
+// Latin text uses the Minimal typefaces; CJK text falls back to the platform's
+// native UI fonts so mixed copy keeps consistent weight and rhythm.
+const cjkFallback =
+  '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif';
+const primaryFont = `${setFont(themeConfig.fontFamily.primary).replace(/,\s*sans-serif$/, "")}, ${cjkFallback}`;
+const secondaryFont = `${setFont(themeConfig.fontFamily.secondary).replace(/,\s*sans-serif$/, "")}, ${cjkFallback}`;
 
 export const typography: TypographyVariantsOptions = {
   fontFamily: primaryFont,
@@ -60,41 +64,47 @@ export const typography: TypographyVariantsOptions = {
   h1: {
     fontFamily: secondaryFont,
     fontWeight: 800,
-    lineHeight: 80 / 64,
+    lineHeight: 1.08,
+    letterSpacing: "-0.03em",
     fontSize: pxToRem(40),
     ...responsiveFontSizes({ sm: 52, md: 58, lg: 64 }),
   },
   h2: {
     fontFamily: secondaryFont,
     fontWeight: 800,
-    lineHeight: 64 / 48,
+    lineHeight: 1.16,
+    letterSpacing: "-0.025em",
     fontSize: pxToRem(32),
     ...responsiveFontSizes({ sm: 40, md: 44, lg: 48 }),
   },
   h3: {
     fontFamily: secondaryFont,
     fontWeight: 700,
-    lineHeight: 1.5,
+    lineHeight: 1.25,
+    letterSpacing: "-0.02em",
     fontSize: pxToRem(24),
     ...responsiveFontSizes({ sm: 26, md: 30, lg: 32 }),
   },
   h4: {
     fontWeight: 700,
-    lineHeight: 1.5,
-    fontSize: pxToRem(20),
+    lineHeight: 1.3,
+    letterSpacing: "-0.02em",
+    fontSize: pxToRem(21),
     ...responsiveFontSizes({ md: 24 }),
   },
   h5: {
     fontWeight: 700,
-    lineHeight: 1.5,
+    lineHeight: 1.4,
+    letterSpacing: "-0.01em",
     fontSize: pxToRem(18),
     ...responsiveFontSizes({ sm: 19 }),
   },
   h6: {
     fontWeight: 600,
     lineHeight: 28 / 18,
-    fontSize: pxToRem(17),
-    ...responsiveFontSizes({ sm: 18 }),
+    letterSpacing: "-0.01em",
+    fontSize: pxToRem(16),
+    ...responsiveFontSizes({ sm: 17 }),
   },
   subtitle1: {
     fontWeight: 600,

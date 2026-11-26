@@ -63,7 +63,10 @@ export function ManagementForm({
         description={t("完善基础信息，保存后立即生效。")}
         back={`/dashboard/${kind}`}
       />
-      <Panel title={t("基本信息")}>
+      <Panel
+        title={t("基本信息")}
+        description={t("带 * 的字段为必填项，保存后立即生效。")}
+      >
         <FieldsForm
           key={path}
           presets={

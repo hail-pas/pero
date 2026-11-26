@@ -1,6 +1,7 @@
 @import "@fontsource-variable/dm-sans";
 @import "@fontsource/barlow/600.css";
 @import "@fontsource/barlow/700.css";
+
 html,
 body,
 #root {
@@ -9,8 +10,10 @@ body,
 }
 html {
   scrollbar-gutter: stable;
+  -webkit-text-size-adjust: 100%;
 }
 body {
+  /* Matches the theme's neutral canvas before React mounts. */
   background: #f9fafb;
 }
 a {
@@ -25,38 +28,70 @@ a {
 }
 button,
 a,
-input {
+input,
+textarea,
+select {
   -webkit-tap-highlight-color: transparent;
+}
+pre,
+code {
+  font-family:
+    "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  margin: 0;
 }
 .MuiTableCell-root {
-  white-space: nowrap;
-}
-.MuiTableCell-root:first-child {
-  padding-left: 24px;
-}
-.MuiTableRow-root:last-child td {
-  border-bottom: 0;
-}
-/* Calm surfaces and controlled spacing, using Minimal's original palette. */
-.MuiCard-root {
-  border: 1px solid rgba(145, 158, 171, 0.08);
+  font-variant-numeric: tabular-nums;
 }
 .MuiTableRow-root.MuiTableRow-hover:hover {
   background-color: rgba(145, 158, 171, 0.045);
 }
-.MuiTableCell-head {
-  height: 56px;
+.MuiTableContainer-root {
+  scrollbar-width: thin;
 }
-.MuiTableBody-root .MuiTableCell-root {
-  height: 76px;
+.MuiTypography-root {
+  text-wrap: pretty;
 }
-.MuiOutlinedInput-root {
-  transition: box-shadow 160ms ease;
+.MuiTypography-h1,
+.MuiTypography-h2,
+.MuiTypography-h3,
+.MuiTypography-h4 {
+  text-wrap: balance;
 }
-.MuiOutlinedInput-root.Mui-focused {
-  box-shadow: 0 0 0 3px rgba(24, 119, 242, 0.06);
+
+/* Keep long identifiers, URLs and request IDs from widening the layout. */
+.MuiTypography-root,
+.MuiTableCell-root,
+.MuiAlert-message,
+.MuiFormHelperText-root {
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* A quiet scrollbar keeps dense admin tables from feeling boxed in. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(145, 158, 171, 0.4) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  background-color: rgba(145, 158, 171, 0.4);
 }

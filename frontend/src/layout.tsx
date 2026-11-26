@@ -24,7 +24,6 @@ import {
   Avatar,
   Box,
   Button,
-  Container,
   Divider,
   Drawer,
   IconButton,
@@ -43,6 +42,86 @@ import { Link as RouterLink, useLocation } from "react-router-dom";
 import type { UserLayout } from "./contracts";
 import { t, useLocale } from "./i18n";
 import { LanguageSwitcher } from "./language-switcher";
+
+const sidebarWidth = 272;
+const headerHeight = 72;
+
+type NavLink = readonly [path: string, label: string, icon: React.ReactNode];
+
+const accountGroups: readonly (readonly [string, readonly NavLink[]])[] = [
+  [
+    "账户",
+    [
+      ["/account/profile", "个人资料", <PersonOutlined />],
+      ["/account/tenants", "我的空间与组织", <PeopleOutlined />],
+    ],
+  ],
+  [
+    "安全",
+    [
+      ["/account/security", "账户安全", <ShieldOutlined />],
+      ["/account/sessions", "登录设备", <DevicesOutlined />],
+      ["/account/activity", "登录记录", <HistoryOutlined />],
+      ["/account/identities", "关联账号", <LinkOutlined />],
+    ],
+  ],
+  [
+    "应用",
+    [
+      ["/account/applications", "我的应用", <AssignmentOutlined />],
+      ["/account/authorizations", "已授权应用", <VerifiedUserOutlined />],
+    ],
+  ],
+];
+
+const adminGroups: readonly (readonly [string, readonly NavLink[]])[] = [
+  [
+    "平台",
+    [
+      ["/dashboard/admins", "管理员", <AdminPanelSettingsOutlined />],
+      ["/dashboard/apps", "应用管理", <GridViewOutlined />],
+      ["/dashboard/tenants", "租户管理", <PeopleOutlined />],
+      ["/dashboard/users", "用户管理", <PeopleOutlined />],
+      ["/dashboard/providers", "身份提供方", <FingerprintOutlined />],
+    ],
+  ],
+  [
+    "运维",
+    [
+      ["/dashboard/events", "登录记录", <HistoryOutlined />],
+      ["/dashboard/registration", "注册与邀请", <PersonAddAltOutlined />],
+      ["/dashboard/notifications", "通知投递", <NotificationsOutlined />],
+      ["/dashboard/audit", "操作审计", <FactCheckOutlined />],
+    ],
+  ],
+];
+
+function permitted(layout: UserLayout | undefined, path: string) {
+  if (!layout?.can_access_dashboard) return false;
+  if (isSuper(layout)) return true;
+  if (path === "/dashboard/tenants") return false;
+  if (path === "/dashboard/apps")
+    return Object.values(layout.admin_access?.app_grants || {}).some((p) =>
+      p.includes("apps.read"),
+    );
+  const permissions: Record<string, string> = {
+    "/dashboard/users": "users.read",
+    "/dashboard/providers": "providers.read",
+    "/dashboard/events": "events.read",
+    "/dashboard/notifications": "notifications.read",
+    "/dashboard/audit": "audit.read",
+  };
+  return can(layout, permissions[path]);
+}
+
+function pageTitle(pathname: string, admin: boolean) {
+  const groups = admin ? adminGroups : accountGroups;
+  for (const [, links] of groups)
+    for (const [path, label] of links)
+      if (pathname === path || pathname.startsWith(`${path}/`)) return t(label);
+  return admin ? t("管理控制台") : t("个人中心");
+}
+
 export function Brand() {
   useLocale();
   return (
@@ -50,9 +129,13 @@ export function Brand() {
       component={RouterLink}
       to="/"
       direction="row"
-
-      spacing={1.2}
-      sx={{ alignItems: "center" }}
+      spacing={1.25}
+      sx={{
+        alignItems: "center",
+        color: "text.primary",
+        transition: "opacity .15s ease",
+        "&:hover": { opacity: 0.78 },
+      }}
     >
       <Box
         component="img"
@@ -60,7 +143,10 @@ export function Brand() {
         alt=""
         sx={{ width: 30, height: 30 }}
       />
-      <Typography variant="h5">
+      <Typography
+        variant="h5"
+        sx={{ fontFamily: "inherit", fontWeight: 700, letterSpacing: "-.02em" }}
+      >
         pero
         <Box component="span" sx={{ color: "primary.main" }}>
           .
@@ -69,6 +155,103 @@ export function Brand() {
     </Stack>
   );
 }
+
+function NavList({
+  groups,
+  pathname,
+  onNavigate,
+}: {
+  groups: readonly (readonly [string, readonly NavLink[]])[];
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  useLocale();
+  return (
+    <List disablePadding sx={{ flex: 1, overflowY: "auto", px: 1.5 }}>
+      {groups.map(([group, links]) => (
+        <Box key={group} component="li" sx={{ listStyle: "none" }}>
+          <Typography
+            component="div"
+            variant="overline"
+            color="text.disabled"
+            sx={{
+              px: 1.25,
+              mt: 2.5,
+              mb: 0.75,
+              fontSize: 11,
+              letterSpacing: ".08em",
+              lineHeight: 1.6,
+            }}
+          >
+            {t(group)}
+          </Typography>
+          <List disablePadding>
+            {links.map(([to, label, icon]) => {
+              const selected =
+                pathname === to ||
+                pathname.startsWith(`${to}/`) ||
+                (to === "/dashboard/apps" &&
+                  pathname.startsWith("/dashboard/apps"));
+              return (
+                <ListItemButton
+                  key={to}
+                  component={RouterLink}
+                  to={to}
+                  onClick={onNavigate}
+                  selected={selected}
+                  aria-current={selected ? "page" : undefined}
+                  sx={{
+                    minHeight: 40,
+                    px: 1.25,
+                    mb: 0.25,
+                    color: "text.secondary",
+                    "& .MuiListItemIcon-root": { color: "text.disabled" },
+                    "&:hover": {
+                      bgcolor: "rgba(145,158,171,.08)",
+                      color: "text.primary",
+                      "& .MuiListItemIcon-root": { color: "text.secondary" },
+                    },
+                    "&.Mui-selected": {
+                      bgcolor: "rgba(24,119,242,.08)",
+                      color: "primary.main",
+                      "& .MuiListItemIcon-root": { color: "primary.main" },
+                      "&:hover": { bgcolor: "rgba(24,119,242,.12)" },
+                    },
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 32 }}>
+                    <Box
+                      component="span"
+                      sx={{
+                        display: "inline-flex",
+                        "& svg": { fontSize: 20 },
+                      }}
+                    >
+                      {icon}
+                    </Box>
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={t(label)}
+                    slotProps={{
+                      primary: {
+                        sx: {
+                          fontSize: 14,
+                          fontWeight: selected ? 600 : 500,
+                          lineHeight: 1.5,
+                        },
+                      },
+                    }}
+                  />
+                </ListItemButton>
+              );
+            })}
+          </List>
+        </Box>
+      ))}
+    </List>
+  );
+}
+
 export function Layout({
   layout,
   children,
@@ -92,192 +275,199 @@ export function Layout({
     setAccountAnchor(null);
   }, [locationKey, desktop]);
   const admin = pathname.startsWith("/dashboard");
-  const links = admin
-    ? ([
-        ["/dashboard/admins", t("管理员"), <AdminPanelSettingsOutlined />],
-        ["/dashboard/apps", t("应用管理"), <GridViewOutlined />],
-        ["/dashboard/tenants", t("租户管理"), <PeopleOutlined />],
-        ["/dashboard/users", t("用户管理"), <PeopleOutlined />],
-        ["/dashboard/providers", t("身份提供方"), <FingerprintOutlined />],
-        ["/dashboard/events", t("登录记录"), <HistoryOutlined />],
-        ["/dashboard/registration", t("注册与邀请"), <PersonAddAltOutlined />],
-        ["/dashboard/notifications", t("通知投递"), <NotificationsOutlined />],
-        ["/dashboard/audit", t("操作审计"), <FactCheckOutlined />],
-      ] as const)
-    : ([
-        ["/account/profile", t("个人资料"), <PersonOutlined />],
-        ["/account/tenants", t("我的空间与组织"), <PeopleOutlined />],
-        ["/account/security", t("账户安全"), <ShieldOutlined />],
-        ["/account/sessions", t("登录设备"), <DevicesOutlined />],
-        ["/account/activity", t("登录记录"), <HistoryOutlined />],
-        ["/account/applications", t("我的应用"), <AssignmentOutlined />],
-        ["/account/authorizations", t("已授权应用"), <VerifiedUserOutlined />],
-        ["/account/identities", t("关联账号"), <LinkOutlined />],
-      ] as const);
-  const visibleLinks = admin
-    ? links.filter(([path]) => {
-        if (!layout?.can_access_dashboard) return false;
-        if (isSuper(layout)) return true;
-        if (path === "/dashboard/tenants") return false;
-        if (path === "/dashboard/apps")
-          return Object.values(layout.admin_access?.app_grants || {}).some(
-            (p) => p.includes("apps.read"),
-          );
-        const permissions: Record<string, string> = {
-          "/dashboard/users": "users.read",
-          "/dashboard/providers": "providers.read",
-          "/dashboard/events": "events.read",
-          "/dashboard/notifications": "notifications.read",
-          "/dashboard/audit": "audit.read",
-        };
-        return can(layout, permissions[path]);
-      })
-    : links;
+  const groups = (admin ? adminGroups : accountGroups)
+    .map(
+      ([group, links]) =>
+        [
+          group,
+          links.filter(([path]) => (admin ? permitted(layout, path) : true)),
+        ] as const,
+    )
+    .filter(([, links]) => links.length > 0);
   const name = layout?.user_name || t("我的账户");
+  const title = pageTitle(pathname, admin);
   const nav = (
-    <Stack sx={{ height: "100%", p: 2.5, overflowY: "auto" }}>
-      <Box sx={{ p: 1, mb: 3 }}>
-        <Brand />
-      </Box>
+    <Stack sx={{ height: "100%", width: "100%" }}>
       <Stack
         direction="row"
-        spacing={1.5}
-
-        component="button"
-        onClick={(e) => setWorkspaceAnchor(e.currentTarget)}
-        aria-label={t("切换工作空间")}
         sx={{
           alignItems: "center",
-          width: 1,
-          p: 1.5,
-          background: "transparent",
-          border: "1px solid #e9ecef",
-          textAlign: "left",
-          cursor: "pointer",
-          borderRadius: 1.5,
-          mb: 3,
-          "&:hover": { bgcolor: "#f4f6f8" },
+          height: headerHeight,
+          px: 3,
+          flexShrink: 0,
+          borderBottom: 1,
+          borderColor: "divider",
         }}
       >
-        <Avatar
-          src={layout?.user_avatar_url}
-          sx={{ bgcolor: "primary.light", color: "primary.darker" }}
-        >
-          {name.slice(0, 1)}
-        </Avatar>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle2" noWrap>
-            {name}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {admin ? t("管理工作空间") : t("个人工作空间")}
-          </Typography>
-        </Box>
-        <KeyboardArrowDownRounded
-          sx={{ ml: "auto", fontSize: 18, color: "text.secondary" }}
-        />
+        <Brand />
       </Stack>
-      <Menu
-        anchorEl={workspaceAnchor}
-        open={!!workspaceAnchor}
-        onClose={() => setWorkspaceAnchor(null)}
-        slotProps={{ paper: { sx: { minWidth: 230 } } }}
-      >
-        <MenuItem
-          component={RouterLink}
-          to="/account/profile"
-          selected={!admin}
-          onClick={() => {
-            setWorkspaceAnchor(null);
-            setOpen(false);
+      <Box sx={{ px: 2, pt: 2, pb: 0.5 }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          component="button"
+          type="button"
+          onClick={(e) => setWorkspaceAnchor(e.currentTarget)}
+          aria-label={t("切换工作空间")}
+          aria-haspopup="menu"
+          aria-expanded={!!workspaceAnchor}
+          sx={{
+            alignItems: "center",
+            width: 1,
+            p: 1.25,
+            background: "transparent",
+            border: 1,
+            borderColor: "divider",
+            textAlign: "left",
+            cursor: "pointer",
+            borderRadius: 1.5,
+            color: "text.primary",
+            font: "inherit",
+            transition: "background-color .15s ease, border-color .15s ease",
+            "&:hover": {
+              bgcolor: "rgba(145,158,171,.04)",
+              borderColor: "rgba(145,158,171,.28)",
+            },
           }}
         >
-          {t("个人工作空间")}
-        </MenuItem>
-        {layout?.can_access_dashboard && (
+          <Avatar
+            src={layout?.user_avatar_url}
+            sx={{
+              width: 36,
+              height: 36,
+              bgcolor: "primary.lighter",
+              color: "primary.darker",
+            }}
+          >
+            {name.slice(0, 1)}
+          </Avatar>
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="subtitle2" noWrap>
+              {name}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              {admin ? t("管理工作空间") : t("个人工作空间")}
+            </Typography>
+          </Box>
+          <KeyboardArrowDownRounded
+            sx={{ fontSize: 18, color: "text.secondary" }}
+          />
+        </Stack>
+        <Menu
+          anchorEl={workspaceAnchor}
+          open={!!workspaceAnchor}
+          onClose={() => setWorkspaceAnchor(null)}
+          slotProps={{ paper: { sx: { minWidth: 230 } } }}
+        >
           <MenuItem
             component={RouterLink}
-            to="/dashboard"
-            selected={admin}
+            to="/account/profile"
+            selected={!admin}
             onClick={() => {
               setWorkspaceAnchor(null);
               setOpen(false);
             }}
           >
-            {t("管理工作空间")}
+            {t("个人工作空间")}
           </MenuItem>
-        )}
-      </Menu>
-      <Typography
-        variant="overline"
-        color="text.disabled"
-        sx={{ px: 2, mb: 1 }}
-      >
-        {admin ? t("工作空间") : t("我的账户")}
-      </Typography>
-      <List>
-        {visibleLinks.map(([to, label, icon]) => (
-          <ListItemButton
-            key={to}
+          {layout?.can_access_dashboard && (
+            <MenuItem
+              component={RouterLink}
+              to="/dashboard"
+              selected={admin}
+              onClick={() => {
+                setWorkspaceAnchor(null);
+                setOpen(false);
+              }}
+            >
+              {t("管理工作空间")}
+            </MenuItem>
+          )}
+        </Menu>
+      </Box>
+      <NavList
+        groups={groups}
+        pathname={pathname}
+        onNavigate={() => setOpen(false)}
+      />
+      <Stack sx={{ px: 2, py: 2, gap: 0.25, flexShrink: 0 }}>
+        <Divider sx={{ mb: 1 }} />
+        {layout?.can_access_dashboard && (
+          <Button
             component={RouterLink}
-            to={to}
+            to={admin ? "/account/profile" : "/dashboard"}
+            startIcon={admin ? <PersonOutlined /> : <DashboardOutlined />}
+            color="inherit"
             onClick={() => setOpen(false)}
-            selected={pathname.startsWith(to)}
-            sx={{
-              borderRadius: 0.75,
-              mb: 0.75,
-              minHeight: 48,
-              "&.Mui-selected": {
-                bgcolor: "rgba(24,119,242,.08)",
-                color: "primary.main",
-              },
-            }}
+            sx={{ justifyContent: "flex-start", color: "text.secondary" }}
           >
-            <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
-              {icon}
-            </ListItemIcon>
-            <ListItemText
-              primary={t(label)}
-              slotProps={{ primary: { sx: { fontSize: 14, fontWeight: 500 } } }}
-            />
-          </ListItemButton>
-        ))}
-      </List>
-      <Box sx={{ flex: 1 }} />
-      {layout?.can_access_dashboard && (
+            {admin ? t("返回个人中心") : t("管理控制台")}
+          </Button>
+        )}
         <Button
           component={RouterLink}
-          to={admin ? "/account/profile" : "/dashboard"}
-          startIcon={admin ? <PersonOutlined /> : <DashboardOutlined />}
+          to="/"
+          startIcon={<HomeOutlined />}
+          color="inherit"
+          onClick={() => setOpen(false)}
+          sx={{ justifyContent: "flex-start", color: "text.secondary" }}
         >
-          {admin ? t("返回个人中心") : t("管理控制台")}
+          {t("返回首页")}
         </Button>
-      )}
-      <Button
-        component={RouterLink}
-        to="/"
-        startIcon={<HomeOutlined />}
-        color="inherit"
-      >
-        {t("返回首页")}
-      </Button>
-      <Divider sx={{ my: 1 }} />
-      <Button onClick={onLogout} startIcon={<LogoutOutlined />} color="inherit">
-        {t("退出登录")}
-      </Button>
+        <Button
+          onClick={() => {
+            setOpen(false);
+            onLogout();
+          }}
+          startIcon={<LogoutOutlined />}
+          color="inherit"
+          sx={{ justifyContent: "flex-start", color: "text.secondary" }}
+        >
+          {t("退出登录")}
+        </Button>
+      </Stack>
     </Stack>
   );
   return (
-    <Box sx={{ display: "flex", minHeight: "100dvh" }}>
-      <Box component="nav" sx={{ width: { lg: 280 }, flexShrink: 0 }}>
+    <Box sx={{ display: "flex", minHeight: "100dvh", bgcolor: "background.default" }}>
+      <Box
+        component="a"
+        href="#main-content"
+        sx={{
+          position: "fixed",
+          top: 8,
+          left: 8,
+          zIndex: (theme) => theme.zIndex.tooltip + 1,
+          px: 2,
+          py: 1,
+          borderRadius: 1,
+          bgcolor: "background.paper",
+          color: "text.primary",
+          boxShadow: 2,
+          transform: "translateY(-200%)",
+          transition: "transform .15s ease",
+          "&:focus-visible": { transform: "translateY(0)" },
+        }}
+      >
+        {t("跳到主要内容")}
+      </Box>
+      <Box
+        component="nav"
+        aria-label={t("主导航")}
+        sx={{ width: { lg: sidebarWidth }, flexShrink: 0 }}
+      >
         <Drawer
           variant={desktop ? "permanent" : "temporary"}
           open={open}
           onClose={() => setOpen(false)}
+          ModalProps={{ keepMounted: true }}
           sx={{
             "& .MuiDrawer-paper": {
-              width: 280,
-              borderRight: "1px solid rgba(145,158,171,.12)",
+              width: sidebarWidth,
+              borderRight: 1,
+              borderColor: "divider",
+              bgcolor: "background.paper",
+              overflowX: "hidden",
             },
           }}
         >
@@ -290,64 +480,127 @@ export function Layout({
         <Stack
           component="header"
           direction="row"
-
           sx={{
             justifyContent: "space-between",
             alignItems: "center",
-            height: 76,
+            height: headerHeight,
             flexShrink: 0,
-            px: { xs: 2, md: 5 },
-            bgcolor: "rgba(249,250,251,.9)",
-            backdropFilter: "blur(8px)",
+            px: { xs: 2, sm: 3, md: 4 },
+            bgcolor: "rgba(255,255,255,.82)",
+            backdropFilter: "blur(12px)",
+            borderBottom: 1,
+            borderColor: "divider",
             position: "sticky",
             top: 0,
-            zIndex: 10,
+            zIndex: (theme) => theme.zIndex.appBar,
           }}
         >
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Stack
+            direction="row"
+            spacing={{ xs: 1, sm: 1.5 }}
+            sx={{ alignItems: "center", minWidth: 0 }}
+          >
             <IconButton
               aria-label={t("打开导航")}
               onClick={() => setOpen(true)}
+              edge="start"
               sx={{ display: { lg: "none" } }}
             >
               <MenuRounded />
             </IconButton>
-            <Typography variant="body2" color="text.secondary">
-              {admin ? t("工作空间 / 管理控制台") : t("工作空间 / 个人中心")}
-            </Typography>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography
+                component="div"
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: { xs: "none", sm: "block" }, lineHeight: 1.4 }}
+              >
+                {admin ? t("管理工作空间") : t("个人工作空间")}
+              </Typography>
+              <Typography
+                component="div"
+                variant="subtitle2"
+                noWrap
+                sx={{ fontWeight: 600, lineHeight: 1.4 }}
+              >
+                {title}
+              </Typography>
+            </Box>
           </Stack>
-          <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+          <Stack
+            direction="row"
+            spacing={{ xs: 0.5, sm: 1.5 }}
+            sx={{ alignItems: "center", flexShrink: 0 }}
+          >
             <LanguageSwitcher />
-            <IconButton
+            <Button
               aria-label={t("账户菜单")}
+              aria-haspopup="menu"
+              aria-expanded={!!accountAnchor}
               onClick={(e) => setAccountAnchor(e.currentTarget)}
+              color="inherit"
+              sx={{
+                minWidth: 0,
+                p: 0.5,
+                pr: { sm: 1.25 },
+                color: "text.primary",
+              }}
             >
-              {" "}
               <Avatar
                 sx={{
                   width: 34,
                   height: 34,
                   bgcolor: "primary.lighter",
                   color: "primary.dark",
+                  fontSize: 14,
                 }}
                 src={layout?.user_avatar_url}
               >
                 {name.slice(0, 1)}
               </Avatar>
-            </IconButton>
+              <Box
+                sx={{
+                  display: { xs: "none", sm: "block" },
+                  ml: 1.25,
+                  textAlign: "left",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{ display: "block", fontWeight: 600, lineHeight: 1.4 }}
+                >
+                  {name}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", lineHeight: 1.4 }}
+                >
+                  {layout?.user_username}
+                </Typography>
+              </Box>
+              <KeyboardArrowDownRounded
+                sx={{
+                  display: { xs: "none", sm: "block" },
+                  fontSize: 18,
+                  ml: 0.5,
+                  color: "text.secondary",
+                }}
+              />
+            </Button>
             <Menu
               anchorEl={accountAnchor}
               open={!!accountAnchor}
               onClose={() => setAccountAnchor(null)}
-              slotProps={{ paper: { sx: { minWidth: 220 } } }}
+              slotProps={{ paper: { sx: { minWidth: 230 } } }}
             >
-              <Box sx={{ px: 2, py: 1 }}>
+              <Box sx={{ px: 2, py: 1, pb: 1.25 }}>
                 <Typography variant="subtitle2">{name}</Typography>
                 <Typography variant="caption" color="text.secondary">
                   {layout?.user_username}
                 </Typography>
               </Box>
-              <Divider />
+              <Divider sx={{ mb: 0.75 }} />
               <MenuItem
                 component={RouterLink}
                 to="/account/profile"
@@ -362,7 +615,7 @@ export function Layout({
               >
                 {t("账户安全")}
               </MenuItem>
-              <Divider />
+              <Divider sx={{ my: 0.75 }} />
               <MenuItem
                 component={RouterLink}
                 to="/sso/select-account"
@@ -382,18 +635,37 @@ export function Layout({
             </Menu>
           </Stack>
         </Stack>
-        <Container
+        <Box
           component="main"
-          maxWidth="xl"
-          sx={{ flex: 1, py: { xs: 3, md: 4 }, px: { xs: 2, md: 5 } }}
+          id="main-content"
+          tabIndex={-1}
+          sx={{
+            flex: 1,
+            width: "100%",
+            maxWidth: 1360,
+            mx: "auto",
+            py: { xs: 3, md: 4 },
+            px: { xs: 2, sm: 3, md: 4, xl: 5 },
+            outline: "none",
+          }}
         >
           {children}
-        </Container>
+        </Box>
         <Typography
           component="footer"
           variant="caption"
           color="text.disabled"
-          sx={{ display: "block", flexShrink: 0, px: { xs: 2, md: 5 }, py: 4 }}
+          sx={{
+            display: "block",
+            flexShrink: 0,
+            width: "100%",
+            maxWidth: 1360,
+            mx: "auto",
+            px: { xs: 2, sm: 3, md: 4, xl: 5 },
+            py: 4,
+            borderTop: { xs: 1, sm: 0 },
+            borderColor: "divider",
+          }}
         >
           © {new Date().getFullYear()} {t("Pero · 统一身份认证平台")}
         </Typography>

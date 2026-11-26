@@ -22,7 +22,7 @@ import {
 import { FieldsForm } from "./forms";
 import type { ViewDataMap, ViewEnvelope } from "./contracts";
 import { date, errorText } from "./api";
-import { Heading, Panel, type Actions } from "./shared";
+import { Empty, Heading, MetaGrid, Panel, type Actions } from "./shared";
 import { t, useLocale } from "./i18n";
 
 export type SecurityView =
@@ -204,39 +204,90 @@ export function Security({
               }
             >
               <Typography
-                variant="body2"
-                sx={{ overflowWrap: "anywhere", mb: 1 }}
+                variant="subtitle2"
+                sx={{ overflowWrap: "anywhere", mb: 2 }}
               >
                 {session.user_agent || t("未知设备")}
               </Typography>
-              <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
-                {t("IP 地址")}：{session.ip || "—"}
-              </Typography>
-              <Typography variant="body2">
-                {t("登录时间")}：{date(session.created_at)}
-              </Typography>
-              <Typography variant="body2">
-                {t("最近活动")}：{date(session.last_seen_at)}
-              </Typography>
-               {session.app_sessions?.map((app) => (
-                 <Stack key={app.id} direction="row" sx={{ mt: 1, gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                   <Typography variant="body2" sx={{ flex: 1 }}>
-                     {app.app_name} · {t("最大登录设备数")}：{app.max_sessions === 0 ? t("不限制") : app.max_sessions}
-                     {" · "}{date(app.created_at)}
-                   </Typography>
-                   <Button size="small" color="warning" onClick={() => ask(
-                     t("退出此应用设备"), "/account/sessions/revoke", { scope: "app", session_id: app.id },
-                     t("只结束此应用设备会话，保留其他应用和全局登录。"),
-                   )}>{t("退出此应用设备")}</Button>
-                   {session.current && <Button size="small" onClick={() => ask(
-                     t("退出此应用的其他设备"), "/account/sessions/revoke", { scope: "app_others", app_id: app.app_id },
-                     t("保留当前设备，只结束此应用的其他设备会话。"),
-                   )}>{t("退出此应用的其他设备")}</Button>}
-                 </Stack>
-               ))}
-              <Typography variant="body2">
-                {t("到期时间")}：{date(session.expires_at)}
-              </Typography>
+              <MetaGrid
+                columns={2}
+                items={[
+                  [t("IP 地址"), session.ip || "—"],
+                  [t("到期时间"), date(session.expires_at)],
+                  [t("登录时间"), date(session.created_at)],
+                  [t("最近活动"), date(session.last_seen_at)],
+                ]}
+              />
+              {!!session.app_sessions?.length && (
+                <Stack spacing={1.5} sx={{ mt: 2.5 }}>
+                  {session.app_sessions.map((app) => (
+                    <Box
+                      key={app.id}
+                      sx={{
+                        border: 1,
+                        borderColor: "divider",
+                        borderRadius: 1.5,
+                        p: 1.5,
+                        minWidth: 0,
+                      }}
+                    >
+                      <Stack
+                        direction={{ xs: "column", sm: "row" }}
+                        spacing={1.5}
+                        sx={{
+                          justifyContent: "space-between",
+                          alignItems: { xs: "stretch", sm: "center" },
+                        }}
+                      >
+                        <Typography
+                          variant="body2"
+                          sx={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}
+                        >
+                          {app.app_name} · {t("最大登录设备数")}：
+                          {app.max_sessions === 0 ? t("不限制") : app.max_sessions}
+                          {" · "}
+                          {date(app.created_at)}
+                        </Typography>
+                        <Stack
+                          direction="row"
+                          sx={{ flexWrap: "wrap", gap: 1, flexShrink: 0 }}
+                        >
+                          <Button
+                            size="small"
+                            color="warning"
+                            onClick={() =>
+                              ask(
+                                t("退出此应用设备"),
+                                "/account/sessions/revoke",
+                                { scope: "app", session_id: app.id },
+                                t("只结束此应用设备会话，保留其他应用和全局登录。"),
+                              )
+                            }
+                          >
+                            {t("退出此应用设备")}
+                          </Button>
+                          {session.current && (
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() =>
+                                ask(
+                                  t("退出此应用的其他设备"),
+                                  "/account/sessions/revoke",
+                                  { scope: "app_others", app_id: app.app_id },
+                                  t("保留当前设备，只结束此应用的其他设备会话。"),
+                                )
+                              }
+                            >
+                              {t("退出此应用的其他设备")}
+                            </Button>
+                          )}
+                        </Stack>
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
             </Panel>
           ))}
         </>
@@ -509,7 +560,7 @@ export function Security({
           </Panel>
         </>
       )}
-      {!data.rows.length && <Alert severity="info">{t("暂无记录。")}</Alert>}
+      {!data.rows.length && <Empty text={t("暂无记录。")} />}
       {"total_pages" in data && data.total_pages > 1 && (
         <Stack sx={{ alignItems: "flex-end", mt: 3 }}>
           <Pagination

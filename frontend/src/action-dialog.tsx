@@ -6,9 +6,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
+  InputAdornment,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import { ContentCopyRounded } from "@mui/icons-material";
 import { useRef, useState } from "react";
 import { FieldsForm, type Field } from "./forms";
 import type { Values } from "./contracts";
@@ -31,6 +35,15 @@ export type ActionModal = DialogHeading &
       }
     | { kind: "secret"; secret: string; label?: string }
   );
+
+/** Destructive endpoints get the error tone without changing every call site. */
+function isDestructive(modal: ActionModal) {
+  if (modal.kind !== "confirm") return false;
+  return /revoke|delete|remove|disable|unlink|retire|reset|close|reject|withdraw|leave|suspend|lock|撤销|删除|停用|移除|解绑|解散|注销|重置|拒绝|撤回|退出|锁定/i.test(
+    `${modal.title} ${modal.endpoint}`,
+  );
+}
+
 export function ActionDialog({
   modal,
   mutate,
@@ -43,7 +56,19 @@ export function ActionDialog({
   useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
   const submitting = useRef(false);
+  const destructive = isDestructive(modal);
+  async function copySecret() {
+    if (modal.kind !== "secret") return;
+    try {
+      await navigator.clipboard.writeText(modal.secret);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  }
   return (
     <Dialog
       open
@@ -72,7 +97,29 @@ export function ActionDialog({
             value={modal.secret}
             fullWidth
             multiline
-            slotProps={{ input: { readOnly: true } }}
+            slotProps={{
+              input: {
+                readOnly: true,
+                sx: { fontFamily: "monospace", fontSize: 13 },
+                endAdornment: (
+                  <InputAdornment position="end" sx={{ alignSelf: "flex-start", mt: 1 }}>
+                    <Tooltip title={copied ? t("已复制") : t("复制")}>
+                      <IconButton
+                        aria-label={t("复制")}
+                        size="small"
+                        onClick={copySecret}
+                      >
+                        {copied ? (
+                          <span aria-hidden>✓</span>
+                        ) : (
+                          <ContentCopyRounded fontSize="small" />
+                        )}
+                      </IconButton>
+                    </Tooltip>
+                  </InputAdornment>
+                ),
+              },
+            }}
           />
         ) : modal.kind === "editor" ? (
           <Box sx={{ pt: 1 }}>
@@ -90,13 +137,13 @@ export function ActionDialog({
       </DialogContent>
       {modal.kind !== "editor" && (
         <DialogActions>
-          <Button disabled={busy} onClick={onClose}>
+          <Button disabled={busy} onClick={onClose} color="inherit">
             {modal.kind === "secret" ? t("已保存，关闭") : t("取消")}
           </Button>
           {modal.kind === "confirm" && (
             <Button
               variant="contained"
-              color="inherit"
+              color={destructive ? "error" : "primary"}
               disabled={busy}
               onClick={async () => {
                 if (submitting.current) return;

@@ -15,7 +15,7 @@ import {
 } from "react-router-dom";
 import type { ViewDataMap } from "./contracts";
 import { FieldsForm, clientFields } from "./forms";
-import { Heading, Panel, type Actions } from "./shared";
+import { Copyable, Heading, Panel, type Actions } from "./shared";
 import { errorText } from "./api";
 import { t, useLocale } from "./i18n";
 
@@ -82,7 +82,10 @@ export function Integration({
           )}
         </Alert>
       )}
-      <Panel title={t("1. 选择客户端类型并创建")}>
+      <Panel
+        title={t("1. 选择客户端类型并创建")}
+        description={t("选择应用运行方式，使用推荐配置快速创建客户端。")}
+      >
         <Stack spacing={2}>
           <TextField
             select
@@ -105,31 +108,36 @@ export function Integration({
               "创建时填写业务回调地址；需要运行本站诊断时，额外保留下方诊断回调地址。",
             )}
           </Typography>
-          <Button
-            onClick={() =>
-              editor(
-                t("新建 OAuth 客户端"),
-                "/dashboard/clients/new",
-                clientFields,
-                {
-                  client_type: type,
-                  require_pkce: true,
-                  scopes: "openid,profile,email",
-                  grant_types: "authorization_code,refresh_token",
-                  redirect_uris: d.callback_uri,
-                },
-                { app_id: d.app.id },
-              )
-            }
-          >
-            {t("使用推荐配置创建客户端")}
-          </Button>
-          <Button
-            disabled={revalidator.state !== "idle"}
-            onClick={() => revalidator.revalidate()}
-          >
-            {t("刷新客户端列表")}
-          </Button>
+          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={() =>
+                editor(
+                  t("新建 OAuth 客户端"),
+                  "/dashboard/clients/new",
+                  clientFields,
+                  {
+                    client_type: type,
+                    require_pkce: true,
+                    scopes: "openid,profile,email",
+                    grant_types: "authorization_code,refresh_token",
+                    redirect_uris: d.callback_uri,
+                  },
+                  { app_id: d.app.id },
+                )
+              }
+            >
+              {t("使用推荐配置创建客户端")}
+            </Button>
+            <Button
+              color="inherit"
+              disabled={revalidator.state !== "idle"}
+              onClick={() => revalidator.revalidate()}
+            >
+              {t("刷新客户端列表")}
+            </Button>
+          </Stack>
         </Stack>
       </Panel>
       <Panel title={t("2. 获取接入配置与检查结果")}>
@@ -157,17 +165,7 @@ export function Integration({
             <Typography>{t("请先创建客户端。")}</Typography>
           )}
           {configuration && (
-            <Box
-              component="pre"
-              sx={{
-                overflowX: "auto",
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                userSelect: "all",
-              }}
-            >
-              {JSON.stringify(configuration, null, 2)}
-            </Box>
+            <Copyable value={JSON.stringify(configuration, null, 2)} block />
           )}
           {d.checks.map((check) => (
             <Alert
@@ -205,12 +203,7 @@ export function Integration({
                 "请将此地址额外登记到所选客户端的回调列表，诊断完成后可移除：",
               )}
             </Typography>
-            <Box
-              component="code"
-              sx={{ overflowWrap: "anywhere", userSelect: "all" }}
-            >
-              {d.callback_uri}
-            </Box>
+            <Copyable value={d.callback_uri} block />
             {!d.test_ready ? (
               <FieldsForm
                 fields={[]}

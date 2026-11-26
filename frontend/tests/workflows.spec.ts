@@ -145,6 +145,30 @@ test("registration completion and flow reset cannot run together", async ({
   await expect(finalize).toBeEnabled();
 });
 
+test("self-service registration explains when no verification channel is available", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/sso/register": {
+      view: "EnrollmentView",
+      data: {
+        csrf_token: "csrf-test",
+        mode: "self_service",
+        status: "",
+        allowed_methods: [],
+        providers: [],
+      },
+    },
+  });
+
+  await page.goto("/sso/register");
+  await expect(page.getByRole("alert")).toContainText(
+    "当前没有可用的邮箱或短信验证渠道，暂时无法自助注册。请联系管理员。",
+  );
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "返回登录" })).toBeVisible();
+});
+
 const progress = {
   rows: [
     {
@@ -766,6 +790,11 @@ test("provider presets remain editable and switching clears protocol settings wh
     },
   });
   await page.goto("/dashboard/providers/new");
+  const clientId = page.getByRole("textbox", {
+    name: "Client ID",
+    exact: true,
+  });
+  const issuer = page.getByRole("textbox", { name: "Issuer", exact: true });
   const choose = async (name: string) => {
     await page
       .getByRole("combobox", { name: "服务商预设", exact: true })
@@ -773,10 +802,8 @@ test("provider presets remain editable and switching clears protocol settings wh
     await page.getByRole("option", { name, exact: true }).click();
   };
   await choose("Google");
-  await expect(page.getByLabel("Issuer", { exact: true })).not.toBeVisible();
-  await expect(
-    page.getByLabel("Client ID", { exact: true }),
-  ).toHaveAccessibleDescription(/服务商应用控制台/);
+  await expect(issuer).not.toBeVisible();
+  await expect(clientId).toHaveAccessibleDescription(/服务商应用控制台/);
   await expect(
     page.getByRole("checkbox", { name: "启用此身份提供方" }),
   ).toHaveAccessibleDescription(/草稿/);
@@ -787,12 +814,8 @@ test("provider presets remain editable and switching clears protocol settings wh
   await page
     .getByRole("button", { name: "可选与高级配置", exact: true })
     .click();
-  await expect(page.getByLabel("Issuer", { exact: true })).toHaveValue(
-    "https://accounts.google.com",
-  );
-  await page
-    .getByLabel("Client ID", { exact: true })
-    .fill("client-from-console");
+  await expect(issuer).toHaveValue("https://accounts.google.com");
+  await clientId.fill("client-from-console");
   await page
     .getByLabel("Client Secret", { exact: true })
     .fill("secret-from-console");
@@ -808,10 +831,10 @@ test("provider presets remain editable and switching clears protocol settings wh
       element.checkValidity(),
     ),
   ).toBe(false);
-  await expect(page.getByLabel("Issuer", { exact: true })).toHaveValue("");
+  await expect(issuer).toHaveValue("");
   const tenantId = "11111111-2222-3333-4444-555555555555";
   await tenant.fill(tenantId);
-  await expect(page.getByLabel("Issuer", { exact: true })).toHaveValue(
+  await expect(issuer).toHaveValue(
     `https://login.microsoftonline.com/${tenantId}/v2.0`,
   );
   await expect(page.getByLabel("令牌端点", { exact: true })).toHaveValue(
@@ -824,7 +847,7 @@ test("provider presets remain editable and switching clears protocol settings wh
   await choose("GitHub");
   await expect(tenant).toHaveCount(0);
   await expect(page.getByLabel("退出端点", { exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Issuer", { exact: true })).toHaveCount(0);
+  await expect(issuer).toHaveCount(0);
   await expect(page.getByLabel("JWKS URI", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("扩展配置 JSON", { exact: true })).toHaveValue(
     /api.github.com\/user\/emails/,
@@ -837,9 +860,7 @@ test("provider presets remain editable and switching clears protocol settings wh
     0,
   );
   await choose("GitLab.com");
-  await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
-    "client-from-console",
-  );
+  await expect(clientId).toHaveValue("client-from-console");
   await expect(page.getByLabel("Client Secret", { exact: true })).toHaveValue(
     "secret-from-console",
   );
