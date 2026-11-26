@@ -1137,7 +1137,7 @@ async fn approval_progress_members_and_audit_share_existing_security() {
         json!({"before":"Before","after":"After"})
     );
     assert!(!detail.to_string().contains("secret_hash"));
-    // Full sign-in alerts are enqueued in the same transaction, without credentials.
+    // New-login notifications are currently paused.
     let count = f
         .state
         .db
@@ -1150,7 +1150,7 @@ async fn approval_progress_members_and_audit_share_existing_security() {
         .unwrap()
         .try_get::<i64>("", "n")
         .unwrap();
-    assert!(count >= 1);
+    assert_eq!(count, 0);
     f.cleanup().await;
 }
 

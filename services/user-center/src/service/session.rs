@@ -217,9 +217,10 @@ impl<'a> SessionService<'a> {
         txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
             "UPDATE sso_sessions SET mfa_required = (EXISTS(SELECT 1 FROM user_mfa WHERE user_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM admin_roles WHERE user_id=$1)) WHERE id=$2",
             [user_id.into(), session.id.into()])).await.map_err(db_error)?;
-        super::security::notify(&txn, &user, "new_login")
-            .await
-            .map_err(db_error)?;
+        // Temporarily pause new-login emails and SMS.
+        // super::security::notify(&txn, &user, "new_login")
+        //     .await
+        //     .map_err(db_error)?;
         crate::db::helper::login_event::record(
             &txn,
             crate::db::helper::login_event::RecordParams {
