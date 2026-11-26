@@ -23,9 +23,7 @@ make gen-keys
 cp services/user-center/config/local.toml.example services/user-center/config/local.toml
 cp services/user-center/config/bootstrap.toml.example services/user-center/config/bootstrap.toml
 
-# 3. 可选：单独执行迁移（服务启动和 bootstrap 均会自动执行）
-export DATABASE_URL=postgres://pero:CHANGE_ME@127.0.0.1:5432/pero
-./scripts/migrate.sh
+# 3. 首次初始化（自动执行迁移）
 make bootstrap
 
 # 4. 构建前端（Rust 服务直接读取 frontend/dist）
@@ -36,19 +34,19 @@ bash scripts/build-frontend.sh
 (cd services/user-center && cargo run --bin user-center -- --config-dir config)
 ```
 
-UI 源码与公共资源只维护在 `frontend/`，本地配置示例让 Rust 服务直接读取 `../../frontend/dist`（相对于服务工作目录）；`make dev` 自动设置绝对路径。`services/` 下不保存 UI 文件或软链接。独立部署包仍包含构建产物，并使用部署目录中的 `ui/static`。
+UI 源码与公共资源位于 `frontend/`。本地配置示例让 Rust 服务直接读取 `../../frontend/dist`（相对于服务工作目录），`make dev` 自动设置绝对路径。Docker 镜像将构建产物放在 `/opt/pero/prd/ui/static`。
 
 ## 初始化与配置
 
 已有本地数据库、Redis、密钥及 `services/user-center/config/local.toml` 配置并完成迁移和 bootstrap 后，可在仓库根目录执行 `make dev`。命令构建前端并启动 user-center，默认通过 `http://127.0.0.1:8080` 查看，按 Ctrl+C 停止；数据库和 Redis 使用本地配置中的地址。此命令只监听本机回环地址，不重复初始化数据。
 
-Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机通过 `scripts/build-docker-image.sh` 构建 Linux amd64 镜像并导出，服务器加载后在 `/root/projects/pero/runtime` 启动，无需服务器编译或本机 Rust/Zig。现有 `/root/projects/pero/source` 可保留；`scripts/package-production-config.sh` 仅在需要迁移配置时使用，私有包不提交 Git。
+本机通过 `scripts/build-docker-image.sh` 构建并导出 Linux amd64 镜像。服务器加载镜像后，在 `/root/projects/pero/runtime` 运行 Docker Compose。首次部署、更新与回退见 [Linux Docker 部署指南](deploy/pero/README.md)。
 
-数据库以 `001_init.sql` 为初始迁移，已部署数据库通过增量迁移升级。服务启动、bootstrap 和 `scripts/migrate.sh` 共用编译进程序的迁移实现，无需 psql；启动时在监听端口和启动后台任务之前完成检查。检查 PostgreSQL 18+、迁移历史顺序及 SHA-256，使用数据库事务锁串行处理并发启动；全部待执行迁移和版本记录在同一事务内完成，验收表字段、关键唯一索引、约束、注销/通知触发器、pgcrypto 和系统种子数据后提交。失败时回滚并终止启动，日志保留错误；修正原因后重新启动即可重试。
+本地开发、发布和 CI 的脚本清单见 [脚本说明](scripts/README.md)。
 
-初始基线用于空库。迁移历史或校验和不匹配时，启动失败并保留现有数据。后续迁移使用递增编号，同时更新 `src/db/verify.sql` 的验收要求并重新构建。部署包包含迁移工具、公开默认值和示例。详见 [数据库迁移与失败恢复](docs/database-migrations.md)。
+数据库以 `001_init.sql` 为空库初始化基线。服务启动、bootstrap 和独立迁移工具共用迁移器。服务在监听端口前核对迁移历史与校验和，执行待应用迁移并完成结构验收。已部署数据库需要历史和校验和均匹配才能原位升级。旧基线处理、迁移失败和回退步骤见 [数据库迁移与失败恢复](docs/database-migrations.md)。
 
-配置可选的 `notification.smtp`、`notification.sms`（Twilio）或 HTTP 网关后，服务将通知加密入库并由后台任务投递；数据库连接使用的 `app.encrypt_key` 必须保持一致。对应渠道未配置时，联系方式验证、注册邮件和密码恢复返回 503。详见[应用门户、发送渠道与密钥运维](docs/application-portal-and-delivery.md)。
+配置 `notification.smtp`、`notification.sms`（Twilio）或 HTTPS 网关后，服务将通知加密入库，由后台任务投递。数据库连接使用的 `app.encrypt_key` 必须保持一致。渠道配置、失败处理和重试规则见 [应用接入与运维](docs/application-portal-and-delivery.md)。
 
 OAuth 客户端密钥统一使用 Argon2id 哈希。已有 bcrypt 客户端密钥需重新设置或重置。
 
@@ -60,11 +58,11 @@ OAuth 客户端密钥统一使用 Argon2id 哈希。已有 bcrypt 客户端密�
 
 管理列表保留服务端创建时间顺序与分页，不提供仅排序当前页的名称排序。
 
-首页、个人中心和后台共用 `can_access_dashboard` 导航字段及服务端权限判断：`super_admin` 和 `admin` 均可进入后台，非管理员不展示管理入口且不能访问后台数据；两种管理员均需完成 MFA。页面导航及浏览器重新获得焦点时重新获取权限，查询失败返回 503。普通管理员的细分菜单与操作授权尚未实现，后续按权限体系扩展。
+首页、个人中心和后台共用 `can_access_dashboard` 导航字段。超级管理员和普通管理员均需完成 MFA 才能访问后台。后台根据当前授权决定可见菜单、可读数据和可执行操作。
 
 页面 URL 对 `Accept: application/json` 返回 `{ view, data }`；浏览器导航返回 Vite 应用。写操作沿用服务端表单接口与 CSRF 校验，布尔值统一为 `true/false`，页面 DTO 时间统一为 RFC3339、枚举使用协议字符串；JSON 请求中的跳转以 `{ redirect }` 返回，由前端执行，避免 OAuth 跨域 fetch。Rust 保留认证、授权、业务校验和数据库操作，已移除 Askama 及旧页面资源。
 
-授权确认页携带绑定用户、SSO 会话和授权请求的签名 token；多标签页分别提交各自展示的请求，互不覆盖。签发授权码时在事务内重新校验并锁定有效会话，避免已撤销会话写入授权码或同意记录。授权码重放只有在客户端、回调地址和 PKCE 校验通过后才触发撤销，撤销范围与刷新令牌重放一致：对应 SSO 会话及该会话下所有客户端的刷新令牌，在线 UserInfo 随即拒绝该会话的访问令牌。
+授权确认页携带绑定用户、SSO 会话和授权请求的签名令牌，各标签页提交各自展示的请求。签发授权码时在事务内锁定并重新校验会话。已使用的授权码在客户端、回调地址、PKCE 和当前租户准入校验通过后被重放时，会撤销对应的 RP 会话。该范围与轮换后的 Refresh Token 被重放时相同。
 
 Access Token 必须携带客户端策略版本和用户应用授权版本。客户端安全配置变更、重置密钥或切换状态，以及撤销应用权限或停用应用，会在事务内推进相应版本；UserInfo 拒绝旧版本令牌，恢复权限或重新启用也不会让旧令牌恢复有效。签发授权码令牌和刷新令牌时均绑定当前版本，不影响其他客户端的策略版本或整个 SSO 会话。初始化 schema 的 `oauth_clients` 和 `user_app_access` 均新增 `token_version` 字段，继续采用空库初始化基线，不提供旧 schema/旧令牌兼容。
 
@@ -106,7 +104,7 @@ pnpm --dir frontend audit
 
 刷新令牌支持可选 `scope` 子集；未传时保持原授权范围，扩大范围返回 `invalid_scope`，不会消耗令牌。新的刷新令牌保留原授权范围，降权仅作用于此次 access token。`prompt=select_account` 提供当前账号与切换登录选择。数据库/Redis 临时故障不会当作用户凭证失效；在线校验返回 503 时 admin 保留登录 Cookie。
 
-部署包可直接执行 `DATABASE_URL=... bash ./migrate.sh`，使用随版本编译的迁移；不接受外部 SQL 目录。checksum 不一致会报错回滚。
+Docker 镜像内的独立迁移入口为 `/opt/pero/prd/migrate.sh`。它通过 `DATABASE_URL` 连接目标数据库，执行随镜像编译的迁移和验收规则。
 
 ## 注销与上游密钥缓存
 
@@ -127,7 +125,7 @@ PERO_BROWSER_TEST=1 cargo test -p user-center --locked --test logout -- --ignore
 
 授权入口会在创建请求前检查客户端是否允许 `authorization_code`，不允许时向已验证的回调地址返回 `unauthorized_client`。密码重置的数据库等依赖故障返回 HTTP 503，输入和令牌校验错误保留原有页面提示。
 
-刷新令牌重放的回滚或会话撤销失败返回 `temporarily_unavailable`（HTTP 503）；调用方应在依赖恢复后重试原刷新令牌请求，服务端重试会再次执行会话及其刷新令牌的撤销。返回 503 不代表撤销已完成；依赖故障持续期间不保证撤销已生效。
+处理 Refresh Token 重放时，如果 RP 会话撤销或事务提交失败，接口返回 `temporarily_unavailable`（HTTP 503）。调用方可在依赖恢复后重新提交原请求。
 
 ## License
 
@@ -137,7 +135,7 @@ MIT OR Apache-2.0
 
 个人中心新增 `/account/sessions`、`/account/activity`、`/account/authorizations`、`/account/identities`。会话列表只展示当前用户的有效会话，可退出指定、其他或全部设备，并同步撤销关联刷新令牌。新登录会记录有长度限制的 User-Agent，历史记录缺失的设备信息显示为未知。
 
-用户撤销应用授权会移除该应用所有客户端的 consent，撤销关联刷新令牌和未使用授权码，并推进当前用户的应用令牌版本；保留管理员分配的应用访问资格，其他应用不受影响。主动撤销覆盖刷新令牌的轮换历史，此后使用旧令牌只返回 invalid_grant，不触发整个 SSO 会话退出；有效授权中的轮换令牌重放仍会撤销关联会话。重新授权不会恢复旧令牌。离线验签的接入应用仍需自行处理撤销感知。
+用户在个人中心撤销应用授权时，会移除该应用所有客户端的授权同意，撤销相关刷新令牌和未使用的授权码，并推进用户的应用令牌版本。应用访问资格与其他应用的授权继续有效。撤销后使用旧令牌会返回 `invalid_grant`。
 
 关联账号通过带 CSRF 的 POST 发起，第三方登录 state 绑定当前用户与当前会话；回调必须保留同一会话，不根据相同邮箱自动合并。解绑只针对自己的第三方身份，禁止移除最后一种可用登录方式，并撤销使用该身份建立的会话。原有登录时账号冲突关联流程继续保留。
 
@@ -152,19 +150,30 @@ MIT OR Apache-2.0
 
 丢失验证器时，先使用原登录方式验证主身份，再输入恢复码。恢复会撤销其他会话，并限制当前会话只能重新设置验证器；设置新验证器使用独立草稿，确认前保留原认证器及未使用的恢复码；页面中断后可用剩余恢复码重新开始，设置完成才替换全部恢复码。不提供管理员直接清除 MFA 的接口，密码重置不会清除 MFA。验证器与恢复码均丢失时，可由另一位超级管理员在用户安全页面核验身份后签发短时恢复码，仍需主身份验证和重新绑定验证器。
 
-敏感账户变更与所有管理写操作需要15 分钟内的近期认证。`/account/reauth` 支持本地密码（已启用 MFA 时同时要求 TOTP），或已绑定 OIDC 身份强制再认证后验证 TOTP。普通 OAuth2/微信没有通用的强制再认证语义，不作为再认证证明；此类账号应在仍有近期登录证明时设置本地密码或绑定 OIDC，以便后续安全管理。再认证后回原安全页面重新提交操作，不保存或自动重放密码等表单内容。
+敏感账户变更与所有管理写操作需要 15 分钟内的近期认证。`/account/reauth` 支持本地密码或已绑定 OIDC 身份的强制再认证。账号已启用 MFA 时，还需验证 TOTP。仅使用普通 OAuth2 或微信登录的账号，可在仍有近期认证时设置本地密码或绑定 OIDC。再认证后回到原页面重新提交操作。
 
-`/dashboard/admins` 设置超级管理员、普通管理员或移除管理员。超级管理员拥有所有后台权限；普通管理员的权限体系后续设计，当前默认拒绝后台访问。角色变更撤销目标用户的所有会话；禁止移除、降级或停用最后一个有效超级管理员。角色变更、MFA 设置、恢复及再认证成功写入操作审计。安全通知通过配置的 SMTP、短信供应商或网关向已验证联系方式投递，消息 kind 为 `mfa_enabled`、`mfa_changed`、`mfa_recovery`，不包含密钥或恢复码。
+`/dashboard/admins` 由超级管理员管理后台角色和普通管理员权限。普通管理员默认没有业务操作权限，授权可以覆盖全局模块或指定的非系统应用。
+
+| 授权范围 | 可分配能力 |
+| --- | --- |
+| 全局 | 普通用户查询、邀请、资料及联系方式管理、启停和密码重置，身份提供方摘要，全局登录记录、操作审计，以及普通通知的查询和重试。完整联系方式需要独立权限。 |
+| 指定应用 | 应用查询与管理、OAuth 客户端查询与管理、客户端密钥轮换，以及应用成员查询与访问资格管理。每项授权绑定具体应用，且各应用独立满足权限依赖。 |
+
+管理员身份及授权分配、新建应用、系统应用管理、注册策略及审批、租户平台管理、身份提供方和签名密钥管理、账户同步配置、接入诊断和管理员会话处置由超级管理员负责。普通管理员只能通过后台管理普通用户，应用成员权限仅覆盖该应用的访问资格。服务端校验功能权限、资源范围和可操作字段。
+
+角色或权限变更会撤销目标管理员的登录状态。权限保存校验授权版本，拒绝覆盖他人已保存的变更，并在同一事务记录授权差异。系统保护最后一个有效超级管理员，禁止移除、降级或停用。
+
+角色变更、MFA 设置、恢复及再认证成功会写入操作审计。MFA 通知通过可用渠道发送到已验证联系方式，消息类型为 `mfa_enabled`、`mfa_changed` 和 `mfa_recovery`。
 
 ## 通知投递运维
 
-通知表已包含在初始迁移中。后台 `/dashboard/notifications` 提供状态筛选、分页、脱敏收件人、尝试次数、最近失败类别及 HTTP 状态；沿用超级管理员门禁。重试操作复用 CSRF、15 分钟近期认证和管理审计。
+后台 `/dashboard/notifications` 提供状态筛选、分页、脱敏收件人、尝试次数、最近失败类别及 HTTP 状态。普通通知的查看和重试分别需要 `notifications.read` 和 `notifications.retry`。账户同步与应用注销的投递记录和重试仅对超级管理员开放。重试需要通过 CSRF 校验和 15 分钟内的近期认证，并写入管理审计。
 
 通知可通过 SMTP、Twilio 短信或 HTTPS 网关投递，复用数据库队列。队列和脱敏记录原子写入，投递成功后删除含凭据的加密载荷，只保留结果元数据。投递状态包括待投递、重试中、网关已接收、过期和取消；“网关已接收”仅表示网关返回 2xx，不代表邮件/短信最终送达。
 
 “立即重试”仅将尚未过期、至少尝试过一次、正在等待重试且没有有效投递租约的原消息提前排队，后台下一轮执行；不生成新验证码、不延长有效期，始终使用原通知 ID 作为 `Idempotency-Key`。网关必须按此键去重。已成功、取消或过期的消息不能重试；联系方式修改、密码恢复等原有撤销流程会同步标记取消。网关已经接收的在途请求无法撤回。
 
-失败记录只保存 `http_error`、`transport_error` 或 `timeout`，不保存网关响应正文、完整地址、验证码或链接。自动重试沿用原有间隔（30 秒递增，最多 300 秒），到期即停止；过期清理由现有清理任务执行，即使网关未配置也会清理。终态元数据保留 30 天后分批删除。
+失败记录保存受控错误类别，例如 `http_error`、`transport_error` 或 `timeout`。自动重试按 30 秒递增，间隔最多 300 秒，通知到期后停止。终态元数据保留 30 天后分批删除。
 
 页面显示待投递总数、超过调度时间 5 分钟的积压及多次失败数量。通知后台任务每 60 秒独立检查一次，发现积压或至少 3 次失败时输出 `Notification backlog requires attention` 警告，可接入现有日志告警；检查不受清理周期、慢网关请求或网关是否配置影响。排查时先确认网关配置、连接和认证，再依据 HTTP 状态检查网关；修复后可提前调度有效通知。网关测试可通过测试账号发起联系方式验证，再在此页面检查结果。
 
@@ -176,25 +185,27 @@ MIT OR Apache-2.0
 
 邀请绑定固定邮箱及可选的单个应用，有效期 72 小时；自助申请有效期 24 小时。管理员可重发、撤销和审批，重发轮换链接而不延长到期时间。既有邮箱的账户必须独立登录后接受邀请；不自动合并账户或恢复已停用的应用资格。后台新建用户改为发送邀请，不再代设初始密码。邮件通过现有加密通知 outbox 投递，需要配置邮件发送渠道；`enrollment` 和 `enrollment_rejected` 是新增消息 kind。
 
-`/account/applications` 提供应用加入申请、退出应用及注销账户。退出应用撤销该应用资格、consent 和令牌；注销账户需15 分钟内的近期认证、准确输入用户名确认，移除个人资料和认证凭据并撤销全部会话。管理员必须先移除管理员身份。普通退出登录仍使用原流程。注册申请与组织邀请在到期 30 天后分批清理；登录及管理员审计记录不自动删除，应由部署方按审计与合规要求制定留存策略。租户和成员对账历史不参与短期凭据清理；注销不自动删除业务应用中的数据。
+`/account/applications` 提供应用加入申请、退出应用及注销账户。退出应用撤销该应用资格、授权同意和令牌。注销需在 15 分钟内完成近期认证并输入用户名确认，随后清除个人资料和认证凭据，撤销全部会话。管理员须先移除管理员身份。注销后的业务数据由接入应用按自身规则处理。
+
+注册申请与组织邀请到期 30 天后分批清理。`retention.login_event_days` 与 `retention.audit_event_days` 分别控制登录与管理员审计记录保留期，默认 90 天和 365 天，设为 `0` 时停用相应清理。租户和成员对账历史单独保留。
 
 应用可在 OIDC 授权请求中使用 `prompt=create` 进入注册；需配置客户端 `login_uri`，以便跨设备或超时后重新发起授权。组织邀请支持新用户注册及既有用户独立登录后加入；应用发出的邀请自动关联来源客户端。应用登录入口处理 `enrollment_status=cancelled` 和 `enrollment_status=expired`，由用户选择重新发起。
 
-数据模型及流程说明见 [注册与邀请设计](docs/registration-invitation-design.md)。
+注册、邀请、进度恢复和 OAuth 回跳见 [注册与邀请接入](docs/registration-invitation-design.md)。
 
 ## 审批、申请进度与应用成员
 
 `/dashboard/registration` 的申请工作台支持分页、邮箱/应用名称搜索和状态筛选，默认优先显示待审批项；平台入口默认汇总全部应用，应用入口默认限定本应用，可用 `all_apps=true/false` 切换查询范围，待审批计数遵循当前应用及搜索范围。应用详情保留独立准入策略入口。拒绝时可填写原因，工作台支持批准、拒绝、重发及撤销。
 
-`/account/applications` 增加“我的申请与邀请”，显示状态、原因和有效期，支持继续办理、重发邮件及撤回。只展示已完成归属于当前用户，或发给当前已验证邮箱的记录；联系方式尚未验证时不展示发给该地址的邀请。继续办理沿用现有注册页及确认流程，通过 HttpOnly Cookie 传递新令牌；列表不返回令牌。尚未创建账户的申请人可从邮件链接查看本次申请进度及拒绝原因；终态链接只读，不能继续接受邀请或创建账户。继续办理和重发都会轮换旧链接，保持原到期时间；重发至少间隔一分钟。
+`/account/applications` 的“我的申请与邀请”显示由当前账户发起、已归属于当前账户，或匹配该账户已验证联系方式的申请。有效的申请可继续办理、重发或撤回。已经开始办理的浏览器可以在链接轮换后继续查看进度，实际操作仍需当前办理凭据及相应的账号验证。
 
-`/dashboard/apps/{id}/members` 支持按用户名/昵称、访问状态分页查询，并按完整用户名授予资格、撤销或恢复成员资格。沿用现有 CSRF、近期认证、超级管理员门禁和审计；撤销会推进用户应用令牌版本并撤销相关授权凭据。系统应用不通过此入口修改成员。
+`/dashboard/apps/{id}/members` 支持按用户名、昵称和访问状态分页查询，并按完整用户名授予、撤销或恢复访问资格。普通管理员需具备目标应用的成员查询或管理权限，且操作对象限普通用户。撤销资格会使该用户在目标应用的既有授权凭据失效。恢复资格由有权管理员显式操作。
 
 ## 业务应用在线校验与令牌撤销
 
-新增 `POST /api/oauth2/introspect` 和 `POST /api/oauth2/revoke`，Discovery 同步公布地址。接口使用表单参数 `token`、`client_id`、`client_secret`，`token_type_hint` 可选；沿用 `client_secret_post` 认证。Introspection 仅允许认证通过的 confidential 客户端查询：自己的 access token / refresh token，以及同一应用下 public 客户端的 access token。后者供原生 App 的业务后端在线校验身份及角色；响应中的 `client_id` / `aud` 始终是令牌原始客户端。其他应用、兄弟 confidential 客户端的令牌及其他客户端的 refresh token 均不开放查询；无效、越权或已撤销时只返回 `{"active":false}`。依赖不可用返回 503，不能当作令牌无效。状态响应禁止缓存；协议管理接口与 Token 签发使用独立的来源配额。
+`POST /api/oauth2/introspect` 和 `POST /api/oauth2/revoke` 通过 Discovery 公布。请求使用表单字段 `token`，可选 `token_type_hint`。Confidential 客户端可通过 `client_secret_basic` 或 `client_secret_post` 认证。Introspection 允许 confidential 客户端查询本客户端的 Access Token 和 Refresh Token，以及同一应用中 public 客户端的 Access Token。响应中的 `client_id` 和 `aud` 对应令牌原始客户端。令牌无效、越权或已撤销时返回 `{"active":false}`，依赖不可用时返回 HTTP 503。状态响应禁止缓存，在线校验与令牌签发使用独立的来源配额。
 
-Revocation 接受本客户端的 access token 或 refresh token；采用应用授权级撤销，使该用户在目标应用的既有令牌及未使用授权码失效，保留应用访问资格、SSO 会话和其他应用授权。未知、已撤销或其他客户端的令牌统一返回 200。旧刷新令牌的主动撤销不会触发刷新重放导致的 SSO 全局退出。
+Revocation 接受本客户端的 Access Token 或 Refresh Token，撤销令牌对应的 RP 会话、关联刷新令牌，以及同一客户端、SSO 会话和租户下的待用授权码。应用访问资格、SSO 会话和其他 RP 会话继续有效。未知、已撤销或属于其他客户端的令牌通常统一返回 HTTP 200。仍处于有效会话中的轮换旧令牌也可用于发起主动撤销。
 
 有效 Access Token 的 introspection 响应返回两个布尔值。`is_superadmin` 表示用户当前持有 `super_admin` 平台角色，`mfa_verified` 表示当前 SSO 会话已完成 MFA。业务端可根据 `is_superadmin` 映射本系统角色，撤销中心角色后下一次在线校验即生效。此前只检查 `is_superadmin` 来授权超级管理员操作的业务端，需要同时检查 `mfa_verified`，以保留原有的 MFA 门禁。用户资料声明复用 scope 策略，`profile` 才返回 `preferred_username`、`name`、`picture`。旧令牌没有 `profile` 时需重新授权才能取得用户名和头像。
 
@@ -212,7 +223,7 @@ Revocation 接受本客户端的 access token 或 refresh token；采用应用�
 
 `prompt=select_account` 进入账号选择页，可继续使用当前账号或重新登录其他账号，保留原 OAuth state、nonce、PKCE、scope 和回调。选择操作绑定授权请求和当时的会话，并要求 CSRF；不会把授权请求 ID 当成登录凭据。个人菜单也提供“切换账号”。切换时撤销当前浏览器的 SSO 会话及关联刷新令牌，不影响其他设备。
 
-通知 outbox 新增安全消息 kind：`new_login`、`password_changed`、`password_reset_completed`、`admin_password_reset`、`contact_changed`、`identity_linked`、`identity_unlinked`。使用 HTTP 网关时，网关需识别这些 kind。登录提醒在完成主认证后生成，应用 MFA 验证不重复提醒；再认证不重复发送登录提醒。联系方式变更通知发送到原已验证渠道及本次验证的新渠道；管理员修改联系方式只通知原已验证渠道。所有提醒与对应变更同事务入队，复用已有投递、重试、脱敏及保留策略，不包含密码、验证码、密钥或恢复码。
+安全通知包括 `password_changed`、`password_reset_completed`、`admin_password_reset`、`contact_changed`、`identity_linked` 和 `identity_unlinked`。使用 HTTPS 网关时，网关需识别这些消息类型。登录成功写入登录审计。联系方式变更通知发送到原已验证渠道及本次验证的新渠道，管理员修改联系方式时只通知原已验证渠道。通知与对应变更在同一事务内入队。
 
 上述结构均包含在初始迁移，服务启动自动核对并验收。
 
@@ -234,7 +245,7 @@ Revocation 接受本客户端的 access token 或 refresh token；采用应用�
 
 解除登录锁定采用先提交审计意图、再操作 Redis、最后记录结果的流程。意图写入失败时不解锁；Redis 失败或超时保留 pending（可能需要人工确认实际状态）；解锁已确认成功但结果写入失败时返回成功并保留带原因的 pending 记录，避免将数据库回滚误当作 Redis 回滚。重试解除锁定是幂等操作。
 
-应用门户、签名密钥生命周期和 Back-channel Logout 配置及接入示例见[运维指南](docs/application-portal-and-delivery.md)。
+应用设备会话上限、签名密钥轮换和 Back-channel Logout 见 [应用接入与运维](docs/application-portal-and-delivery.md)。
 
 
 ## 应用侧账户生命周期同步
@@ -242,7 +253,7 @@ Revocation 接受本客户端的 access token 或 refresh token；采用应用�
 应用详情的 confidential 客户端支持配置账户同步 HTTPS 地址。用户资料、账户状态、成员加入/退出及账户注销与签名事件原子入队；应用收到事件后用客户端认证调用 `POST /api/accounts/sync` 获取本应用成员的当前状态，资料字段沿用客户端 scope 过滤。启用或更换地址会同步现有成员，投递失败自动重试，后台通知页可查看和重试。详见[账户生命周期同步与接收端示例](docs/account-lifecycle-sync.md)。
 
 
-## 多租户能力（feature/unified-tenancy）
+## 多租户
 
 - 用户创建组织资格与现有组织成员治理独立；组织可设置独立成员上限（默认 100，平台配置），支持显式停用、恢复及解散墓碑。
 - 平台超级管理员可以在 `/dashboard/tenants` 搜索组织、维护成员额度、提升现有成员为 Owner、管理租户应用准入。

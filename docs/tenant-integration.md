@@ -1,10 +1,10 @@
-# Pero 用户、租户与应用接入
+# 租户接入
 
 ## 职责与权限边界
 
-Pero 维护统一用户身份、登录与会话、个人/组织空间及 owner/admin/member 组织治理角色。业务资源、业务角色和数据 ACL **不在** Pero 维护。
+Pero 管理用户身份、登录会话、个人空间与组织空间，以及 `owner`、`admin` 和 `member` 三种组织治理角色。业务应用负责资源、业务角色和数据访问控制。
 
-每个业务数据表独立保存非空 `tenant_id`，请求中的租户标识必须与已验证 Access Token 的 `tenant_id` 匹配。仅接受 `typ=at+jwt`、可信 `iss`、预期 `aud`、有效签名及 `exp` 的 Access Token；ID Token 不用于业务接口鉴权。需要即时撤销判断时调用 `POST /api/oauth2/introspect`，本地 JWT 校验无法保证实时失效。
+业务应用应按非空 `tenant_id` 隔离业务数据，并要求请求及目标资源的租户与已验证的 Access Token 一致。校验 Access Token 的签名、`typ=at+jwt`、`iss`、`aud` 和 `exp`。需要即时判断撤销时，调用 `POST /api/oauth2/introspect`。
 
 SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不能切换租户。个人空间随用户创建，无组织治理能力。非系统应用按照 `tenant_mode` 选择个人/组织/两者。
 
@@ -18,7 +18,7 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 
 ## 组织生命周期
 
-- **active**：Owner/Admin 按其治理角色管理成员；Owner 可改名、停用与恢复组织。
+- **active**：Owner 和 Admin 按其治理角色管理成员。Owner 可改名或停用组织。
 - **disabled**：保留组织及成员，拒绝新邀请、接受邀请和业务授权；Owner 可恢复自行停用的组织；平台超级管理员停用的组织只能由平台超级管理员恢复，旧租户授权不会恢复。停用会终止已绑定该组织的未完成 OAuth 授权请求。停用/恢复采用明确目标状态，允许安全重试。
 - **deleted**：只允许 Owner 通过组织标识确认主动解散，且组织已没有其他有效成员、未被平台停用。平台停用期间不得自行解散，须先由平台超级管理员解除停用。解散后不可恢复；保留租户 ID、成员历史与审计记录以供下游对账，释放 slug；撤销租户令牌、待用授权码和未接受邀请，并发送状态变更事件。业务系统仍自行决定业务数据保留与清理。
 - 平台后台 `/dashboard/tenants` 提供分页搜索、状态过滤、成员检索、组织成员上限配置、所有者应急提升、组织应用准入和停用/恢复。平台管理员不因这些操作自动获得业务数据访问权。
@@ -43,12 +43,13 @@ SSO 会话只关联用户；切换空间必须重新授权，Refresh Token 不�
 
 | 方法 | 地址 | 操作 |
 | --- | --- | --- |
-| GET / POST | `/tenants` | 列出自己的空间 / 按个人创建额度创建组织；创建成功返回 HTTP 201 和 `{"id":"<tenant-uuid>"}` |
+| GET | `/tenants` | 列出自己的空间，返回 `{rows}` |
+| POST | `/tenants` | 提交 `{name, slug}` 创建组织，成功返回 HTTP 201 和 `{"id":"<tenant-uuid>"}` |
 | GET | `/tenants/{id}` | 获取当前组织信息 |
 | GET | `/tenants/{id}/members` | 列出成员 |
 | GET / POST | `/tenants/{id}/invitations` | 查看最近 100 条邀请 / 邀请成员：`{email,role}` |
 | POST | `/tenants/{id}/invitations/{invitation}/revoke` | 撤销待接受邀请 |
-| POST | `/tenants/{id}/members/{user}` | 修改角色/移除：`{action}` |
+| POST | `/tenants/{id}/members/{user}` | 提交 `{action}` 改变角色或移除成员，值为 `owner`、`admin`、`member` 或 `remove`，仍受操作者的治理权限限制 |
 | POST | `/tenants/{id}/rename` | 修改组织名称：`{name}` |
 | POST | `/tenants/{id}/leave` | 退出组织 |
 | POST | `/tenants/{id}/status` | 设置组织状态：`{status:"active"|"disabled"}`；相同状态重复提交无副作用 |
@@ -61,19 +62,20 @@ UserInfo 与 Access Token introspection 返回当前 `tenant_id`、`tenant_kind`
 
 ## 同步与全量对账
 
-具有 Account Sync URI 的非系统应用 confidential 客户端，可通过 `client_secret_basic` 或 `client_secret_post` 调用：
+启用“账户生命周期同步”的非系统应用可用有效的 confidential 客户端调用以下接口。请求为 `POST`，使用 `application/x-www-form-urlencoded`，通过 `client_secret_basic` 或 `client_secret_post` 认证。
 
-- `POST /api/accounts/sync`：已知 `sub` 的用户最新账户投影。
-- `POST /api/tenants/membership/sync`：已知 `sub,tenant_id` 的成员快照（包括 `app_allowed`、`app_access_active` 和最终 `active`）。仅查询该应用曾具备准入资格的用户-租户关系；撤销后仍返回 `active=false`，但从未在该应用准入范围内的成员关系返回 404。
-- `POST /api/accounts/sync/list`：按 `user_id` 升序分页读取本应用有历史准入关系的用户账户投影，每页最多 100 条；可提交 `after_user_id`。
-- `POST /api/tenants/membership/list`：按 `(tenant_id,user_id)` 分页读取本应用**曾可准入的历史成员关系**（即使成员已退出、组织已停用、应用不再支持该租户类别）；每条包含 `tenant_name`、`membership_role`、`tenant_status`、`membership_status`、`app_allowed`、`app_access_active`、`active` 以及版本；每页最多 100 条；续页提交 `after_tenant_id` 与 `after_user_id`。
-- `POST /api/tenants/sync`：提交 `tenant_id`，读取本应用曾可准入的单个租户目录快照，包括 `tenant_name`、`tenant_kind`、`slug`、`tenant_status`、`max_members`、`member_count`、`app_allowed`、`active`。不可见租户返回 404。
-- `POST /api/tenants/list`：按 `tenant_id` 升序列出本应用曾可准入的租户目录快照，每页最多 100 条；续页提交 `after_tenant_id`（UUID），响应仍为 `{rows,next}`。
+| 路径 | 请求字段 | 响应 |
+| --- | --- | --- |
+| `/api/accounts/sync` | `sub` | 本应用成员的当前账户投影 |
+| `/api/tenants/sync` | `tenant_id` | 租户目录快照，包括名称、类型、`slug`、状态、成员数和上限、`app_allowed`、`active` |
+| `/api/tenants/membership/sync` | `sub`、`tenant_id` | 成员快照，包括角色、租户及成员状态和版本、`app_allowed`、`app_access_active`、`active` |
+| `/api/accounts/sync/list` | 可选 `after_user_id` | 账户投影分页，`next` 为用户 UUID |
+| `/api/tenants/list` | 可选 `after_tenant_id` | 租户目录分页，`next` 为租户 UUID |
+| `/api/tenants/membership/list` | 续页同时传 `after_tenant_id`、`after_user_id` | 成员快照分页，`next` 为 `{tenant_id,user_id}`，条目中的用户标识为 `sub` |
 
-三个分页接口响应均为 `{rows,next}`，`next=null` 表示结束；从 `next` 中取游标继续查询。所有响应不缓存。全量对账用于初次接入、事件过期后的恢复及主动核对；分页不是跨页一致性事务快照，对账时持续应用增量事件，并在必要时重新执行一轮对账。
+分页响应为 `{rows,next}`，每页最多 100 条，`next=null` 表示结束。初次查询省略游标，续页使用对应的 `next` 值。点查超出应用可见范围时返回 HTTP 404。所有响应禁止缓存。
 
-现有签名事件 `tenant.membership.changed` 保留 `tenant_id`；事件仅提示重新查询最新状态，接收端应校验签名、受众、时间、jti 并实现幂等，切勿按消息产生顺序直接覆盖业务侧状态。业务系统负责本地数据投影、资源 ACL 和业务数据生命周期。
-
+账户投影包含本应用已有的成员关系。租户和成员投影以本应用历史准入关系为边界，保留退出、解散或准入被撤销后的快照。成员快照中，`app_allowed` 反映应用状态、租户模式与组织准入，`app_access_active` 反映该账户的应用访问资格，`active` 还要求用户、租户与成员关系均有效。应用停用后，仍可用有效客户端凭据读取历史投影以完成撤权对账。
 
 ### 组织元数据与治理角色同步
 
@@ -92,11 +94,9 @@ UserInfo 与 Access Token introspection 返回当前 `tenant_id`、`tenant_kind`
 
 ## 首次接入、增量同步与全量恢复
 
-- **首次接入**：业务系统通过 confidential client 凭据（`client_secret_basic` 或 `client_secret_post`）调用 `POST /api/accounts/sync/list`、`POST /api/tenants/list` 和 `POST /api/tenants/membership/list` 建立本地投影。每个请求使用 `application/x-www-form-urlencoded`，这三种列表使用各自独立的游标。
-- **日常更新**：校验签名的 `tenant.membership.changed` 事件仅提示变化（携带 `sub` 和 `tenant_id`），先调用 `POST /api/tenants/membership/sync` 查询最新成员状态；再视需要调用 `POST /api/tenants/sync` 更新组织目录。应用成员资格授予/撤销同样会产生有关历史租户关系的变更通知。账户事件仍通过 `POST /api/accounts/sync` 获取最新状态。
-- **断线恢复**：使用三个列表重复全量对账，保留并重放对账期间的增量事件。历史关系可能变为 `active=false`，不能因为记录仍在列表中就继续授予访问，也不应因为某页缺行就直接删除业务历史数据。
-- **接入范围**：所有服务端同步接口都要求**非系统应用的、已配置 Account Sync URI 的 confidential OAuth 客户端**。目录及成员列表以应用曾实际符合准入条件的用户-租户关系为边界，并非平台全部组织的全局枚举接口。个人模式应用不能据此枚举用户所在的无关组织；准入撤销、成员移除或组织停用后，历史关系仍可对账，但不再新增无关组织的可见性。应用整体停用后，仍允许有效的 confidential 客户端凭据读取历史投影以完成撤权对账，投影中的 `app_allowed` / `active` 将为 `false`；停用不会允许用户继续以该应用获得访问令牌。
-- **字段语义**：`app_allowed` 反映该应用当前模式、状态及组织准入条件；`active` 反映当前是否有效。成员列表的 `active` 还要求账户、应用账户准入和组织成员关系均有效。历史记录和租户 tombstone 仅供同步与审计；业务数据是否清理由业务系统自行决定。
+- **首次接入**。分别遍历账户、租户目录和租户成员的列表接口，建立本地投影。
+- **日常更新**。接收并验证 `tenant.membership.changed` 事件后，用 `sub` 和 `tenant_id` 查询最新成员状态，按需刷新租户目录。账户事件通过 `/api/accounts/sync` 获取当前账户投影。使用 `jti` 去重，按当前查询结果更新。验签和投递流程见 [账户生命周期同步](account-lifecycle-sync.md#接收签名事件)。
+- **断线恢复**。重新遍历三个列表，并持续处理对账期间收到的增量事件。每页独立读取，需要时再核对一轮。以 `active` 控制访问，单页缺行时保留业务历史。
 
 ## 组织应用申请
 
@@ -108,4 +108,4 @@ Owner 可在 `/account/tenants/{id}` 查看组织适用的应用，对 `organiza
 
 ## 注册与邀请接入
 
-应用注册入口使用 OIDC `prompt=create`，配置客户端 `login_uri` 作为需要重新发起授权时的入口。业务应用调用成员邀请接口时，Pero 从已验证的 Access Token 记录来源客户端。新用户接受组织邮件邀请时可直接创建账户并加入组织；既有账户须独立认证且匹配邀请邮箱。完成后返回来源应用的 login URI，并携带目标 `tenant_id`，应用应创建全新的授权请求，保留正常的 state、nonce、PKCE 与回调验证。组织成员资格不等于应用访问权限，仍需满足应用准入策略。详见 [注册与邀请设计](registration-invitation-design.md)。
+业务应用调用成员邀请接口时，Pero 从已验证的 Access Token 记录来源客户端。接受邀请后，应用可通过来源客户端的 `login_uri` 和返回的 `tenant_id` 发起新授权。授权时会校验组织成员资格与应用准入。回跳及重试流程见 [注册与邀请接入](registration-invitation-design.md)。

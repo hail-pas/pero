@@ -11,10 +11,11 @@ keys/
 *.pem
 *.key
 
-# Service configs (keep defaults and examples only)
+# Service configs (track public defaults, examples and documentation)
 services/**/config/*
 !services/**/config/default.toml
 !services/**/config/*.example
+!services/user-center/config/README.md
 
 # Editor / IDE
 *.swp
