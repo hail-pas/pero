@@ -1007,6 +1007,14 @@ async fn expired_application_registration_returns_to_initiating_client() {
     );
     let (_, page, _) = call(&router, &second, "/sso/register", None).await;
     assert_eq!(page["data"]["app"], f.app.to_string());
+    for path in [
+        "/sso/register?token=invalid",
+        "/sso/register?invitation=invalid",
+    ] {
+        let (_, unchanged, _) = call(&router, &second, path, None).await;
+        assert_eq!(unchanged["data"]["app"], f.app.to_string());
+        assert_eq!(unchanged["data"]["flow"], page["data"]["flow"]);
+    }
 
     let (_, _, headers) = call(&router, "", &format!("{uri}&state=completed"), None).await;
     let token = pero_utils::crypto::generate_token();
@@ -1325,6 +1333,20 @@ async fn existing_account_enrollment_reuses_the_request_and_keeps_progress() {
     )
     .await;
     assert_eq!(joined["code"], 0);
+    let count = f
+        .state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS count FROM enrollments WHERE requested_user_id=$1",
+            [f.user.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "count")
+        .unwrap();
+    assert_eq!(count, 1);
     assert_eq!(
         enrollment::progress(&f.state.db, id)
             .await
@@ -1356,6 +1378,11 @@ async fn existing_account_enrollment_reuses_the_request_and_keeps_progress() {
     assert_eq!(ready["data"]["status"], "pending_verification");
     let flow = ready["data"]["flow"].as_str().unwrap();
     assert!(headers.get("location").is_none());
+    let (_, invalid_invitation, _) =
+        call(&router, &browser, "/sso/register?invitation=invalid", None).await;
+    assert_eq!(invalid_invitation["data"]["status"], "pending_verification");
+    assert_eq!(invalid_invitation["data"]["flow"], flow);
+    assert_eq!(invalid_invitation["data"]["error"], "invalid_invitation");
     let (status, _, _) = call(
         &router,
         &browser,

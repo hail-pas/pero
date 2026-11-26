@@ -653,15 +653,18 @@ async fn start_contact(
     let provider_id = social.map(|s| s.0);
     let subject = social.map(|s| s.1);
     if previous.is_some() || requested_user_id.is_some() {
+        // An account's application survives a fresh OAuth request or session.
+        // Keep its original continuation; other sessions use the client login URI.
         let existing = txn.query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT id FROM enrollments WHERE NOT invitation AND (id=$1 OR requested_user_id=$2)
              AND requested_user_id IS NOT DISTINCT FROM $2::uuid AND app_id IS NOT DISTINCT FROM $3::uuid
-             AND client_id IS NOT DISTINCT FROM $4::uuid AND auth_request_id IS NOT DISTINCT FROM $5::uuid
+             AND client_id IS NOT DISTINCT FROM $4::uuid
              AND provider_id IS NOT DISTINCT FROM $6::uuid AND subject IS NOT DISTINCT FROM $7::text
              AND (email=$8::citext OR phone=$9::citext) AND expires_at>now()
              AND tenant_id IS NOT DISTINCT FROM $10::uuid
-             AND authorization_session_id IS NOT DISTINCT FROM $11::uuid
+             AND ($2::uuid IS NOT NULL OR (auth_request_id IS NOT DISTINCT FROM $5::uuid
+                  AND authorization_session_id IS NOT DISTINCT FROM $11::uuid))
              AND status IN ('pending_verification','pending_approval','ready') ORDER BY created_at DESC LIMIT 1",
             [previous.into(), requested_user_id.into(), app.into(), client_id.into(), request_id.into(),
              provider_id.into(), subject.into(), (!is_phone).then_some(address).into(),

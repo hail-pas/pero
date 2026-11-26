@@ -294,7 +294,7 @@ pub async fn get(
     if let Some(token) = query.invitation {
         if let Err(e) = crate::service::tenant::invitation_progress(&state.db, &token).await {
             if matches!(e, crate::service::ManagementError::Invalid("not_found")) {
-                return render(&state, clear_flow(jar), None, "invalid_invitation").await;
+                return render_current(&state, jar, "invalid_invitation").await;
             }
             return util::management_response(Err(e));
         }
@@ -343,31 +343,35 @@ pub async fn get(
     if query.entry.as_deref() == Some("platform") {
         return (clear_flow(jar), Redirect::to("/sso/register")).into_response();
     }
+    render_current(&state, jar, query.error.as_deref().unwrap_or("")).await
+}
+
+async fn render_current(state: &AppState, jar: CookieJar, error: &str) -> Response {
     if tenant_token(&jar).is_some() {
-        return render_invitation(&state, jar, query.error.as_deref().unwrap_or("")).await;
+        return render_invitation(state, jar, error).await;
     }
-    let request = match registration_request(&state, &jar).await {
+    let request = match registration_request(state, &jar).await {
         Ok(request) => request,
         Err(e) => return util::management_response(Err(e)),
     };
     let app = request.as_ref().map(|r| r.app_id);
     if request.is_none()
         && flow_token(&jar).is_none()
-        && progress_claim(&state, &jar).is_none()
-        && request_context_client(&state, &jar).is_some()
+        && progress_claim(state, &jar).is_none()
+        && request_context_client(state, &jar).is_some()
     {
-        return cancel_registration(&state, jar, true).await;
+        return cancel_registration(state, jar, true).await;
     }
     let error = if request
         .as_ref()
         .is_some_and(|request| request.tenant_id.is_some())
-        && !has_registration(&state, &jar)
+        && !has_registration(state, &jar)
     {
         "enrollment_organization_required"
     } else {
-        query.error.as_deref().unwrap_or("")
+        error
     };
-    render(&state, jar, app, error).await
+    render(state, jar, app, error).await
 }
 
 pub(crate) async fn application_context_cookie(
@@ -407,18 +411,11 @@ pub(crate) async fn enter_enrollment(state: &AppState, jar: CookieJar, token: St
     let row = match enrollment::progress_by_token(&state.db, &token).await {
         Ok(row) => row,
         Err(crate::service::ManagementError::Invalid(_)) if flow_token(&jar) == Some(&token) => {
-            return render(state, jar, None, "").await;
+            return render_current(state, jar, "").await;
         }
         Err(crate::service::ManagementError::Invalid(_)) => {
-            // A rotated link cannot authorize any action, but must not discard
-            // the browser's independently authenticated registration progress.
-            if tenant_token(&jar).is_some() {
-                return render_invitation(state, jar, "enrollment_unavailable").await;
-            }
-            if progress_claim(state, &jar).is_some() || flow_token(&jar).is_some() {
-                return render(state, jar, None, "enrollment_unavailable").await;
-            }
-            return render(state, clear_flow(jar), None, "enrollment_unavailable").await;
+            // An invalid link must not discard another active registration.
+            return render_current(state, jar, "enrollment_unavailable").await;
         }
         Err(e) => return util::management_response(Err(e)),
     };
