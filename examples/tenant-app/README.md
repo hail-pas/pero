@@ -24,6 +24,7 @@ python examples/tenant-app/app.py
 ## 集成契约
 
 - **登录**：从中心取得 code、校验一次性 state、PKCE、OIDC ID Token 的签名/iss/aud/nonce，然后使用 introspection 在线验证 Access Token 和实际租户上下文。
+- **注册**可从 `/register` 发起。为 OAuth Client 登记经 HTTPS 访问的 `/login` 作为 `login_uri`。该入口处理注册取消、授权过期及组织邀请的 `tenant_id`，续接时生成新的授权请求。
 - **租户切换**：使用 Bearer Token 查询 `/api/tenants/choices`，通过携带 CSRF Token 的 POST 表单发起全新的授权码流程。每次登录生成新的随机业务会话 ID，成功切换后清理旧会话；不要修改现有 Token 的 `tenant_id`。
 - **受保护请求**：调用 introspection 校验 `active`、`sub`、`tenant_id`；依赖返回 503 时不当作用户已注销。真实应用还需基于当前租户强制校验其业务资源的数据隔离。
 - **退出**：携带 CSRF，撤销本客户端授权并引导浏览器退出中心 SSO。RP 回调地址与 Logout URI 请按正式环境配置。

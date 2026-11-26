@@ -83,7 +83,7 @@ pub fn management_response(result: Result<(), crate::service::ManagementError>) 
                 }
                 "rate_limited" => axum::http::StatusCode::TOO_MANY_REQUESTS,
                 "not_found" => axum::http::StatusCode::NOT_FOUND,
-                "permission_revision_conflict" | "policy_conflict" => {
+                "permission_revision_conflict" | "policy_conflict" | "enrollment_flow_changed" => {
                     axum::http::StatusCode::CONFLICT
                 }
                 "notification_disabled" => axum::http::StatusCode::SERVICE_UNAVAILABLE,

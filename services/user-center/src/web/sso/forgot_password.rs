@@ -90,11 +90,13 @@ pub async fn post_forgot(
 }
 
 fn render_forgot(jar: CookieJar, state: &AppState, error: String, success: bool) -> Response {
+    let registration = super::register::has_registration(state, &jar);
     state
         .web_security()
         .view_with_csrf(jar, "ForgotPasswordView", |csrf_token| ForgotPasswordView {
             error,
             success,
             csrf_token,
+            registration,
         })
 }

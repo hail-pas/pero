@@ -32,7 +32,7 @@ pub fn normalize_icon(raw: &str) -> &'static str {
 pub(crate) async fn require_enabled_social<C: ConnectionTrait>(
     db: &C,
     id: uuid::Uuid,
-) -> Result<(), pero_error::AppError> {
+) -> Result<ip::Model, pero_error::AppError> {
     let provider = ip::Entity::find_by_id(id)
         .lock_shared()
         .one(db)
@@ -44,13 +44,14 @@ pub(crate) async fn require_enabled_social<C: ConnectionTrait>(
             )
             .with_source(error)
         })?;
-    if !provider.is_some_and(|provider| provider.enabled && provider.kind.is_social()) {
-        return Err(pero_error::AppError::unauthorized(
-            "provider_unavailable",
-            "Identity provider is disabled or unavailable",
-        ));
-    }
-    Ok(())
+    provider
+        .filter(|provider| provider.enabled && provider.kind.is_social())
+        .ok_or_else(|| {
+            pero_error::AppError::unauthorized(
+                "provider_unavailable",
+                "Identity provider is disabled or unavailable",
+            )
+        })
 }
 
 #[derive(Debug)]

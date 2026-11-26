@@ -103,7 +103,7 @@ export function Auth({
             {!data.system && (
               <Button
                 component="a"
-                href="/account/applications"
+                href={`/account/applications?recovery=${encodeURIComponent(data.token)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 variant="outlined"
@@ -143,6 +143,11 @@ export function Auth({
             {t("返回个人中心")}
           </Button>
         )}
+        {data.expired && data.login_url && (
+          <Button component="a" href={data.login_url} variant="outlined">
+            {t("返回应用登录")}
+          </Button>
+        )}
       </Stack>
     );
   } else if (view === "SelectAccountView") {
@@ -180,6 +185,21 @@ export function Auth({
       </Stack>
     );
   } else if (login || forgot || reset) {
+    const loginRedirect = "redirect" in data ? data.redirect : "";
+    const registrationLogin = loginRedirect === "/sso/register";
+    const registrationFlow = "flow" in data ? data.flow : null;
+    const socialParams = new URLSearchParams();
+    if (loginRedirect) socialParams.set("redirect", loginRedirect);
+    if (registrationLogin && registrationFlow) {
+      socialParams.set("existing", "true");
+      socialParams.set("flow", registrationFlow);
+    }
+    const socialQuery = socialParams.size ? `?${socialParams}` : "";
+    const registrationRecovery = "registration" in data && data.registration;
+    const registrationUrl =
+      "registration_url" in data
+        ? data.registration_url
+        : "/sso/register?entry=platform";
     let fields: Field[] = login
       ? [
           {
@@ -300,7 +320,8 @@ export function Auth({
               await mutate(location.pathname + location.search, {
                 ...values,
                 identifier_type: identifierType,
-                redirect: "redirect" in data ? data.redirect : "",
+                redirect: loginRedirect,
+                flow: registrationFlow,
               });
             }}
             label={
@@ -311,10 +332,20 @@ export function Auth({
         <Stack direction="row" sx={{ justifyContent: "space-between", mt: 3 }}>
           <Button
             component={RouterLink}
-            to={login ? "/sso/register" : "/sso/login"}
+            to={
+              registrationRecovery || registrationLogin
+                ? "/sso/register"
+                : login
+                  ? registrationUrl
+                  : "/sso/login"
+            }
             size="small"
           >
-            {login ? t("创建账户") : t("返回登录")}
+            {registrationRecovery || registrationLogin
+              ? t("返回本次注册流程")
+              : login
+                ? t("创建账户")
+                : t("返回登录")}
           </Button>
           {login && (
             <Button
@@ -340,7 +371,7 @@ export function Auth({
                   key={p.key}
                   component="a"
                   disabled={formBusy}
-                  href={`/sso/social/${encodeURIComponent(p.key || "")}/login${"redirect" in data && data.redirect ? `?redirect=${encodeURIComponent(data.redirect)}` : ""}`}
+                  href={`/sso/social/${encodeURIComponent(p.key)}/login${socialQuery}`}
                   variant="outlined"
                 >
                   {p.name}

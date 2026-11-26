@@ -169,6 +169,58 @@ test("self-service registration explains when no verification channel is availab
   await expect(page.getByRole("link", { name: "返回登录" })).toBeVisible();
 });
 
+test("login from registration receives the scoped cookie and submits the flow", async ({
+  page,
+  context,
+}) => {
+  const flow = "registration-flow";
+  await mock(page, {
+    "/sso/register": {
+      view: "EnrollmentView",
+      data: {
+        csrf_token: "enrollment-csrf",
+        mode: "self_service",
+        status: "ready",
+        existing_account: true,
+        flow,
+      },
+    },
+    "/sso/register/login": {
+      view: "AccountLoginView",
+      data: {
+        csrf_token: "login-csrf",
+        redirect: "/sso/register",
+        flow,
+        providers: [],
+      },
+    },
+  });
+  await page.goto("/sso/register");
+  await context.addCookies([
+    {
+      name: "pero_enrollment",
+      value: "current",
+      domain: new URL(page.url()).hostname,
+      path: "/sso",
+    },
+  ]);
+  await page.getByRole("link", { name: "登录已有账户" }).click();
+  await expect(page).toHaveURL(/\/sso\/register\/login\?/);
+  await page.reload();
+  await page.locator('[name="identifier"]').fill("member");
+  await page.locator('[name="password"]').fill("Password123!");
+  const submitted = page.waitForRequest(
+    (request) => request.method() === "POST",
+  );
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  const request = await submitted;
+  expect(new URL(request.url()).pathname).toBe("/sso/register/login");
+  expect(await request.headerValue("cookie")).toContain(
+    "pero_enrollment=current",
+  );
+  expect(new URLSearchParams(request.postData()!).get("flow")).toBe(flow);
+});
+
 const progress = {
   rows: [
     {
@@ -202,6 +254,7 @@ test("a closed application registration can exit the current flow", async ({
       ).toEqual({
         action: "reset",
         csrf_token: "csrf-test",
+        flow: "closed-application-flow",
       });
       activeFlow = false;
       return route.fulfill({ json: { redirect: "/account/applications" } });
@@ -213,6 +266,7 @@ test("a closed application registration can exit the current flow", async ({
           csrf_token: "csrf-test",
           mode: activeFlow ? "closed" : "self_service",
           status: activeFlow ? "ready" : "",
+          flow: "closed-application-flow",
         },
       },
     });

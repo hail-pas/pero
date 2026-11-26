@@ -188,7 +188,6 @@ pub async fn finish_enrollment(
     state: &AppState,
     jar: CookieJar,
     result: crate::service::enrollment::EnrollmentResult,
-    request: Option<&crate::db::entity::authorization_requests::Model>,
     ip: Option<IpNetwork>,
     user_agent: Option<String>,
 ) -> axum::response::Response {
@@ -221,21 +220,54 @@ pub async fn finish_enrollment(
             Err(error) => {
                 tracing::error!(%error, "Registration committed but session creation failed");
                 let cookies = state.cookie_factory();
-                jar.add(cookies.clear_cookie(cookies.session_cookie_name()))
+                return (
+                    jar.add(cookies.clear_cookie(cookies.session_cookie_name())),
+                    Redirect::to("/sso/register?error=enrollment_completed_login_required"),
+                )
+                    .into_response();
             }
         }
     } else {
         jar
     };
+    if result.resume_portal
+        && let Some(id) = result.auth_request_id
+    {
+        use crate::db::entity::authorization_requests;
+        match authorization_requests::Entity::find_by_id(id)
+            .one(&state.db)
+            .await
+        {
+            Ok(Some(request))
+                if Some(request.client_id) == result.client_id
+                    && Some(request.app_id) == result.app_id
+                    && request.diagnostic_session_id.is_none()
+                    && request.completed_at.is_none()
+                    && request.expires_at > time::OffsetDateTime::now_utc() =>
+            {
+                match crate::web::oauth2::authorize::resolve_pending_authorization(
+                    state, &jar, &request, true,
+                )
+                .await
+                {
+                    Ok((jar, response)) => {
+                        return (crate::web::sso::register::clear_flow(jar), response)
+                            .into_response();
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "Registration authorization could not resume")
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(%error, "Registration authorization lookup failed"),
+            _ => {}
+        }
+    }
     // Enrollment may outlive its short-lived OAuth request. Recheck the
     // browser nonce and request after committing registration and creating the session.
-    let pending = if let Some(request) = request
-        .filter(|r| Some(r.id) == result.auth_request_id && Some(r.client_id) == result.client_id)
-    {
+    let pending = if let Some(id) = result.auth_request_id.filter(|_| !result.resume_portal) {
         match crate::web::sso::register::active_request(state, &jar).await {
-            Ok(current) => {
-                current.filter(|r| r.id == request.id && r.client_id == request.client_id)
-            }
+            Ok(current) => current.filter(|r| r.id == id && Some(r.client_id) == result.client_id),
             Err(error) => {
                 tracing::error!(%error, "Registration authorization lookup failed");
                 None
@@ -244,7 +276,7 @@ pub async fn finish_enrollment(
     } else {
         None
     };
-    if let Some(pending) = pending {
+    if let Some(pending) = &pending {
         let resume = match (pending.tenant_id, result.tenant_id) {
             (None, Some(tenant)) => {
                 match crate::db::helper::auth_request::bind_tenant(&state.db, pending.id, tenant)
@@ -261,20 +293,36 @@ pub async fn finish_enrollment(
             (_, None) => true,
         };
         if resume {
-            return (jar, Redirect::to("/oauth2/authorize/resume")).into_response();
+            let session_token = jar
+                .get(state.cookie_factory().session_cookie_name())
+                .map(|cookie| cookie.value());
+            match enrollment_resume_target(state, pending, result.tenant_id, session_token) {
+                Ok(uri) => {
+                    return (
+                        crate::web::sso::register::clear_flow(jar),
+                        Redirect::to(&uri),
+                    )
+                        .into_response();
+                }
+                Err(error) => tracing::error!(%error, "Failed to sign registration continuation"),
+            }
         }
     }
     let cookies = state.cookie_factory();
-    let jar = jar
-        .add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
-        .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()));
+    let jar = crate::web::sso::register::clear_flow(jar);
+    let jar = if pending.is_some() {
+        jar.add(cookies.clear_cookie(&cookies.nonce_cookie_name()))
+            .add(cookies.clear_cookie(&cookies.auth_req_cookie_name()))
+    } else {
+        jar
+    };
     if let Some(id) = result.client_id {
         match oauth_clients::Entity::find_by_id(id).one(&state.db).await {
             Ok(Some(client))
                 if client.status == CommonStatus::Active
                     && Some(client.app_id) == result.app_id =>
             {
-                match client_login_target(state, client, result.tenant_id, false).await {
+                match client_login_target(state, client, result.tenant_id, None).await {
                     Ok(Some(uri)) => return (jar, Redirect::to(&uri)).into_response(),
                     Ok(None) => {}
                     Err(error) => {
@@ -293,11 +341,106 @@ pub async fn finish_enrollment(
     (jar, Redirect::to(&target)).into_response()
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct EnrollmentContinuation {
+    pub request_id: uuid::Uuid,
+    pub client_id: uuid::Uuid,
+    pub app_id: uuid::Uuid,
+    tenant_id: Option<uuid::Uuid>,
+    expires: i64,
+    session_token_hash: Option<String>,
+}
+
+impl EnrollmentContinuation {
+    pub(crate) fn requires_session(&self) -> bool {
+        self.session_token_hash.is_some()
+    }
+
+    pub(crate) fn matches_session(&self, state: &AppState, jar: &CookieJar) -> bool {
+        self.session_token_hash.as_ref().is_none_or(|expected| {
+            jar.get(state.cookie_factory().session_cookie_name())
+                .is_some_and(|cookie| {
+                    let current = pero_utils::crypto::sha256_hex(cookie.value());
+                    pero_utils::crypto::constant_time_eq(current.as_bytes(), expected.as_bytes())
+                })
+        })
+    }
+}
+
+pub(crate) fn enrollment_resume_target(
+    state: &AppState,
+    request: &crate::db::entity::authorization_requests::Model,
+    tenant_id: Option<uuid::Uuid>,
+    session_token: Option<&str>,
+) -> Result<String, serde_json::Error> {
+    let value = sign_enrollment_continuation(state, request, tenant_id, session_token)?;
+    let mut uri = "/oauth2/authorize/resume".to_owned();
+    pero_utils::encode::append_query_param(&mut uri, "enrollment", &value);
+    Ok(uri)
+}
+
+pub(crate) fn sign_enrollment_continuation(
+    state: &AppState,
+    request: &crate::db::entity::authorization_requests::Model,
+    tenant_id: Option<uuid::Uuid>,
+    session_token: Option<&str>,
+) -> Result<String, serde_json::Error> {
+    let target = EnrollmentContinuation {
+        request_id: request.id,
+        client_id: request.client_id,
+        app_id: request.app_id,
+        tenant_id: tenant_id.or(request.tenant_id),
+        expires: request.expires_at.unix_timestamp() + 600,
+        session_token_hash: session_token.map(pero_utils::crypto::sha256_hex),
+    };
+    pero_utils::crypto::encode_signed_json(&target, enrollment_key(state))
+}
+
+fn enrollment_key(state: &AppState) -> &[u8] {
+    state
+        .config
+        .sso
+        .cookie_signing_secret
+        .expose_secret()
+        .as_bytes()
+}
+
+pub(crate) fn enrollment_continuation(
+    state: &AppState,
+    value: &str,
+) -> Option<EnrollmentContinuation> {
+    let target: EnrollmentContinuation =
+        pero_utils::crypto::decode_signed_json(value, enrollment_key(state)).ok()?;
+    (target.expires > time::OffsetDateTime::now_utc().unix_timestamp()).then_some(target)
+}
+
+pub(crate) async fn enrollment_fallback(
+    state: &AppState,
+    target: &EnrollmentContinuation,
+    status: Option<&str>,
+) -> String {
+    use crate::db::entity::oauth_clients;
+    use sea_orm::EntityTrait;
+    let client = oauth_clients::Entity::find_by_id(target.client_id)
+        .one(&state.db)
+        .await
+        .inspect_err(|error| tracing::warn!(%error, "Registration fallback unavailable"))
+        .ok()
+        .flatten()
+        .filter(|c| c.app_id == target.app_id);
+    if let Some(client) = client
+        && let Ok(Some(uri)) = client_login_target(state, client, target.tenant_id, status).await
+    {
+        return uri;
+    }
+    "/account/applications".to_owned()
+}
+
 pub(crate) async fn client_login_target(
     state: &AppState,
     client: crate::db::entity::oauth_clients::Model,
     tenant_id: Option<uuid::Uuid>,
-    cancelled: bool,
+    status: Option<&str>,
 ) -> Result<Option<String>, sea_orm::DbErr> {
     use crate::db::{entity::apps, enums::CommonStatus};
     use sea_orm::EntityTrait;
@@ -315,8 +458,8 @@ pub(crate) async fn client_login_target(
     {
         return Ok(None);
     }
-    if cancelled {
-        pero_utils::encode::append_query_param(&mut uri, "enrollment_status", "cancelled");
+    if let Some(status) = status {
+        pero_utils::encode::append_query_param(&mut uri, "enrollment_status", status);
     }
     if let Some(tenant) = tenant_id {
         pero_utils::encode::append_query_param(&mut uri, "tenant_id", &tenant.to_string());

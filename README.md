@@ -44,7 +44,7 @@ UI 源码与公共资源只维护在 `frontend/`，本地配置示例让 Rust �
 
 Linux Docker 部署见 [deploy/pero/README.md](deploy/pero/README.md)。本机通过 `scripts/build-docker-image.sh` 构建 Linux amd64 镜像并导出，服务器加载后在 `/root/projects/pero/runtime` 启动，无需服务器编译或本机 Rust/Zig。现有 `/root/projects/pero/source` 可保留；`scripts/package-production-config.sh` 仅在需要迁移配置时使用，私有包不提交 Git。
 
-数据库已合并为单个 `001_init.sql` 初始迁移。服务启动、bootstrap 和 `scripts/migrate.sh` 共用编译进程序的迁移实现，无需 psql；启动时在监听端口和启动后台任务之前完成检查。检查 PostgreSQL 18+、迁移历史顺序及 SHA-256，使用数据库事务锁串行处理并发启动；全部待执行迁移和版本记录在同一事务内完成，验收表字段、关键唯一索引、约束、注销/通知触发器、pgcrypto 和系统种子数据后提交。失败时回滚并终止启动，日志保留错误；修正原因后重新启动即可重试。
+数据库以 `001_init.sql` 为初始迁移，已部署数据库通过增量迁移升级。服务启动、bootstrap 和 `scripts/migrate.sh` 共用编译进程序的迁移实现，无需 psql；启动时在监听端口和启动后台任务之前完成检查。检查 PostgreSQL 18+、迁移历史顺序及 SHA-256，使用数据库事务锁串行处理并发启动；全部待执行迁移和版本记录在同一事务内完成，验收表字段、关键唯一索引、约束、注销/通知触发器、pgcrypto 和系统种子数据后提交。失败时回滚并终止启动，日志保留错误；修正原因后重新启动即可重试。
 
 这是新的空库基线：合并前的 001–022 历史或旧 checksum 会被拒绝，不自动改写历史或清空数据。已有环境先备份，使用新库初始化并按需显式导入业务数据；不要直接删除旧库迁移记录。后续增加 `002_description.sql` 等递增文件，同时更新 `src/db/verify.sql` 的验收要求并重新构建；已发布的 SQL 不应修改。部署包包含迁移工具、公开默认值和示例，不包含真实配置或私钥。详见 [数据库迁移与失败恢复](docs/database-migrations.md)。
 
@@ -178,7 +178,7 @@ MIT OR Apache-2.0
 
 `/account/applications` 提供应用加入申请、退出应用及注销账户。退出应用撤销该应用资格、consent 和令牌；注销账户需15 分钟内的近期认证、准确输入用户名确认，移除个人资料和认证凭据并撤销全部会话。管理员必须先移除管理员身份。普通退出登录仍使用原流程。注册申请与组织邀请在到期 30 天后分批清理；登录及管理员审计记录不自动删除，应由部署方按审计与合规要求制定留存策略。租户和成员对账历史不参与短期凭据清理；注销不自动删除业务应用中的数据。
 
-应用可在 OIDC 授权请求中使用 `prompt=create` 进入注册；需配置客户端 `login_uri`，以便跨设备或超时后重新发起授权。组织邀请支持新用户注册及既有用户独立登录后加入；应用发出的邀请自动关联来源客户端。
+应用可在 OIDC 授权请求中使用 `prompt=create` 进入注册；需配置客户端 `login_uri`，以便跨设备或超时后重新发起授权。组织邀请支持新用户注册及既有用户独立登录后加入；应用发出的邀请自动关联来源客户端。应用登录入口处理 `enrollment_status=cancelled` 和 `enrollment_status=expired`，由用户选择重新发起。
 
 数据模型及流程说明见 [注册与邀请设计](docs/registration-invitation-design.md)。
 

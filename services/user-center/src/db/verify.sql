@@ -8,7 +8,7 @@ SELECT id, code_hash, authorization_request_id, user_id, app_id, client_id, sess
 SELECT id, client_id, app_id, redirect_uri, scopes, client_state, nonce, code_challenge, code_challenge_method, prompt, max_age, login_hint, authorized_user_id, created_at, expires_at, completed_at, diagnostic_session_id FROM authorization_requests LIMIT 0;
 SELECT id, session_id, client_id, user_id, endpoint, created_at, expires_at, next_attempt_at, attempts, lease_id, leased_until, delivered_at, expired_at, last_error FROM backchannel_logout_deliveries LIMIT 0;
 SELECT id, user_id, change_type, new_value, status, verification_code_hash, nonce, requested_at, expires_at, verified_at, cancelled_at, created_at, updated_at FROM contact_change_requests LIMIT 0;
-SELECT id, app_id, client_id, auth_request_id, email, phone, invitation, invited_by, domain_exception, reason, token_hash, status, verified_at, approved_by, approved_at, provider_id, subject, completed_user_id, created_at, expires_at, last_sent_at FROM enrollments LIMIT 0;
+SELECT id, app_id, client_id, auth_request_id, email, phone, invitation, invited_by, domain_exception, reason, token_hash, status, verified_at, approved_by, approved_at, provider_id, subject, completed_user_id, requested_user_id, tenant_id, authorization_session_id, created_at, expires_at, last_sent_at FROM enrollments LIMIT 0;
 SELECT id, user_id, provider_id, kind, subject, password_hash, password_algorithm, password_updated_at, profile, last_login_at, created_at, updated_at, unbound_at FROM identities LIMIT 0;
 SELECT activate_at, last_issued_until, id, provider_id, kid, use, algorithm, public_key_pem, private_key_pem_enc, certificate_pem, active, not_before, expires_at, revoked_at, created_at, updated_at FROM identity_provider_keys LIMIT 0;
 SELECT id, code, name, kind, issuer, authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri, end_session_endpoint, client_id, client_secret_enc, scopes, settings, enabled, created_at, updated_at FROM identity_providers LIMIT 0;
@@ -72,6 +72,7 @@ BEGIN
     FOREACH object_name IN ARRAY ARRAY['session_backchannel_logout','app_backchannel_logout',
                                       'client_backchannel_logout','client_session_backchannel_logout','app_session_revocation',
                                       'tenant_session_revocation','tenant_member_session_revocation','notification_outbox_deleted',
+                                      'tenant_invitation_notification_cancelled',
                                       'user_account_sync','membership_account_sync','client_account_sync','app_account_sync',
                                       'tg_pero_personal_tenant','tenant_membership_sync','tenant_status_sync',
                                       'aa_tenant_app_history_access','aa_tenant_app_history_member',
@@ -94,7 +95,7 @@ END $$;
 
 SELECT id,kind,name,slug,owner_user_id,status,platform_suspended,auth_version,created_at,updated_at,max_members FROM tenants LIMIT 0;
 SELECT tenant_id,user_id,role,status,auth_version,joined_at,updated_at FROM tenant_members LIMIT 0;
-SELECT id,tenant_id,client_id,email,role,token_hash,status,invited_by,expires_at,accepted_at,accepted_user_id,created_at FROM tenant_invitations LIMIT 0;
+SELECT id,tenant_id,client_id,email,role,token_hash,status,invited_by,expires_at,accepted_at,accepted_user_id,created_at,notification_id FROM tenant_invitations LIMIT 0;
 SELECT tenant_mode,organization_access,organization_auto_access FROM apps LIMIT 0;
 SELECT admission_origin FROM user_app_access LIMIT 0;
 SELECT tenant_id,app_id FROM tenant_app_grants LIMIT 0;

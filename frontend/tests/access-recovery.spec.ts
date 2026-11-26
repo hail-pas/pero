@@ -30,7 +30,7 @@ for (const action of ["retry", "other", "cancel"] as const) {
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "申请或查看访问资格" }),
-    ).toHaveAttribute("href", "/account/applications");
+    ).toHaveAttribute("href", "/account/applications?recovery=signed-recovery");
     await expect(
       page.getByRole("link", { name: "申请或查看访问资格" }),
     ).toHaveAttribute("target", "_blank");

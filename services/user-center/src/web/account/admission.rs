@@ -16,6 +16,7 @@ struct AppRow {
     status: Option<String>,
     organization_admission: bool,
     organization_only: bool,
+    self_service_open: bool,
     code: String,
     description: Option<String>,
     homepage_url: Option<String>,
@@ -31,7 +32,17 @@ pub async fn get(
     let eligibility = crate::service::tenant_context::AUTO_ELIGIBILITY;
     let rows = AppRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        format!("SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,a.tenant_mode='organization' AS organization_only,COALESCE(u.require_mfa,false) AS require_mfa,COALESCE(u.admission_origin='organization',false) AS organization_admission,CASE WHEN u.status='active' AND u.admission_origin='organization' AND NOT ({eligibility}) THEN NULL ELSE u.status::text END AS status FROM apps a LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1 WHERE NOT a.system AND a.status='active' ORDER BY a.name"),
+        format!("SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,
+            a.tenant_mode='organization' AS organization_only,
+            COALESCE(p.mode,platform.mode)='self_service' AND NOT platform.emergency_stop AS self_service_open,
+            COALESCE(u.require_mfa,false) AS require_mfa,
+            COALESCE(u.admission_origin='organization',false) AS organization_admission,
+            CASE WHEN u.status='active' AND u.admission_origin='organization' AND NOT ({eligibility}) THEN NULL ELSE u.status::text END AS status
+            FROM apps a
+            JOIN registration_policies platform ON platform.id='00000000-0000-0000-0000-000000000000'
+            LEFT JOIN registration_policies p ON p.app_id=a.id
+            LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1
+            WHERE NOT a.system AND a.status='active' ORDER BY a.name"),
         [account.user.id.into()],
     ))
     .all(&state.db)
@@ -74,6 +85,8 @@ pub struct Action {
     action: String,
     #[serde(default)]
     confirmation: String,
+    #[serde(default)]
+    recovery: String,
 }
 pub async fn app(
     State(state): State<AppState>,
@@ -88,20 +101,18 @@ pub async fn app(
     let result = match f.action.as_str() {
         "leave" => crate::service::account_security::leave_app(&state, &account.session, id).await,
         "join" => {
-            let email = account.user.email.as_deref();
-            let phone = account.user.phone.as_deref();
-            let prefer_phone = email.is_none()
-                || (!state.config.notification.available("email")
-                    && state.config.notification.available("phone"));
-            if let Some(phone) = phone.filter(|_| prefer_phone) {
-                crate::service::enrollment::start_phone(&state, phone, Some(id)).await
-            } else if let Some(email) = email {
-                crate::service::enrollment::start(&state, email, Some(id), None).await
-            } else {
-                Err(crate::service::ManagementError::Invalid(
-                    "enrollment_contact_required",
-                ))
-            }
+            let source = match crate::web::oauth2::access::enrollment_source(
+                &state,
+                &f.recovery,
+                account.session.id,
+                id,
+            )
+            .await
+            {
+                Ok(source) => source,
+                Err(error) => return util::management_response(Err(error)),
+            };
+            crate::service::enrollment::start_portal(&state, &account.session, id, source).await
         }
         _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
     };

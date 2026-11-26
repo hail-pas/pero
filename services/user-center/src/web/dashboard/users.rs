@@ -102,13 +102,8 @@ pub async fn create(
     }
 
     util::management_response(
-        crate::service::enrollment::start(
-            &state,
-            &form.email,
-            None,
-            Some((&admin.session, false, "")),
-        )
-        .await,
+        crate::service::enrollment::invite(&state, &form.email, None, &admin.session, false, "")
+            .await,
     )
 }
 

@@ -1,6 +1,5 @@
 use axum::extract::State;
 use axum::response::Response;
-use axum_extra::extract::CookieJar;
 
 use crate::service::provider;
 use crate::state::app::AppState;
@@ -14,33 +13,6 @@ pub async fn error_page(
     let code = params.get("code").cloned().unwrap_or_default();
     let tpl = ErrorView { code };
     pero_api_axum::form::view("ErrorView", tpl)
-}
-
-pub(crate) async fn resolve_auth_request_id(
-    state: &AppState,
-    jar: &CookieJar,
-) -> Result<Option<uuid::Uuid>, pero_error::AppError> {
-    let cookies = state.cookie_factory();
-    let nonce_name = cookies.nonce_cookie_name();
-    if let Some(c) = jar.get(&nonce_name) {
-        let key_str = c.value();
-        if let Ok(key) = crate::cache::key::pending_req.key(key_str)
-            && let Some(val) = state
-                .cache
-                .get::<crate::cache::key::PendingReqValue>(key)
-                .await?
-            && let Ok(id) = uuid::Uuid::parse_str(&val.auth_request_id)
-        {
-            return Ok(Some(id));
-        }
-    }
-    let req_name = cookies.auth_req_cookie_name();
-    Ok(jar.get(&req_name).and_then(|c| {
-        cookies
-            .decode_auth_request(c.value())
-            .ok()
-            .map(|v| v.auth_request_id)
-    }))
 }
 
 pub(crate) async fn find_enabled_social_providers(

@@ -21,7 +21,7 @@ pub async fn enqueue<C: ConnectionTrait>(
     user_id: Uuid,
     message: &Notification<'_>,
     expires_at: OffsetDateTime,
-) -> Result<(), DbErr> {
+) -> Result<Uuid, DbErr> {
     enqueue_owned(db, Some(user_id), None, message, expires_at).await
 }
 
@@ -31,7 +31,9 @@ pub async fn enqueue_enrollment<C: ConnectionTrait>(
     message: &Notification<'_>,
     expires_at: OffsetDateTime,
 ) -> Result<(), DbErr> {
-    enqueue_owned(db, None, Some(enrollment_id), message, expires_at).await
+    enqueue_owned(db, None, Some(enrollment_id), message, expires_at)
+        .await
+        .map(|_| ())
 }
 
 async fn enqueue_owned<C: ConnectionTrait>(
@@ -40,7 +42,7 @@ async fn enqueue_owned<C: ConnectionTrait>(
     enrollment_id: Option<Uuid>,
     message: &Notification<'_>,
     expires_at: OffsetDateTime,
-) -> Result<(), DbErr> {
+) -> Result<Uuid, DbErr> {
     let payload = serde_json::to_string(message)
         .map_err(|_| DbErr::Custom("notification serialization failed".into()))?;
     let recipient = match message.channel {
@@ -49,10 +51,11 @@ async fn enqueue_owned<C: ConnectionTrait>(
         _ => "***".into(),
     };
     // Queue and metadata are atomic even for callers without an explicit transaction.
+    let id = Uuid::now_v7();
     db.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
         "WITH queued AS (INSERT INTO notification_outbox(id,payload_enc,expires_at,user_id,enrollment_id,kind) VALUES($1,pgp_sym_encrypt($2,current_setting('app.encrypt_key')),$3,$4,$5,$6) RETURNING id) INSERT INTO notification_deliveries(id,user_id,enrollment_id,kind,channel,recipient) SELECT id,$4,$5,$6,$7,$8 FROM queued",
-        [Uuid::now_v7().into(),payload.into(),expires_at.into(),user_id.into(),enrollment_id.into(),message.kind.into(),message.channel.into(),recipient.into()])).await?;
-    Ok(())
+        [id.into(),payload.into(),expires_at.into(),user_id.into(),enrollment_id.into(),message.kind.into(),message.channel.into(),recipient.into()])).await?;
+    Ok(id)
 }
 
 pub async fn retry(
@@ -115,6 +118,7 @@ pub async fn enqueue_verification<C: ConnectionTrait>(
         OffsetDateTime::now_utc() + time::Duration::minutes(15),
     )
     .await
+    .map(|_| ())
 }
 
 #[derive(FromQueryResult)]

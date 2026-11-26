@@ -3089,7 +3089,7 @@ async fn enrollment_policy_proof_and_membership_lifecycle() {
     );
     let raw = pero_utils::crypto::generate_token();
     let id = Uuid::now_v7();
-    sql(db,"INSERT INTO enrollments(id,app_id,email,token_hash,expires_at) VALUES($1,$2,'new@example.com',$3,now()+interval '1 hour')",vec![id.into(),app.into(),pero_utils::crypto::sha256_hex(&raw).into()]).await;
+    sql(db,"INSERT INTO enrollments(id,app_id,client_id,email,token_hash,expires_at) VALUES($1,$2,$3,'new@example.com',$4,now()+interval '1 hour')",vec![id.into(),app.into(),fixture.client.into(),pero_utils::crypto::sha256_hex(&raw).into()]).await;
     assert!(
         enrollment::finalize(state, &raw, "new_user", "ValidPass123!", None, None)
             .await
@@ -3214,14 +3214,17 @@ async fn enrollment_approval_and_emergency_stop() {
 }
 
 #[tokio::test]
-#[ignore = "requires dedicated PERO_TEST_DATABASE_URL and local Redis database 15"]
+#[ignore = "requires dedicated PERO_TEST_DATABASE_URL and PERO_TEST_REDIS_URL"]
 async fn enrollment_invitation_delivery_rotation_and_acceptance() {
     use crate::service::enrollment;
     use sea_orm::FromQueryResult;
     let fixture = SecurityFixture::new().await;
     let mut state = fixture.state.clone();
     let mut config = (*state.config).clone();
-    config.redis.url = "redis://127.0.0.1:6379/15".parse().unwrap();
+    config.redis.url = std::env::var("PERO_TEST_REDIS_URL")
+        .unwrap()
+        .parse()
+        .unwrap();
     config.notification.endpoint = "https://notify.example.test".into();
     state.cache =
         std::sync::Arc::new(pero_cache_redis::RedisCacheStore::from_config(&config.redis).unwrap());
@@ -3247,11 +3250,13 @@ async fn enrollment_invitation_delivery_rotation_and_acceptance() {
         .unwrap()
         .unwrap();
     let address = format!("invite-{}@example.com", Uuid::now_v7().simple());
-    enrollment::start(
+    enrollment::invite(
         &state,
         &address,
         Some(fixture.app),
-        Some((&actor, false, "Team invitation")),
+        &actor,
+        false,
+        "Team invitation",
     )
     .await
     .unwrap();
@@ -3342,6 +3347,7 @@ async fn enrollment_social_completion_requires_browser_proof() {
         proved_at: time::OffsetDateTime::now_utc().unix_timestamp(),
         app: None,
         invitation_hash: None,
+        enrollment_id: Some(request),
     };
     assert!(
         enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
@@ -3369,6 +3375,24 @@ async fn enrollment_social_completion_requires_browser_proof() {
             .is_err()
     );
     proof.invitation_hash = None;
+    sql(
+        db,
+        "UPDATE identity_providers SET enabled=false WHERE id=$1",
+        vec![provider.into()],
+    )
+    .await;
+    assert!(matches!(
+        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof)).await,
+        Err(crate::service::ManagementError::Invalid(
+            "registration_closed"
+        ))
+    ));
+    sql(
+        db,
+        "UPDATE identity_providers SET enabled=true WHERE id=$1",
+        vec![provider.into()],
+    )
+    .await;
     enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
         .await
         .unwrap();

@@ -147,6 +147,7 @@ fn render_reset(
     error: String,
     success: String,
 ) -> Response {
+    let registration = super::register::has_registration(state, &jar);
     state
         .web_security()
         .view_with_csrf(jar, "ResetPasswordView", |csrf_token| ResetPasswordView {
@@ -154,5 +155,6 @@ fn render_reset(
             error,
             success,
             csrf_token,
+            registration,
         })
 }

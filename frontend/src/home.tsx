@@ -58,7 +58,7 @@ export function Home({ data }: { data: ViewDataMap["HomeView"] }) {
                 </Button>
                 <Button
                   component={RouterLink}
-                  to="/sso/register"
+                  to="/sso/register?entry=platform"
                   variant="contained"
                   color="primary"
                 >

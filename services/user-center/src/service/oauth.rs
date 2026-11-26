@@ -70,27 +70,24 @@ impl<'a> OAuthService<'a> {
 
         let client = client.ok_or(OAuthError::InvalidClient("Client not found"))?;
 
-        if client.status != CommonStatus::Active {
-            return Err(OAuthError::InvalidClient("Client is disabled"));
-        }
-
-        if !client.redirect_uris.iter().any(|uri| uri == redirect_uri)
-            || pero_utils::redirect::validate_oauth_redirect_uri(
-                redirect_uri,
-                client.r#type == OauthClientType::Public,
-            )
-            .is_err()
-        {
-            return Err(OAuthError::InvalidRedirectUri);
-        }
-
-        for scope in scopes {
-            if !crate::service::scope::contains(&client.scopes, scope) {
-                return Err(OAuthError::InvalidScope(scope.clone()));
-            }
-        }
-
+        validate_client_parameters(&client, redirect_uri, scopes)?;
         Ok(client)
+    }
+
+    pub(crate) async fn validate_pending_authorization(
+        &self,
+        request: &authorization_requests::Model,
+    ) -> Result<(), OAuthError> {
+        let client = oauth_clients::Entity::find_by_id(request.client_id)
+            .one(self.db)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+            .ok_or(OAuthError::AccessDenied)?;
+        if !client_allows_authorization(&client, request) {
+            return Err(OAuthError::AccessDenied);
+        }
+        self.validate_app(&client).await?;
+        Ok(())
     }
 
     /// 校验客户端关联的 App 是否存在且 active
@@ -216,14 +213,7 @@ impl<'a> OAuthService<'a> {
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
             .ok_or(OAuthError::AccessDenied)?;
-        if client.status != CommonStatus::Active
-            || client.app_id != request.app_id
-            || !client
-                .grant_types
-                .iter()
-                .any(|grant| grant == "authorization_code")
-            || !client.redirect_uris.contains(&request.redirect_uri)
-            || !crate::service::scope::allowed(&request.scopes, &client.scopes)
+        if !client_allows_authorization(&client, &request)
             || crate::service::access::lock_grant_access(&txn, session.user_id, request.app_id)
                 .await
                 .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
@@ -289,11 +279,8 @@ impl<'a> OAuthService<'a> {
         }
 
         let now = OffsetDateTime::now_utc();
-        if auth_request.completed_at.is_some() || auth_request.expires_at < now {
-            return Err(OAuthError::Internal(AppError::bad_request(
-                "invalid_authorization_request",
-                "Authorization request is no longer valid",
-            )));
+        if auth_request.completed_at.is_some() || auth_request.expires_at <= now {
+            return Err(OAuthError::AccessDenied);
         }
 
         if requires_reauthentication(
@@ -513,6 +500,46 @@ impl<'a> OAuthService<'a> {
         let value: Option<PendingReqValue> = self.cache.get(key).await?;
         Ok(value.is_some())
     }
+}
+
+fn validate_client_parameters(
+    client: &oauth_clients::Model,
+    redirect_uri: &str,
+    scopes: &[String],
+) -> Result<(), OAuthError> {
+    if client.status != CommonStatus::Active {
+        return Err(OAuthError::InvalidClient("Client is disabled"));
+    }
+    if !client.redirect_uris.iter().any(|uri| uri == redirect_uri)
+        || pero_utils::redirect::validate_oauth_redirect_uri(
+            redirect_uri,
+            client.r#type == OauthClientType::Public,
+        )
+        .is_err()
+    {
+        return Err(OAuthError::InvalidRedirectUri);
+    }
+    if let Some(scope) = scopes
+        .iter()
+        .find(|scope| !crate::service::scope::contains(&client.scopes, scope))
+    {
+        return Err(OAuthError::InvalidScope(scope.clone()));
+    }
+    Ok(())
+}
+
+fn client_allows_authorization(
+    client: &oauth_clients::Model,
+    request: &authorization_requests::Model,
+) -> bool {
+    client.app_id == request.app_id
+        && client
+            .grant_types
+            .iter()
+            .any(|grant| grant == "authorization_code")
+        && (request.code_challenge.is_some()
+            || (!client.require_pkce && client.r#type != OauthClientType::Public))
+        && validate_client_parameters(client, &request.redirect_uri, &request.scopes).is_ok()
 }
 
 #[derive(Debug)]
