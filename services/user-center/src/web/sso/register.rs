@@ -410,6 +410,14 @@ pub(crate) async fn enter_enrollment(state: &AppState, jar: CookieJar, token: St
             return render(state, jar, None, "").await;
         }
         Err(crate::service::ManagementError::Invalid(_)) => {
+            // A rotated link cannot authorize any action, but must not discard
+            // the browser's independently authenticated registration progress.
+            if tenant_token(&jar).is_some() {
+                return render_invitation(state, jar, "enrollment_unavailable").await;
+            }
+            if progress_claim(state, &jar).is_some() || flow_token(&jar).is_some() {
+                return render(state, jar, None, "enrollment_unavailable").await;
+            }
             return render(state, clear_flow(jar), None, "enrollment_unavailable").await;
         }
         Err(e) => return util::management_response(Err(e)),
