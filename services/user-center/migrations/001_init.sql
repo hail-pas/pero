@@ -2,8 +2,8 @@
 -- User Center — Initial Schema
 -- ============================================================
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS citext;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 
 -- encrypt_key 由 DatabaseConfig 管理，通过 PostgreSQL session-level custom setting 注入：
 --   SET app.encrypt_key = '<key>';
@@ -81,14 +81,14 @@ CREATE UNIQUE INDEX ux_users_username_alive
 ON users (username)
 WHERE deleted_at IS NULL;
 
-CREATE INDEX ix_users_status
-ON users (status);
+CREATE INDEX ix_users_alive_created
+ON users (created_at DESC, id DESC) WHERE deleted_at IS NULL;
 
-CREATE INDEX ix_users_created_at
-ON users (created_at);
+CREATE INDEX ix_users_alive_status_created
+ON users (status, created_at DESC, id DESC) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE users IS
-'用户主表。第一阶段不引入 tenant；email 和 phone 直接保存在本表中，并用 *_verified_at 标识验证时间。逻辑删除由 deleted_at 控制，status 中不包含 deleted 值。';
+'平台账号主表。联系方式由对应的 *_verified_at 标识验证时间；逻辑删除由 deleted_at 控制。';
 
 COMMENT ON COLUMN users.id IS
 '用户主键，使用 PostgreSQL 18 内置 uuidv7() 生成。';
@@ -253,6 +253,7 @@ COMMENT ON COLUMN apps.updated_at IS
 CREATE TABLE oauth_clients (
     login_uri text,
     backchannel_logout_uri text,
+    account_sync_enabled boolean NOT NULL DEFAULT false,
     account_sync_uri text,
     previous_secret_expires_at timestamptz,
     previous_secret_hash text,
@@ -260,7 +261,7 @@ CREATE TABLE oauth_clients (
 
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
 
-    identifier citext NOT NULL,
+    identifier text NOT NULL,
     secret_hash text NULL,
 
     name text NULL,
@@ -296,6 +297,11 @@ CREATE TABLE oauth_clients (
     CONSTRAINT ck_oauth_clients_id_token_ttl_positive
         CHECK (id_token_ttl_seconds > 0),
 
+    CONSTRAINT ck_previous_client_secret
+        CHECK ((previous_secret_hash IS NULL) = (previous_secret_expires_at IS NULL)),
+    CONSTRAINT ck_account_sync_confidential
+        CHECK ((NOT account_sync_enabled OR type = 'confidential')
+           AND (account_sync_enabled OR account_sync_uri IS NULL)),
     CONSTRAINT ck_oauth_clients_confidential_secret
         CHECK (
             (type = 'confidential' AND secret_hash IS NOT NULL)
@@ -307,11 +313,11 @@ CREATE TABLE oauth_clients (
 CREATE UNIQUE INDEX ux_oauth_clients_identifier
 ON oauth_clients (identifier);
 
-CREATE INDEX ix_oauth_clients_app_id
-ON oauth_clients (app_id);
+CREATE INDEX ix_oauth_clients_app_created
+ON oauth_clients (app_id, created_at, id);
 
-CREATE INDEX ix_oauth_clients_status
-ON oauth_clients (status);
+CREATE INDEX ix_oauth_clients_previous_secret_expiry
+ON oauth_clients (previous_secret_expires_at) WHERE previous_secret_expires_at IS NOT NULL;
 
 COMMENT ON COLUMN oauth_clients.token_version IS
 '客户端安全策略版本，签发及在线验证 access token 时绑定。';
@@ -326,7 +332,7 @@ COMMENT ON COLUMN oauth_clients.app_id IS
 '所属子应用 ID。';
 
 COMMENT ON COLUMN oauth_clients.identifier IS
-'OAuth client_id，对外暴露给子应用。使用 citext，避免大小写造成重复配置。';
+'OAuth client_id，对外暴露给子应用。区分大小写，全局唯一。';
 
 COMMENT ON COLUMN oauth_clients.secret_hash IS
 'Client Secret 哈希。confidential client 必须配置；public client 可为空。推荐使用 bcrypt 或 SHA-256。';
@@ -424,9 +430,6 @@ ON identity_providers (code);
 CREATE INDEX ix_identity_providers_kind
 ON identity_providers (kind);
 
-CREATE INDEX ix_identity_providers_enabled
-ON identity_providers (enabled);
-
 COMMENT ON TABLE identity_providers IS
 '身份提供方配置表。local 表示用户中心自身；github、google 等第三方也作为 provider 配置在本表。';
 
@@ -486,7 +489,7 @@ CREATE TABLE identity_provider_keys (
 
     provider_id uuid NOT NULL REFERENCES identity_providers(id) ON DELETE CASCADE,
 
-    kid citext NOT NULL,
+    kid text NOT NULL,
     use key_use NOT NULL DEFAULT 'sig',
     algorithm key_algorithm NOT NULL DEFAULT 'RS256',
 
@@ -514,11 +517,12 @@ CREATE UNIQUE INDEX ux_identity_provider_keys_active_signing
 ON identity_provider_keys (provider_id)
 WHERE active = true AND use = 'sig' AND revoked_at IS NULL;
 
-CREATE INDEX ix_identity_provider_keys_provider_id
-ON identity_provider_keys (provider_id);
-
 CREATE INDEX ix_identity_provider_keys_active
 ON identity_provider_keys (active);
+
+CREATE INDEX ix_identity_provider_keys_signing_material_expiry
+ON identity_provider_keys (expires_at)
+WHERE (private_key_pem_enc IS NOT NULL OR activate_at IS NOT NULL) AND expires_at IS NOT NULL;
 
 COMMENT ON TABLE identity_provider_keys IS
 'Provider 密钥表。第一阶段主要用于 local provider 的 JWT 签名和 JWKS 暴露。私钥使用 pgp_sym_encrypt 加密存储，密钥由 DatabaseConfig 通过 app.encrypt_key 注入。';
@@ -530,7 +534,7 @@ COMMENT ON COLUMN identity_provider_keys.provider_id IS
 '所属 provider。通常指向 code=local 的 provider。';
 
 COMMENT ON COLUMN identity_provider_keys.kid IS
-'Key ID。写入 JWT header，用于子应用或 JWKS 客户端选择验证公钥。';
+'Key ID。区分大小写，写入 JWT header 供子应用选择验证公钥。';
 
 COMMENT ON COLUMN identity_provider_keys.use IS
 '密钥用途。sig=签名；enc=加密。第一阶段主要使用 sig。';
@@ -619,9 +623,6 @@ ON identities (user_id);
 CREATE INDEX ix_identities_provider_id
 ON identities (provider_id);
 
-CREATE INDEX ix_identities_kind
-ON identities (kind);
-
 CREATE INDEX ix_identities_unbound_at
 ON identities (unbound_at) WHERE unbound_at IS NOT NULL;
 
@@ -671,98 +672,7 @@ COMMENT ON INDEX ux_identities_one_oauth_per_provider IS
 '同一用户在同一 OAuth provider 下只允许一个当前有效 OAuth 身份。';
 
 -- ============================================================
--- 7. authorization_requests
--- ============================================================
-
-CREATE TABLE authorization_requests (
-    id uuid PRIMARY KEY DEFAULT uuidv7(),
-
-    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-
-    redirect_uri text NOT NULL,
-    scopes text[] NOT NULL DEFAULT ARRAY[]::text[],
-
-    client_state text NULL,
-    nonce text NULL,
-
-    code_challenge text NULL,
-    code_challenge_method code_challenge_method NULL,
-
-    prompt text NULL,
-    max_age bigint NULL CHECK (max_age >= 0),
-    login_hint citext NULL,
-
-    authorized_user_id uuid NULL REFERENCES users(id) ON DELETE SET NULL,
-
-    created_at timestamptz NOT NULL DEFAULT now(),
-    expires_at timestamptz NOT NULL,
-    completed_at timestamptz NULL,
-
-    CONSTRAINT ck_authorization_requests_expiry
-        CHECK (expires_at > created_at),
-    tenant_id uuid REFERENCES tenants(id)
-);
-
-CREATE INDEX ix_authorization_requests_client_id
-ON authorization_requests (client_id);
-
-CREATE INDEX ix_authorization_requests_app_id
-ON authorization_requests (app_id);
-
-CREATE INDEX ix_authorization_requests_expires_at
-ON authorization_requests (expires_at);
-
-CREATE INDEX ix_authorization_requests_tenant
-ON authorization_requests (tenant_id) WHERE tenant_id IS NOT NULL;
-
-COMMENT ON TABLE authorization_requests IS
-'SSO /oauth2/authorize 请求上下文表。用于在用户登录、第三方跳转、授权码生成之间保留原始请求信息。';
-
-COMMENT ON COLUMN authorization_requests.id IS
-'授权请求 ID，uuid v7。';
-
-COMMENT ON COLUMN authorization_requests.client_id IS
-'发起授权请求的 OAuth Client 内部 ID。';
-
-COMMENT ON COLUMN authorization_requests.app_id IS
-'目标子应用 ID。冗余保存是为了查询和校验方便。';
-
-COMMENT ON COLUMN authorization_requests.redirect_uri IS
-'本次请求使用的回调地址，必须来自 oauth_clients.redirect_uris 白名单。';
-
-COMMENT ON COLUMN authorization_requests.scopes IS
-'本次请求申请的 scopes。';
-
-COMMENT ON COLUMN authorization_requests.client_state IS
-'子应用传入的 state。用户中心只保存并原样回传，不应解析其业务含义。';
-
-COMMENT ON COLUMN authorization_requests.nonce IS
-'OIDC nonce，用于 ID Token 防重放。';
-
-COMMENT ON COLUMN authorization_requests.code_challenge IS
-'PKCE code challenge。';
-
-COMMENT ON COLUMN authorization_requests.code_challenge_method IS
-'PKCE 方法：plain 或 S256。建议只允许 S256。';
-
-COMMENT ON COLUMN authorization_requests.prompt IS
-'OIDC prompt 参数，可用于强制登录、选择账号等。第一阶段可选。';
-
-COMMENT ON COLUMN authorization_requests.login_hint IS
-'登录提示，例如用户邮箱。仅作为 UI 提示，不作为身份唯一依据。';
-
-COMMENT ON COLUMN authorization_requests.authorized_user_id IS
-'完成授权的用户 ID。用户认证成功后写入，用于审计追溯。';
-
-COMMENT ON COLUMN authorization_requests.expires_at IS
-'授权请求上下文过期时间，建议 5-10 分钟。';
-
-COMMENT ON COLUMN authorization_requests.completed_at IS
-'请求完成时间。生成授权码后可写入。';
-
--- ============================================================
--- 8. sso_sessions
+-- 7. sso_sessions
 -- ============================================================
 
 CREATE TABLE sso_sessions (
@@ -795,9 +705,6 @@ CREATE TABLE sso_sessions (
 
 CREATE UNIQUE INDEX ux_sso_sessions_token_hash
 ON sso_sessions (token_hash);
-
-CREATE INDEX ix_sso_sessions_user_id
-ON sso_sessions (user_id);
 
 CREATE INDEX ix_sso_sessions_identity_id
 ON sso_sessions (identity_id) WHERE identity_id IS NOT NULL;
@@ -854,6 +761,132 @@ COMMENT ON INDEX ix_sso_sessions_user_active IS
 '查询用户所有有效会话（revoked_at IS NULL）及按撤销状态过滤。';
 
 -- ============================================================
+-- 8. authorization_requests
+-- ============================================================
+
+CREATE TABLE authorization_requests (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+
+    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+
+    redirect_uri text NOT NULL,
+    scopes text[] NOT NULL DEFAULT ARRAY[]::text[],
+
+    client_state text NULL,
+    nonce text NULL,
+
+    code_challenge text NULL,
+    code_challenge_method code_challenge_method NULL,
+
+    prompt text NULL,
+    max_age bigint NULL CHECK (max_age >= 0),
+    login_hint citext NULL,
+
+    authorized_user_id uuid NULL REFERENCES users(id) ON DELETE SET NULL,
+    diagnostic_session_id uuid REFERENCES sso_sessions(id) ON DELETE CASCADE,
+
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    completed_at timestamptz NULL,
+
+    CONSTRAINT ck_authorization_requests_expiry
+        CHECK (expires_at > created_at),
+    tenant_id uuid REFERENCES tenants(id)
+);
+
+CREATE INDEX ix_authorization_requests_client_id
+ON authorization_requests (client_id);
+
+CREATE INDEX ix_authorization_requests_app_id
+ON authorization_requests (app_id);
+
+CREATE INDEX ix_authorization_requests_expires_at
+ON authorization_requests (expires_at);
+
+CREATE INDEX ix_authorization_requests_tenant
+ON authorization_requests (tenant_id) WHERE tenant_id IS NOT NULL;
+
+CREATE INDEX ix_authorization_requests_diagnostic_session ON authorization_requests(diagnostic_session_id) WHERE diagnostic_session_id IS NOT NULL;
+
+COMMENT ON TABLE authorization_requests IS
+'SSO /oauth2/authorize 请求上下文表。用于在用户登录、第三方跳转、授权码生成之间保留原始请求信息。';
+
+COMMENT ON COLUMN authorization_requests.id IS
+'授权请求 ID，uuid v7。';
+
+COMMENT ON COLUMN authorization_requests.client_id IS
+'发起授权请求的 OAuth Client 内部 ID。';
+
+COMMENT ON COLUMN authorization_requests.app_id IS
+'目标子应用 ID。冗余保存是为了查询和校验方便。';
+
+COMMENT ON COLUMN authorization_requests.redirect_uri IS
+'本次请求使用的回调地址，必须来自 oauth_clients.redirect_uris 白名单。';
+
+COMMENT ON COLUMN authorization_requests.scopes IS
+'本次请求申请的 scopes。';
+
+COMMENT ON COLUMN authorization_requests.client_state IS
+'子应用传入的 state。用户中心只保存并原样回传，不应解析其业务含义。';
+
+COMMENT ON COLUMN authorization_requests.nonce IS
+'OIDC nonce，用于 ID Token 防重放。';
+
+COMMENT ON COLUMN authorization_requests.code_challenge IS
+'PKCE code challenge。';
+
+COMMENT ON COLUMN authorization_requests.code_challenge_method IS
+'PKCE 方法：plain 或 S256。建议只允许 S256。';
+
+COMMENT ON COLUMN authorization_requests.prompt IS
+'OIDC prompt 参数，可用于强制登录、选择账号等。第一阶段可选。';
+
+COMMENT ON COLUMN authorization_requests.login_hint IS
+'登录提示，例如用户邮箱。仅作为 UI 提示，不作为身份唯一依据。';
+
+COMMENT ON COLUMN authorization_requests.authorized_user_id IS
+'完成授权的用户 ID。用户认证成功后写入，用于审计追溯。';
+
+COMMENT ON COLUMN authorization_requests.expires_at IS
+'授权请求上下文过期时间，建议 5-10 分钟。';
+
+COMMENT ON COLUMN authorization_requests.completed_at IS
+'请求完成时间。生成授权码后可写入。';
+
+-- Application and OAuth client sessions
+CREATE TABLE app_sessions (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    sso_session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    revoked_at timestamptz,
+    revoke_reason text
+);
+CREATE UNIQUE INDEX ux_app_sessions_active ON app_sessions(user_id,app_id,sso_session_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX ix_app_sessions_active_user ON app_sessions(app_id,user_id,created_at,id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX ix_app_sessions_sso ON app_sessions(sso_session_id);
+CREATE INDEX ix_app_sessions_latest ON app_sessions(user_id,app_id,sso_session_id,created_at DESC,id DESC);
+
+CREATE TABLE client_sessions (
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
+    app_session_id uuid NOT NULL REFERENCES app_sessions(id) ON DELETE CASCADE,
+    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    revoked_at timestamptz,
+    revoke_reason text
+);
+CREATE UNIQUE INDEX ux_client_sessions_active ON client_sessions(app_session_id,client_id,tenant_id)
+    NULLS NOT DISTINCT WHERE revoked_at IS NULL;
+CREATE INDEX ix_client_sessions_client ON client_sessions(client_id,revoked_at);
+CREATE INDEX ix_client_sessions_parent ON client_sessions(app_session_id);
+CREATE INDEX ix_client_sessions_tenant ON client_sessions(tenant_id,revoked_at) WHERE tenant_id IS NOT NULL;
+
+-- ============================================================
 -- 9. authorization_codes
 -- ============================================================
 
@@ -861,13 +894,17 @@ CREATE TABLE authorization_codes (
     id uuid PRIMARY KEY DEFAULT uuidv7(),
 
     code_hash text NOT NULL,
+    admission_session_id uuid REFERENCES app_sessions(id) ON DELETE CASCADE,
+    admission_revoked boolean NOT NULL DEFAULT false,
+    takeover_allowed boolean NOT NULL DEFAULT false,
+    client_session_id uuid REFERENCES client_sessions(id) ON DELETE CASCADE,
 
     authorization_request_id uuid NULL REFERENCES authorization_requests(id) ON DELETE SET NULL,
 
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
-    session_id uuid NULL REFERENCES sso_sessions(id) ON DELETE SET NULL,
+    session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
 
     redirect_uri text NOT NULL,
     scopes text[] NOT NULL DEFAULT ARRAY[]::text[],
@@ -891,9 +928,6 @@ CREATE TABLE authorization_codes (
 CREATE UNIQUE INDEX ux_authorization_codes_code_hash
 ON authorization_codes (code_hash);
 
-CREATE INDEX ix_authorization_codes_user_id
-ON authorization_codes (user_id);
-
 CREATE INDEX ix_authorization_codes_client_id
 ON authorization_codes (client_id);
 
@@ -909,6 +943,10 @@ CREATE INDEX ix_authorization_codes_request
 ON authorization_codes (authorization_request_id) WHERE authorization_request_id IS NOT NULL;
 CREATE INDEX ix_authorization_codes_tenant_user
 ON authorization_codes (tenant_id,user_id) WHERE tenant_id IS NOT NULL;
+
+CREATE INDEX ix_authorization_codes_device ON authorization_codes(user_id,app_id,session_id);
+CREATE INDEX ix_authorization_codes_admission_session ON authorization_codes(admission_session_id) WHERE admission_session_id IS NOT NULL;
+CREATE INDEX ix_authorization_codes_client_session ON authorization_codes(client_session_id) WHERE client_session_id IS NOT NULL;
 
 COMMENT ON TABLE authorization_codes IS
 'SSO 授权码表。授权码只保存哈希，不保存明文。授权码短有效期且只能消费一次。';
@@ -967,7 +1005,7 @@ CREATE TABLE refresh_tokens (
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
-    session_id uuid NULL REFERENCES sso_sessions(id) ON DELETE SET NULL,
+    session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
 
     scopes text[] NOT NULL DEFAULT ARRAY[]::text[],
 
@@ -977,7 +1015,7 @@ CREATE TABLE refresh_tokens (
     revoked_at timestamptz NULL,
     revoke_reason text NULL,
 
-    replaced_by_id uuid NULL,
+    client_session_id uuid REFERENCES client_sessions(id) ON DELETE CASCADE,
 
     CONSTRAINT ck_refresh_tokens_expiry
         CHECK (expires_at > created_at),
@@ -986,17 +1024,8 @@ CREATE TABLE refresh_tokens (
     tenant_member_version bigint
 );
 
-ALTER TABLE refresh_tokens
-ADD CONSTRAINT fk_refresh_tokens_replaced_by
-FOREIGN KEY (replaced_by_id)
-REFERENCES refresh_tokens(id)
-ON DELETE SET NULL;
-
 CREATE UNIQUE INDEX ux_refresh_tokens_token_hash
 ON refresh_tokens (token_hash);
-
-CREATE INDEX ix_refresh_tokens_user_id
-ON refresh_tokens (user_id);
 
 CREATE INDEX ix_refresh_tokens_user_active
 ON refresh_tokens (user_id, revoked_at);
@@ -1010,16 +1039,12 @@ ON refresh_tokens (app_id, user_id);
 CREATE INDEX ix_refresh_tokens_session_id
 ON refresh_tokens (session_id);
 
-CREATE INDEX ix_refresh_tokens_orphan_active
-ON refresh_tokens (id)
-WHERE session_id IS NULL AND revoked_at IS NULL;
-
 CREATE INDEX ix_refresh_tokens_expires_at
 ON refresh_tokens (expires_at);
-CREATE INDEX ix_refresh_tokens_replaced_by
-ON refresh_tokens (replaced_by_id) WHERE replaced_by_id IS NOT NULL;
 CREATE INDEX ix_refresh_tokens_tenant_user
 ON refresh_tokens (tenant_id,user_id) WHERE tenant_id IS NOT NULL;
+
+CREATE INDEX ix_refresh_tokens_client_session ON refresh_tokens(client_session_id) WHERE client_session_id IS NOT NULL;
 
 COMMENT ON TABLE refresh_tokens IS
 'Refresh Token 表。Access Token / ID Token 建议使用 JWT 不落库；Refresh Token 需要落库以支持撤销、轮换、单应用退出和全端退出。';
@@ -1053,9 +1078,6 @@ COMMENT ON COLUMN refresh_tokens.revoked_at IS
 
 COMMENT ON COLUMN refresh_tokens.revoke_reason IS
 '撤销原因，例如 logout、rotation、risk_control。';
-
-COMMENT ON COLUMN refresh_tokens.replaced_by_id IS
-'Refresh Token 轮换后的新 token 记录 ID。应用层必须校验新 token 属于同一 user 和 client。';
 
 -- ============================================================
 -- 11. user_consents
@@ -1108,11 +1130,11 @@ CREATE TABLE user_app_access (
         CONSTRAINT ck_app_admission_origin CHECK (admission_origin IN ('explicit','organization'))
 );
 
-CREATE INDEX ix_user_app_access_app_id
-ON user_app_access (app_id, user_id);
+CREATE INDEX ix_user_app_access_app_created
+ON user_app_access (app_id, created_at DESC, user_id DESC);
 
-CREATE INDEX ix_user_app_access_status
-ON user_app_access (status);
+CREATE INDEX ix_user_app_access_app_user
+ON user_app_access (app_id, user_id);
 
 COMMENT ON COLUMN user_app_access.token_version IS
 '用户应用授权版本，撤销时递增，重新授权不重置。';
@@ -1135,6 +1157,26 @@ COMMENT ON COLUMN user_app_access.created_at IS
 COMMENT ON COLUMN user_app_access.updated_at IS
 '更新时间，由应用层维护。';
 
+-- One current request per user and application, independent of the access grant.
+CREATE TABLE application_access_requests (
+    id uuid NOT NULL UNIQUE,
+    user_id uuid NOT NULL REFERENCES users(id),
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'closed')),
+    decided_by uuid REFERENCES users(id),
+    reason text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, app_id),
+    CONSTRAINT ck_application_access_request_decision CHECK (
+        (status IN ('approved', 'rejected')) = (decided_by IS NOT NULL)
+    )
+);
+
+CREATE INDEX ix_application_access_review_queue
+    ON application_access_requests (app_id, created_at, id) WHERE status = 'pending';
+CREATE INDEX ix_application_access_requests_app ON application_access_requests (app_id);
+
 -- ============================================================
 -- 13. contact_change_requests
 -- ============================================================
@@ -1145,7 +1187,7 @@ CREATE TABLE contact_change_requests (
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
     change_type contact_change_type NOT NULL,
-    new_value text NOT NULL,
+    new_value citext NOT NULL,
 
     status contact_change_status NOT NULL DEFAULT 'pending',
 
@@ -1184,12 +1226,6 @@ CREATE UNIQUE INDEX ux_contact_change_value_pending
 ON contact_change_requests (change_type, new_value)
 WHERE status = 'pending';
 
-CREATE INDEX ix_contact_change_requests_user_id
-ON contact_change_requests (user_id);
-
-CREATE INDEX ix_contact_change_requests_status
-ON contact_change_requests (status);
-
 CREATE INDEX ix_contact_change_requests_expires_at
 ON contact_change_requests (expires_at);
 
@@ -1206,7 +1242,7 @@ COMMENT ON COLUMN contact_change_requests.change_type IS
 '变更类型：email 或 phone。';
 
 COMMENT ON COLUMN contact_change_requests.new_value IS
-'申请变更的新邮箱或新手机号。使用 text 类型，应用层负责格式校验（手机号建议 E.164）。';
+'申请变更的新邮箱或新手机号。比较规则与 users 的联系方式一致，由应用层负责格式校验。';
 
 COMMENT ON COLUMN contact_change_requests.status IS
 '申请状态：pending=待验证；verified=已验证；cancelled=已取消；expired=已过期。';
@@ -1307,7 +1343,10 @@ CREATE INDEX ix_login_events_provider_created
 ON login_events (provider_id, created_at DESC, id DESC) WHERE provider_id IS NOT NULL;
 
 CREATE INDEX ix_login_events_type
-ON login_events (event_type);
+ON login_events (event_type, created_at DESC, id DESC);
+
+CREATE INDEX ix_login_events_ip_created
+ON login_events (ip, created_at DESC, id DESC) WHERE ip IS NOT NULL;
 
 COMMENT ON TABLE login_events IS
 '登录事件审计表。记录所有登录成功、失败和登出事件，用于安全监控和审计追溯。';
@@ -1339,19 +1378,69 @@ COMMENT ON COLUMN login_events.detail IS
 COMMENT ON COLUMN login_events.created_at IS
 '事件发生时间。';
 
--- 数据初始化
-INSERT INTO apps (id, code, name, status, system, max_sessions, created_at, updated_at)
-VALUES (
-    gen_random_uuid(),
-    'user-center',
-    '用户中心',
-    'active',
-    true,
-    0,
-    now(),
-    now()
-) ON CONFLICT (code) DO UPDATE SET system = true;
+-- A NULL application identifies the platform policy. Other rows override it.
+CREATE SEQUENCE registration_policy_version_seq;
+CREATE TABLE registration_policies (
+    app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
+    mode text NOT NULL CHECK (mode IN ('closed','invite_only','self_service')),
+    domains text[] NOT NULL DEFAULT '{}',
+    approval_required boolean NOT NULL DEFAULT true,
+    emergency_stop boolean NOT NULL DEFAULT false,
+    version bigint NOT NULL DEFAULT nextval('registration_policy_version_seq'),
+    CONSTRAINT uq_registration_policies_app UNIQUE NULLS NOT DISTINCT (app_id),
+    CONSTRAINT ck_registration_policies_emergency_stop CHECK (app_id IS NULL OR NOT emergency_stop)
+);
+ALTER SEQUENCE registration_policy_version_seq OWNED BY registration_policies.version;
 
+CREATE TABLE enrollments (
+    id uuid PRIMARY KEY,
+    app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
+    client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL,
+    auth_request_id uuid REFERENCES authorization_requests(id) ON DELETE SET NULL,
+    email citext,
+    phone citext,
+    invitation boolean NOT NULL DEFAULT false,
+    invited_by uuid REFERENCES users(id),
+    manual_delivery boolean NOT NULL DEFAULT false,
+    domain_exception boolean NOT NULL DEFAULT false,
+    reason text NOT NULL DEFAULT '',
+    token_hash text NOT NULL UNIQUE,
+    status text NOT NULL DEFAULT 'pending_verification' CHECK (status IN ('pending_verification','pending_approval','ready','completed','rejected','revoked','expired')),
+    verified_at timestamptz,
+    approved_by uuid REFERENCES users(id),
+    approved_at timestamptz,
+    provider_id uuid REFERENCES identity_providers(id),
+    subject text,
+    completed_user_id uuid REFERENCES users(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    last_sent_at timestamptz NOT NULL DEFAULT now(),
+    tenant_id uuid REFERENCES tenants(id) ON DELETE SET NULL,
+    CHECK (invitation=(invited_by IS NOT NULL)),
+    CHECK (NOT domain_exception OR invitation),
+    CHECK ((provider_id IS NULL)=(subject IS NULL)),
+    CONSTRAINT ck_enrollment_contact CHECK (
+        CASE WHEN manual_delivery THEN invitation AND phone IS NULL
+             ELSE num_nonnulls(email, phone) = 1
+        END
+    )
+);
+CREATE INDEX ix_enrollments_expiry ON enrollments(expires_at);
+CREATE INDEX ix_enrollments_pending_expiry ON enrollments(expires_at)
+    WHERE status IN ('pending_verification','pending_approval','ready');
+CREATE INDEX ix_enrollments_pending_inviter ON enrollments(invited_by)
+    WHERE invited_by IS NOT NULL AND status IN ('pending_verification','pending_approval','ready');
+CREATE INDEX ix_enrollments_pending_approver ON enrollments(approved_by)
+    WHERE approved_by IS NOT NULL AND status IN ('pending_verification','pending_approval','ready');
+CREATE INDEX ix_enrollments_app ON enrollments(app_id);
+CREATE INDEX ix_enrollments_completed_user ON enrollments(completed_user_id) WHERE completed_user_id IS NOT NULL;
+CREATE INDEX ix_enrollments_auth_request ON enrollments(auth_request_id) WHERE auth_request_id IS NOT NULL;
+-- Unaddressed manual links are distinct. Addressed invitations are unique per scope.
+CREATE UNIQUE INDEX ux_enrollments_invitation ON enrollments(email, app_id) NULLS NOT DISTINCT
+    WHERE invitation AND email IS NOT NULL AND status IN ('pending_verification','pending_approval','ready');
+CREATE INDEX ix_enrollments_email_created ON enrollments(email,created_at DESC,id DESC) WHERE email IS NOT NULL;
+CREATE INDEX ix_enrollments_phone_created ON enrollments(phone,created_at DESC,id DESC)
+    WHERE phone IS NOT NULL;
 -- Durable, encrypted notification delivery.
 CREATE TABLE notification_outbox (
     id uuid PRIMARY KEY,
@@ -1361,11 +1450,14 @@ CREATE TABLE notification_outbox (
     attempts integer NOT NULL DEFAULT 0,
     user_id uuid REFERENCES users(id) ON DELETE CASCADE,
     kind text NOT NULL,
-    lease_id uuid NULL,
-    leased_until timestamptz NULL
+    lease_id uuid,
+    leased_until timestamptz,
+    enrollment_id uuid REFERENCES enrollments(id) ON DELETE CASCADE,
+    CONSTRAINT ck_notification_outbox_owner CHECK (num_nonnulls(user_id, enrollment_id) = 1)
 );
 CREATE INDEX ix_notification_outbox_due ON notification_outbox (next_attempt_at);
-CREATE INDEX ix_notification_outbox_user ON notification_outbox (user_id);
+CREATE INDEX ix_notification_outbox_user_kind ON notification_outbox (user_id, kind) WHERE user_id IS NOT NULL;
+CREATE INDEX ix_notification_outbox_enrollment ON notification_outbox (enrollment_id) WHERE enrollment_id IS NOT NULL;
 CREATE INDEX ix_notification_outbox_expiry ON notification_outbox (expires_at);
 
 -- Keep audit metadata independent of mutable/deleted user records. Never store request bodies.
@@ -1384,13 +1476,31 @@ CREATE TABLE audit_events (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_audit_events_created_at ON audit_events (created_at DESC, id DESC);
-CREATE INDEX ix_audit_events_actor ON audit_events (actor_id, created_at DESC);
+CREATE INDEX ix_audit_events_actor ON audit_events (actor_id, created_at DESC, id DESC);
 CREATE INDEX ix_login_events_user_created ON login_events (user_id, created_at DESC, id DESC);
+
+CREATE SEQUENCE admin_permission_revision_seq;
 
 CREATE TABLE admin_roles (
     user_id uuid PRIMARY KEY REFERENCES users(id),
-    role text NOT NULL CHECK (role IN ('super_admin','admin'))
+    role text NOT NULL CHECK (role IN ('super_admin','admin')),
+    permission_revision bigint NOT NULL DEFAULT nextval('admin_permission_revision_seq')
 );
+
+ALTER SEQUENCE admin_permission_revision_seq OWNED BY admin_roles.permission_revision;
+
+CREATE TABLE admin_permissions (
+    user_id uuid NOT NULL REFERENCES admin_roles(user_id) ON DELETE CASCADE,
+    permission text NOT NULL,
+    PRIMARY KEY (user_id, permission)
+);
+CREATE TABLE admin_app_permissions (
+    user_id uuid NOT NULL REFERENCES admin_roles(user_id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    permission text NOT NULL,
+    PRIMARY KEY (user_id, app_id, permission)
+);
+CREATE INDEX ix_admin_app_permissions_app ON admin_app_permissions(app_id, user_id);
 
 CREATE TABLE user_mfa (
     assisted_recovery_expires_at timestamptz,
@@ -1402,9 +1512,18 @@ CREATE TABLE user_mfa (
     enabled boolean NOT NULL DEFAULT false,
     setup_expires_at timestamptz NOT NULL DEFAULT now() + interval '5 minutes',
     last_step bigint NOT NULL DEFAULT -1,
-    recovery_hashes text[] NOT NULL DEFAULT '{}'
+    recovery_hashes text[] NOT NULL DEFAULT '{}',
+    CONSTRAINT assisted_recovery_pair CHECK (
+        (assisted_recovery_hash IS NULL) = (assisted_recovery_expires_at IS NULL)
+    )
 );
 
+
+CREATE INDEX ix_user_mfa_setup_session ON user_mfa(setup_session) WHERE setup_session IS NOT NULL;
+CREATE INDEX ix_user_mfa_setup_expiry ON user_mfa(setup_expires_at)
+    WHERE NOT enabled OR pending_secret_enc IS NOT NULL;
+CREATE INDEX ix_user_mfa_recovery_expiry ON user_mfa(assisted_recovery_expires_at)
+    WHERE assisted_recovery_expires_at IS NOT NULL;
 
 -- Operational metadata never contains codes, links, raw recipients or gateway bodies.
 CREATE TABLE notification_deliveries (
@@ -1418,10 +1537,12 @@ CREATE TABLE notification_deliveries (
     last_error text NULL,
     http_status integer NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    enrollment_id uuid REFERENCES enrollments(id) ON DELETE SET NULL
 );
+CREATE INDEX ix_notification_deliveries_enrollment ON notification_deliveries (enrollment_id) WHERE enrollment_id IS NOT NULL;
 CREATE INDEX ix_notification_deliveries_created ON notification_deliveries (created_at DESC, id DESC);
-CREATE INDEX ix_notification_deliveries_status ON notification_deliveries (status, created_at DESC);
+CREATE INDEX ix_notification_deliveries_status ON notification_deliveries (status, created_at DESC, id DESC);
 CREATE INDEX ix_notification_deliveries_cleanup ON notification_deliveries (updated_at) WHERE status IN ('delivered','expired','cancelled');
 
 
@@ -1451,131 +1572,6 @@ CREATE TRIGGER tenant_invitation_notification_cancelled
     WHEN (OLD.status='pending' AND NEW.status<>'pending' AND OLD.notification_id IS NOT NULL)
     EXECUTE FUNCTION cancel_tenant_invitation_notification();
 
--- Platform defaults and explicit per-application overrides share one policy shape.
-CREATE TABLE registration_policies (
-    id uuid PRIMARY KEY,
-    app_id uuid UNIQUE REFERENCES apps(id) ON DELETE CASCADE,
-    mode text NOT NULL CHECK (mode IN ('closed','invite_only','self_service')),
-    domains text[] NOT NULL DEFAULT '{}',
-    approval_required boolean NOT NULL DEFAULT true,
-    emergency_stop boolean NOT NULL DEFAULT false,
-    version bigint NOT NULL DEFAULT 1,
-    CHECK ((app_id IS NULL AND id='00000000-0000-0000-0000-000000000000') OR (app_id IS NOT NULL AND id=app_id))
-);
-INSERT INTO registration_policies(id,mode) VALUES ('00000000-0000-0000-0000-000000000000','invite_only');
-CREATE TABLE enrollments (
-    id uuid PRIMARY KEY,
-    app_id uuid REFERENCES apps(id) ON DELETE CASCADE,
-    client_id uuid REFERENCES oauth_clients(id) ON DELETE SET NULL,
-    auth_request_id uuid REFERENCES authorization_requests(id) ON DELETE SET NULL,
-    email citext,
-    phone citext,
-    invitation boolean NOT NULL DEFAULT false,
-    invited_by uuid REFERENCES users(id),
-    domain_exception boolean NOT NULL DEFAULT false,
-    reason text NOT NULL DEFAULT '',
-    token_hash text NOT NULL UNIQUE,
-    status text NOT NULL DEFAULT 'pending_verification' CHECK (status IN ('pending_verification','pending_approval','ready','completed','rejected','revoked','expired')),
-    verified_at timestamptz,
-    approved_by uuid REFERENCES users(id),
-    approved_at timestamptz,
-    provider_id uuid REFERENCES identity_providers(id),
-    subject text,
-    completed_user_id uuid REFERENCES users(id),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    expires_at timestamptz NOT NULL,
-    last_sent_at timestamptz NOT NULL DEFAULT now(),
-    requested_user_id uuid REFERENCES users(id),
-    tenant_id uuid REFERENCES tenants(id) ON DELETE SET NULL,
-    authorization_session_id uuid REFERENCES sso_sessions(id) ON DELETE SET NULL,
-    CHECK (invitation=(invited_by IS NOT NULL)),
-    CHECK (NOT domain_exception OR invitation),
-    CHECK ((provider_id IS NULL)=(subject IS NULL)),
-    CONSTRAINT ck_enrollment_contact CHECK (num_nonnulls(email,phone)=1)
-);
-CREATE INDEX ix_enrollments_pending ON enrollments(status,created_at);
-CREATE INDEX ix_enrollments_expiry ON enrollments(expires_at);
-CREATE INDEX ix_enrollments_pending_expiry ON enrollments(expires_at)
-    WHERE status IN ('pending_verification','pending_approval','ready');
-CREATE INDEX ix_enrollments_app ON enrollments(app_id);
-CREATE INDEX ix_enrollments_completed_user ON enrollments(completed_user_id) WHERE completed_user_id IS NOT NULL;
-CREATE INDEX ix_enrollments_auth_request ON enrollments(auth_request_id) WHERE auth_request_id IS NOT NULL;
-CREATE INDEX ix_enrollments_requested_user ON enrollments(requested_user_id,created_at DESC)
-    WHERE requested_user_id IS NOT NULL;
-CREATE INDEX ix_enrollments_authorization_session ON enrollments(authorization_session_id)
-    WHERE authorization_session_id IS NOT NULL;
-CREATE UNIQUE INDEX ux_enrollments_invitation ON enrollments(email,COALESCE(app_id,'00000000-0000-0000-0000-000000000000')) WHERE invitation AND status IN ('pending_verification','pending_approval','ready');
-
-ALTER TABLE notification_outbox ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE CASCADE;
-ALTER TABLE notification_deliveries ADD COLUMN enrollment_id uuid REFERENCES enrollments(id) ON DELETE SET NULL;
-ALTER TABLE notification_outbox ADD CHECK (num_nonnulls(user_id,enrollment_id)=1);
-CREATE INDEX ix_notification_outbox_enrollment ON notification_outbox(enrollment_id) WHERE enrollment_id IS NOT NULL;
-CREATE INDEX ix_notification_deliveries_enrollment ON notification_deliveries(enrollment_id) WHERE enrollment_id IS NOT NULL;
--- Application admission is governed by registration_policies; remove the competing switch.
-
-CREATE INDEX ix_enrollments_email_created ON enrollments(email,created_at DESC,id DESC);
-CREATE INDEX ix_enrollments_phone_created ON enrollments(phone,created_at DESC,id DESC)
-    WHERE phone IS NOT NULL;
-CREATE INDEX ix_user_app_access_app_created ON user_app_access(app_id,created_at DESC,user_id);
-
-ALTER TABLE oauth_clients ADD CONSTRAINT ck_previous_client_secret CHECK ((previous_secret_hash IS NULL)=(previous_secret_expires_at IS NULL));
-
-ALTER TABLE user_mfa ADD CONSTRAINT assisted_recovery_pair CHECK (
-    (assisted_recovery_hash IS NULL) = (assisted_recovery_expires_at IS NULL)
-);
-
--- Internal diagnostic identity is server-owned and bound to the initiating session.
-ALTER TABLE authorization_requests ADD COLUMN diagnostic_session_id uuid
-    REFERENCES sso_sessions(id) ON DELETE CASCADE;
-CREATE INDEX ix_authorization_requests_diagnostic_session ON authorization_requests(diagnostic_session_id) WHERE diagnostic_session_id IS NOT NULL;
-CREATE INDEX ix_user_mfa_setup_session ON user_mfa(setup_session) WHERE setup_session IS NOT NULL;
-CREATE INDEX ix_user_mfa_setup_expiry ON user_mfa(setup_expires_at)
-    WHERE NOT enabled OR pending_secret_enc IS NOT NULL;
-CREATE INDEX ix_user_mfa_recovery_expiry ON user_mfa(assisted_recovery_expires_at)
-    WHERE assisted_recovery_expires_at IS NOT NULL;
-
-CREATE TABLE app_sessions (
-    id uuid PRIMARY KEY DEFAULT uuidv7(),
-    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    sso_session_id uuid NOT NULL REFERENCES sso_sessions(id) ON DELETE CASCADE,
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    revoked_at timestamptz,
-    revoke_reason text
-);
-CREATE UNIQUE INDEX ux_app_sessions_active ON app_sessions(user_id,app_id,sso_session_id)
-    WHERE revoked_at IS NULL;
-CREATE INDEX ix_app_sessions_active_user ON app_sessions(app_id,user_id,created_at,id)
-    WHERE revoked_at IS NULL;
-CREATE INDEX ix_app_sessions_sso ON app_sessions(sso_session_id);
-CREATE INDEX ix_app_sessions_latest ON app_sessions(user_id,app_id,sso_session_id,created_at DESC,id DESC);
-
-CREATE TABLE client_sessions (
-    id uuid PRIMARY KEY DEFAULT uuidv7(),
-    app_session_id uuid NOT NULL REFERENCES app_sessions(id) ON DELETE CASCADE,
-    client_id uuid NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
-    tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    revoked_at timestamptz,
-    revoke_reason text
-);
-CREATE UNIQUE INDEX ux_client_sessions_active ON client_sessions(app_session_id,client_id,tenant_id)
-    NULLS NOT DISTINCT WHERE revoked_at IS NULL;
-CREATE INDEX ix_client_sessions_client ON client_sessions(client_id,revoked_at);
-CREATE INDEX ix_client_sessions_parent ON client_sessions(app_session_id);
-CREATE INDEX ix_client_sessions_tenant ON client_sessions(tenant_id,revoked_at) WHERE tenant_id IS NOT NULL;
-
-ALTER TABLE authorization_codes
-    ADD COLUMN admission_session_id uuid REFERENCES app_sessions(id) ON DELETE SET NULL,
-    ADD COLUMN admission_revoked boolean NOT NULL DEFAULT false,
-    ADD COLUMN takeover_allowed boolean NOT NULL DEFAULT false,
-    ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE SET NULL;
-ALTER TABLE refresh_tokens
-    ADD COLUMN client_session_id uuid REFERENCES client_sessions(id) ON DELETE SET NULL;
-CREATE INDEX ix_refresh_tokens_client_session ON refresh_tokens(client_session_id);
-CREATE INDEX ix_authorization_codes_device ON authorization_codes(user_id,app_id,session_id);
-CREATE INDEX ix_authorization_codes_admission_session ON authorization_codes(admission_session_id) WHERE admission_session_id IS NOT NULL;
-CREATE INDEX ix_authorization_codes_client_session ON authorization_codes(client_session_id) WHERE client_session_id IS NOT NULL;
 CREATE TABLE backchannel_logout_deliveries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id uuid NOT NULL,
@@ -1593,7 +1589,7 @@ CREATE TABLE backchannel_logout_deliveries (
     last_error text,
     UNIQUE(session_id, client_id)
 );
-CREATE INDEX ON backchannel_logout_deliveries(next_attempt_at)
+CREATE INDEX ix_backchannel_logout_deliveries_due ON backchannel_logout_deliveries(next_attempt_at)
 WHERE delivered_at IS NULL AND expired_at IS NULL;
 CREATE INDEX ix_backchannel_logout_deliveries_pending_expiry ON backchannel_logout_deliveries(expires_at)
 WHERE delivered_at IS NULL AND expired_at IS NULL;
@@ -1641,6 +1637,22 @@ CREATE TRIGGER session_backchannel_logout AFTER UPDATE OF revoked_at ON sso_sess
 FOR EACH ROW WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
 EXECUTE FUNCTION enqueue_sso_logout();
 
+-- The cascade removes child sessions and grants. Queue their logout before deletion.
+CREATE FUNCTION enqueue_sso_delete_logout() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO backchannel_logout_deliveries(session_id,client_id,user_id,endpoint)
+    SELECT r.id,r.client_id,a.user_id,c.backchannel_logout_uri
+    FROM app_sessions a
+    JOIN client_sessions r ON r.app_session_id=a.id
+    JOIN oauth_clients c ON c.id=r.client_id
+    WHERE a.sso_session_id=OLD.id AND a.revoked_at IS NULL AND r.revoked_at IS NULL
+      AND c.backchannel_logout_uri IS NOT NULL
+    ON CONFLICT(session_id,client_id) DO NOTHING;
+    RETURN OLD;
+END $$;
+CREATE TRIGGER session_delete_backchannel_logout BEFORE DELETE ON sso_sessions
+FOR EACH ROW WHEN (OLD.revoked_at IS NULL) EXECUTE FUNCTION enqueue_sso_delete_logout();
+
 CREATE FUNCTION enqueue_app_logout() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     PERFORM id FROM app_sessions WHERE user_id=NEW.user_id AND app_id=NEW.app_id AND revoked_at IS NULL
@@ -1653,8 +1665,9 @@ CREATE TRIGGER app_backchannel_logout AFTER UPDATE OF token_version,status ON us
 FOR EACH ROW WHEN (OLD.token_version IS DISTINCT FROM NEW.token_version OR OLD.status IS DISTINCT FROM NEW.status)
 EXECUTE FUNCTION enqueue_app_logout();
 
+-- Keep the unused scope predicates out of the plan so each revocation can use its indexes.
 CREATE FUNCTION retire_client_context(p_client uuid,p_tenant uuid,p_user uuid,p_reason text)
-RETURNS void LANGUAGE plpgsql AS $$
+RETURNS void LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan AS $$
 BEGIN
     PERFORM a.id FROM app_sessions a
     WHERE a.revoked_at IS NULL AND (p_user IS NULL OR a.user_id=p_user)
@@ -1698,26 +1711,6 @@ CREATE TRIGGER tenant_member_session_revocation AFTER UPDATE OF auth_version ON 
 FOR EACH ROW WHEN (OLD.auth_version IS DISTINCT FROM NEW.auth_version)
 EXECUTE FUNCTION revoke_member_sessions();
 
-CREATE TABLE admin_permission_state (
-    user_id uuid PRIMARY KEY REFERENCES admin_roles(user_id) ON DELETE CASCADE,
-    revision bigint NOT NULL DEFAULT 0,
-    updated_by uuid REFERENCES users(id),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE TABLE admin_permissions (
-    user_id uuid NOT NULL REFERENCES admin_permission_state(user_id) ON DELETE CASCADE,
-    permission text NOT NULL,
-    PRIMARY KEY (user_id, permission)
-);
-CREATE TABLE admin_app_permissions (
-    user_id uuid NOT NULL REFERENCES admin_permission_state(user_id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    permission text NOT NULL,
-    PRIMARY KEY (user_id, app_id, permission)
-);
-CREATE INDEX ON admin_app_permissions(app_id, user_id);
-
-
 -- Account synchronization carries identifiers only; applications fetch current state.
 -- Tenant identity is retained for downstream reconciliation, even after deletion.
 CREATE TABLE account_sync_deliveries (
@@ -1740,15 +1733,14 @@ CREATE TABLE account_sync_deliveries (
 );
 COMMENT ON COLUMN account_sync_deliveries.tenant_id IS
     'Tenant identity of a membership change, including deleted tenants; intentionally not a foreign key.';
-CREATE INDEX ON account_sync_deliveries(next_attempt_at)
+CREATE INDEX ix_account_sync_deliveries_due ON account_sync_deliveries(next_attempt_at)
 WHERE delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
 CREATE INDEX ix_account_sync_deliveries_pending_expiry ON account_sync_deliveries(expires_at)
 WHERE delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
-CREATE INDEX ix_account_sync_deliveries_created ON account_sync_deliveries(created_at);
+CREATE INDEX ix_account_sync_deliveries_created ON account_sync_deliveries(created_at DESC, id DESC);
 CREATE INDEX ix_account_sync_deliveries_client ON account_sync_deliveries(client_id);
-ALTER TABLE oauth_clients ADD CONSTRAINT ck_account_sync_confidential
-CHECK (account_sync_uri IS NULL OR type='confidential');
-
+CREATE INDEX ix_account_sync_deliveries_pending_client ON account_sync_deliveries(client_id)
+WHERE delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
 -- ============================================================
 -- Organization application admission and history
 -- ============================================================
@@ -1774,6 +1766,7 @@ CREATE TABLE tenant_app_requests (
 );
 CREATE INDEX ix_tenant_app_requests_pending ON tenant_app_requests(updated_at)
     WHERE status='pending';
+CREATE INDEX ix_tenant_app_requests_app ON tenant_app_requests(app_id);
 
 CREATE TABLE tenant_app_history (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -1803,10 +1796,12 @@ CREATE TRIGGER tg_pero_personal_tenant AFTER INSERT ON users
     FOR EACH ROW EXECUTE FUNCTION pero_create_personal_tenant();
 
 -- Admission history is recorded before downstream notification triggers.
+-- Plan for the supplied scope so row-level triggers can use the lookup indexes.
 
 CREATE FUNCTION pero_record_tenant_app_history(
     p_app uuid DEFAULT NULL, p_user uuid DEFAULT NULL, p_tenant uuid DEFAULT NULL
-) RETURNS void LANGUAGE sql AS $$
+) RETURNS void LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan AS $$
+BEGIN
     INSERT INTO tenant_app_history(app_id,tenant_id,user_id)
     SELECT a.app_id,t.id,a.user_id
     FROM user_app_access a
@@ -1827,7 +1822,7 @@ CREATE FUNCTION pero_record_tenant_app_history(
            OR EXISTS (SELECT 1 FROM tenant_app_grants g
                       WHERE g.tenant_id=t.id AND g.app_id=app.id))
     ON CONFLICT DO NOTHING;
-$$;
+END $$;
 
 CREATE FUNCTION pero_track_tenant_app_history() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -1857,12 +1852,18 @@ CREATE TRIGGER aa_tenant_app_history_member
     FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
 
 CREATE TRIGGER aa_tenant_app_history_tenant
-    AFTER INSERT OR UPDATE OF status ON tenants
-    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+    AFTER UPDATE OF status ON tenants
+    FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status AND NEW.status='active')
+    EXECUTE FUNCTION pero_track_tenant_app_history();
 
 CREATE TRIGGER aa_tenant_app_history_app
-    AFTER INSERT OR UPDATE OF status,tenant_mode,organization_access,organization_auto_access ON apps
-    FOR EACH ROW EXECUTE FUNCTION pero_track_tenant_app_history();
+    AFTER UPDATE OF status,tenant_mode,organization_access,organization_auto_access ON apps
+    FOR EACH ROW
+    WHEN (NOT NEW.system AND NEW.status='active'
+          AND (OLD.status,OLD.tenant_mode,OLD.organization_access,OLD.organization_auto_access)
+              IS DISTINCT FROM
+              (NEW.status,NEW.tenant_mode,NEW.organization_access,NEW.organization_auto_access))
+    EXECUTE FUNCTION pero_track_tenant_app_history();
 
 CREATE TRIGGER aa_tenant_app_history_grant
     AFTER INSERT ON tenant_app_grants
@@ -1884,7 +1885,7 @@ BEGIN
     INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
     SELECT c.id,NEW.id,event_kind,c.account_sync_uri
     FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
-    WHERE a.user_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    WHERE a.user_id=NEW.id AND c.status='active' AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
 
     IF (OLD.status,OLD.deleted_at) IS DISTINCT FROM (NEW.status,NEW.deleted_at) THEN
         INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
@@ -1920,7 +1921,7 @@ BEGIN
                 ELSE 'membership.revoked' END,
            c.account_sync_uri
     FROM oauth_clients c
-    WHERE c.app_id=NEW.app_id AND c.account_sync_uri IS NOT NULL;
+    WHERE c.app_id=NEW.app_id AND c.status='active' AND c.account_sync_uri IS NOT NULL;
 
     INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
     SELECT c.id,NEW.user_id,h.tenant_id,'tenant.membership.changed',c.account_sync_uri
@@ -1943,16 +1944,14 @@ BEGIN
     UPDATE account_sync_deliveries SET cancelled_at=now(),lease_id=NULL,leased_until=NULL
     WHERE client_id=NEW.id AND delivered_at IS NULL AND cancelled_at IS NULL AND expired_at IS NULL;
 
-    IF NEW.account_sync_uri IS NOT NULL THEN
+    IF NEW.status='active' AND NEW.account_sync_uri IS NOT NULL THEN
         INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
         SELECT NEW.id,a.user_id,'sync.requested',NEW.account_sync_uri
         FROM user_app_access a WHERE a.app_id=NEW.app_id;
 
-        IF NEW.status='active' THEN
-            INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
-            SELECT NEW.id,h.user_id,h.tenant_id,'tenant.membership.changed',NEW.account_sync_uri
-            FROM tenant_app_history h WHERE h.app_id=NEW.app_id;
-        END IF;
+        INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
+        SELECT NEW.id,h.user_id,h.tenant_id,'tenant.membership.changed',NEW.account_sync_uri
+        FROM tenant_app_history h WHERE h.app_id=NEW.app_id;
     END IF;
     RETURN NEW;
 END $$;
@@ -1965,7 +1964,7 @@ BEGIN
     INSERT INTO account_sync_deliveries(client_id,user_id,kind,endpoint)
     SELECT c.id,a.user_id,'sync.requested',c.account_sync_uri
     FROM user_app_access a JOIN oauth_clients c ON c.app_id=a.app_id
-    WHERE a.app_id=NEW.id AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
+    WHERE a.app_id=NEW.id AND c.status='active' AND c.account_sync_uri IS NOT NULL FOR SHARE OF c;
 
     INSERT INTO account_sync_deliveries(client_id,user_id,tenant_id,kind,endpoint)
     SELECT c.id,h.user_id,h.tenant_id,'tenant.membership.changed',c.account_sync_uri
@@ -2049,3 +2048,18 @@ CREATE TRIGGER tenant_status_sync
           IS DISTINCT FROM
           (NEW.status, NEW.auth_version, NEW.name, NEW.max_members))
     EXECUTE FUNCTION enqueue_tenant_status_sync();
+
+-- 数据初始化
+INSERT INTO apps (id, code, name, status, system, max_sessions, created_at, updated_at)
+VALUES (
+    gen_random_uuid(),
+    'user-center',
+    '用户中心',
+    'active',
+    true,
+    0,
+    now(),
+    now()
+) ON CONFLICT (code) DO UPDATE SET system = true;
+
+INSERT INTO registration_policies (mode) VALUES ('invite_only');

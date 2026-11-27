@@ -19,19 +19,28 @@ pub async fn execute<C: ConnectionTrait>(
     Ok(())
 }
 #[derive(FromQueryResult)]
-struct Role {
-    role: String,
+pub(super) struct AdminRole {
+    pub role: String,
+    pub permission_revision: i64,
 }
-pub async fn role<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Option<String>, DbErr> {
-    Ok(Role::find_by_statement(Statement::from_sql_and_values(
+
+pub(super) async fn admin_role<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+) -> Result<Option<AdminRole>, DbErr> {
+    AdminRole::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT role FROM admin_roles WHERE user_id=$1",
+        "SELECT role, permission_revision FROM admin_roles WHERE user_id=$1",
         [user.into()],
     ))
     .one(db)
-    .await?
-    .map(|r| r.role))
+    .await
 }
+
+pub async fn role<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Option<String>, DbErr> {
+    Ok(admin_role(db, user).await?.map(|row| row.role))
+}
+
 pub async fn mfa_enabled<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<bool, DbErr> {
     #[derive(FromQueryResult)]
     struct Enabled {

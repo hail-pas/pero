@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    db::entity::{apps, authorization_requests, oauth_clients, users},
-    service::{ManagementError, enrollment::ApplicationSource},
-    state::app::AppState,
+    db::entity::{apps, authorization_requests, oauth_clients, user_app_access, users},
+    db::enums::CommonStatus,
+    service::{application_request, enrollment::ApplicationSource},
+    state::{app::AppState, session::SsoSession},
     web::{error::OAuthError, session::extract_session, util},
 };
 
@@ -22,6 +23,12 @@ struct Recovery {
     session_id: Uuid,
     diagnostic: bool,
 }
+
+enum RecoveryRequest {
+    Pending(SsoSession, authorization_requests::Model),
+    Expired(ApplicationSource),
+}
+
 #[derive(Deserialize)]
 pub struct Params {
     #[serde(default)]
@@ -66,65 +73,40 @@ async fn load(
     state: &AppState,
     jar: &CookieJar,
     token: &str,
-) -> Result<
-    (
-        ApplicationSource,
-        Uuid,
-        Option<authorization_requests::Model>,
-    ),
-    OAuthError,
-> {
+) -> Result<RecoveryRequest, OAuthError> {
     let recovery: Recovery = pero_utils::crypto::decode_signed_json(token, key(state))
         .map_err(|_| OAuthError::BadRequest("Invalid recovery request".into()))?;
-    let session = extract_session(state, jar)
+    let Some(session) = extract_session(state, jar)
         .await
         .map_err(|_| OAuthError::Unavailable)?
         .filter(|s| s.id == recovery.session_id)
-        .ok_or_else(|| OAuthError::BadRequest("Recovery session changed or expired".into()))?;
+    else {
+        return Ok(RecoveryRequest::Expired(recovery.source));
+    };
     let request = authorization_requests::Entity::find_by_id(recovery.source.request_id)
         .one(&state.db)
         .await
-        .map_err(|_| OAuthError::Unavailable)?;
-    Ok((recovery.source, session.user_id, request))
-}
-fn available(request: &authorization_requests::Model) -> bool {
-    request.completed_at.is_none() && request.expires_at > time::OffsetDateTime::now_utc()
+        .map_err(|_| OAuthError::Unavailable)?
+        .filter(|request| {
+            request.client_id == recovery.source.client_id
+                && request.app_id == recovery.source.app_id
+                && request.diagnostic_session_id.is_some() == recovery.diagnostic
+                && request.completed_at.is_none()
+                && request.expires_at > time::OffsetDateTime::now_utc()
+        });
+    Ok(match request {
+        Some(request) => RecoveryRequest::Pending(session, request),
+        None => RecoveryRequest::Expired(recovery.source),
+    })
 }
 
-pub(crate) async fn enrollment_source(
-    state: &AppState,
-    token: &str,
-    session_id: Uuid,
-    app_id: Uuid,
-) -> Result<Option<ApplicationSource>, ManagementError> {
-    let Ok(recovery) = pero_utils::crypto::decode_signed_json::<Recovery>(token, key(state)) else {
-        return Ok(None);
-    };
-    if recovery.session_id != session_id || recovery.source.app_id != app_id || recovery.diagnostic
-    {
-        return Ok(None);
-    }
-    // Keep the registered login entry even after cleanup removes the OAuth request.
-    let client = oauth_clients::Entity::find_by_id(recovery.source.client_id)
-        .one(&state.db)
-        .await?;
-    Ok(client
-        .filter(|c| {
-            c.app_id == app_id
-                && c.status == crate::db::enums::CommonStatus::Active
-                && c.login_uri
-                    .as_deref()
-                    .is_some_and(crate::service::client::valid_login_uri)
-        })
-        .map(|_| recovery.source))
-}
 fn expired(state: &AppState, jar: CookieJar, login_url: Option<String>) -> Response {
     state
         .web_security()
         .view_with_csrf(jar, "AppAccessDeniedView", |csrf_token| {
             serde_json::json!({
                 "csrf_token": csrf_token, "token": "", "app_name": "", "username": "",
-                "system": false, "expired": true, "login_url": login_url,
+                "expired": true, "login_url": login_url,
             })
         })
 }
@@ -154,8 +136,10 @@ pub async fn get(
     Query(params): Query<Params>,
 ) -> Response {
     let (request, user_id) = match load(&state, &jar, &params.token).await {
-        Ok((_, user_id, Some(r))) if available(&r) => (r, user_id),
-        Ok((source, _, _)) => return expired_with_source(&state, jar, source).await,
+        Ok(RecoveryRequest::Pending(session, request)) => (request, session.user_id),
+        Ok(RecoveryRequest::Expired(source)) => {
+            return expired_with_source(&state, jar, source).await;
+        }
         Err(OAuthError::BadRequest(_)) => return expired(&state, jar, None),
         Err(e) => return e.into_response(),
     };
@@ -172,12 +156,64 @@ pub async fn get(
         Ok(None) => return expired(&state, jar, None),
         Err(e) => return util::dependency_error(e),
     };
+    let tenant_unavailable = if !app.system
+        && let Some(tenant) = request.tenant_id
+    {
+        match crate::service::tenant_context::eligible(&state.db, user_id, app.id, tenant).await {
+            Ok(space) => space.is_none(),
+            Err(error) => return util::dependency_error(error),
+        }
+    } else {
+        false
+    };
+    let (can_request, opens_immediately, granted, application, admission_error) =
+        if app.system || tenant_unavailable || request.diagnostic_session_id.is_some() {
+            (false, false, false, None, None)
+        } else {
+            let result = async {
+                let policy = application_request::policy(&state.db, app.id).await?;
+                let access = user_app_access::Entity::find_by_id((user_id, app.id))
+                    .one(&state.db)
+                    .await?;
+                let application = application_request::current(&state.db, user_id, app.id).await?;
+                let granted = access.as_ref().is_some_and(|access| {
+                    access.status == CommonStatus::Active && access.admission_origin == "explicit"
+                });
+                let self_service = app.status == CommonStatus::Active
+                    && app.tenant_mode != "organization"
+                    && policy.mode != "managed"
+                    && !policy.paused
+                    && !granted
+                    && access.is_none_or(|access| access.status == CommonStatus::Active);
+                let admission_error = if self_service {
+                    application_request::check_email_domain(&policy.domains, &user).err()
+                } else {
+                    None
+                };
+                Ok::<_, crate::service::ManagementError>((
+                    self_service && admission_error.is_none(),
+                    policy.mode == "open",
+                    granted,
+                    application,
+                    admission_error,
+                ))
+            }
+            .await;
+            match result {
+                Ok(result) => result,
+                Err(error) => return util::management_response(Err(error)),
+            }
+        };
     state
         .web_security()
         .view_with_csrf(jar, "AppAccessDeniedView", |csrf_token| {
             serde_json::json!({
                 "csrf_token": csrf_token, "token": params.token, "app_name": app.name,
-                "username": user.username, "system": app.system, "expired": false,
+                "username": user.username, "expired": false,
+                "can_request": can_request, "opens_immediately": opens_immediately,
+                "tenant_unavailable": tenant_unavailable,
+                "admission_error": admission_error,
+                "granted": granted, "application": application,
             })
         })
 }
@@ -190,12 +226,17 @@ pub async fn post(
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &input.csrf_token, &state) {
         return e;
     }
-    if !matches!(input.action.as_str(), "retry" | "other" | "cancel") {
+    if !matches!(
+        input.action.as_str(),
+        "retry" | "other" | "cancel" | "join" | "withdraw"
+    ) {
         return pero_api_axum::json_error("invalid_request");
     }
-    let request = match load(&state, &jar, &input.token).await {
-        Ok((_, _, Some(r))) if available(&r) => r,
-        Ok((source, _, _)) => return expired_with_source(&state, jar, source).await,
+    let (session, request) = match load(&state, &jar, &input.token).await {
+        Ok(RecoveryRequest::Pending(session, request)) => (session, request),
+        Ok(RecoveryRequest::Expired(source)) => {
+            return expired_with_source(&state, jar, source).await;
+        }
         Err(OAuthError::BadRequest(_)) => return expired(&state, jar, None),
         Err(e) => return e.into_response(),
     };
@@ -213,6 +254,25 @@ pub async fn post(
             Ok(_) => Redirect::to("/account/profile").into_response(),
             Err(e) => util::dependency_error(e),
         };
+    }
+    if matches!(input.action.as_str(), "join" | "withdraw") {
+        let result = application_action(&state, &session, &request, &input.action).await;
+        match result {
+            Ok(true) => {}
+            Ok(false) => return get(State(state), jar, Query(Params { token: input.token })).await,
+            Err(error @ crate::service::ManagementError::Invalid("unauthorized")) => {
+                return match crate::web::account::mfa::pending_target(&state, &jar).await {
+                    Ok(Some(target)) => {
+                        super::authorize::resume_after_mfa(&state, &jar, request.id, target)
+                            .await
+                            .into_response()
+                    }
+                    Ok(None) => util::management_response(Err(error)),
+                    Err(response) => response,
+                };
+            }
+            Err(error) => return util::management_response(Err(error)),
+        }
     }
     // Validate current client configuration before resuming a pending request.
     let result = async {
@@ -235,4 +295,41 @@ pub async fn post(
         Err(OAuthError::BadRequest(_)) => expired(&state, jar, None),
         Err(e) => e.into_response(),
     }
+}
+
+async fn application_action(
+    state: &AppState,
+    session: &SsoSession,
+    request: &authorization_requests::Model,
+    action: &str,
+) -> Result<bool, crate::service::ManagementError> {
+    use crate::service::ManagementError as Error;
+    if request.diagnostic_session_id.is_some() {
+        return Err(Error::Invalid("enrollment_unavailable"));
+    }
+    state
+        .oauth_service()
+        .validate_pending_authorization(request)
+        .await
+        .map_err(|error| match error {
+            crate::service::oauth::OAuthError::Internal(error) => Error::Credential(error),
+            _ => Error::Invalid("enrollment_unavailable"),
+        })?;
+    if action == "withdraw" {
+        application_request::withdraw(state, session, request.app_id).await?;
+        return Ok(false);
+    }
+    if let Some(tenant) = request.tenant_id
+        && crate::service::tenant_context::eligible(
+            &state.db,
+            session.user_id,
+            request.app_id,
+            tenant,
+        )
+        .await?
+        .is_none()
+    {
+        return Err(Error::Invalid("enrollment_unavailable"));
+    }
+    application_request::submit(state, session, request.app_id).await
 }

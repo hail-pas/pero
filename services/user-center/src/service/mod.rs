@@ -6,6 +6,7 @@ pub mod admin;
 pub mod admin_sessions;
 pub mod app;
 pub mod app_session;
+pub mod application_request;
 pub mod client;
 pub mod contact;
 pub mod enrollment;

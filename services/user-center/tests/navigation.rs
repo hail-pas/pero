@@ -72,15 +72,6 @@ async fn navigation_and_dashboard_share_live_administrator_entitlement() {
             .await
             .unwrap();
         }
-        if role == Some("admin") {
-            sec::execute(
-                &db,
-                "INSERT INTO admin_permission_state(user_id) VALUES($1)",
-                vec![user.into()],
-            )
-            .await
-            .unwrap();
-        }
         let (token, session) = state
             .session_service()
             .create(user, None, None, None, None)

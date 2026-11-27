@@ -1,12 +1,14 @@
-//! Scope-bounded reconciliation for clients with Account Sync enabled.
+//! Application-scoped queries for account, tenant, and membership reconciliation.
+use super::account_sync::authenticate;
+use crate::service::{account_sync, scope};
 use crate::state::app::AppState;
 use axum::{
     Form,
     extract::State,
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use sea_orm::{DbBackend, EntityTrait, FromQueryResult, Statement};
+use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -38,46 +40,16 @@ struct Cursor {
     tenant_id: Uuid,
     user_id: Uuid,
 }
-async fn client(
-    s: &AppState,
-    source: &str,
-    headers: &HeaderMap,
-    client_id: &mut String,
-    client_secret: &mut Option<String>,
-) -> Result<crate::db::entity::oauth_clients::Model, Box<Response>> {
-    let c = super::client_auth::authenticate(s, headers, client_id, client_secret, source)
-        .await
-        .map_err(IntoResponse::into_response)?;
-    if c.r#type != crate::db::enums::OauthClientType::Confidential || c.account_sync_uri.is_none() {
-        return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
-    }
-    let app = crate::db::entity::apps::Entity::find_by_id(c.app_id)
-        .one(&s.db)
-        .await
-        .map_err(crate::web::util::dependency_error)?;
-    if app.is_none_or(|a| a.system) {
-        return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
-    }
-    Ok(c)
-}
-fn no_cache(mut response: Response) -> Response {
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    response
-        .headers_mut()
-        .insert(header::PRAGMA, header::HeaderValue::from_static("no-cache"));
-    response
-}
 // Point lookups and reconciliation must observe the same historical admission
 // boundary and calculate all status flags from a single database snapshot.
+const MEMBERSHIP_HISTORY: &str =
+    "SELECT tenant_id, user_id FROM tenant_app_history h WHERE app_id=$1";
 const MEMBERSHIP_SELECT: &str = r#"
 SELECT membership.*,
        (membership_status='active' AND tenant_status='active'
         AND user_active AND app_access_active AND app_allowed) AS active
 FROM (
-    SELECT m.tenant_id, m.user_id AS sub, t.name AS tenant_name,
+    SELECT h.tenant_id, h.user_id AS sub, t.name AS tenant_name,
            m.role AS membership_role, t.kind AS tenant_kind,
            t.status AS tenant_status, m.status AS membership_status,
            t.auth_version AS tenant_version, m.auth_version AS membership_version,
@@ -91,15 +63,14 @@ FROM (
             AND (a.admission_origin='explicit'
                  OR (a.admission_origin='organization' AND app.organization_auto_access
                      AND t.kind='organization'))) AS app_access_active
-    FROM tenant_app_history h
+    FROM membership_history h
     JOIN tenant_members m ON m.tenant_id=h.tenant_id AND m.user_id=h.user_id
-    JOIN tenants t ON t.id=m.tenant_id
-    JOIN users u ON u.id=m.user_id
-    JOIN user_app_access a ON a.user_id=m.user_id AND a.app_id=h.app_id
-    JOIN apps app ON app.id=a.app_id
-    WHERE h.app_id=$1 AND NOT app.system
+    JOIN tenants t ON t.id=h.tenant_id
+    JOIN users u ON u.id=h.user_id
+    JOIN user_app_access a ON a.user_id=h.user_id AND a.app_id=$1
+    JOIN apps app ON app.id=$1
+    WHERE NOT app.system
 ) membership
-WHERE true
 "#;
 
 #[derive(Deserialize)]
@@ -118,28 +89,30 @@ pub async fn membership(
     Form(mut f): Form<MembershipInput>,
 ) -> Response {
     let result = async {
-        let c = client(
+        let (db, c) = authenticate(
             &s,
-            &format!("tenant-sync:{}", source.for_rate_limit()),
             &headers,
             &mut f.client_id,
             &mut f.client_secret,
+            &format!("tenant-sync:{}", source.for_rate_limit()),
         )
-        .await
-        .map_err(|error| *error)?;
+        .await?;
         let row = MemberRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{MEMBERSHIP_SELECT} AND tenant_id=$2 AND sub=$3"),
+            format!(
+                "WITH membership_history AS ({MEMBERSHIP_HISTORY} AND tenant_id=$2 AND user_id=$3)
+                 {MEMBERSHIP_SELECT}"
+            ),
             [c.app_id.into(), f.tenant_id.into(), f.sub.into()],
         ))
-        .one(&s.db)
+        .one(&db)
         .await
         .map_err(crate::web::util::dependency_error)?
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
         Ok(axum::Json(row).into_response())
     }
     .await;
-    no_cache(result.unwrap_or_else(|e| e))
+    result.unwrap_or_else(|e| e)
 }
 
 pub async fn memberships(
@@ -152,23 +125,35 @@ pub async fn memberships(
         if f.after_tenant_id.is_some() != f.after_user_id.is_some() {
             return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let c = client(
+        let (db, c) = authenticate(
             &s,
-            &format!("reconcile:{}", source.for_rate_limit()),
             &headers,
             &mut f.client_id,
             &mut f.client_secret,
+            &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await
-        .map_err(|error| *error)?;
+        .await?;
+        let mut values = vec![c.app_id.into()];
+        let cursor = if let (Some(tenant), Some(user)) = (f.after_tenant_id, f.after_user_id) {
+            values.extend([tenant.into(), user.into()]);
+            "AND (tenant_id,user_id)>($2,$3)"
+        } else {
+            ""
+        };
         let mut rows = MemberRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
+            // Check both relationships before applying the history page limit.
             format!(
-                "{MEMBERSHIP_SELECT} AND ($2::uuid IS NULL OR (tenant_id,sub)>($2::uuid,$3::uuid)) ORDER BY tenant_id,sub LIMIT 101"
+                "WITH membership_history AS ({MEMBERSHIP_HISTORY} {cursor}
+                 AND (SELECT true FROM tenant_members m JOIN user_app_access a
+                      ON a.user_id=m.user_id AND a.app_id=$1
+                      WHERE m.tenant_id=h.tenant_id AND m.user_id=h.user_id)
+                 ORDER BY tenant_id,user_id LIMIT 101)
+                 {MEMBERSHIP_SELECT} ORDER BY tenant_id,sub"
             ),
-            [c.app_id.into(), f.after_tenant_id.into(), f.after_user_id.into()],
+            values,
         ))
-        .all(&s.db)
+        .all(&db)
         .await
         .map_err(crate::web::util::dependency_error)?;
         let more = rows.len() > 100;
@@ -184,34 +169,53 @@ pub async fn memberships(
         Ok(axum::Json(serde_json::json!({"rows":rows,"next":next})).into_response())
     }
     .await;
-    no_cache(result.unwrap_or_else(|e| e))
+    result.unwrap_or_else(|e| e)
 }
+#[derive(Deserialize)]
+pub struct AccountsRequest {
+    #[serde(default)]
+    client_id: String,
+    client_secret: Option<String>,
+    after_tenant_id: Option<Uuid>,
+    after_user_id: Option<Uuid>,
+    active: Option<bool>,
+    search: Option<String>,
+    limit: Option<u32>,
+}
+
 pub async fn accounts(
     State(s): State<AppState>,
     source: pero_api_axum::extractor::ClientIp,
     headers: HeaderMap,
-    Form(mut f): Form<Request>,
+    Form(mut f): Form<AccountsRequest>,
 ) -> Response {
     let result = async {
-        if f.after_tenant_id.is_some() {
+        let limit = f.limit.unwrap_or(account_sync::MAX_PAGE_SIZE);
+        let search = f.search.as_deref().map(str::trim);
+        if f.after_tenant_id.is_some()
+            || !(1..=account_sync::MAX_PAGE_SIZE).contains(&limit)
+            || search.is_some_and(|term| term.is_empty() || term.contains('\0'))
+        {
             return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let c = client(
+        let (db, c) = authenticate(
             &s,
-            &format!("reconcile:{}", source.for_rate_limit()),
             &headers,
             &mut f.client_id,
             &mut f.client_secret,
+            &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await
-        .map_err(|error| *error)?;
-        let (rows, next) = crate::service::account_sync::page(&s.db, c.id, f.after_user_id)
+        .await?;
+        if search.is_some() && !scope::contains(&c.scopes, "profile") {
+            return Err(StatusCode::FORBIDDEN.into_response());
+        }
+        let (rows, next) = account_sync::page(&db, &c, f.after_user_id, f.active, search, limit)
             .await
             .map_err(crate::web::util::dependency_error)?;
         Ok(axum::Json(serde_json::json!({"rows": rows, "next": next})).into_response())
     }
     .await;
-    no_cache(result.unwrap_or_else(|e| e))
+    result.unwrap_or_else(|e| e)
 }
 
 #[derive(Deserialize)]
@@ -288,10 +292,6 @@ SELECT
     ) AS active
 FROM tenants t
 JOIN apps app ON app.id=$1
-WHERE EXISTS (
-    SELECT 1 FROM tenant_app_history h
-    WHERE h.tenant_id=t.id AND h.app_id=app.id
-)
 "#;
 
 pub async fn tenant(
@@ -301,28 +301,31 @@ pub async fn tenant(
     Form(mut f): Form<TenantInput>,
 ) -> Response {
     let result = async {
-        let c = client(
+        let (db, c) = authenticate(
             &s,
-            &format!("reconcile:{}", source.for_rate_limit()),
             &headers,
             &mut f.client_id,
             &mut f.client_secret,
+            &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await
-        .map_err(|error| *error)?;
+        .await?;
         let row = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!("{TENANT_SELECT} AND t.id=$2"),
+            format!(
+                "{TENANT_SELECT} WHERE t.id=$2 AND EXISTS (
+                     SELECT 1 FROM tenant_app_history WHERE app_id=$1 AND tenant_id=$2
+                 )"
+            ),
             [c.app_id.into(), f.tenant_id.into()],
         ))
-        .one(&s.db)
+        .one(&db)
         .await
         .map_err(crate::web::util::dependency_error)?
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
         Ok(axum::Json(row).into_response())
     }
     .await;
-    no_cache(result.unwrap_or_else(|e| e))
+    result.unwrap_or_else(|e| e)
 }
 
 pub async fn tenants(
@@ -335,23 +338,44 @@ pub async fn tenants(
         if f.after_user_id.is_some() {
             return Err(StatusCode::BAD_REQUEST.into_response());
         }
-        let c = client(
+        let (db, c) = authenticate(
             &s,
-            &format!("reconcile:{}", source.for_rate_limit()),
             &headers,
             &mut f.client_id,
             &mut f.client_secret,
+            &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await
-        .map_err(|error| *error)?;
+        .await?;
+        let mut values = vec![c.app_id.into()];
+        let cursor = if let Some(tenant) = f.after_tenant_id {
+            values.push(tenant.into());
+            "AND tenant_id>$2"
+        } else {
+            ""
+        };
         let mut rows = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
+            // Seek to the next tenant in the history primary key. DISTINCT would
+            // scan every historical membership before advancing to the next tenant.
             format!(
-                "{TENANT_SELECT} AND ($2::uuid IS NULL OR t.id>$2::uuid) ORDER BY t.id LIMIT 101"
+                "WITH RECURSIVE tenant_page(tenant_id, position) AS (
+                     (SELECT tenant_id, 1 FROM tenant_app_history
+                      WHERE app_id=$1 {cursor} ORDER BY tenant_id LIMIT 1)
+                     UNION ALL
+                     SELECT next.tenant_id, p.position + 1
+                     FROM tenant_page p
+                     CROSS JOIN LATERAL (
+                         SELECT tenant_id FROM tenant_app_history
+                         WHERE app_id=$1 AND tenant_id>p.tenant_id
+                         ORDER BY tenant_id LIMIT 1
+                     ) next
+                     WHERE p.position < 101
+                 )
+                 {TENANT_SELECT} JOIN tenant_page p ON p.tenant_id=t.id ORDER BY t.id"
             ),
-            [c.app_id.into(), f.after_tenant_id.into()],
+            values,
         ))
-        .all(&s.db)
+        .all(&db)
         .await
         .map_err(crate::web::util::dependency_error)?;
         let more = rows.len() > 100;
@@ -364,5 +388,5 @@ pub async fn tenants(
         Ok(axum::Json(serde_json::json!({"rows": rows, "next": next})).into_response())
     }
     .await;
-    no_cache(result.unwrap_or_else(|e| e))
+    result.unwrap_or_else(|e| e)
 }

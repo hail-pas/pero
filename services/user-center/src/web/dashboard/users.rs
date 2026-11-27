@@ -101,9 +101,17 @@ pub async fn create(
         return response;
     }
 
-    util::management_response(
-        crate::service::enrollment::invite(&state, &form.email, None, &admin.session, false, "")
-            .await,
+    super::enrollment::activation_response(
+        crate::service::enrollment::invite(
+            &state,
+            &form.email,
+            None,
+            &admin.actor(&state),
+            form.domain_exception,
+            &form.reason,
+            form.delivery,
+        )
+        .await,
     )
 }
 
@@ -337,9 +345,13 @@ pub async fn grant_app(
         Ok(id) => id,
         Err(_) => return json_error("invalid_app_id"),
     };
-    util::management_response(
-        crate::service::access::grant_app(&state.db, &admin.actor(&state), id, app_id).await,
-    )
+    let actor = admin.actor(&state);
+    let result = if form.restore {
+        crate::service::access::restore_app(&state.db, &actor, id, app_id).await
+    } else {
+        crate::service::access::grant_app(&state.db, &actor, id, app_id).await
+    };
+    util::management_response(result)
 }
 
 pub async fn revoke_app(
@@ -405,5 +417,12 @@ pub struct UserEditInput {
 #[serde(deny_unknown_fields)]
 pub struct CreateUserInput {
     csrf_token: String,
+    #[serde(default)]
     email: String,
+    #[serde(default)]
+    delivery: crate::service::enrollment::InvitationDelivery,
+    #[serde(default)]
+    domain_exception: bool,
+    #[serde(default)]
+    reason: String,
 }

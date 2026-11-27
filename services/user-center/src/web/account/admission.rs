@@ -1,5 +1,5 @@
 use super::{dto::AccountLayout, security::AccountContext};
-use crate::{state::app::AppState, web::util};
+use crate::{service::application_request, state::app::AppState, web::util};
 use axum::{
     Form,
     extract::{Path, Query, State},
@@ -17,6 +17,13 @@ struct AppRow {
     organization_admission: bool,
     organization_only: bool,
     self_service_open: bool,
+    opens_immediately: bool,
+    #[serde(skip)]
+    domains: Vec<String>,
+    #[sea_orm(skip)]
+    admission_error: Option<&'static str>,
+    request_status: Option<String>,
+    request_reason: Option<String>,
     code: String,
     description: Option<String>,
     homepage_url: Option<String>,
@@ -30,25 +37,38 @@ pub async fn get(
     Query(query): Query<crate::service::enrollment::ListQuery>,
 ) -> Response {
     let eligibility = crate::service::tenant_context::AUTO_ELIGIBILITY;
+    let access_mode = application_request::ACCESS_MODE_SQL;
     let rows = AppRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!("SELECT a.id,a.name,a.code,a.description,a.homepage_url,a.logo_url,
             a.tenant_mode='organization' AS organization_only,
-            COALESCE(p.mode,platform.mode)='self_service' AND NOT platform.emergency_stop AS self_service_open,
+            admission.mode<>'managed' AND NOT platform.emergency_stop AS self_service_open,
+            admission.mode='open' AS opens_immediately,
+            COALESCE(p.domains, platform.domains) AS domains,
+            request.status AS request_status, request.reason AS request_reason,
             COALESCE(u.require_mfa,false) AS require_mfa,
             COALESCE(u.admission_origin='organization',false) AS organization_admission,
             CASE WHEN u.status='active' AND u.admission_origin='organization' AND NOT ({eligibility}) THEN NULL ELSE u.status::text END AS status
             FROM apps a
-            JOIN registration_policies platform ON platform.id='00000000-0000-0000-0000-000000000000'
+            JOIN registration_policies platform ON platform.app_id IS NULL
             LEFT JOIN registration_policies p ON p.app_id=a.id
+            CROSS JOIN LATERAL (SELECT {access_mode} AS mode) admission
             LEFT JOIN user_app_access u ON u.app_id=a.id AND u.user_id=$1
+            LEFT JOIN application_access_requests request ON request.user_id=$1 AND request.app_id=a.id
             WHERE NOT a.system AND a.status='active' ORDER BY a.name"),
         [account.user.id.into()],
     ))
     .all(&state.db)
     .await;
     match rows {
-        Ok(rows) => {
+        Ok(mut rows) => {
+            for app in &mut rows {
+                if app.self_service_open && !app.organization_only {
+                    app.admission_error =
+                        application_request::check_email_domain(&app.domains, &account.user).err();
+                    app.self_service_open = app.admission_error.is_none();
+                }
+            }
             let progress = match crate::service::enrollment::list(
                 &state.db,
                 &query,
@@ -85,8 +105,6 @@ pub struct Action {
     action: String,
     #[serde(default)]
     confirmation: String,
-    #[serde(default)]
-    recovery: String,
 }
 pub async fn app(
     State(state): State<AppState>,
@@ -100,22 +118,26 @@ pub async fn app(
     }
     let result = match f.action.as_str() {
         "leave" => crate::service::account_security::leave_app(&state, &account.session, id).await,
-        "join" => {
-            let source = match crate::web::oauth2::access::enrollment_source(
-                &state,
-                &f.recovery,
-                account.session.id,
-                id,
-            )
+        "join" => crate::service::application_request::submit(&state, &account.session, id)
             .await
-            {
-                Ok(source) => source,
-                Err(error) => return util::management_response(Err(error)),
-            };
-            crate::service::enrollment::start_portal(&state, &account.session, id, source).await
+            .map(|_| ()),
+        "withdraw" => {
+            crate::service::application_request::withdraw(&state, &account.session, id).await
         }
         _ => Err(crate::service::ManagementError::Invalid("invalid_request")),
     };
+    if matches!(
+        result,
+        Err(crate::service::ManagementError::Invalid("unauthorized"))
+    ) {
+        match super::mfa::pending_target(&state, &jar).await {
+            Ok(Some(target)) => {
+                return super::mfa::redirect_to(target, "/account/applications").into_response();
+            }
+            Ok(None) => {}
+            Err(response) => return response,
+        }
+    }
     util::management_response(result)
 }
 pub async fn close(

@@ -21,19 +21,40 @@ pub async fn find_by_identifier(
         .await
 }
 
-pub fn validate_username(username: &str) -> Result<(), String> {
+pub fn validate_username(username: &str) -> Result<(), &'static str> {
     let trimmed = username.trim();
     if trimmed.is_empty() {
-        return Err("username is required".to_owned());
-    }
-    if trimmed.len() < 3 || trimmed.len() > 64 {
-        return Err("username must be 3-64 characters".to_owned());
+        return Err("username_required");
     }
     if !trimmed
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err("username can only contain letters, digits, underscore, and hyphen".to_owned());
+        return Err("username_chars_invalid");
+    }
+    if !(3..=64).contains(&trimmed.len()) {
+        return Err("username_length_invalid");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_username;
+
+    #[test]
+    fn username_validation_returns_message_keys() {
+        assert_eq!(validate_username("  "), Err("username_required"));
+        assert_eq!(validate_username("ab"), Err("username_length_invalid"));
+        assert_eq!(
+            validate_username(&"a".repeat(65)),
+            Err("username_length_invalid")
+        );
+        assert_eq!(validate_username("中文"), Err("username_chars_invalid"));
+        assert_eq!(
+            validate_username("member.name"),
+            Err("username_chars_invalid")
+        );
+        assert_eq!(validate_username(" member_1-name "), Ok(()));
+    }
 }

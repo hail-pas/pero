@@ -38,6 +38,7 @@ import {
   Status,
   Toolbar,
   names,
+  providerKind,
 } from "./shared";
 interface ManagementRow {
   id: string;
@@ -285,7 +286,7 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
                           <Chip
                             size="small"
                             variant="outlined"
-                            label={lower(row.protocol)}
+                            label={providerKind(row.protocol)}
                           />
                         )}
                       </Stack>
@@ -389,7 +390,7 @@ export function ManagementList({ page }: { page: ViewEnvelope<ListView> }) {
                           <Chip
                             size="small"
                             variant="outlined"
-                            label={lower(row.protocol)}
+                            label={providerKind(row.protocol)}
                           />
                         )}
                       </>

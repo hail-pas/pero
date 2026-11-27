@@ -190,6 +190,8 @@ pub async fn logout_settings(
 #[derive(serde::Deserialize)]
 pub struct AccountSyncForm {
     csrf_token: String,
+    account_sync_enabled: bool,
+    #[serde(default)]
     account_sync_uri: String,
 }
 
@@ -204,7 +206,10 @@ pub async fn account_sync_settings(
     if let Some(response) = util::verify_csrf_or_json_error(&jar, &form.csrf_token, &state) {
         return response;
     }
-    let endpoint = util::empty_or_opt(&form.account_sync_uri);
+    let endpoint = form
+        .account_sync_enabled
+        .then(|| util::empty_or_opt(&form.account_sync_uri))
+        .flatten();
     if pero_utils::redirect::validate_optional_provider_endpoint_uri(endpoint.as_deref()).is_err() {
         return pero_api_axum::json_error("invalid_url");
     }
@@ -216,10 +221,11 @@ pub async fn account_sync_settings(
         Ok(None) => return pero_api_axum::json_error("not_found"),
         Err(error) => return util::dependency_error(error),
     };
-    if endpoint.is_some() && current.r#type != OauthClientType::Confidential {
+    if form.account_sync_enabled && current.r#type != OauthClientType::Confidential {
         return pero_api_axum::json_error("invalid_client_type");
     }
     let mut active: crate::db::entity::oauth_clients::ActiveModel = current.clone().into();
+    active.account_sync_enabled = Set(form.account_sync_enabled);
     active.account_sync_uri = Set(endpoint);
     active.updated_at = Set(time::OffsetDateTime::now_utc());
     util::management_response(

@@ -62,18 +62,20 @@ UserInfo 与 Access Token introspection 返回当前 `tenant_id`、`tenant_kind`
 
 ## 同步与全量对账
 
-启用“账户生命周期同步”的非系统应用可用有效的 confidential 客户端调用以下接口。请求为 `POST`，使用 `application/x-www-form-urlencoded`，通过 `client_secret_basic` 或 `client_secret_post` 认证。
+由超级管理员开启查询授权后，非系统应用可用有效的 confidential 客户端凭据查询本应用的账户、租户和成员。同步回调可选，用于 Pero 推送事件。以下接口使用 `POST` 和 `application/x-www-form-urlencoded`，通过 `client_secret_basic` 或 `client_secret_post` 认证。
 
 | 路径 | 请求字段 | 响应 |
 | --- | --- | --- |
-| `/api/accounts/sync` | `sub` | 本应用成员的当前账户投影 |
+| `/api/accounts/sync` | `sub` 或 `username` | 本应用成员的当前账户投影 |
 | `/api/tenants/sync` | `tenant_id` | 租户目录快照，包括名称、类型、`slug`、状态、成员数和上限、`app_allowed`、`active` |
 | `/api/tenants/membership/sync` | `sub`、`tenant_id` | 成员快照，包括角色、租户及成员状态和版本、`app_allowed`、`app_access_active`、`active` |
-| `/api/accounts/sync/list` | 可选 `after_user_id` | 账户投影分页，`next` 为用户 UUID |
+| `/api/accounts/sync/list` | 可选 `after_user_id`、`search`、`active`、`limit` | 账户投影分页，`next` 为用户 UUID |
 | `/api/tenants/list` | 可选 `after_tenant_id` | 租户目录分页，`next` 为租户 UUID |
 | `/api/tenants/membership/list` | 续页同时传 `after_tenant_id`、`after_user_id` | 成员快照分页，`next` 为 `{tenant_id,user_id}`，条目中的用户标识为 `sub` |
 
 分页响应为 `{rows,next}`，每页最多 100 条，`next=null` 表示结束。初次查询省略游标，续页使用对应的 `next` 值。点查超出应用可见范围时返回 HTTP 404。所有响应禁止缓存。
+
+完整用户名查询和前缀搜索用于应用侧选人，参数和 `profile` scope 要求见 [按用户名查找和下拉搜索](account-lifecycle-sync.md#按用户名查找和下拉搜索)。
 
 账户投影包含本应用已有的成员关系。租户和成员投影以本应用历史准入关系为边界，保留退出、解散或准入被撤销后的快照。成员快照中，`app_allowed` 反映应用状态、租户模式与组织准入，`app_access_active` 反映该账户的应用访问资格，`active` 还要求用户、租户与成员关系均有效。应用停用后，仍可用有效客户端凭据读取历史投影以完成撤权对账。
 
@@ -95,14 +97,14 @@ UserInfo 与 Access Token introspection 返回当前 `tenant_id`、`tenant_kind`
 ## 首次接入、增量同步与全量恢复
 
 - **首次接入**。分别遍历账户、租户目录和租户成员的列表接口，建立本地投影。
-- **日常更新**。接收并验证 `tenant.membership.changed` 事件后，用 `sub` 和 `tenant_id` 查询最新成员状态，按需刷新租户目录。账户事件通过 `/api/accounts/sync` 获取当前账户投影。使用 `jti` 去重，按当前查询结果更新。验签和投递流程见 [账户生命周期同步](account-lifecycle-sync.md#接收签名事件)。
-- **断线恢复**。重新遍历三个列表，并持续处理对账期间收到的增量事件。每页独立读取，需要时再核对一轮。以 `active` 控制访问，单页缺行时保留业务历史。
+- **日常更新**。应用可随时查询当前状态。已配置回调时，验证 `tenant.membership.changed` 事件后，用 `sub` 和 `tenant_id` 查询最新成员状态，按需刷新租户目录。账户事件通过 `/api/accounts/sync` 获取当前账户投影。使用 `jti` 去重，按当前查询结果更新。验签和投递流程见 [账户生命周期同步](account-lifecycle-sync.md#接收签名事件)。
+- **断线恢复**。重新遍历三个列表。已配置回调的应用继续处理对账期间收到的增量事件。每页独立读取，需要时再核对一轮。以 `active` 控制访问，单页缺行时保留业务历史。
 
 ## 组织应用申请
 
 Owner 可在 `/account/tenants/{id}` 查看组织适用的应用，对 `organization_access=restricted` 的应用申请准入或撤回待审申请。平台超级管理员在 `/dashboard/tenants/{id}` 批准或拒绝申请，批准与组织应用准入变更在同一事务内完成；仍保留原有平台直接授权入口。每个组织/应用保留一条当前申请记录，拒绝后可以再次申请。停用组织、禁用应用或已开通应用均不允许再提交新申请。
 
-当用户通过独立应用注册/加入流程完成验证后，原先来自组织自动准入的用户应用资格将升级为显式准入；此后可以按应用租户模式进入个人空间。被管理员明确撤销的准入不会经此流程被隐式恢复。
+当用户依据注册策略取得应用的个人准入后，原先来自组织自动准入的用户应用资格将升级为显式准入；此后可以按应用租户模式进入个人空间。被管理员明确撤销的准入不会经此流程被隐式恢复。
 
 自动准入开关变更与成员准入来源从组织变为显式准入时，会复用现有账户同步及租户成员变更事件，促使业务端重新拉取最新状态，而不是依靠旧缓存继续授权。
 

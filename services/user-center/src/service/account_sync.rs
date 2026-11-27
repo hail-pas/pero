@@ -1,4 +1,4 @@
-//! Transactional account change notifications; receivers fetch current, app-scoped state.
+//! Transactional account change notifications and application-scoped account queries.
 use crate::state::app::AppState;
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement};
 use uuid::Uuid;
@@ -86,15 +86,34 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 // Both point lookups and paginated reconciliation use the same account projection.
-const ACCOUNT_SELECT: &str = "SELECT u.id,u.username::text,u.email::text,u.email_verified_at,u.phone::text,u.phone_verified_at,u.nickname,u.avatar_url,u.status,u.created_at,u.updated_at,u.deleted_at,a.status::text AS membership_status,app.status='active' AND (a.admission_origin='explicit' OR (app.organization_auto_access AND EXISTS (SELECT 1 FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.user_id=u.id AND m.status='active' AND t.kind='organization' AND t.status='active' AND app.tenant_mode IN ('organization','both') AND (app.organization_access='open' OR EXISTS(SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id))))) AS app_active,c.scopes FROM users u JOIN user_app_access a ON a.user_id=u.id JOIN apps app ON app.id=a.app_id JOIN oauth_clients c ON c.app_id=a.app_id WHERE c.id=$1 AND c.status='active' AND c.type='confidential' AND c.account_sync_uri IS NOT NULL AND NOT app.system";
+fn account_select(access: &str) -> String {
+    format!(
+        r#"
+SELECT a.user_id AS id, u.username::text, u.email::text, u.email_verified_at, u.phone::text,
+       u.phone_verified_at, u.nickname, u.avatar_url, u.status, u.created_at, u.updated_at,
+       u.deleted_at, a.status::text AS membership_status, c.scopes,
+       (u.deleted_at IS NULL AND u.status='active' AND a.status='active' AND app.status='active'
+        AND (a.admission_origin='explicit' OR (app.organization_auto_access AND EXISTS (
+            SELECT 1 FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id
+            WHERE m.user_id=u.id AND m.status='active' AND t.kind='organization'
+              AND t.status='active' AND app.tenant_mode IN ('organization','both')
+              AND (app.organization_access='open' OR EXISTS (
+                  SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=app.id
+              ))
+        )))) AS active
+FROM users u
+JOIN {access} a ON a.user_id=u.id
+JOIN apps app ON app.id=a.app_id
+JOIN oauth_clients c ON c.app_id=a.app_id
+WHERE c.id=$1 AND c.status='active' AND c.type='confidential' AND c.account_sync_enabled AND NOT app.system
+"#
+    )
+}
 
 fn account_projection(row: &sea_orm::QueryResult) -> Result<serde_json::Value, DbErr> {
     let user = crate::db::entity::users::Model::from_query_result(row, "")?;
     let membership: String = row.try_get("", "membership_status")?;
-    let active = user.deleted_at.is_none()
-        && user.status == crate::db::enums::UserStatus::Active
-        && membership == "active"
-        && row.try_get::<bool>("", "app_active")?;
+    let active: bool = row.try_get("", "active")?;
     let profile = if active {
         serde_json::to_value(super::scope::user_claims(
             &user,
@@ -112,14 +131,14 @@ fn account_projection(row: &sea_orm::QueryResult) -> Result<serde_json::Value, D
 }
 
 /// Read an individual account using the same projection as batch reconciliation.
-pub async fn snapshot(
-    db: &sea_orm::DatabaseConnection,
+pub async fn snapshot<C: ConnectionTrait>(
+    db: &C,
     client: Uuid,
     user: Uuid,
 ) -> Result<Option<serde_json::Value>, DbErr> {
     db.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        format!("{ACCOUNT_SELECT} AND u.id=$2"),
+        format!("{} AND u.id=$2", account_select("user_app_access")),
         [client.into(), user.into()],
     ))
     .await?
@@ -128,30 +147,90 @@ pub async fn snapshot(
     .transpose()
 }
 
-/// Keyset-paginated account reconciliation in one query rather than one per user.
-pub async fn page(
-    db: &sea_orm::DatabaseConnection,
+/// Resolve a username only when the same projection is allowed to disclose it.
+pub(crate) async fn snapshot_by_username<C: ConnectionTrait>(
+    db: &C,
     client: Uuid,
+    username: &str,
+) -> Result<Option<serde_json::Value>, DbErr> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT * FROM ({} AND u.username=$2::citext) account
+             WHERE active AND 'profile'=ANY(scopes)",
+            account_select("user_app_access"),
+        ),
+        [client.into(), username.into()],
+    ))
+    .await?
+    .as_ref()
+    .map(account_projection)
+    .transpose()
+}
+
+pub(crate) const MAX_PAGE_SIZE: u32 = 100;
+
+/// Keyset-paginated account reconciliation in one query rather than one per user.
+pub(crate) async fn page<C: ConnectionTrait>(
+    db: &C,
+    client: &crate::db::entity::oauth_clients::Model,
     after: Option<Uuid>,
+    active: Option<bool>,
+    search: Option<&str>,
+    limit: u32,
 ) -> Result<(Vec<serde_json::Value>, Option<Uuid>), DbErr> {
+    let limit = limit as usize;
+    let mut values = vec![
+        client.id.into(),
+        client.app_id.into(),
+        ((limit + 1) as i64).into(),
+    ];
+    let (access_cursor, user_cursor) = if let Some(after) = after {
+        values.push(after.into());
+        ("AND user_id>$4", "AND u.id>$4")
+    } else {
+        ("", "")
+    };
+    // User and app foreign keys make it safe to take unfiltered pages before joining.
+    let access_limit = if active.is_none() && search.is_none() {
+        "ORDER BY user_id LIMIT $3"
+    } else {
+        ""
+    };
+    let select = account_select("account_access");
+    let mut sql = format!(
+        "WITH account_access AS (SELECT user_id, app_id, status, admission_origin
+            FROM user_app_access WHERE app_id=$2 {access_cursor} {access_limit})
+         SELECT * FROM ({select} {user_cursor}) account WHERE true"
+    );
+    if let Some(active) = active {
+        values.push(active.into());
+        sql.push_str(&format!(" AND active=${}", values.len()));
+    }
+    if let Some(search) = search {
+        values.push(search.into());
+        let param = values.len();
+        sql.push_str(&format!(
+            " AND active AND 'profile'=ANY(scopes)
+              AND (starts_with(lower(username), lower(${param}))
+                   OR starts_with(lower(nickname), lower(${param})))"
+        ));
+    }
+    sql.push_str(" ORDER BY id LIMIT $3");
     let mut rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            format!(
-                "{ACCOUNT_SELECT} AND ($2::uuid IS NULL OR u.id>$2::uuid) ORDER BY u.id LIMIT 101"
-            ),
-            [client.into(), after.into()],
+            sql,
+            values,
         ))
         .await?;
-    let more = rows.len() > 100;
-    rows.truncate(100);
-    let next = if more {
-        rows.last()
-            .map(|row| row.try_get::<Uuid>("", "id"))
-            .transpose()?
-    } else {
-        None
-    };
+    let more = rows.len() > limit;
+    rows.truncate(limit);
+    let next = rows
+        .last()
+        .filter(|_| more)
+        .map(|row| row.try_get::<Uuid>("", "id"))
+        .transpose()?;
     let accounts = rows
         .iter()
         .map(account_projection)

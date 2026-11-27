@@ -459,7 +459,7 @@ pub async fn invite_from_client(
         let protected = txn
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id FROM tenant_invitations WHERE tenant_id=$1 AND email=$2 AND status='pending' AND role='admin' AND expires_at>now()",
+                "SELECT id FROM tenant_invitations WHERE tenant_id=$1 AND email=$2::citext AND status='pending' AND role='admin' AND expires_at>now()",
                 [id.into(), email.clone().into()],
             ))
             .await?;
@@ -484,7 +484,7 @@ pub async fn invite_from_client(
     let token = pero_utils::crypto::generate_token();
     let hash = pero_utils::crypto::sha256_hex(&token);
     let expiry = time::OffsetDateTime::now_utc() + time::Duration::days(7);
-    exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND email=$2 AND status='pending'",vec![id.into(),email.clone().into()]).await?;
+    exec(&txn,"UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND email=$2::citext AND status='pending'",vec![id.into(),email.clone().into()]).await?;
     let mut link =
         pero_utils::oauth::url::issuer_endpoint(&state.config.sso.base_url, "sso/register");
     pero_utils::encode::append_query_param(&mut link, "invitation", &token);
@@ -614,6 +614,9 @@ pub async fn finalize_invitation(
     if !exists && session.is_some() {
         return Err(Error::Invalid("enrollment_sign_out_required"));
     }
+    if !exists {
+        crate::db::helper::user::validate_username(username).map_err(Error::Invalid)?;
+    }
     let proof = proof.filter(|proof| {
         proof.is_fresh()
             && proof.invitation_hash.as_deref()
@@ -704,11 +707,12 @@ pub async fn finalize_invitation(
         } else {
             RegistrationCredential::Password(hash.ok_or(Error::Invalid("invalid_request"))?)
         };
-        let (user, identity) = super::user::create_verified_user(
+        let (user, identity) = super::user::create_registered_user(
             &txn,
             username,
             Some(invite.email.clone()),
             None,
+            true,
             credential,
         )
         .await?;
@@ -722,7 +726,6 @@ pub async fn finalize_invitation(
         app_id: invite.app_id,
         client_id: invite.client_id,
         auth_request_id: None,
-        resume_portal: false,
         tenant_id: Some(invite.tenant_id),
     })
 }
@@ -841,6 +844,12 @@ pub async fn delete(
     }
     // Keep the tenant row and ID as a tombstone; 'deleted' cannot be toggled back.
     exec(&txn, "UPDATE tenants SET status='deleted',slug=NULL,auth_version=auth_version+1,updated_at=now() WHERE id=$1",vec![id.into()]).await?;
+    exec(
+        &txn,
+        "DELETE FROM tenant_app_requests WHERE tenant_id=$1",
+        vec![id.into()],
+    )
+    .await?;
     exec(
         &txn,
         "UPDATE tenant_invitations SET status='revoked' WHERE tenant_id=$1 AND status='pending'",

@@ -18,7 +18,7 @@ pub struct Model {
     pub tenant_version: Option<i64>,
     pub tenant_member_version: Option<i64>,
     pub client_id: Uuid,
-    pub session_id: Option<Uuid>,
+    pub session_id: Uuid,
     pub admission_session_id: Option<Uuid>,
     pub admission_revoked: bool,
     pub takeover_allowed: bool,
@@ -67,7 +67,7 @@ pub enum Relation {
         from = "Column::SessionId",
         to = "super::sso_sessions::Column::Id",
         on_update = "NoAction",
-        on_delete = "SetNull"
+        on_delete = "Cascade"
     )]
     SsoSessions,
     #[sea_orm(

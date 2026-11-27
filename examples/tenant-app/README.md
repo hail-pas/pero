@@ -6,7 +6,7 @@
 
 1. 在 Pero 创建支持 `personal` / `organization` / `both` 的业务应用。
 2. 创建 **confidential** OAuth Client，开启 `authorization_code,refresh_token`、S256 PKCE 和 `openid,profile,email` scopes；添加回调 `http://127.0.0.1:8092/callback`。生产环境请改为 HTTPS。
-3. 如需同步，将 Account Sync URI 配置为此模板经 **HTTPS** 公开的 `/account-sync`。公网接收端可参考仓库内 `examples/account-sync`。
+3. 全量对账需要超级管理员为客户端开启账户、租户和成员查询授权。如需接收 Pero 推送的事件，将同步地址配置为此模板经 **HTTPS** 公开的 `/account-sync`。公网接收端可参考仓库内 `examples/account-sync`。
 4. 确保 Redis 可用，配置密钥并启动：
 
 ```bash
@@ -28,6 +28,6 @@ python examples/tenant-app/app.py
 - **租户切换**：使用 Bearer Token 查询 `/api/tenants/choices`，通过携带 CSRF Token 的 POST 表单发起全新的授权码流程。每次登录生成新的随机业务会话 ID，成功切换后清理旧会话；不要修改现有 Token 的 `tenant_id`。
 - **受保护请求**：调用 introspection 校验 `active`、`sub`、`tenant_id`；依赖返回 503 时不当作用户已注销。真实应用还需基于当前租户强制校验其业务资源的数据隔离。
 - **退出**：携带 CSRF，撤销本客户端授权并引导浏览器退出中心 SSO。RP 回调地址与 Logout URI 请按正式环境配置。
-- **同步**：可在 `/account-sync` 接收 JWT 签名事件，通过服务端客户端认证查询账户或租户成员的当前状态；`python examples/tenant-app/app.py reconcile` 可以遍历三个游标接口执行初始/断线全量对账。Redis 投影仅演示，不代替生产业务库、事务和完整的幂等事件处理。
+- **查询与同步**：`python examples/tenant-app/app.py reconcile` 可用服务端客户端凭据遍历三个游标接口执行全量对账，无需配置事件回调。配置回调后，`/account-sync` 还可接收 JWT 签名事件并查询当前状态。Redis 投影仅演示，不代替生产业务库、事务和完整的幂等事件处理。
 
 **前提**：本示例只有一台服务进程和一个 Redis；没有业务角色、订单、文件等业务层 ACL。生产应用应使用自己的数据库事务处理账户投影与事件 jti，并根据业务资源的租户归属实现严格隔离。短信/邮件注册、组织申请均由 Pero 用户中心页面处理，无须业务端复制认证逻辑。

@@ -78,9 +78,10 @@ pub fn management_response(result: Result<(), crate::service::ManagementError>) 
         Ok(()) => json_ok(),
         Err(crate::service::ManagementError::Invalid(code)) => {
             let status = match code {
-                "registration_closed" | "email_domain_not_allowed" | "forbidden" => {
-                    axum::http::StatusCode::FORBIDDEN
-                }
+                "registration_closed"
+                | "email_domain_not_allowed"
+                | "verified_email_required"
+                | "forbidden" => axum::http::StatusCode::FORBIDDEN,
                 "rate_limited" => axum::http::StatusCode::TOO_MANY_REQUESTS,
                 "not_found" => axum::http::StatusCode::NOT_FOUND,
                 "permission_revision_conflict" | "policy_conflict" | "enrollment_flow_changed" => {

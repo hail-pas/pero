@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::{ManagementError, password::PasswordIdentityService, session::SessionService};
 use crate::db::entity::{
     apps, identities, identity_providers, oauth_clients, refresh_tokens, sso_sessions,
-    user_app_access, user_consents,
+    user_app_access, user_consents, users,
 };
 use crate::db::enums::{IdentityKind, UserStatus};
 
@@ -139,7 +139,7 @@ pub(crate) async fn lock_account_session<C: ConnectionTrait>(
     db: &C,
     session: &crate::state::session::SsoSession,
     config: &crate::config::SsoConfig,
-) -> Result<(), ManagementError> {
+) -> Result<users::Model, ManagementError> {
     let user = PasswordIdentityService::lock_user(db, session.user_id).await?;
     if user.status != UserStatus::Active
         || crate::db::helper::session::lock_active(
@@ -153,7 +153,7 @@ pub(crate) async fn lock_account_session<C: ConnectionTrait>(
     {
         return Err(ManagementError::Invalid("unauthorized"));
     }
-    Ok(())
+    Ok(user)
 }
 
 pub async fn revoke_account_sessions(
@@ -232,16 +232,7 @@ pub async fn leave_app(
         .one(&txn)
         .await?;
     lock_account_session(&txn, session, &state.config.sso).await?;
-    // Persist an explicit denial even before the first organization auto-admission.
-    super::access::write_app_access(
-        &txn,
-        session.user_id,
-        app_id,
-        crate::db::enums::CommonStatus::Disabled,
-    )
-    .await?;
-    SessionService::revoke_app_grants(&txn, app_id, Some(session.user_id), "membership_withdrawn")
-        .await?;
+    super::access::revoke_explicit(&txn, session.user_id, app_id, "membership_withdrawn").await?;
     super::security::execute(&txn,"DELETE FROM user_consents WHERE user_id=$1 AND client_id IN (SELECT id FROM oauth_clients WHERE app_id=$2)",vec![session.user_id.into(),app_id.into()]).await?;
     super::security::execute(&txn,"INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,'membership_withdrawn',$2,'success',200 FROM users WHERE id=$1",vec![session.user_id.into(),app_id.to_string().into()]).await?;
     txn.commit().await?;
@@ -293,14 +284,29 @@ pub async fn close_account(
     SessionService::revoke_all_login_state_for_user_in_db(&txn, user.id, "account_closed").await?;
     super::contact::invalidate_contact_credentials(&txn, user.id, None).await?;
     super::security::execute(&txn,
-        "DELETE FROM notification_outbox WHERE user_id=$1 OR enrollment_id IN (SELECT id FROM enrollments WHERE email=$2 OR phone=$3)",
-        vec![user.id.into(), user.email.clone().into(), user.phone.clone().into()],
-    ).await?;
-    super::security::execute(&txn,
-        "UPDATE enrollments SET status='revoked' WHERE (email=$1 OR phone=$2) AND status IN ('pending_verification','pending_approval','ready')",
+        "UPDATE enrollments SET status='revoked' WHERE (email=$1::citext OR phone=$2::citext) AND status IN ('pending_verification','pending_approval','ready')",
         vec![user.email.clone().into(), user.phone.clone().into()],
     ).await?;
+    super::security::execute(
+        &txn,
+        "DELETE FROM notification_outbox WHERE user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
+    super::security::execute(
+        &txn,
+        "DELETE FROM notification_outbox o USING enrollments e
+         WHERE o.enrollment_id=e.id AND (e.email=$1::citext OR e.phone=$2::citext)",
+        vec![user.email.clone().into(), user.phone.clone().into()],
+    )
+    .await?;
     super::security::execute(&txn,"UPDATE user_app_access SET status='disabled',token_version=token_version+1,updated_at=now() WHERE user_id=$1",vec![user.id.into()]).await?;
+    super::security::execute(
+        &txn,
+        "DELETE FROM application_access_requests WHERE user_id=$1",
+        vec![user.id.into()],
+    )
+    .await?;
     super::security::execute(
         &txn,
         "UPDATE tenant_members SET status='removed',auth_version=auth_version+1,updated_at=now() WHERE user_id=$1 AND status='active'",

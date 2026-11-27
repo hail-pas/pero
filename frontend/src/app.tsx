@@ -20,11 +20,19 @@ import {
   useRevalidator,
   type LoaderFunctionArgs,
 } from "react-router-dom";
-import { errorText, request, type ViewEnvelope, type Values } from "./api";
+import {
+  isEnrollmentPath,
+  request,
+  RequestError,
+  requestErrorText,
+  type ViewEnvelope,
+  type Values,
+} from "./api";
 import type { Field } from "./forms";
 import { ActionDialog, type ActionModal } from "./action-dialog";
-import { t, useLocale } from "./i18n";
+import { t, useLocale, type Message } from "./i18n";
 import { Layout } from "./layout";
+import { LanguageSwitcher } from "./language-switcher";
 import { PageContent } from "./page-content";
 
 function documentNavigation(url: URL) {
@@ -53,11 +61,11 @@ export async function pageLoader({ request: navigation }: LoaderFunctionArgs) {
         ? redirectDocument(target.href)
         : redirect(target.pathname + target.search);
     }
-    if (!result.view) throw new Error(errorText("invalid_response"));
-    return { payload: result, failure: "", sequence };
+    if (!result.view) throw new RequestError("invalid_response");
+    return { payload: result, sequence };
   } catch (error) {
     if (navigation.signal.aborted) throw error;
-    return { payload: undefined, failure: (error as Error).message, sequence };
+    return { failure: error, sequence };
   }
 }
 
@@ -101,7 +109,7 @@ export function App() {
       ? updated
       : undefined;
   const payload = currentUpdate?.payload ?? loaded.payload;
-  const failure = currentUpdate ? "" : loaded.failure;
+  const failure = currentUpdate ? undefined : loaded.failure;
   const routeKey = location.pathname + location.search;
   const [notice, setNotice] = useState("");
   const [pendingNotice, setPendingNotice] = useState<{
@@ -224,7 +232,11 @@ export function App() {
       result = await request(endpoint, { ...values, csrf_token: csrfToken });
     } catch (error) {
       if (activeRoute.current !== sourceRoute) return;
-      if ((error as Error & { code?: string }).code === "forbidden") {
+      if (
+        !isEnrollmentPath(endpoint) &&
+        error instanceof RequestError &&
+        error.code === "forbidden"
+      ) {
         setModal(null);
         setPayload({ view: "ForbiddenView", data: { code: "forbidden" } });
       }
@@ -243,22 +255,28 @@ export function App() {
       "secret" in result.data &&
       result.data.secret
     ) {
+      const purpose = result.data.purpose;
+      const labels =
+        purpose === "invitation_activation"
+          ? {
+              label: "激活链接",
+              title: "邀请激活链接",
+              description: "链接只在签发时显示。请核验受邀人身份后私下发送链接。受邀人可在个人中心管理联系方式。",
+            }
+          : purpose === "mfa_recovery"
+            ? {
+                label: "临时恢复码",
+                title: "临时恢复码",
+                description: "恢复码仅显示一次，15 分钟内有效。核验身份后私下交付本人；用户须先登录，再使用恢复码重新绑定验证器。",
+              }
+            : {
+                label: "客户端密钥",
+                title: "请保存客户端密钥",
+                description: "密钥只在此时显示，请复制并妥善保存。",
+              };
       setModal({
         kind: "secret",
-        label:
-          result.data.purpose === "mfa_recovery"
-            ? t("临时恢复码")
-            : t("客户端密钥"),
-        title:
-          result.data.purpose === "mfa_recovery"
-            ? t("临时恢复码")
-            : t("请保存客户端密钥"),
-        description:
-          result.data.purpose === "mfa_recovery"
-            ? t(
-                "恢复码仅显示一次，15 分钟内有效。核验身份后私下交付本人；用户须先登录，再使用恢复码重新绑定验证器。",
-              )
-            : t("密钥只在此时显示，请复制并妥善保存。"),
+        ...labels,
         secret: result.data.secret,
       });
       return;
@@ -273,22 +291,22 @@ export function App() {
     setModal(null);
     if (after) {
       await after();
-      setPendingNotice({ sourceKey: sourceRoute.key, text: t("操作已完成") });
+      setPendingNotice({ sourceKey: sourceRoute.key, text: "操作已完成" });
     } else {
-      setNotice(t("操作已完成"));
+      setNotice("操作已完成");
       await refresh();
     }
   }
   function ask(
-    title: string,
+    title: Message,
     endpoint: string,
     values: Values = {},
-    description = t("此操作会立即生效，请确认后继续。"),
+    description: Message = "此操作会立即生效，请确认后继续。",
   ) {
     setModal({ kind: "confirm", title, endpoint, values, description });
   }
   function editor(
-    title: string,
+    title: Message,
     endpoint: string,
     fields: Field[],
     initial: Values = {},
@@ -302,7 +320,10 @@ export function App() {
     content = (
       <Card>
         <CardContent>
-          <Alert severity="error">{t(failure)}</Alert>
+          <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
+            <LanguageSwitcher />
+          </Box>
+          <Alert severity="error">{requestErrorText(failure)}</Alert>
           <Button
             sx={{ mt: 2 }}
             onClick={refresh}
@@ -352,10 +373,10 @@ export function App() {
           layout={layout ?? undefined}
           onLogout={() =>
             ask(
-              t("退出登录"),
+              "退出登录",
               "/account/logout",
               {},
-              t("退出当前账户并撤销当前登录会话。"),
+              "退出当前账户并撤销当前登录会话。",
             )
           }
         >

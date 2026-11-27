@@ -11,7 +11,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub app_id: Uuid,
-    #[sea_orm(column_type = "custom(\"citext\")", select_as = "text", unique)]
+    #[sea_orm(column_type = "Text", unique)]
     pub identifier: String,
     #[sea_orm(column_type = "Text", nullable)]
     #[serde(skip_serializing)]
@@ -27,6 +27,7 @@ pub struct Model {
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
     pub backchannel_logout_uri: Option<String>,
+    pub account_sync_enabled: bool,
     pub account_sync_uri: Option<String>,
     pub scopes: Vec<String>,
     pub grant_types: Vec<String>,

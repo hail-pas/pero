@@ -38,19 +38,23 @@ pub async fn get(
         let mut policy = svc::policy(&state.db, scope.app).await?;
         let inherited = scope.app.is_some() && policy.app_id.is_none();
         policy.app_id = scope.app;
+        let can_invite = svc::supports_personal_enrollment(&state.db, scope.app).await?;
         let list = svc::list(&state.db, &scope, None).await?;
-        Ok::<_, ManagementError>((policy, inherited, list))
+        Ok::<_, ManagementError>((policy, inherited, can_invite, list))
     }
     .await;
     match result {
-        Ok((policy, inherited, list)) => util::view_response(
+        Ok((policy, inherited, can_invite, list)) => util::view_response(
             "EnrollmentAdminView",
-            serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"policy":policy,"inherited":inherited,"rows":list.rows,"page":list.page,"total_pages":list.total_pages,"pending_count":list.pending_count}),
+            serde_json::json!({"layout":page.layout,"csrf_token":page.csrf_token,"policy":policy,
+                "inherited":inherited,"can_invite":can_invite,"rows":list.rows,"page":list.page,
+                "total_pages":list.total_pages,"pending_count":list.pending_count}),
             page.jar,
         ),
         Err(e) => util::management_response(Err(e)),
     }
 }
+
 pub async fn save(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -63,9 +67,8 @@ pub async fn save(
     util::management_response(
         svc::save_policy(
             &state,
-            &admin.session,
+            &admin.actor(&state),
             svc::Policy {
-                id: f.app.unwrap_or(Uuid::nil()),
                 app_id: f.app,
                 mode: f.mode,
                 domains: util::parse_comma_list(&f.domains),
@@ -81,7 +84,10 @@ pub async fn save(
 #[derive(Deserialize)]
 pub struct Invite {
     csrf_token: String,
+    #[serde(default)]
     email: String,
+    #[serde(default)]
+    delivery: svc::InvitationDelivery,
     app: Option<Uuid>,
     #[serde(default)]
     domain_exception: bool,
@@ -97,14 +103,15 @@ pub async fn invite(
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
         return e;
     }
-    util::management_response(
+    activation_response(
         svc::invite(
             &state,
             &f.email,
             f.app,
-            &admin.session,
+            &admin.actor(&state),
             f.domain_exception,
             &f.reason,
+            f.delivery,
         )
         .await,
     )
@@ -126,5 +133,14 @@ pub async fn manage(
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
         return e;
     }
-    util::management_response(svc::manage(&state, &admin.session, id, &f.action, &f.reason).await)
+    activation_response(svc::manage(&state, &admin.actor(&state), id, &f.action, &f.reason).await)
+}
+
+pub(super) fn activation_response(result: Result<Option<String>, ManagementError>) -> Response {
+    match result {
+        Ok(Some(link)) => pero_api_axum::json_ok_with_sensitive(
+            serde_json::json!({"secret":link,"purpose":"invitation_activation"}),
+        ),
+        result => util::management_response(result.map(|_| ())),
+    }
 }

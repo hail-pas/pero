@@ -24,6 +24,10 @@ pub async fn can_access_dashboard<C: ConnectionTrait>(
 pub async fn lock_policy<C: ConnectionTrait>(db: &C) -> Result<(), sea_orm::DbErr> {
     sec::execute(db, "SELECT pg_advisory_xact_lock(71234019)", vec![]).await
 }
+
+pub(super) async fn read_lock_policy<C: ConnectionTrait>(db: &C) -> Result<(), sea_orm::DbErr> {
+    sec::execute(db, "SELECT pg_advisory_xact_lock_shared(71234019)", vec![]).await
+}
 /// Call under the policy lock when removing a role or disabling its account.
 pub async fn protect_last_super_admin<C: ConnectionTrait>(
     db: &C,
@@ -84,37 +88,21 @@ pub async fn update_role(
         protect_last_super_admin(&txn, user.id).await?;
     }
     if sec::role(&txn, user.id).await?.as_deref() != Some(role) {
-        sec::execute(
-            &txn,
-            "DELETE FROM admin_permission_state WHERE user_id=$1",
-            vec![user.id.into()],
-        )
-        .await?;
-    }
-    if role == "remove" {
+        // Changing roles clears delegated grants and starts a new permission revision.
         sec::execute(
             &txn,
             "DELETE FROM admin_roles WHERE user_id=$1",
             vec![user.id.into()],
         )
         .await?;
-    } else {
-        sec::execute(&txn,"INSERT INTO admin_roles(user_id,role) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET role=EXCLUDED.role",vec![user.id.into(),role.into()]).await?;
-    }
-    if sec::role(&txn, user.id).await?.as_deref() == Some("admin") {
-        sec::execute(
-            &txn,
-            "INSERT INTO admin_permission_state(user_id) VALUES($1) ON CONFLICT DO NOTHING",
-            vec![user.id.into()],
-        )
-        .await?;
-    } else {
-        sec::execute(
-            &txn,
-            "DELETE FROM admin_permission_state WHERE user_id=$1",
-            vec![user.id.into()],
-        )
-        .await?;
+        if role != "remove" {
+            sec::execute(
+                &txn,
+                "INSERT INTO admin_roles (user_id, role) VALUES ($1, $2)",
+                vec![user.id.into(), role.into()],
+            )
+            .await?;
+        }
     }
     if role != "super_admin" {
         super::enrollment::invalidate_sponsor(&txn, user.id).await?;

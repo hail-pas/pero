@@ -92,7 +92,7 @@ async fn contact_mutations_revalidate_the_authenticated_session() {
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn delegated_user_invitations_follow_current_permissions() {
-    use user_center::service::enrollment;
+    use user_center::service::enrollment::{self, InvitationDelivery::*};
 
     let f = Fixture::new().await;
     let actor = database::management_actor(&f.state.db).await;
@@ -101,28 +101,24 @@ async fn delegated_user_invitations_follow_current_permissions() {
         vec![actor.session.user_id.into()],
     )
     .await;
-    f.sql(
-        "INSERT INTO admin_permission_state(user_id) VALUES($1)",
-        vec![actor.session.user_id.into()],
-    )
-    .await;
     f.sql("INSERT INTO admin_permissions(user_id,permission) VALUES($1,'users.read'),($1,'users.create')", vec![actor.session.user_id.into()]).await;
 
-    // UsersCreate permits platform invitations, never app grants or domain exceptions.
+    // UsersCreate permits email delivery for platform invitations only.
     let address = format!("delegated-{}@example.test", Uuid::now_v7().simple());
-    assert!(
-        enrollment::invite(&f.state, &address, Some(f.app), &actor.session, false, "")
-            .await
-            .is_err()
-    );
-    assert!(
-        enrollment::invite(&f.state, &address, None, &actor.session, true, "exception")
-            .await
-            .is_err()
-    );
+    for (address, app, exception, reason, delivery) in [
+        (address.as_str(), Some(f.app), false, "", Email),
+        (address.as_str(), None, true, "exception", Email),
+        (address.as_str(), None, false, "", Manual),
+        ("", None, false, "", AccountLink),
+    ] {
+        assert!(matches!(
+            enrollment::invite(&f.state, address, app, &actor, exception, reason, delivery).await,
+            Err(user_center::service::ManagementError::Invalid("forbidden"))
+        ));
+    }
     for complete in [true, false] {
         let address = format!("delegated-{}@example.test", Uuid::now_v7().simple());
-        enrollment::invite(&f.state, &address, None, &actor.session, false, "")
+        enrollment::invite(&f.state, &address, None, &actor, false, "", Email)
             .await
             .unwrap();
         let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
@@ -144,8 +140,11 @@ async fn delegated_user_invitations_follow_current_permissions() {
             enrollment::finalize(
                 &f.state,
                 &token,
-                "delegated_invitee",
-                "ValidPass123!",
+                enrollment::FinalizeInput {
+                    username: "delegated_invitee",
+                    password: "ValidPass123!",
+                    ..Default::default()
+                },
                 None,
                 None,
             )
@@ -161,8 +160,11 @@ async fn delegated_user_invitations_follow_current_permissions() {
                 enrollment::finalize(
                     &f.state,
                     &token,
-                    "revoked_invitee",
-                    "ValidPass123!",
+                    enrollment::FinalizeInput {
+                        username: "revoked_invitee",
+                        password: "ValidPass123!",
+                        ..Default::default()
+                    },
                     None,
                     None
                 )
@@ -436,6 +438,21 @@ async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
             .is_none()
     );
 
+    f.sql(
+        "UPDATE registration_policies SET emergency_stop=true WHERE app_id IS NULL",
+        vec![],
+    )
+    .await;
+    assert!(
+        !access::ensure_oauth_app_access(db, &session, f.app, 3600)
+            .await
+            .unwrap()
+    );
+    f.sql(
+        "UPDATE registration_policies SET emergency_stop=false WHERE app_id IS NULL",
+        vec![],
+    )
+    .await;
     access::revoke_app(db, &actor, f.user, f.app).await.unwrap();
     assert!(
         !access::ensure_oauth_app_access(db, &session, f.app, 3600)
@@ -443,7 +460,10 @@ async fn explicit_app_revocation_prevents_first_organization_auto_admission() {
             .unwrap()
     );
 
-    access::grant_app(db, &actor, f.user, f.app).await.unwrap();
+    assert!(access::grant_app(db, &actor, f.user, f.app).await.is_err());
+    access::restore_app(db, &actor, f.user, f.app)
+        .await
+        .unwrap();
     assert!(
         access::ensure_oauth_app_access(db, &session, f.app, 3600)
             .await
@@ -483,7 +503,7 @@ async fn organization_auto_admission_changes_resync_account_projection() {
     )
     .await;
     f.sql(
-        "UPDATE oauth_clients SET account_sync_uri='https://rp.example.test/sync' WHERE id=$1",
+        "UPDATE oauth_clients SET account_sync_enabled=true,account_sync_uri='https://rp.example.test/sync' WHERE id=$1",
         vec![f.client.into()],
     )
     .await;
@@ -664,7 +684,7 @@ async fn expired_security_data_is_cleaned_without_removing_current_records() {
         vec![f.user.into(), f.admin.into()],
     )
     .await;
-    assert_eq!(clean_expired_mfa(db).await.unwrap(), 2);
+    assert_eq!(clean_expired_mfa(db).await.unwrap(), 3);
     assert_eq!(clean_expired_mfa(db).await.unwrap(), 0);
     let row = db
         .query_one_raw(Statement::from_string(
@@ -890,6 +910,168 @@ async fn call(
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn account_links_create_users_and_grant_only_the_invited_app() {
+    use std::net::{Ipv6Addr, SocketAddr};
+
+    let f = Fixture::new().await;
+    let (admin, csrf) = f.admin_login().await;
+    // Keep this scenario's registration budget separate from other test clients.
+    let source = SocketAddr::from((Ipv6Addr::from(f.app.as_u128()), 0));
+    let router = user_center::router::build(f.state.clone())
+        .layer(axum::Extension(axum::extract::ConnectInfo(source)));
+    let app_id = f.app.to_string();
+    f.sql(
+        "INSERT INTO registration_policies(app_id,mode,domains) VALUES($1,'invite_only',ARRAY['example.test'])",
+        vec![f.app.into()],
+    )
+    .await;
+
+    let account = [("csrf_token", csrf.as_str()), ("delivery", "account_link")];
+    let mut app_fields = account.to_vec();
+    app_fields.push(("app", &app_id));
+    let (_, denied, _) = call(&router, &admin, "/dashboard/invitations", Some(&app_fields)).await;
+    assert_eq!(denied["error"], "email_domain_not_allowed");
+    app_fields.extend([
+        ("domain_exception", "true"),
+        ("reason", "Temporary account"),
+    ]);
+
+    for (fields, username, app_scoped) in [
+        (account.as_slice(), "platform_invitee", false),
+        (app_fields.as_slice(), "app_invitee", true),
+    ] {
+        let (_, invitation, headers) =
+            call(&router, &admin, "/dashboard/invitations", Some(fields)).await;
+        assert_eq!(invitation["data"]["purpose"], "invitation_activation");
+        assert_eq!(headers["cache-control"], "no-store");
+        let link = url::Url::parse(invitation["data"]["secret"].as_str().unwrap()).unwrap();
+        let entry = format!("{}?{}", link.path(), link.query().unwrap());
+        let (_, opened, headers) = call(&router, "", &entry, None).await;
+        assert_eq!(opened["redirect"], "/sso/register");
+        let flow_cookies = headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|header| header.to_str().ok()?.split(';').next())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let (_, page, _) = call(&router, &flow_cookies, "/sso/register", None).await;
+        assert_eq!(page["data"]["account_invitation"], true);
+        assert_eq!(page["data"]["status"], "ready");
+        assert_eq!(page["data"]["allowed_methods"], json!(["email", "phone"]));
+        let csrf = page["data"]["csrf_token"].as_str().unwrap();
+        let cookie_name = f.state.web_security().csrf_cookie_name();
+        let browser = format!("{flow_cookies}; {cookie_name}={csrf}");
+        let mut finalize = vec![
+            ("csrf_token", csrf),
+            ("flow", page["data"]["flow"].as_str().unwrap()),
+            ("action", "finalize"),
+            ("username", username),
+            ("password", "ValidPass123!"),
+        ];
+        let contact = app_scoped.then_some(("Invitee@EXAMPLE.TEST", "+8613800000000"));
+        if let Some((email, phone)) = contact {
+            let mut duplicate = finalize.clone();
+            duplicate.push(("email", "member@example.test"));
+            let (_, conflict, _) = call(&router, &browser, "/sso/register", Some(&duplicate)).await;
+            assert_eq!(conflict["error"], "contact_taken");
+            finalize.extend([("email", email), ("phone", phone)]);
+        }
+        let (_, completed, _) = call(&router, &browser, "/sso/register", Some(&finalize)).await;
+        assert_eq!(
+            completed["redirect"], "/account/applications",
+            "registration failed: {}",
+            completed["error"]
+        );
+        let user =
+            user_center::db::helper::user::find_by_identifier(&f.state.db, "username", username)
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(user.email.is_none() && user.phone.is_none());
+        let access = user_center::service::access::active_app_access(&f.state.db, user.id, f.app)
+            .await
+            .unwrap();
+        assert_eq!(access.is_some(), app_scoped);
+        let (_, replayed, _) = call(&router, &browser, "/sso/register", Some(&finalize)).await;
+        assert_eq!(replayed["data"]["status"], "completed");
+        if let Some((_, phone)) = contact {
+            let (cookies, csrf, _, _) = f.login(user.id).await;
+            let (_, profile, _) = call(&router, &cookies, "/account/profile", None).await;
+            let profile = &profile["data"]["user"];
+            for (channel, value) in [("email", "invitee@example.test"), ("phone", phone)] {
+                assert_eq!(profile[format!("pending_{channel}_value")], value);
+                let nonce = profile[format!("pending_{channel}_nonce")]
+                    .as_str()
+                    .unwrap();
+                let delivery = f.state.db.query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT pgp_sym_decrypt(o.payload_enc,current_setting('app.encrypt_key'))::jsonb->>'code' AS code
+                     FROM notification_outbox o JOIN notification_deliveries d USING(id)
+                     WHERE o.user_id=$1 AND o.kind='verify_contact' AND d.channel=$2",
+                    [user.id.into(), channel.into()],
+                )).await.unwrap().unwrap();
+                let code = delivery.try_get::<String>("", "code").unwrap();
+                let (_, verified, _) = call(
+                    &router,
+                    &cookies,
+                    "/account/profile/verify-contact",
+                    Some(&[("csrf_token", &csrf), ("nonce", nonce), ("code", &code)]),
+                )
+                .await;
+                assert_eq!(verified["code"], 0);
+            }
+            let user = user_center::db::entity::users::Entity::find_by_id(user.id)
+                .one(&f.state.db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(user.email_verified_at.is_some() && user.phone_verified_at.is_some());
+        }
+    }
+
+    let (_, invitation, _) = call(
+        &router,
+        &admin,
+        "/dashboard/invitations",
+        Some(&[
+            ("csrf_token", &csrf),
+            ("delivery", "manual"),
+            ("app", &app_id),
+            ("email", "registered-later@example.test"),
+        ]),
+    )
+    .await;
+    f.sql(
+        "INSERT INTO users(username,email,email_verified_at)
+         VALUES('registered_later','registered-later@example.test',now())",
+        vec![],
+    )
+    .await;
+    let link = url::Url::parse(invitation["data"]["secret"].as_str().unwrap()).unwrap();
+    let token = link
+        .query_pairs()
+        .find(|(key, _)| key == "token")
+        .unwrap()
+        .1;
+    user_center::service::enrollment::verify(&f.state, &token)
+        .await
+        .unwrap();
+    let entry = format!("{}?{}", link.path(), link.query().unwrap());
+    let (_, _, headers) = call(&router, "", &entry, None).await;
+    let cookies = headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|header| header.to_str().ok()?.split(';').next())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let (_, blocked, _) = call(&router, &cookies, "/sso/register", None).await;
+    assert_eq!(blocked["data"]["mode"], "closed");
+    assert_eq!(blocked["data"]["error"], "enrollment_existing_app_invitee");
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
 async fn expired_application_registration_returns_to_initiating_client() {
     let f = Fixture::new().await;
     f.sql(
@@ -1067,58 +1249,116 @@ async fn expired_application_registration_returns_to_initiating_client() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
-async fn portal_enrollment_keeps_the_client_after_the_recovery_request_expires() {
+async fn open_app_access_checks_verified_domains_after_oauth_request_expires() {
     let f = Fixture::new().await;
-    let (cookies, csrf, _, _) = f.login(f.user).await;
-    let router = user_center::router::build(f.state.clone());
+    f.sql(
+        "UPDATE users SET email=NULL,email_verified_at=NULL WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    f.sql(
+        "UPDATE registration_policies SET approval_required=false,domains=ARRAY['example.test'] WHERE app_id IS NULL",
+        vec![],
+    )
+    .await;
     f.sql(
         "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
         vec![f.client.into()],
     )
     .await;
+    let (cookies, csrf, _, _) = f.login(f.user).await;
+    let router = user_center::router::build(f.state.clone());
     let authorize = format!(
         "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid",
         f.client
     );
     let (_, denied, _) = call(&router, &cookies, &authorize, None).await;
-    let access = denied["redirect"].as_str().unwrap();
-    let (_, denied, _) = call(&router, &cookies, access, None).await;
-    let recovery = denied["data"]["token"].as_str().unwrap();
-    f.sql(
-        "DELETE FROM authorization_requests WHERE client_id=$1",
-        vec![f.client.into()],
+    let recovery = denied["redirect"].as_str().unwrap();
+    let (_, view, _) = call(&router, &cookies, recovery, None).await;
+    assert_eq!(view["data"]["can_request"], false);
+    assert_eq!(view["data"]["opens_immediately"], true);
+    assert_eq!(view["data"]["admission_error"], "verified_email_required");
+    let (new_cookies, new_csrf, _, _) = f.login(f.user).await;
+    let (_, expired, _) = call(
+        &router,
+        &new_cookies,
+        "/oauth2/authorize/access",
+        Some(&[
+            ("csrf_token", &new_csrf),
+            ("token", view["data"]["token"].as_str().unwrap()),
+            ("action", "join"),
+        ]),
     )
     .await;
-    let (_, expired, _) = call(&router, &cookies, access, None).await;
     assert_eq!(expired["data"]["expired"], true);
     assert_eq!(
         expired["data"]["login_url"],
         "https://client.example.test/login"
     );
+    f.sql(
+        "DELETE FROM authorization_requests WHERE client_id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    let (_, expired, _) = call(&router, &cookies, recovery, None).await;
+    assert_eq!(expired["data"]["expired"], true);
+    assert_eq!(
+        expired["data"]["login_url"],
+        "https://client.example.test/login"
+    );
+
+    let portal = format!("/account/applications/{}", f.app);
+    let (_, catalogue, _) = call(&router, &cookies, "/account/applications", None).await;
+    let application = &catalogue["data"]["rows"][0];
+    assert_eq!(application["self_service_open"], false);
+    assert_eq!(application["admission_error"], "verified_email_required");
+    for (email, verified, error) in [
+        ("member@example.test", false, "verified_email_required"),
+        ("member@sub.example.test", true, "email_domain_not_allowed"),
+    ] {
+        f.sql(
+            "UPDATE users SET email=$2,email_verified_at=CASE WHEN $3 THEN now() END WHERE id=$1",
+            vec![f.user.into(), email.into(), verified.into()],
+        )
+        .await;
+        let (status, blocked, _) = call(
+            &router,
+            &cookies,
+            &portal,
+            Some(&[("csrf_token", &csrf), ("action", "join")]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(blocked["error"], error);
+    }
+    f.sql(
+        "UPDATE users SET email='member@EXAMPLE.TEST',email_verified_at=now() WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
     let (_, joined, _) = call(
         &router,
         &cookies,
-        &format!("/account/applications/{}", f.app),
-        Some(&[
-            ("csrf_token", &csrf),
-            ("action", "join"),
-            ("recovery", recovery),
-        ]),
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
     )
     .await;
     assert_eq!(joined["code"], 0);
+    let (_, resumed, _) = call(&router, &cookies, &authorize, None).await;
+    assert_eq!(resumed["redirect"], "/sso/consent");
     let row = f
         .state
         .db
-        .query_one_raw(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT client_id FROM enrollments WHERE requested_user_id=$1 AND app_id=$2",
-            [f.user.into(), f.app.into()],
+            "SELECT (SELECT count(*) FROM notification_outbox) AS notifications,
+                    (SELECT count(*) FROM application_access_requests) AS requests",
         ))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.try_get::<Uuid>("", "client_id").unwrap(), f.client);
+    assert_eq!(row.try_get::<i64>("", "notifications").unwrap(), 0);
+    assert_eq!(row.try_get::<i64>("", "requests").unwrap(), 0);
     f.cleanup().await;
 }
 
@@ -1148,6 +1388,30 @@ async fn organization_only_apps_reject_self_service_enrollment_from_the_portal()
         .unwrap()
         .unwrap();
     let router = user_center::router::build(f.state.clone());
+    let actor = database::management_actor(&f.state.db).await;
+    assert!(matches!(
+        enrollment::invite(
+            &f.state,
+            "new-applicant@example.test",
+            Some(f.app),
+            &actor,
+            false,
+            "",
+            enrollment::InvitationDelivery::Manual,
+        )
+        .await,
+        Err(ManagementError::Invalid("enrollment_unavailable"))
+    ));
+    let (admin_cookies, _) = f.admin_login().await;
+    let (status, view, _) = call(
+        &router,
+        &admin_cookies,
+        &format!("/dashboard/registration?app={}", f.app),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view["data"]["can_invite"], false);
     let (status, joined, _) = call(
         &router,
         &cookies,
@@ -1155,10 +1419,17 @@ async fn organization_only_apps_reject_self_service_enrollment_from_the_portal()
         Some(&[("csrf_token", &csrf), ("action", "join")]),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(joined["error"], "enrollment_unavailable");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(joined["error"], "registration_closed");
     assert!(matches!(
-        enrollment::finalize(&f.state, &token, "", "", Some(&session), None).await,
+        enrollment::finalize(
+            &f.state,
+            &token,
+            enrollment::FinalizeInput::default(),
+            Some(&session),
+            None
+        )
+        .await,
         Err(ManagementError::Invalid("enrollment_unavailable"))
     ));
     f.cleanup().await;
@@ -1166,7 +1437,7 @@ async fn organization_only_apps_reject_self_service_enrollment_from_the_portal()
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
-async fn enrollment_approval_tracks_effective_policy() {
+async fn platform_account_approval_applies_with_or_without_an_application_origin() {
     use user_center::service::enrollment;
 
     let f = Fixture::new().await;
@@ -1183,18 +1454,28 @@ async fn enrollment_approval_tracks_effective_policy() {
 
     let mut platform = enrollment::policy(&f.state.db, None).await.unwrap();
     platform.approval_required = true;
-    enrollment::save_policy(&f.state, &actor.session, platform, false)
+    enrollment::save_policy(&f.state, &actor, platform, false)
         .await
         .unwrap();
-    for token in [&platform_token, &app_token] {
-        let row = enrollment::lookup(&f.state.db, token).await.unwrap();
-        assert_eq!(row.status, "pending_approval");
-    }
+    assert_eq!(
+        enrollment::lookup(&f.state.db, &platform_token)
+            .await
+            .unwrap()
+            .status,
+        "pending_approval"
+    );
+    assert_eq!(
+        enrollment::lookup(&f.state.db, &app_token)
+            .await
+            .unwrap()
+            .status,
+        "pending_approval"
+    );
 
     let mut app = enrollment::policy(&f.state.db, Some(f.app)).await.unwrap();
     app.app_id = Some(f.app);
     app.approval_required = false;
-    enrollment::save_policy(&f.state, &actor.session, app.clone(), false)
+    enrollment::save_policy(&f.state, &actor, app, false)
         .await
         .unwrap();
     assert_eq!(
@@ -1202,7 +1483,7 @@ async fn enrollment_approval_tracks_effective_policy() {
             .await
             .unwrap()
             .status,
-        "ready"
+        "pending_approval"
     );
     assert_eq!(
         enrollment::lookup(&f.state.db, &platform_token)
@@ -1212,7 +1493,26 @@ async fn enrollment_approval_tracks_effective_policy() {
         "pending_approval"
     );
 
-    enrollment::save_policy(&f.state, &actor.session, app, true)
+    let mut stale = enrollment::policy(&f.state.db, Some(f.app)).await.unwrap();
+    enrollment::save_policy(&f.state, &actor, stale.clone(), true)
+        .await
+        .unwrap();
+    let mut inherited = enrollment::policy(&f.state.db, Some(f.app)).await.unwrap();
+    inherited.app_id = Some(f.app);
+    inherited.domains = vec!["example.test".into()];
+    enrollment::save_policy(&f.state, &actor, inherited, false)
+        .await
+        .unwrap();
+    stale.domains.clear();
+    assert!(matches!(
+        enrollment::save_policy(&f.state, &actor, stale, false).await,
+        Err(user_center::service::ManagementError::Invalid(
+            "policy_conflict"
+        ))
+    ));
+    let current = enrollment::policy(&f.state.db, Some(f.app)).await.unwrap();
+    assert_eq!(current.domains, ["example.test"]);
+    enrollment::save_policy(&f.state, &actor, current, true)
         .await
         .unwrap();
     assert_eq!(
@@ -1223,9 +1523,42 @@ async fn enrollment_approval_tracks_effective_policy() {
         "pending_approval"
     );
 
+    let existing_token = pero_utils::crypto::generate_token();
+    f.sql(
+        "INSERT INTO enrollments(id,app_id,client_id,email,token_hash,status,verified_at,expires_at)
+         VALUES($1,$2,$3,'member@example.test',$4,'pending_approval',now(),now()+interval '1 day')",
+        vec![Uuid::now_v7().into(), f.app.into(), f.client.into(), pero_utils::crypto::sha256_hex(&existing_token).into()],
+    )
+    .await;
+    let (_, _, _, raw) = f.login(f.user).await;
+    let session = f
+        .state
+        .session_service()
+        .validate(&raw)
+        .await
+        .unwrap()
+        .unwrap();
+    let result = enrollment::finalize(
+        &f.state,
+        &existing_token,
+        enrollment::FinalizeInput::default(),
+        Some(&session),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.user_id, f.user);
+    assert!(result.identity.is_none());
+    assert!(
+        user_center::service::access::active_app_access(&f.state.db, f.user, f.app)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     let mut platform = enrollment::policy(&f.state.db, None).await.unwrap();
     platform.approval_required = false;
-    enrollment::save_policy(&f.state, &actor.session, platform, false)
+    enrollment::save_policy(&f.state, &actor, platform, false)
         .await
         .unwrap();
     for token in [&platform_token, &app_token] {
@@ -1238,293 +1571,283 @@ async fn enrollment_approval_tracks_effective_policy() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PostgreSQL and Redis"]
-async fn existing_account_enrollment_reuses_the_request_and_keeps_progress() {
-    use user_center::service::{ManagementError, enrollment};
-
+async fn oauth_and_portal_share_domain_checks_and_review() {
     let f = Fixture::new().await;
-    let (cookies, csrf, _, raw) = f.login(f.user).await;
-    let session = f
-        .state
-        .session_service()
-        .validate(&raw)
-        .await
-        .unwrap()
-        .unwrap();
+    let (admin, admin_csrf) = f.admin_login().await;
+    let (cookies, csrf, sid, _) = f.login(f.user).await;
     let router = user_center::router::build(f.state.clone());
     f.sql(
-        "UPDATE users SET email='portal-registration@example.test' WHERE id=$1",
+        "UPDATE users SET email=NULL,email_verified_at=NULL WHERE id=$1",
         vec![f.user.into()],
     )
     .await;
-    f.sql(
-        "UPDATE oauth_clients SET login_uri='https://client.example.test/login' WHERE id=$1",
-        vec![f.client.into()],
+    let app = f.app.to_string();
+    let (_, saved, _) = call(
+        &router,
+        &admin,
+        "/dashboard/registration",
+        Some(&[
+            ("csrf_token", &admin_csrf),
+            ("app", &app),
+            ("mode", "self_service"),
+            ("domains", "example.test"),
+            ("approval_required", "true"),
+            ("version", "1"),
+        ]),
     )
     .await;
-    let tenant = f
-        .state
-        .db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id FROM tenants WHERE owner_user_id=$1 AND kind='personal'",
-            [f.user.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get::<Uuid>("", "id")
-        .unwrap();
+    assert_eq!(saved["code"], 0);
     let authorize = format!(
-        "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&tenant_id={tenant}",
+        "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid",
         f.client
     );
     let (_, denied, _) = call(&router, &cookies, &authorize, None).await;
     let access = denied["redirect"].as_str().unwrap();
-    assert!(access.starts_with("/oauth2/authorize/access?token="));
-    let (_, denied, _) = call(&router, &cookies, access, None).await;
-    let recovery = denied["data"]["token"].as_str().unwrap();
-    for _ in 0..2 {
-        let (_, joined, _) = call(
-            &router,
-            &cookies,
-            &format!("/account/applications/{}", f.app),
-            Some(&[
-                ("csrf_token", &csrf),
-                ("action", "join"),
-                ("recovery", recovery),
-            ]),
-        )
-        .await;
-        assert_eq!(joined["code"], 0);
-    }
-    let rows = f.state.db.query_all_raw(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT e.id, pgp_sym_decrypt(n.payload_enc,current_setting('app.encrypt_key')) AS payload
-         FROM enrollments e JOIN notification_outbox n ON n.enrollment_id=e.id WHERE e.requested_user_id=$1",
-        [f.user.into()],
-    )).await.unwrap();
-    assert_eq!(rows.len(), 1);
-    let id: Uuid = rows[0].try_get("", "id").unwrap();
-    let original = enrollment::progress(&f.state.db, id).await.unwrap();
-    assert_eq!(original.tenant_id, Some(tenant));
-    let (_, denied, _) = call(
-        &router,
-        &cookies,
-        &format!("{authorize}&state=second"),
-        None,
+    let (_, view, _) = call(&router, &cookies, access, None).await;
+    assert_eq!(view["data"]["can_request"], false);
+    let recovery = view["data"]["token"].as_str().unwrap();
+    let oauth = "/oauth2/authorize/access";
+    let join = [
+        ("csrf_token", csrf.as_str()),
+        ("action", "join"),
+        ("token", recovery),
+    ];
+    let (_, blocked, _) = call(&router, &cookies, oauth, Some(&join)).await;
+    assert_eq!(blocked["error"], "verified_email_required");
+    f.sql(
+        "UPDATE users SET email='member@example.test',email_verified_at=now() WHERE id=$1",
+        vec![f.user.into()],
     )
     .await;
-    let (_, denied, _) = call(
-        &router,
-        &cookies,
-        denied["redirect"].as_str().unwrap(),
-        None,
+    let (_, view, _) = call(&router, &cookies, access, None).await;
+    assert_eq!(view["data"]["can_request"], true);
+    let (_, catalogue, _) = call(&router, &cookies, "/account/applications", None).await;
+    let application = &catalogue["data"]["rows"][0];
+    assert_eq!(application["self_service_open"], true);
+    assert_eq!(application["opens_immediately"], false);
+    let portal = format!("/account/applications/{app}");
+    let members = format!("/dashboard/apps/{app}/members");
+    let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    f.sql(
+        "INSERT INTO user_mfa(user_id,secret_enc,enabled)
+         VALUES($1,pgp_sym_encrypt($2,current_setting('app.encrypt_key')),true)",
+        vec![f.user.into(), secret.into()],
     )
     .await;
-    let (_, joined, _) = call(
-        &router,
-        &cookies,
-        &format!("/account/applications/{}", f.app),
-        Some(&[
-            ("csrf_token", &csrf),
-            ("action", "join"),
-            ("recovery", denied["data"]["token"].as_str().unwrap()),
-        ]),
+    f.sql(
+        "UPDATE sso_sessions SET mfa_required=true WHERE id=$1",
+        vec![sid.into()],
     )
     .await;
-    assert_eq!(joined["code"], 0);
-    let count = f
-        .state
-        .db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT count(*) AS count FROM enrollments WHERE requested_user_id=$1",
-            [f.user.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get::<i64>("", "count")
-        .unwrap();
-    assert_eq!(count, 1);
+    let (_, challenge, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
+    )
+    .await;
     assert_eq!(
-        enrollment::progress(&f.state.db, id)
-            .await
-            .unwrap()
-            .auth_request_id,
-        original.auth_request_id
+        challenge["redirect"],
+        "/sso/mfa?redirect=%2Faccount%2Fapplications"
     );
-    let payload: Value =
-        serde_json::from_str(&rows[0].try_get::<String>("", "payload").unwrap()).unwrap();
-    let link = url::Url::parse(payload["link"].as_str().unwrap()).unwrap();
-    let (status, _, headers) = call(
+    let (_, challenge, headers) = call(&router, &cookies, oauth, Some(&join)).await;
+    let resume = "/oauth2/authorize/resume";
+    assert_eq!(
+        challenge["redirect"],
+        "/sso/mfa?redirect=%2Foauth2%2Fauthorize%2Fresume"
+    );
+    let nonce = headers["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    let otp = user_center::service::security::totp(secret, "workflow_user")
+        .unwrap()
+        .generate_current()
+        .to_string();
+    let (_, verified, headers) = call(
         &router,
         &cookies,
-        &format!("{}?{}", link.path(), link.query().unwrap()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let browser = headers
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|value| {
-            let value = value.to_str().ok()?;
-            (!value.contains("Max-Age=0") && value.starts_with("pero_enrollment"))
-                .then(|| value.split(';').next().unwrap())
-        })
-        .fold(cookies, |cookies, pair| format!("{cookies}; {pair}"));
-    let (_, ready, headers) = call(&router, &browser, "/sso/register", None).await;
-    assert_eq!(ready["data"]["status"], "pending_verification");
-    let flow = ready["data"]["flow"].as_str().unwrap();
-    assert!(headers.get("location").is_none());
-    let (_, invalid_invitation, _) =
-        call(&router, &browser, "/sso/register?invitation=invalid", None).await;
-    assert_eq!(invalid_invitation["data"]["status"], "pending_verification");
-    assert_eq!(invalid_invitation["data"]["flow"], flow);
-    assert_eq!(invalid_invitation["data"]["error"], "invalid_invitation");
-    let (status, _, _) = call(
-        &router,
-        &browser,
-        "/sso/register",
+        "/sso/mfa",
         Some(&[
             ("csrf_token", &csrf),
             ("action", "verify"),
-            ("flow", "another-flow"),
+            ("code", &otp),
+            ("redirect", resume),
         ]),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    let (_, verified, _) = call(
-        &router,
-        &browser,
-        "/sso/register",
-        Some(&[("csrf_token", &csrf), ("action", "verify"), ("flow", flow)]),
-    )
-    .await;
-    assert_eq!(verified["data"]["status"], "pending_approval");
-    assert_eq!(verified["data"]["can_resend"], true);
-    let (_, stale, _) = call(&router, &browser, "/sso/register", None).await;
-    assert_eq!(stale["data"]["can_resend"], false);
-    let (status, _, _) = call(
-        &router,
-        &browser,
-        "/sso/register",
-        Some(&[("csrf_token", &csrf), ("action", "resend"), ("flow", flow)]),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    let token = link
-        .query_pairs()
-        .find(|(key, _)| key == "token")
+    assert_eq!(verified["redirect"], resume);
+    let session_cookie = headers["set-cookie"]
+        .to_str()
         .unwrap()
-        .1
-        .into_owned();
-    f.sql(
-        "UPDATE users SET email='moved@example.test' WHERE id=$1",
-        vec![f.user.into()],
-    )
-    .await;
-    assert!(matches!(
-        enrollment::finalize(&f.state, &token, "", "", Some(&session), None).await,
-        Err(ManagementError::Invalid("enrollment_contact_changed"))
-    ));
-    f.sql(
-        "UPDATE users SET email='portal-registration@example.test' WHERE id=$1",
-        vec![f.user.into()],
-    )
-    .await;
-    f.sql(
-        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
-        vec![f.user.into(), f.app.into()],
-    )
-    .await;
-    let current_token = enrollment::owner_action(&f.state, &session, id, "continue")
-        .await
-        .unwrap()
+        .split(';')
+        .next()
         .unwrap();
-    assert_ne!(current_token, token);
-    let (_, pending, _) = call(&router, &browser, "/sso/register", None).await;
-    assert_eq!(pending["data"]["status"], "pending_approval");
-    assert_eq!(pending["data"]["can_act"], false);
-    let browser_with_token = format!(
-        "{}; pero_enrollment={current_token}",
-        browser
-            .split("; ")
-            .filter(|pair| !pair.starts_with("pero_enrollment="))
-            .collect::<Vec<_>>()
-            .join("; ")
-    );
-    let (_, ready, _) = call(&router, &browser_with_token, "/sso/register", None).await;
-    let finalize = [
-        ("csrf_token", csrf.as_str()),
-        ("action", "finalize"),
-        ("flow", ready["data"]["flow"].as_str().unwrap()),
-    ];
-    f.sql(
-        "UPDATE sso_sessions SET mfa_required=true WHERE id=$1",
-        vec![session.id.into()],
-    )
-    .await;
-    let (_, mfa, _) = call(
+    let (_, resumed, _) = call(&router, &format!("{session_cookie}; {nonce}"), resume, None).await;
+    let (_, view, _) = call(
         &router,
-        &browser_with_token,
-        "/sso/register",
-        Some(&finalize),
+        session_cookie,
+        resumed["redirect"].as_str().unwrap(),
+        None,
     )
     .await;
-    assert_eq!(mfa["redirect"], "/sso/mfa?redirect=%2Fsso%2Fregister");
-    f.sql(
-        "UPDATE sso_sessions SET mfa_verified_at=now() WHERE id=$1",
-        vec![session.id.into()],
-    )
-    .await;
-    let (_, resumed, _) = call(
+    let recovery = view["data"]["token"].as_str().unwrap();
+    let csrf = view["data"]["csrf_token"].as_str().unwrap().to_owned();
+    let csrf_cookie = f.state.web_security().csrf_cookie_name();
+    let cookies = format!("{session_cookie}; {csrf_cookie}={csrf}");
+    assert_eq!(view["data"]["can_request"], true);
+    assert!(view["data"]["application"].is_null());
+    let (_, pending, _) = call(
         &router,
-        &browser_with_token,
-        "/sso/register",
-        Some(&finalize),
-    )
-    .await;
-    assert_eq!(resumed["redirect"], "/sso/consent");
-    assert_eq!(
-        enrollment::progress(&f.state.db, id).await.unwrap().status,
-        "completed"
-    );
-    let (_, completed, _) = call(&router, &browser, "/sso/register", None).await;
-    assert_eq!(completed["data"]["status"], "completed");
-    let flow = completed["data"]["flow"].as_str().unwrap();
-    let (_, continued, _) = call(
-        &router,
-        &browser,
-        "/sso/register",
+        &cookies,
+        oauth,
         Some(&[
             ("csrf_token", &csrf),
-            ("action", "continue"),
-            ("flow", flow),
+            ("action", "join"),
+            ("token", recovery),
+        ]),
+    )
+    .await;
+    assert_eq!(
+        pending["data"]["application"]["status"], "pending",
+        "{pending}"
+    );
+    let (_, joined, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
+    )
+    .await;
+    assert_eq!(joined["code"], 0);
+    let (_, queue, _) = call(&router, &admin, &members, None).await;
+    let requests = queue["data"]["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 1);
+    let first_request = requests[0]["id"].as_str().unwrap();
+    let (_, withdrawn, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "withdraw")]),
+    )
+    .await;
+    assert_eq!(withdrawn["code"], 0);
+    let (_, limited, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
+    )
+    .await;
+    assert_eq!(limited["error"], "rate_limited");
+    f.sql(
+        "UPDATE application_access_requests SET updated_at=now()-interval '15 seconds'",
+        vec![],
+    )
+    .await;
+    let (_, resubmitted, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
+    )
+    .await;
+    assert_eq!(resubmitted["code"], 0);
+    let (_, stale, _) = call(
+        &router,
+        &admin,
+        &members,
+        Some(&[
+            ("csrf_token", &admin_csrf),
+            ("action", "approve"),
+            ("request_id", first_request),
+        ]),
+    )
+    .await;
+    assert_eq!(stale["error"], "request_not_pending");
+    let (_, queue, _) = call(&router, &admin, &members, None).await;
+    let request_id = queue["data"]["requests"][0]["id"].as_str().unwrap();
+    let approve = [
+        ("csrf_token", admin_csrf.as_str()),
+        ("action", "approve"),
+        ("request_id", request_id),
+    ];
+    f.sql(
+        "UPDATE users SET email='member@different.test' WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    let (_, blocked, _) = call(&router, &admin, &members, Some(&approve)).await;
+    assert_eq!(blocked["error"], "email_domain_not_allowed");
+    f.sql(
+        "UPDATE users SET email='member@example.test',email_verified_at=now() WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    let (_, approved, _) = call(&router, &admin, &members, Some(&approve)).await;
+    assert_eq!(approved["code"], 0);
+    let (_, continued, _) = call(
+        &router,
+        &cookies,
+        oauth,
+        Some(&[
+            ("csrf_token", &csrf),
+            ("action", "retry"),
+            ("token", recovery),
         ]),
     )
     .await;
     assert_eq!(continued["redirect"], "/sso/consent");
-
-    let (other, other_csrf, _, _) = f.login(f.admin).await;
-    let other_browser = browser
-        .split("; ")
-        .filter(|pair| pair.starts_with("pero_enrollment"))
-        .fold(other, |cookies, pair| format!("{cookies}; {pair}"));
-    let (status, _, _) = call(
+    let (_, left, _) = call(
         &router,
-        &other_browser,
-        "/sso/register",
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "leave")]),
+    )
+    .await;
+    assert_eq!(left["code"], 0);
+    let (_, again, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "join")]),
+    )
+    .await;
+    assert_eq!(again["error"], "app_access_disabled");
+    let (_, invited, _) = call(
+        &router,
+        &admin,
+        &members,
         Some(&[
-            ("csrf_token", &other_csrf),
-            ("action", "continue"),
-            ("flow", flow),
+            ("csrf_token", &admin_csrf),
+            ("action", "grant"),
+            ("username", "workflow_user"),
         ]),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invited["error"], "app_access_disabled");
+    let (_, granted, _) = call(
+        &router,
+        &admin,
+        &format!("/dashboard/users/{}/grant-app", f.user),
+        Some(&[("csrf_token", &admin_csrf), ("app_id", &app)]),
+    )
+    .await;
+    assert_eq!(granted["error"], "app_access_disabled");
+    let (_, restored, _) = call(
+        &router,
+        &admin,
+        &members,
+        Some(&[
+            ("csrf_token", &admin_csrf),
+            ("action", "restore"),
+            ("user_id", &f.user.to_string()),
+        ]),
+    )
+    .await;
+    assert_eq!(restored["code"], 0);
     f.cleanup().await;
 }
 
@@ -1549,7 +1872,7 @@ async fn approval_progress_members_and_audit_share_existing_security() {
             .is_err()
     );
     let own = Uuid::now_v7();
-    f.sql("INSERT INTO enrollments(id,app_id,email,token_hash,status,expires_at) VALUES($1,$2,'member@example.test','owner-token','ready',now()+interval '1 day')",vec![own.into(),f.app.into()]).await;
+    f.sql("INSERT INTO enrollments(id,email,token_hash,status,expires_at) VALUES($1,'member@example.test','owner-token','ready',now()+interval '1 day')",vec![own.into()]).await;
     let (_, page, _) = call(
         &router,
         &admin,
@@ -2586,11 +2909,6 @@ async fn dynamic_permissions_are_scoped_versioned_and_revoke_sessions() {
         vec![f.user.into()],
     )
     .await;
-    f.sql(
-        "INSERT INTO admin_permission_state(user_id) VALUES($1)",
-        vec![f.user.into()],
-    )
-    .await;
     f.sql("INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt('GEZDGNBVGY3TQOJQ',current_setting('app.encrypt_key')),true)",vec![f.user.into()]).await;
     let second = Uuid::now_v7();
     f.sql(
@@ -2634,7 +2952,12 @@ async fn dynamic_permissions_are_scoped_versioned_and_revoke_sessions() {
         call(&router, &cookie, "/dashboard/admins", None).await.0,
         StatusCode::FORBIDDEN
     );
-    let mut input = json!({"csrf_token":super_csrf,"revision":0,"global_permissions":["users.read","users.update"],"app_grants":[{"app_id":f.app,"permissions":["apps.read","clients.read","clients.manage"]}]});
+    let initial = user_center::service::permissions::load(&f.state.db, f.user)
+        .await
+        .unwrap()
+        .grants
+        .revision;
+    let mut input = json!({"csrf_token":super_csrf,"revision":initial,"global_permissions":["users.read","users.update"],"app_grants":[{"app_id":f.app,"permissions":["apps.read","clients.read","clients.manage"]}]});
     assert_eq!(
         save(&router, &super_cookie, f.user, input.clone()).await.0,
         StatusCode::OK
@@ -2786,11 +3109,18 @@ async fn dynamic_permissions_are_scoped_versioned_and_revoke_sessions() {
         StatusCode::FORBIDDEN
     );
     let audit=f.state.db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT details FROM audit_events WHERE target=$1 AND outcome='success' AND details ? 'after_revision'",[format!("/dashboard/admins/{}/permissions",f.user).into()])).await.unwrap().unwrap();
+    let revision = user_center::service::permissions::load(&f.state.db, f.user)
+        .await
+        .unwrap()
+        .grants
+        .revision;
+    assert!(revision > initial);
     assert_eq!(
         audit.try_get::<Value>("", "details").unwrap()["after_revision"],
-        1
+        revision
     );
-    input["revision"] = json!(1);
+    let stale_grants = input.clone();
+    input["revision"] = json!(revision);
     input["app_grants"] = json!([{ "app_id":second,"permissions":["clients.manage"]}]);
     assert_eq!(
         save(&router, &super_cookie, f.user, input.clone()).await.0,
@@ -2833,6 +3163,24 @@ async fn dynamic_permissions_are_scoped_versioned_and_revoke_sessions() {
             .revoked_at
             .is_some()
     );
+    for role in ["remove", "admin"] {
+        let (status, _, _) = call(
+            &router,
+            &super_cookie,
+            "/dashboard/admins",
+            Some(&[
+                ("csrf_token", &super_csrf),
+                ("username", "workflow_user"),
+                ("role", role),
+            ]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert_eq!(
+        save(&router, &super_cookie, f.user, stale_grants).await.0,
+        StatusCode::CONFLICT
+    );
     f.cleanup().await;
 }
 
@@ -2844,34 +3192,107 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
     user_center::service::access::grant_app(&f.state.db, &actor, f.user, f.app)
         .await
         .unwrap();
-    let (cookies, csrf) = f.admin_login().await;
     let router = user_center::router::build(f.state.clone());
-    let path = format!("/dashboard/clients/{}/account-sync", f.client);
-    for (endpoint, status) in [
-        ("http://127.0.0.1/sync", StatusCode::BAD_REQUEST),
-        ("https://rp.example.test/sync", StatusCode::OK),
-    ] {
-        assert_eq!(
-            call(
-                &router,
-                &cookies,
-                &path,
-                Some(&[("csrf_token", &csrf), ("account_sync_uri", endpoint)])
-            )
-            .await
-            .0,
-            status
-        );
-    }
-    // Delegated client management must not become permission to export global contacts.
-    let delegated = database::management_actor(&f.state.db).await;
+    let other_app = Uuid::now_v7();
     f.sql(
-        "UPDATE admin_roles SET role='admin' WHERE user_id=$1",
-        vec![delegated.session.user_id.into()],
+        "INSERT INTO apps(id,code,name) VALUES($1,'other-app','Other App')",
+        vec![other_app.into()],
     )
     .await;
     f.sql(
-        "INSERT INTO admin_permission_state(user_id) VALUES($1)",
+        "INSERT INTO user_app_access(user_id,app_id) VALUES($1,$2)",
+        vec![f.admin.into(), other_app.into()],
+    )
+    .await;
+    let tenant_id = async |user, app| {
+        user_center::service::tenant_context::resolve(&f.state.db, user, app, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .tenant_id
+            .to_string()
+    };
+    let tenant = tenant_id(f.user, f.app).await;
+    let other_tenant = tenant_id(f.admin, other_app).await;
+    let sub = f.user.to_string();
+    let other_sub = f.admin.to_string();
+    let client_id = f.client.to_string();
+    let query = async |path, filters: &[(&str, &str)]| {
+        let mut fields = vec![
+            ("client_id", client_id.as_str()),
+            ("client_secret", f.secret.as_str()),
+        ];
+        fields.extend_from_slice(filters);
+        call(&router, "", path, Some(&fields)).await
+    };
+    let (cookies, csrf) = f.admin_login().await;
+    let path = format!("/dashboard/clients/{}/account-sync", f.client);
+    let settings = async |cookies: &str, csrf: &str, enabled: &str, endpoint: &str| {
+        call(
+            &router,
+            cookies,
+            &path,
+            Some(&[
+                ("csrf_token", csrf),
+                ("account_sync_enabled", enabled),
+                ("account_sync_uri", endpoint),
+            ]),
+        )
+        .await
+        .0
+    };
+    assert_eq!(
+        query("/api/accounts/sync", &[("sub", &sub)]).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        query("/api/tenants/list", &[]).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(settings(&cookies, &csrf, "true", "").await, StatusCode::OK);
+    for (point, list, fields, foreign_fields) in [
+        (
+            "/api/accounts/sync",
+            "/api/accounts/sync/list",
+            vec![("sub", sub.as_str())],
+            vec![("sub", other_sub.as_str())],
+        ),
+        (
+            "/api/tenants/sync",
+            "/api/tenants/list",
+            vec![("tenant_id", tenant.as_str())],
+            vec![("tenant_id", other_tenant.as_str())],
+        ),
+        (
+            "/api/tenants/membership/sync",
+            "/api/tenants/membership/list",
+            vec![("tenant_id", tenant.as_str()), ("sub", sub.as_str())],
+            vec![
+                ("tenant_id", other_tenant.as_str()),
+                ("sub", other_sub.as_str()),
+            ],
+        ),
+    ] {
+        let (status, snapshot, _) = query(point, &fields).await;
+        assert_eq!(status, StatusCode::OK, "{point}");
+        assert_eq!(snapshot["active"], true, "{point}");
+        assert_eq!(
+            query(point, &foreign_fields).await.0,
+            StatusCode::NOT_FOUND,
+            "{point}"
+        );
+        let (status, page, _) = query(list, &[]).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        assert_eq!(page, json!({"rows": [snapshot], "next": null}), "{list}");
+    }
+    let (status, page, _) = query("/api/tenants/list", &[("after_tenant_id", &tenant)]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page, json!({"rows": [], "next": null}));
+
+    // Query-only clients also keep scope management under super-admin control.
+    let delegated = database::management_actor(&f.state.db).await;
+    f.sql(
+        "UPDATE admin_roles SET role='admin' WHERE user_id=$1",
         vec![delegated.session.user_id.into()],
     )
     .await;
@@ -2904,36 +3325,17 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
         .await,
         Err(user_center::service::ManagementError::Invalid("forbidden"))
     ));
-    let fields = [
-        ("sub", f.user.to_string()),
-        ("client_id", f.client.to_string()),
-        ("client_secret", f.secret.clone()),
-    ];
-    let fields = fields
-        .iter()
-        .map(|(k, v)| (*k, v.as_str()))
-        .collect::<Vec<_>>();
-    let (status, snapshot, headers) = call(&router, "", "/api/accounts/sync", Some(&fields)).await;
+    for (endpoint, status) in [
+        ("http://127.0.0.1/sync", StatusCode::BAD_REQUEST),
+        ("https://rp.example.test/sync", StatusCode::OK),
+    ] {
+        assert_eq!(settings(&cookies, &csrf, "true", endpoint).await, status);
+    }
+    let (status, snapshot, headers) = query("/api/accounts/sync", &[("sub", &sub)]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(snapshot["active"], true);
     assert_eq!(headers["cache-control"], "no-store");
     assert_eq!(snapshot["profile"], json!({}));
-    // A valid client cannot query a platform user outside its own app membership.
-    assert_eq!(
-        call(
-            &router,
-            "",
-            "/api/accounts/sync",
-            Some(&[
-                ("sub", &f.admin.to_string()),
-                ("client_id", &f.client.to_string()),
-                ("client_secret", &f.secret)
-            ])
-        )
-        .await
-        .0,
-        StatusCode::NOT_FOUND
-    );
     assert_eq!(
         call(
             &router,
@@ -2951,14 +3353,7 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
     );
     let (user_cookies, user_csrf, _, _) = f.login(f.user).await;
     assert_eq!(
-        call(
-            &router,
-            &user_cookies,
-            &path,
-            Some(&[("csrf_token", &user_csrf), ("account_sync_uri", "")])
-        )
-        .await
-        .0,
+        settings(&user_cookies, &user_csrf, "false", "").await,
         StatusCode::FORBIDDEN
     );
     let (_, view, _) = call(&router, &cookies, "/dashboard/notifications", None).await;
@@ -2986,7 +3381,7 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
             expected_events
         );
     }
-    // Client-secret permissions must not bypass the super-admin account sync boundary.
+    // Credentials for a push client remain under super-admin control.
     f.sql(
         "INSERT INTO admin_app_permissions(user_id,app_id,permission) VALUES($1,$2,'clients.secret.rotate')",
         vec![delegated.session.user_id.into(), f.app.into()],
@@ -3000,24 +3395,33 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
         user_center::service::client::rotate_secret(&f.state.db, &delegated, f.client, 60).await,
         Err(user_center::service::ManagementError::Invalid("forbidden"))
     ));
+    user_center::service::client::toggle_status(&f.state.db, &delegated, f.client)
+        .await
+        .unwrap();
+    assert_eq!(
+        query("/api/accounts/sync", &[("sub", &sub)]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(matches!(
+        user_center::service::client::toggle_status(&f.state.db, &delegated, f.client).await,
+        Err(user_center::service::ManagementError::Invalid("forbidden"))
+    ));
+    user_center::service::client::toggle_status(&f.state.db, &actor, f.client)
+        .await
+        .unwrap();
+    assert_eq!(settings(&cookies, &csrf, "false", "").await, StatusCode::OK);
+    assert_eq!(
+        query("/api/accounts/sync/list", &[]).await.0,
+        StatusCode::FORBIDDEN
+    );
     // Public browser clients have no credentials for server-side provisioning.
     f.sql(
-        "UPDATE oauth_clients SET account_sync_uri=NULL,type='public',secret_hash=NULL WHERE id=$1",
+        "UPDATE oauth_clients SET type='public',secret_hash=NULL WHERE id=$1",
         vec![f.client.into()],
     )
     .await;
     assert_eq!(
-        call(
-            &router,
-            &cookies,
-            &path,
-            Some(&[
-                ("csrf_token", &csrf),
-                ("account_sync_uri", "https://rp.example.test/sync")
-            ])
-        )
-        .await
-        .0,
+        settings(&cookies, &csrf, "true", "").await,
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
@@ -3034,6 +3438,136 @@ async fn account_sync_configuration_and_snapshot_require_app_authority() {
         .0,
         StatusCode::FORBIDDEN
     );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated PostgreSQL and Redis"]
+async fn account_sync_lookup_and_search_respect_projection_visibility() {
+    let f = Fixture::new().await;
+    let second = Uuid::now_v7();
+    let disabled = Uuid::now_v7();
+    f.sql(
+        "INSERT INTO users(id,username) VALUES($1,'workflow_second'),($2,'workflow_disabled')",
+        vec![second.into(), disabled.into()],
+    )
+    .await;
+    f.sql(
+        "UPDATE users SET nickname='项目成员' WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    f.sql(
+        "INSERT INTO user_app_access(user_id,app_id,status) VALUES
+         ($1,$4,'active'),($2,$4,'active'),($3,$4,'disabled')",
+        vec![f.user.into(), second.into(), disabled.into(), f.app.into()],
+    )
+    .await;
+    let (secret, secret_hash) = pero_utils::crypto::generate_client_secret();
+    f.sql(
+        "UPDATE oauth_clients SET account_sync_enabled=true,scopes=ARRAY['openid','profile'],secret_hash=$2 WHERE id=$1",
+        vec![f.client.into(), secret_hash.into()],
+    )
+    .await;
+    let router = user_center::router::build(f.state.clone());
+    let client_id = f.client.to_string();
+    let request = async |path: &str, filters: &[(&str, &str)]| {
+        let mut fields = vec![
+            ("client_id", client_id.as_str()),
+            ("client_secret", secret.as_str()),
+        ];
+        fields.extend_from_slice(filters);
+        call(&router, "", path, Some(&fields)).await
+    };
+    let point = "/api/accounts/sync";
+    let list = "/api/accounts/sync/list";
+    let malformed = Request::post(list)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from("active=invalid"))
+        .unwrap();
+    let rejected = router.clone().oneshot(malformed).await.unwrap();
+    assert!(rejected.status().is_client_error());
+    assert_eq!(rejected.headers()["cache-control"], "no-store");
+
+    let sub = f.user.to_string();
+    let (status, result, headers) = request(point, &[("username", " WORKFLOW_USER ")]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(result, request(point, &[("sub", &sub)]).await.1);
+    assert_eq!(result["profile"]["preferred_username"], "workflow_user");
+    assert!(result["profile"].get("email").is_none());
+    for username in ["workflow_us", "workflow_admin", "workflow_disabled"] {
+        assert_eq!(
+            request(point, &[("username", username)]).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(request(point, &[]).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        request(point, &[("sub", &sub), ("username", "workflow_user")])
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+
+    let filters = [("search", "WORKFLOW_"), ("active", "true"), ("limit", "1")];
+    let (status, first, headers) = request(list, &filters).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(first, json!({"rows": [result], "next": sub}));
+    let cursor = first["next"].as_str().unwrap();
+    let (_, next, _) = request(
+        list,
+        &[
+            filters[0],
+            filters[1],
+            filters[2],
+            ("after_user_id", cursor),
+        ],
+    )
+    .await;
+    assert_eq!(next["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(next["rows"][0]["sub"], second.to_string());
+    assert_eq!(next["next"], Value::Null);
+    assert_eq!(
+        request(list, &[("search", "项目")]).await.1["rows"][0]["sub"],
+        sub
+    );
+    for term in [
+        "%",
+        "workflow_admin",
+        "workflow_disabled",
+        "member@example.test",
+    ] {
+        assert_eq!(
+            request(list, &[("search", term)]).await.1,
+            json!({"rows": [], "next": null})
+        );
+    }
+    let (_, inactive, _) = request(list, &[("active", "false")]).await;
+    assert_eq!(inactive["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(inactive["rows"][0]["sub"], disabled.to_string());
+    assert_eq!(inactive["rows"][0]["profile"], json!({}));
+    assert_eq!(
+        request(list, &[]).await.1["rows"].as_array().unwrap().len(),
+        3
+    );
+    for filter in [("search", "  "), ("limit", "0"), ("limit", "101")] {
+        assert_eq!(request(list, &[filter]).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    f.sql(
+        "UPDATE oauth_clients SET scopes=ARRAY['openid'] WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
+    assert_eq!(
+        request(point, &[("username", "workflow_user")]).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(request(list, &filters).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(request(point, &[("sub", &sub)]).await.0, StatusCode::OK);
+    assert_eq!(request(list, &[]).await.0, StatusCode::OK);
     f.cleanup().await;
 }
 

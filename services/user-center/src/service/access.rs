@@ -1,7 +1,7 @@
 use super::permissions::{self, Actor, Permission as P};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait,
-    QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
+    QueryFilter, QuerySelect, Statement, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -34,48 +34,172 @@ pub async fn grant_app(
     user_id: Uuid,
     app_id: Uuid,
 ) -> Result<(), ManagementError> {
+    manage_grant(db, actor, user_id, app_id, false).await
+}
+
+pub async fn restore_app(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    user_id: Uuid,
+    app_id: Uuid,
+) -> Result<(), ManagementError> {
+    manage_grant(db, actor, user_id, app_id, true).await
+}
+
+async fn manage_grant(
+    db: &DatabaseConnection,
+    actor: &Actor,
+    user_id: Uuid,
+    app_id: Uuid,
+    restore: bool,
+) -> Result<(), ManagementError> {
     let txn = db.begin().await?;
     let access = permissions::authorize(&txn, actor).await?;
     permissions::app(&txn, &access, app_id, P::AppsMembersManage).await?;
     permissions::protect_user(&txn, &access, user_id).await?;
 
-    let user = lock_app_for_access_change(&txn, user_id, app_id).await?;
-    if user.status != crate::db::enums::UserStatus::Active {
-        return Err(ManagementError::Invalid("not_found"));
+    let app = apps_entity::Entity::find_by_id(app_id)
+        .lock_shared()
+        .one(&txn)
+        .await?
+        .ok_or(ManagementError::Invalid("invalid_app_id"))?;
+    if !app.system
+        && (app.status != CommonStatus::Active
+            || super::application_request::policy(&txn, app_id)
+                .await?
+                .paused)
+    {
+        return Err(ManagementError::Invalid("registration_closed"));
     }
-    write_app_access(&txn, user_id, app_id, CommonStatus::Active).await?;
+    let action = if restore {
+        "app_access_restored"
+    } else {
+        "app_access_granted"
+    };
+    grant_explicit(
+        &txn,
+        user_id,
+        app_id,
+        actor.session.user_id,
+        action,
+        restore,
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }
 
-pub(super) async fn write_app_access<C: ConnectionTrait>(
+pub(super) async fn ordinary_app<C: ConnectionTrait>(
+    db: &C,
+    app_id: Uuid,
+) -> Result<apps_entity::Model, ManagementError> {
+    apps_entity::Entity::find_by_id(app_id)
+        .lock_shared()
+        .one(db)
+        .await?
+        .filter(|app| !app.system && app.status == CommonStatus::Active)
+        .ok_or(ManagementError::Invalid("enrollment_unavailable"))
+}
+
+pub(super) async fn lock_user_app_access<C: ConnectionTrait>(
     db: &C,
     user_id: Uuid,
     app_id: Uuid,
-    status: CommonStatus,
+) -> Result<Option<uaa::Model>, sea_orm::DbErr> {
+    uaa::Entity::find_by_id((user_id, app_id))
+        .lock_exclusive()
+        .one(db)
+        .await
+}
+
+/// The caller holds the policy lock and has authorized this source of access.
+pub(super) async fn grant_explicit(
+    db: &DatabaseTransaction,
+    user: Uuid,
+    app: Uuid,
+    actor: Uuid,
+    action: &str,
+    restore: bool,
+) -> Result<Option<Uuid>, ManagementError> {
+    if !users::Entity::find_by_id(user)
+        .one(db)
+        .await?
+        .is_some_and(|u| u.deleted_at.is_none() && u.status == crate::db::enums::UserStatus::Active)
+    {
+        return Err(ManagementError::Invalid("not_found"));
+    }
+    let statement = if restore {
+        "UPDATE user_app_access SET status = 'active', admission_origin = 'explicit', updated_at = now()
+         WHERE user_id = $1 AND app_id = $2 AND status = 'disabled'"
+    } else {
+        "INSERT INTO user_app_access (user_id, app_id) VALUES ($1, $2)
+         ON CONFLICT (user_id, app_id) DO UPDATE SET status = 'active',
+             admission_origin = 'explicit', updated_at = now()
+         WHERE user_app_access.status = 'active'"
+    };
+    let written = db
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            statement,
+            [user.into(), app.into()],
+        ))
+        .await?
+        .rows_affected();
+    if written == 0 {
+        return Err(ManagementError::Invalid(if restore {
+            "app_access_not_disabled"
+        } else {
+            "app_access_disabled"
+        }));
+    }
+    let request: Option<Uuid> = db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE application_access_requests SET status = 'approved', decided_by = $3, updated_at = now()
+         WHERE user_id = $1 AND app_id = $2 AND status = 'pending' RETURNING id",
+        [user.into(), app.into(), actor.into()],
+    )).await?.map(|row| row.try_get("", "id")).transpose()?;
+    let details = request.map_or_else(
+        || serde_json::json!({}),
+        |id| serde_json::json!({"request_id": id}),
+    );
+    audit(db, actor, user, app, action, details).await?;
+    Ok(request)
+}
+
+pub(super) async fn audit<C: ConnectionTrait>(
+    db: &C,
+    actor: Uuid,
+    user: Uuid,
+    app: Uuid,
+    action: &str,
+    details: serde_json::Value,
 ) -> Result<(), sea_orm::DbErr> {
-    let now = time::OffsetDateTime::now_utc();
-    uaa::Entity::insert(uaa::ActiveModel {
-        user_id: Set(user_id),
-        app_id: Set(app_id),
-        status: Set(status),
-        admission_origin: Set("explicit".to_owned()),
-        created_at: Set(now),
-        updated_at: Set(now),
-        ..Default::default()
-    })
-    .on_conflict(
-        sea_orm::sea_query::OnConflict::columns([uaa::Column::UserId, uaa::Column::AppId])
-            .update_columns([
-                uaa::Column::Status,
-                uaa::Column::AdmissionOrigin,
-                uaa::Column::UpdatedAt,
-            ])
-            .to_owned(),
+    super::security::execute(
+        db,
+        "INSERT INTO audit_events (actor_id, actor_username, action, target, outcome, http_status, details)
+         SELECT id, username, $2, $3, 'success', 200, $4 FROM users WHERE id = $1",
+        vec![actor.into(), action.into(), format!("{app}/{user}").into(), details.into()],
     )
-    .exec(db)
+    .await
+}
+
+pub(super) async fn revoke_explicit(
+    db: &DatabaseTransaction,
+    user: Uuid,
+    app: Uuid,
+    reason: &str,
+) -> Result<(), sea_orm::DbErr> {
+    // Keep a denial even if no access has been granted yet.
+    super::security::execute(
+        db,
+        "INSERT INTO user_app_access (user_id, app_id, status) VALUES ($1, $2, 'disabled')
+         ON CONFLICT (user_id, app_id) DO UPDATE SET status = 'disabled',
+             admission_origin = 'explicit', updated_at = now()",
+        vec![user.into(), app.into()],
+    )
     .await?;
-    Ok(())
+    super::application_request::close(db, Some(user), Some(app)).await?;
+    super::session::SessionService::revoke_app_grants(db, app, Some(user), reason).await
 }
 
 async fn current_admission<C: ConnectionTrait>(
@@ -91,27 +215,36 @@ async fn current_admission<C: ConnectionTrait>(
     super::tenant_context::auto_eligible(db, access.user_id, access.app_id).await
 }
 
-/// OAuth may provision a super administrator's own entitlement before MFA/consent.
-/// Ordinary users require explicit admission or current organization eligibility.
+pub(crate) async fn has_oauth_app_access(
+    db: &DatabaseConnection,
+    user: Uuid,
+    app: Uuid,
+) -> Result<bool, sea_orm::DbErr> {
+    match active_app_access(db, user, app).await? {
+        Some(access) => current_admission(db, &access).await,
+        None => Ok(false),
+    }
+}
+
+/// Interactive OAuth can provision organization-derived access.
 pub async fn ensure_oauth_app_access(
     db: &DatabaseConnection,
     session: &crate::state::session::SsoSession,
     app_id: Uuid,
     idle_ttl_seconds: u64,
 ) -> Result<bool, sea_orm::DbErr> {
-    if let Some(access) = active_app_access(db, session.user_id, app_id).await?
-        && current_admission(db, &access).await?
-    {
+    if has_oauth_app_access(db, session.user_id, app_id).await? {
         return Ok(true);
     }
-    let super_admin =
-        super::security::role(db, session.user_id).await?.as_deref() == Some("super_admin");
     let txn = db.begin().await?;
+    super::admin::read_lock_policy(&txn).await?;
     let app = apps_entity::Entity::find_by_id(app_id)
         .lock_shared()
         .one(&txn)
         .await?;
-    if !app.is_some_and(|a| a.status == CommonStatus::Active) {
+    if !app.is_some_and(|a| {
+        !a.system && a.status == CommonStatus::Active && a.organization_auto_access
+    }) {
         return Ok(false);
     }
     // Recheck admission under the app/access locks: a concurrent grant may have
@@ -126,9 +259,8 @@ pub async fn ensure_oauth_app_access(
         return Ok(true);
     }
     // An explicit disabled admission is a deny: organization auto-admission must not restore it.
-    if !super_admin
-        && (existing.is_some()
-            || !super::tenant_context::auto_eligible(&txn, session.user_id, app_id).await?)
+    if existing.is_some()
+        || !super::tenant_context::auto_eligible(&txn, session.user_id, app_id).await?
     {
         return Ok(false);
     }
@@ -138,15 +270,6 @@ pub async fn ensure_oauth_app_access(
         .await?;
     if !user
         .is_some_and(|u| u.deleted_at.is_none() && u.status == crate::db::enums::UserStatus::Active)
-    {
-        return Ok(false);
-    }
-    // Role and app membership are checked again inside the write transaction.
-    if super_admin
-        && super::security::role(&txn, session.user_id)
-            .await?
-            .as_deref()
-            != Some("super_admin")
     {
         return Ok(false);
     }
@@ -162,19 +285,17 @@ pub async fn ensure_oauth_app_access(
     if live_session.is_none() {
         return Ok(false);
     }
-    if super_admin {
-        write_app_access(&txn, session.user_id, app_id, CommonStatus::Active).await?;
-    } else {
-        // Never overwrite an explicit revocation or a grant racing with this insert.
-        txn.execute_raw(Statement::from_sql_and_values(DbBackend::Postgres,
-            "INSERT INTO user_app_access(user_id,app_id,admission_origin) VALUES($1,$2,'organization') ON CONFLICT DO NOTHING",
-            [session.user_id.into(),app_id.into()])).await?;
-    }
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO user_app_access (user_id, app_id, admission_origin)
+         SELECT $1, $2, 'organization' FROM registration_policies
+         WHERE app_id IS NULL AND NOT emergency_stop
+         ON CONFLICT DO NOTHING",
+        [session.user_id.into(), app_id.into()],
+    ))
+    .await?;
     txn.commit().await?;
-    match active_app_access(db, session.user_id, app_id).await? {
-        Some(access) => current_admission(db, &access).await,
-        None => Ok(false),
-    }
+    has_oauth_app_access(db, session.user_id, app_id).await
 }
 
 pub async fn revoke_app(
@@ -189,15 +310,7 @@ pub async fn revoke_app(
     permissions::protect_user(&txn, &access, user_id).await?;
 
     lock_app_for_access_change(&txn, user_id, app_id).await?;
-    // Persist explicit denial even before the first organization auto-admission.
-    write_app_access(&txn, user_id, app_id, CommonStatus::Disabled).await?;
-    super::session::SessionService::revoke_app_grants(
-        &txn,
-        app_id,
-        Some(user_id),
-        "app_access_revoked",
-    )
-    .await?;
+    revoke_explicit(&txn, user_id, app_id, "app_access_revoked").await?;
     txn.commit().await?;
     Ok(())
 }

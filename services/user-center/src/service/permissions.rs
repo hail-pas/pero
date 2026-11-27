@@ -190,10 +190,6 @@ impl Access {
     }
 }
 #[derive(FromQueryResult)]
-struct Revision {
-    revision: i64,
-}
-#[derive(FromQueryResult)]
 struct GlobalRow {
     permission: String,
 }
@@ -207,27 +203,20 @@ fn parse(code: String) -> Result<Permission, ManagementError> {
         .map_err(|_| ManagementError::Invalid("forbidden"))
 }
 pub async fn load<C: ConnectionTrait>(db: &C, user: Uuid) -> Result<Access, ManagementError> {
-    let role = sec::role(db, user).await?;
-    if role.as_deref() == Some("super_admin") {
+    let role = sec::admin_role(db, user)
+        .await?
+        .ok_or(ManagementError::Invalid("forbidden"))?;
+    if role.role == "super_admin" {
         return Ok(Access {
             super_admin: true,
             ..Default::default()
         });
     }
-    if role.as_deref() != Some("admin") {
+    if role.role != "admin" {
         return Err(ManagementError::Invalid("forbidden"));
     }
-    let revision = Revision::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT revision FROM admin_permission_state WHERE user_id=$1",
-        [user.into()],
-    ))
-    .one(db)
-    .await?
-    .ok_or(ManagementError::Invalid("forbidden"))?
-    .revision;
     let mut grants = Grants {
-        revision,
+        revision: role.permission_revision,
         ..Default::default()
     };
     for row in GlobalRow::find_by_statement(Statement::from_sql_and_values(
@@ -373,7 +362,6 @@ pub async fn replace(
         return Err(ManagementError::Invalid("permission_revision_conflict"));
     }
     let mut after = Grants {
-        revision: before.revision + 1,
         global_permissions: input.global_permissions,
         ..Default::default()
     };
@@ -428,7 +416,16 @@ pub async fn replace(
             .await?;
         }
     }
-    sec::execute(&txn,"UPDATE admin_permission_state SET revision=$2,updated_by=$3,updated_at=now() WHERE user_id=$1",vec![target.into(),after.revision.into(),actor.session.user_id.into()]).await?;
+    after.revision = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE admin_roles SET permission_revision=DEFAULT WHERE user_id=$1
+             RETURNING permission_revision",
+            [target.into()],
+        ))
+        .await?
+        .ok_or(ManagementError::Invalid("not_found"))?
+        .try_get("", "permission_revision")?;
     fn entries(g: &Grants) -> BTreeSet<(Option<Uuid>, Permission)> {
         g.global_permissions
             .iter()

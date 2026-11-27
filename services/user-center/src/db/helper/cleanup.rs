@@ -1,12 +1,5 @@
-use sea_orm::sea_query::{LockBehavior, LockType};
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
-    QuerySelect, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use time::OffsetDateTime;
-
-use crate::db::entity::{refresh_tokens, sso_sessions};
-use sea_orm::QueryOrder;
 
 const BATCH_SIZE: u64 = 500;
 const MAX_BATCHES: usize = 20;
@@ -47,11 +40,19 @@ async fn delete_before(
     order_column: &str,
     cutoff: OffsetDateTime,
 ) -> Result<u64, sea_orm::DbErr> {
-    // Identifiers and conditions are static literals supplied by the helpers below.
-    let sql = format!(
-        "DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE {condition} ORDER BY {order_column} LIMIT {BATCH_SIZE} FOR UPDATE SKIP LOCKED)"
-    );
+    let sql = delete_batch_sql(table, condition, order_column);
     execute_batches_at(db, &sql, cutoff).await
+}
+
+fn delete_batch_sql(table: &str, condition: &str, order_column: &str) -> String {
+    // Identifiers and conditions are static literals supplied by the helpers below.
+    // The row locks keep these tuple IDs valid for the duration of the statement.
+    format!(
+        "DELETE FROM ONLY {table} WHERE ctid = ANY (ARRAY(
+            SELECT ctid FROM ONLY {table} WHERE {condition}
+            ORDER BY {order_column} LIMIT {BATCH_SIZE} FOR UPDATE SKIP LOCKED
+        ))"
+    )
 }
 
 async fn delete_expired(
@@ -88,90 +89,25 @@ pub async fn clean_expired_sso_sessions(
 ) -> Result<u64, sea_orm::DbErr> {
     let now = OffsetDateTime::now_utc();
     // Sweep each lifetime independently so both use an ordered index range scan.
-    let absolute = clean_sso_sessions_before(db, sso_sessions::Column::ExpiresAt, now).await?;
-    let idle = clean_sso_sessions_before(
+    // The delete trigger queues RP logout before the cascade removes sessions and grants.
+    let absolute = delete_before(
         db,
-        sso_sessions::Column::LastSeenAt,
+        "sso_sessions",
+        "expires_at <= $1",
+        "expires_at, id",
+        now,
+    )
+    .await?;
+    let idle = delete_before(
+        db,
+        "sso_sessions",
+        "last_seen_at <= $1",
+        "last_seen_at, id",
         now - time::Duration::seconds(idle_ttl_seconds as i64),
     )
     .await?;
 
-    // Orphans already fail authorization; drain them in bounded batches for bookkeeping.
-    let orphans = execute_batches(
-        db,
-        "UPDATE refresh_tokens SET revoked_at=$1, revoke_reason='session_expired'
-         WHERE id IN (SELECT id FROM refresh_tokens WHERE session_id IS NULL
-             AND revoked_at IS NULL ORDER BY id LIMIT 500 FOR UPDATE SKIP LOCKED)",
-    )
-    .await?;
-    Ok(absolute + idle + orphans)
-}
-
-async fn clean_sso_sessions_before(
-    db: &DatabaseConnection,
-    column: sso_sessions::Column,
-    cutoff: OffsetDateTime,
-) -> Result<u64, sea_orm::DbErr> {
-    let mut total = 0;
-    for _ in 0..MAX_BATCHES {
-        let txn = db.begin().await?;
-        let now = OffsetDateTime::now_utc();
-        let ids: Vec<uuid::Uuid> = sso_sessions::Entity::find()
-            .select_only()
-            .column(sso_sessions::Column::Id)
-            .filter(column.lte(cutoff))
-            .order_by_asc(column)
-            .order_by_asc(sso_sessions::Column::Id)
-            // Match token issuance and logout: lock sessions before refresh grants.
-            .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
-            .limit(BATCH_SIZE)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        if ids.is_empty() {
-            txn.commit().await?;
-            break;
-        }
-        // Queue RP logout notifications through the existing revocation trigger
-        // before deleting the session and its RP mappings.
-        sso_sessions::Entity::update_many()
-            .col_expr(
-                sso_sessions::Column::RevokedAt,
-                sea_orm::sea_query::Expr::value(Some(now)),
-            )
-            .col_expr(
-                sso_sessions::Column::RevokeReason,
-                sea_orm::sea_query::Expr::value("session_expired"),
-            )
-            .filter(sso_sessions::Column::Id.is_in(ids.clone()))
-            .filter(sso_sessions::Column::RevokedAt.is_null())
-            .exec(&txn)
-            .await?;
-        refresh_tokens::Entity::update_many()
-            .col_expr(
-                refresh_tokens::Column::RevokedAt,
-                sea_orm::sea_query::Expr::value(Some(now)),
-            )
-            .col_expr(
-                refresh_tokens::Column::RevokeReason,
-                sea_orm::sea_query::Expr::value("session_expired"),
-            )
-            .filter(refresh_tokens::Column::SessionId.is_in(ids.clone()))
-            .filter(refresh_tokens::Column::RevokedAt.is_null())
-            .exec(&txn)
-            .await?;
-        let result = sso_sessions::Entity::delete_many()
-            .filter(sso_sessions::Column::Id.is_in(ids))
-            .exec(&txn)
-            .await?;
-        txn.commit().await?;
-        total += result.rows_affected;
-        if result.rows_affected < BATCH_SIZE {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    Ok(total)
+    Ok(absolute + idle)
 }
 
 clean_expired!(clean_expired_refresh_tokens, "refresh_tokens");
@@ -213,22 +149,25 @@ pub async fn clean_expired_mfa(db: &DatabaseConnection) -> Result<u64, sea_orm::
              LIMIT 500 FOR UPDATE OF u SKIP LOCKED)",
     )
     .await?;
-    let updated = execute_batches(
+    let abandoned_setups = execute_batches(
         db,
-        "UPDATE user_mfa f SET
-            pending_secret_enc=CASE WHEN f.setup_expires_at <= $1 THEN NULL ELSE f.pending_secret_enc END,
-            setup_session=CASE WHEN f.setup_expires_at <= $1 THEN NULL ELSE f.setup_session END,
-            assisted_recovery_hash=CASE WHEN f.assisted_recovery_expires_at <= $1 THEN NULL ELSE f.assisted_recovery_hash END,
-            assisted_recovery_expires_at=CASE WHEN f.assisted_recovery_expires_at <= $1 THEN NULL ELSE f.assisted_recovery_expires_at END
-         WHERE f.enabled AND ((f.pending_secret_enc IS NOT NULL AND f.setup_expires_at <= $1)
-             OR f.assisted_recovery_expires_at <= $1)
+        "UPDATE user_mfa f SET pending_secret_enc=NULL,setup_session=NULL
+         WHERE f.enabled AND f.pending_secret_enc IS NOT NULL AND f.setup_expires_at <= $1
          AND f.user_id IN (SELECT u.id FROM user_mfa m JOIN users u ON u.id=m.user_id
-             WHERE m.enabled AND ((m.pending_secret_enc IS NOT NULL AND m.setup_expires_at <= $1)
-                 OR m.assisted_recovery_expires_at <= $1)
-             LIMIT 500 FOR UPDATE OF u SKIP LOCKED)",
+             WHERE m.enabled AND m.pending_secret_enc IS NOT NULL AND m.setup_expires_at <= $1
+             ORDER BY m.setup_expires_at LIMIT 500 FOR UPDATE OF u SKIP LOCKED)",
     )
     .await?;
-    Ok(deleted + updated)
+    let expired_recoveries = execute_batches(
+        db,
+        "UPDATE user_mfa f SET assisted_recovery_hash=NULL,assisted_recovery_expires_at=NULL
+         WHERE f.enabled AND f.assisted_recovery_expires_at <= $1
+         AND f.user_id IN (SELECT u.id FROM user_mfa m JOIN users u ON u.id=m.user_id
+             WHERE m.enabled AND m.assisted_recovery_expires_at <= $1
+             ORDER BY m.assisted_recovery_expires_at LIMIT 500 FOR UPDATE OF u SKIP LOCKED)",
+    )
+    .await?;
+    Ok(deleted + abandoned_setups + expired_recoveries)
 }
 
 async fn clean_event_history(
@@ -270,21 +209,40 @@ pub async fn clean_audit_events(db: &DatabaseConnection, days: u16) -> Result<u6
     clean_event_history(db, "audit_events", days).await
 }
 
+pub(crate) async fn clean_expired_notification_batch(
+    db: &DatabaseConnection,
+) -> Result<u64, sea_orm::DbErr> {
+    let sql = delete_batch_sql(
+        "notification_outbox",
+        "expires_at <= now() AND (leased_until IS NULL OR leased_until <= now())",
+        "expires_at",
+    );
+    Ok(db
+        .execute_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await?
+        .rows_affected())
+}
+
 /// Keep credential expiry independent of gateway availability; retain only 30 days of terminal metadata.
 pub async fn clean_notifications(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
-    let mut total = 0;
+    let mut expired = 0;
     for _ in 0..MAX_BATCHES {
-        let expired = db.execute_raw(Statement::from_string(DbBackend::Postgres,
-            "DELETE FROM notification_outbox WHERE id IN (SELECT id FROM notification_outbox WHERE expires_at<=now() ORDER BY expires_at FOR UPDATE SKIP LOCKED LIMIT 500)".to_owned())).await?.rows_affected();
-        let archived = db.execute_raw(Statement::from_string(DbBackend::Postgres,
-            "DELETE FROM notification_deliveries WHERE id IN (SELECT id FROM notification_deliveries WHERE updated_at<now()-interval '30 days' AND status IN ('delivered','expired','cancelled') ORDER BY updated_at LIMIT 500 FOR UPDATE SKIP LOCKED)".to_owned())).await?.rows_affected();
-        total += expired + archived;
-        if expired < BATCH_SIZE && archived < BATCH_SIZE {
+        let removed = clean_expired_notification_batch(db).await?;
+        expired += removed;
+        if removed < BATCH_SIZE {
             break;
         }
         tokio::task::yield_now().await;
     }
-    Ok(total)
+    let archived = delete_before(
+        db,
+        "notification_deliveries",
+        "updated_at < $1 AND status IN ('delivered','expired','cancelled')",
+        "updated_at",
+        OffsetDateTime::now_utc() - time::Duration::days(30),
+    )
+    .await?;
+    Ok(expired + archived)
 }
 
 pub async fn clean_enrollments(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
@@ -353,14 +311,25 @@ pub async fn clean_account_sync_deliveries(db: &DatabaseConnection) -> Result<u6
 }
 
 pub async fn clean_expired_client_secrets(db: &DatabaseConnection) -> Result<u64, sea_orm::DbErr> {
-    let mut total = 0;
-    for _ in 0..MAX_BATCHES {
-        let count=db.execute_raw(Statement::from_string(DbBackend::Postgres,"UPDATE oauth_clients SET previous_secret_hash=NULL,previous_secret_expires_at=NULL WHERE previous_secret_expires_at<=now() AND id IN (SELECT id FROM oauth_clients WHERE previous_secret_expires_at<=now() LIMIT 500 FOR UPDATE SKIP LOCKED)".to_owned())).await?.rows_affected();
-        total += count;
-        if count < BATCH_SIZE {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    Ok(total)
+    execute_batches(
+        db,
+        "UPDATE oauth_clients SET previous_secret_hash=NULL,previous_secret_expires_at=NULL
+         WHERE id IN (SELECT id FROM oauth_clients WHERE previous_secret_expires_at<=LEAST($1,now())
+             ORDER BY previous_secret_expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)",
+    )
+    .await
+}
+
+pub async fn clean_expired_signing_key_material(
+    db: &DatabaseConnection,
+) -> Result<u64, sea_orm::DbErr> {
+    // Previously issued tokens may still need the public key for verification.
+    execute_batches(
+        db,
+        "UPDATE identity_provider_keys SET private_key_pem_enc=NULL,activate_at=NULL,updated_at=now()
+         WHERE id IN (SELECT id FROM identity_provider_keys WHERE expires_at<=LEAST($1,now())
+             AND (private_key_pem_enc IS NOT NULL OR activate_at IS NOT NULL)
+             ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)",
+    )
+    .await
 }

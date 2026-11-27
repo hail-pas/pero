@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    #[sea_orm(column_type = "custom(\"citext\")", select_as = "text", unique)]
+    #[sea_orm(
+        column_type = "custom(\"citext\")",
+        select_as = "text",
+        save_as = "citext",
+        unique
+    )]
     pub code: String,
     #[sea_orm(column_type = "Text")]
     pub name: String,

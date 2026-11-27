@@ -3,7 +3,7 @@ import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import type { ViewDataMap } from "./contracts";
 import { date } from "./api";
 import { Heading, MetaGrid, Panel, type Actions } from "./shared";
-import { t, useLocale } from "./i18n";
+import { labelValue, t, useLocale } from "./i18n";
 
 export function UserSecurity({
   data,
@@ -19,7 +19,7 @@ export function UserSecurity({
       [
         {
           name: "reason",
-          label: t("处理原因（勿填写密码或恢复码）"),
+          label: "处理原因（勿填写密码或恢复码）",
           required: true,
         },
       ],
@@ -53,7 +53,7 @@ export function UserSecurity({
           </Typography>
           <Button
             disabled={!data.login_lock.failed_attempts}
-            onClick={() => intervene("unlock", t("解除临时锁定"))}
+            onClick={() => intervene("unlock", "解除临时锁定")}
           >
             {t("解除临时锁定")}
           </Button>
@@ -75,7 +75,7 @@ export function UserSecurity({
             disabled={!data.can_recover}
             color="warning"
             onClick={() =>
-              intervene("recover_mfa", t("生成临时恢复码并退出全部会话"))
+              intervene("recover_mfa", "生成临时恢复码并退出全部会话")
             }
           >
             {t("生成临时恢复码并退出全部会话")}
@@ -92,7 +92,7 @@ export function UserSecurity({
         action={
           <Button
             color="warning"
-            onClick={() => intervene("revoke_all", t("退出全部会话"))}
+            onClick={() => intervene("revoke_all", "退出全部会话")}
           >
             {t("退出全部会话")}
           </Button>
@@ -122,7 +122,7 @@ export function UserSecurity({
                 <Button
                   size="small"
                   color="warning"
-                  onClick={() => intervene("revoke_one", t("退出此会话"), s.id)}
+                  onClick={() => intervene("revoke_one", "退出此会话", s.id)}
                 >
                   {t("退出此会话")}
                 </Button>
@@ -153,8 +153,7 @@ export function UserSecurity({
                       }}
                     >
                       <Typography variant="body2" sx={{ flex: 1, overflowWrap: "anywhere" }}>
-                        {app.app_name} · {t("最大登录设备数")}：
-                        {app.max_sessions === 0 ? t("不限制") : app.max_sessions}
+                        {app.app_name} · {labelValue("最大登录设备数", app.max_sessions === 0 ? t("不限制") : app.max_sessions)}
                         {" · "}
                         {date(app.created_at)}
                       </Typography>
@@ -162,7 +161,7 @@ export function UserSecurity({
                         size="small"
                         color="warning"
                         onClick={() =>
-                          intervene("revoke_app_session", t("退出此应用设备"), app.id)
+                          intervene("revoke_app_session", "退出此应用设备", app.id)
                         }
                       >
                         {t("退出此应用设备")}

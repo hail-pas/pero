@@ -70,6 +70,7 @@ export interface ClientSummary {
   redirect_uris: string[];
   post_logout_redirect_uris: string[];
   backchannel_logout_uri: string | null;
+  account_sync_enabled: boolean;
   account_sync_uri: string | null;
   scopes: string[];
   grant_types: string[];
@@ -300,8 +301,13 @@ export interface ViewDataMap {
     token: string;
     app_name: string;
     username: string;
-    system: boolean;
     expired: boolean;
+    can_request?: boolean;
+    tenant_unavailable?: boolean;
+    opens_immediately?: boolean;
+    admission_error?: string | null;
+    granted?: boolean;
+    application?: { status: string; reason: string } | null;
     login_url?: string | null;
   };
   SelectAccountView: CsrfPage & {
@@ -322,6 +328,16 @@ export interface ViewDataMap {
     social: boolean;
     tenant_name?: string;
     tenant_invitation?: boolean;
+    account_invitation?: boolean;
+    manual_delivery?: boolean;
+    password_policy?: {
+      min_length: number;
+      max_length: number;
+      require_uppercase: boolean;
+      require_lowercase: boolean;
+      require_digit: boolean;
+      require_special: boolean;
+    };
     existing_account?: boolean;
     signed_in?: boolean;
     matching_account?: boolean;
@@ -337,7 +353,6 @@ export interface ViewDataMap {
   EnrollmentAdminView: AccountPage &
     ProgressList & {
       policy: {
-        id: string;
         app_id: string | null;
         mode: string;
         domains: string[];
@@ -346,6 +361,7 @@ export interface ViewDataMap {
         version: number;
       };
       inherited: boolean;
+      can_invite: boolean;
     };
   AdmissionView: AccountPage & {
     mfa_enabled: boolean;
@@ -362,6 +378,10 @@ export interface ViewDataMap {
       organization_admission: boolean;
       organization_only: boolean;
       self_service_open?: boolean;
+      opens_immediately?: boolean;
+      admission_error?: string | null;
+      request_status?: string | null;
+      request_reason?: string | null;
       require_mfa: boolean;
     }[];
   };
@@ -430,7 +450,14 @@ export interface ViewDataMap {
     username: string;
     nickname: string | null;
     status: string;
-  }> & { app_id: string; app_name: string; system: boolean };
+  }> & {
+    app_id: string;
+    app_name: string;
+    system: boolean;
+    requests?: { id: string; username: string }[];
+    requests_page?: number;
+    more_requests?: boolean;
+  };
   AppDetailView: AccountPage & {
     app: AppSummary;
     clients: ClientSummary[];

@@ -136,6 +136,9 @@ pub async fn update(
     let changed = old.tenant_mode != input.tenant_mode
         || old.organization_access != input.organization_access
         || old.organization_auto_access != input.organization_auto_access;
+    if old.tenant_mode != input.tenant_mode && input.tenant_mode == "organization" {
+        super::application_request::close(&txn, None, Some(id)).await?;
+    }
     // Never let old restricted grants silently come back after the application
     // has been made open or personal-only and is later restricted again.
     let clear_grants =
@@ -189,6 +192,7 @@ pub async fn toggle_status(
     active.updated_at = Set(time::OffsetDateTime::now_utc());
     active.update(&txn).await?;
     if status == CommonStatus::Disabled {
+        super::application_request::close(&txn, None, Some(id)).await?;
         super::security::execute(&txn,"DELETE FROM notification_outbox WHERE enrollment_id IN (SELECT id FROM enrollments WHERE app_id=$1 AND status IN ('pending_verification','pending_approval','ready'))",vec![id.into()]).await?;
         super::security::execute(&txn,"UPDATE enrollments SET status='revoked' WHERE app_id=$1 AND status IN ('pending_verification','pending_approval','ready')",vec![id.into()]).await?;
         super::session::SessionService::revoke_app_grants(&txn, id, None, "app_disabled").await?;

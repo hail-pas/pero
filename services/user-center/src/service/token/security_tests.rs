@@ -16,7 +16,9 @@ use crate::{
         password::PasswordIdentityService,
     },
 };
-use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Statement, TransactionTrait};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, Statement, TransactionTrait,
+};
 use uuid::Uuid;
 
 async fn sql(db: &sea_orm::DatabaseConnection, query: &str, values: Vec<sea_orm::Value>) {
@@ -155,6 +157,15 @@ fn refresh_form(client: Uuid, raw: &str) -> TokenRequest {
         scope: None,
         client_id: client.to_string(),
         client_secret: None,
+    }
+}
+
+fn verification_notice(nonce: &str) -> crate::service::verification::VerificationCode {
+    let code = "123456";
+    crate::service::verification::VerificationCode {
+        code: code.into(),
+        nonce: nonce.into(),
+        code_hash: pero_utils::crypto::sha256_hex(code),
     }
 }
 
@@ -446,13 +457,37 @@ async fn refresh_replay() {
     let rt = Uuid::now_v7();
     sql(&db,"INSERT INTO refresh_tokens(id,token_hash,user_id,app_id,client_id,session_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6,ARRAY['openid']::text[],now()+interval '1 day')",vec![rt.into(),pero_utils::crypto::sha256_hex(&raw).into(),user.into(),app.into(),client.into(),session.into()]).await;
     bind_test_grants(&db, user, app).await;
-    let result = service
+    let Ok(result) = service
         .handle_refresh_token(&refresh_form(client, &raw), &client_model)
-        .await;
-    assert!(result.is_ok(), "valid refresh must work");
+        .await
+    else {
+        panic!("valid refresh must work");
+    };
+    let replacement_hash = pero_utils::crypto::sha256_hex(&result.refresh_token.unwrap());
     // Revocation failures must be retryable, rather than claiming replay handling completed.
     db.execute_unprepared("CREATE FUNCTION fail_replay_revoke() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated revocation failure'; END $$; CREATE TRIGGER fail_replay_revoke BEFORE UPDATE OF revoked_at ON client_sessions FOR EACH ROW EXECUTE FUNCTION fail_replay_revoke()")
         .await.unwrap();
+    sql(
+        &db,
+        "UPDATE refresh_tokens SET created_at=now()-interval '2 days',expires_at=now()-interval '1 hour' WHERE id=$1",
+        vec![rt.into()],
+    )
+    .await;
+    assert!(matches!(
+        service
+            .handle_refresh_token(&refresh_form(client, &raw), &client_model)
+            .await,
+        Err(TokenEndpointError::OAuth {
+            code: pero_error::protocol::oauth::OAuth2ErrorCode::InvalidGrant,
+            ..
+        })
+    ));
+    sql(
+        &db,
+        "UPDATE refresh_tokens SET expires_at=now()+interval '1 day' WHERE id=$1",
+        vec![rt.into()],
+    )
+    .await;
     assert!(matches!(
         service
             .handle_refresh_token(&refresh_form(client, &raw), &client_model)
@@ -462,12 +497,8 @@ async fn refresh_replay() {
             ..
         })
     ));
-    let row = refresh_tokens::Entity::find_by_id(rt)
-        .one(&db)
-        .await
-        .unwrap()
-        .unwrap();
-    let replacement = refresh_tokens::Entity::find_by_id(row.replaced_by_id.unwrap())
+    let replacement = refresh_tokens::Entity::find()
+        .filter(refresh_tokens::Column::TokenHash.eq(replacement_hash))
         .one(&db)
         .await
         .unwrap()
@@ -488,12 +519,7 @@ async fn refresh_replay() {
             ..
         })
     ));
-    let row = refresh_tokens::Entity::find_by_id(rt)
-        .one(&db)
-        .await
-        .unwrap()
-        .unwrap();
-    let replacement = refresh_tokens::Entity::find_by_id(row.replaced_by_id.unwrap())
+    let replacement = refresh_tokens::Entity::find_by_id(replacement.id)
         .one(&db)
         .await
         .unwrap()
@@ -558,8 +584,8 @@ async fn expired_sessions_deny_refresh() {
         .unwrap()
         .unwrap();
     let service = TokenService::new(&state);
-    // Expiration, idle timeout and orphaning all deny refresh, including after cleanup.
-    for kind in ["expired", "idle", "orphan"] {
+    // Expiration, idle timeout and deletion all deny refresh, including after cleanup.
+    for kind in ["expired", "idle", "deleted"] {
         let (_, session) = state
             .session_service()
             .create(user, None, None, None, None)
@@ -948,23 +974,41 @@ async fn recovery_and_contact_expiry() {
             &contact_session,
             ContactChannel::Email,
             "first@example.test".into(),
-            None,
+            Some("https://issuer.example.test"),
         )
         .await
         .ok()
         .expect("first contact");
-    sql(&db,"UPDATE contact_change_requests SET requested_at=now()-interval '30 minutes',expires_at=now()-interval '15 minutes' WHERE nonce=$1",vec![nonce.into()]).await;
-    assert!(
+    assert!(matches!(
         contacts
             .create_contact_request(
                 &contact_session,
                 ContactChannel::Email,
-                "first@example.test".into(),
-                None
+                "FIRST@example.test".into(),
+                None,
             )
+            .await,
+        Err(crate::service::contact::ContactError::SamePendingValue)
+    ));
+    sql(&db,"UPDATE contact_change_requests SET requested_at=now()-interval '30 minutes',expires_at=now()-interval '15 minutes' WHERE nonce=$1",vec![nonce.into()]).await;
+    let (_, replacement) = contacts
+        .create_contact_request(
+            &contact_session,
+            ContactChannel::Email,
+            "FIRST@example.test".into(),
+            Some("https://issuer.example.test"),
+        )
+        .await
+        .ok()
+        .expect("replace expired contact");
+    assert_eq!(notification_count().await, 1);
+    assert!(
+        contacts
+            .cancel_contact(&contact_session, &replacement)
             .await
             .is_ok()
     );
+    assert_eq!(notification_count().await, 0);
 
     fixture.cleanup().await;
 }
@@ -1034,11 +1078,55 @@ async fn signing_key_rotation() {
             .kid,
         "new"
     );
-    assert!(
-        crate::db::helper::signing_key::find_verification_key_by_kid(&db, "old")
+    let previous = crate::db::helper::signing_key::find_verification_key_by_kid(&db, "old")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(previous.private_key_pem_enc.is_some());
+    sql(
+        &db,
+        "UPDATE identity_provider_keys SET expires_at=now()-interval '1 minute',
+         activate_at=now()-interval '2 minutes',last_issued_until=now()+interval '1 hour' WHERE id=$1",
+        vec![previous.id.into()],
+    )
+    .await;
+    use crate::db::helper::cleanup::clean_expired_signing_key_material;
+    assert_eq!(clean_expired_signing_key_material(&db).await.unwrap(), 1);
+    assert_eq!(clean_expired_signing_key_material(&db).await.unwrap(), 0);
+    let expired = crate::db::helper::signing_key::find_verification_key_by_kid(&db, "old")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(expired.public_key_pem, previous.public_key_pem);
+    assert!(expired.private_key_pem_enc.is_none() && expired.activate_at.is_none());
+    assert!(expired.last_issued_until.unwrap() > time::OffsetDateTime::now_utc());
+    for retains_old_key in [true, false] {
+        if !retains_old_key {
+            sql(
+                &db,
+                "UPDATE identity_provider_keys SET last_issued_until=now()-interval '1 second' WHERE id=$1",
+                vec![previous.id.into()],
+            )
+            .await;
+        }
+        let response = crate::api::jwks::jwks(axum::extract::State(state.clone())).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let jwks: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let listed = jwks["keys"].as_array().unwrap();
+        assert!(listed.iter().any(|key| key["kid"] == "new"));
+        assert_eq!(
+            listed.iter().any(|key| key["kid"] == "old"),
+            retains_old_key
+        );
+    }
+    assert_eq!(
+        crate::db::helper::signing_key::require_active_signing_key(&db)
             .await
             .unwrap()
-            .is_some()
+            .kid,
+        "new"
     );
     fixture.cleanup().await;
 }
@@ -1076,6 +1164,13 @@ async fn notification_retries_and_leases() {
             );
             let body: serde_json::Value = serde_json::from_slice(request.body()).unwrap();
             assert_eq!(body["code"], "123456");
+            assert!(body.get("locale").is_none());
+            let language = request.headers().get(http::header::ACCEPT_LANGUAGE);
+            if body["link"].as_str().unwrap().ends_with("nonce=test-nonce") {
+                assert_eq!(language.unwrap(), "zh-CN");
+            } else {
+                assert!(language.is_none());
+            }
             let first = {
                 let mut attempts = self.attempts.lock().unwrap();
                 attempts.push(
@@ -1107,17 +1202,22 @@ async fn notification_retries_and_leases() {
         .notification
         .endpoint = "https://notifications.example.test/send".into();
     delivery_state.http_client = gateway.clone();
-    crate::service::notify::enqueue_verification(
-        &db,
-        user,
-        "https://issuer.example.test",
-        "email",
-        "first@example.test",
-        "123456",
-        "test-nonce",
-    )
-    .await
-    .unwrap();
+    use crate::service::notify::{Locale, NOTIFICATION_LOCALE, enqueue_verification};
+    NOTIFICATION_LOCALE
+        .scope(
+            Some(Locale::Chinese),
+            enqueue_verification(
+                &db,
+                user,
+                "https://issuer.example.test",
+                "email",
+                "first@example.test",
+                &verification_notice("test-nonce"),
+                time::OffsetDateTime::now_utc() + time::Duration::minutes(15),
+            ),
+        )
+        .await
+        .unwrap();
     let worker_state = delivery_state.clone();
     let worker =
         tokio::spawn(async move { crate::service::notify::deliver_one(&worker_state).await });
@@ -1304,8 +1404,8 @@ async fn notification_retries_and_leases() {
             "https://issuer.example.test",
             "email",
             "first@example.test",
-            "123456",
-            nonce,
+            &verification_notice(nonce),
+            time::OffsetDateTime::now_utc() + time::Duration::minutes(15),
         )
         .await
         .unwrap();
@@ -1415,13 +1515,13 @@ async fn policy_revocation_locks() {
             .revoked_at
             .is_some()
     );
-    // Concurrent grants use one upsert and never revive previously revoked tokens.
+    // Concurrent restores can only transition the disabled grant once.
     let management_actor = database::management_actor(&db).await;
     let (first, second) = tokio::join!(
-        crate::service::access::grant_app(&db, &management_actor, user, app),
-        crate::service::access::grant_app(&db, &management_actor, user, app)
+        crate::service::access::restore_app(&db, &management_actor, user, app),
+        crate::service::access::restore_app(&db, &management_actor, user, app)
     );
-    assert!(first.is_ok() && second.is_ok());
+    assert_ne!(first.is_ok(), second.is_ok());
     assert!(
         crate::service::access::active_app_access(&db, user, app)
             .await
@@ -1521,10 +1621,11 @@ async fn session_touch_and_bounded_cleanup() {
             .last_seen_at
             > touched
     );
-    // More than one batch, including grants which must be revoked before ON DELETE SET NULL.
+    // More than one batch, including grants whose own expiration is still in the future.
     sql(&db, "INSERT INTO sso_sessions(token_hash,user_id,created_at,expires_at) SELECT 'expired-'||n,$1,now()-interval '2 days',now()-interval '1 day' FROM generate_series(1,1100) n", vec![fixture.user.into()]).await;
     sql(&db, "INSERT INTO sso_sessions(token_hash,user_id,created_at,last_seen_at,expires_at) VALUES('idle-expired',$1,now()-interval '2 hours',now()-interval '2 hours',now()+interval '1 day')", vec![fixture.user.into()]).await;
     sql(&db, "INSERT INTO refresh_tokens(token_hash,user_id,app_id,client_id,session_id,expires_at) SELECT token_hash,user_id,$1,$2,id,now()+interval '1 day' FROM sso_sessions", vec![fixture.app.into(),fixture.client.into()]).await;
+    sql(&db, "INSERT INTO authorization_codes(code_hash,user_id,app_id,client_id,session_id,redirect_uri,expires_at) SELECT token_hash,user_id,$1,$2,id,'https://client.example.test/callback',now()+interval '5 minutes' FROM sso_sessions", vec![fixture.app.into(),fixture.client.into()]).await;
     sql(
         &db,
         "UPDATE oauth_clients SET backchannel_logout_uri='https://client.example.test/logout' WHERE id=$1",
@@ -1550,9 +1651,9 @@ async fn session_touch_and_bounded_cleanup() {
     let delivery = db.query_one_raw(Statement::from_sql_and_values(DbBackend::Postgres, "SELECT count(*) AS total,count(*) FILTER (WHERE session_id IN (SELECT c.id FROM client_sessions c JOIN app_sessions a ON a.id=c.app_session_id WHERE a.sso_session_id=$1)) AS live FROM backchannel_logout_deliveries", [live.into()])).await.unwrap().unwrap();
     assert_eq!(delivery.try_get::<i64>("", "total").unwrap(), 2);
     assert_eq!(delivery.try_get::<i64>("", "live").unwrap(), 0);
-    let row = db.query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT count(*) FILTER (WHERE revoked_at IS NOT NULL) AS revoked, count(*) FILTER (WHERE revoked_at IS NULL) AS live FROM refresh_tokens")).await.unwrap().unwrap();
-    assert_eq!(row.try_get::<i64>("", "revoked").unwrap(), 1101);
-    assert_eq!(row.try_get::<i64>("", "live").unwrap(), 1);
+    let row = db.query_one_raw(Statement::from_string(DbBackend::Postgres, "SELECT (SELECT count(*) FROM refresh_tokens) AS refresh, (SELECT count(*) FROM authorization_codes) AS codes")).await.unwrap().unwrap();
+    assert_eq!(row.try_get::<i64>("", "refresh").unwrap(), 1);
+    assert_eq!(row.try_get::<i64>("", "codes").unwrap(), 1);
     assert!(
         state
             .session_service()
@@ -1665,8 +1766,16 @@ async fn notification_cleanup_is_bounded_and_links_preserve_base_paths() {
     let mut state = fixture.state.clone();
     let db = state.db.clone();
     sql(&db,"INSERT INTO notification_outbox (id,payload_enc,expires_at,user_id,kind) SELECT uuidv7(),''::bytea,now()-interval '1 second',$1,'verify_contact' FROM generate_series(1,1001)",vec![fixture.user.into()]).await;
-    for remaining in [501i64, 1, 0] {
-        assert!(!crate::service::notify::deliver_one(&state).await.unwrap());
+    let leased = Uuid::now_v7();
+    sql(
+        &db,
+        "INSERT INTO notification_outbox (id,payload_enc,expires_at,user_id,kind,lease_id,leased_until)
+         VALUES ($1,''::bytea,now()-interval '1 second',$2,'verify_contact',uuidv7(),now()+interval '2 minutes')",
+        vec![leased.into(), fixture.user.into()],
+    )
+    .await;
+    for remaining in [502i64, 2, 1] {
+        crate::service::notify::deliver_batch(&state).await;
         let row = db
             .query_one_raw(Statement::from_string(
                 DbBackend::Postgres,
@@ -1677,6 +1786,18 @@ async fn notification_cleanup_is_bounded_and_links_preserve_base_paths() {
             .unwrap();
         assert_eq!(row.try_get::<i64>("", "n").unwrap(), remaining);
     }
+    sql(
+        &db,
+        "UPDATE notification_outbox SET leased_until=now() WHERE id=$1",
+        vec![leased.into()],
+    )
+    .await;
+    assert_eq!(
+        crate::db::helper::cleanup::clean_expired_notification_batch(&db)
+            .await
+            .unwrap(),
+        1
+    );
     let config = std::sync::Arc::make_mut(&mut state.config);
     config.sso.base_url = "https://issuer.example.test/tenant/".into();
     config.notification.endpoint = "https://gateway.example.test/send".into();
@@ -1705,8 +1826,8 @@ async fn notification_cleanup_is_bounded_and_links_preserve_base_paths() {
         &state.config.sso.base_url,
         "email",
         "recovery@example.test",
-        "123456",
-        "a&b+c",
+        &verification_notice("a&b+c"),
+        time::OffsetDateTime::now_utc() + time::Duration::minutes(15),
     )
     .await
     .unwrap();
@@ -2394,6 +2515,14 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
     };
     let (original, original_code) = issue(fixture.client).await;
     assert_eq!(status(&original.access_token).await, http::StatusCode::OK);
+    sql(
+        &state.db,
+        "UPDATE authorization_codes SET created_at=now()-interval '1 hour',expires_at=now()-interval '1 minute' WHERE code_hash=$1",
+        vec![pero_utils::crypto::sha256_hex(&original_code).into()],
+    )
+    .await;
+    replay(&original_code).await;
+    assert_eq!(status(&original.access_token).await, http::StatusCode::OK);
     crate::service::access::revoke_app(
         &state.db,
         &database::management_actor(&state.db).await,
@@ -2402,7 +2531,7 @@ async fn access_tokens_stay_revoked_after_policy_restoration() {
     )
     .await
     .unwrap();
-    crate::service::access::grant_app(
+    crate::service::access::restore_app(
         &state.db,
         &database::management_actor(&state.db).await,
         fixture.user,
@@ -3078,7 +3207,7 @@ async fn enrollment_policy_proof_and_membership_lifecycle() {
     let db = &state.db;
     let app = fixture.app;
     // Explicit app policy permits enrollment while the platform stays invite-only.
-    sql(db,"INSERT INTO registration_policies(id,app_id,mode,approval_required) VALUES($1,$1,'self_service',false)",vec![app.into()]).await;
+    sql(db,"INSERT INTO registration_policies(app_id,mode,approval_required) VALUES($1,'self_service',false)",vec![app.into()]).await;
     assert_eq!(
         enrollment::policy(db, None).await.unwrap().mode,
         "invite_only"
@@ -3091,9 +3220,19 @@ async fn enrollment_policy_proof_and_membership_lifecycle() {
     let id = Uuid::now_v7();
     sql(db,"INSERT INTO enrollments(id,app_id,client_id,email,token_hash,expires_at) VALUES($1,$2,$3,'new@example.com',$4,now()+interval '1 hour')",vec![id.into(),app.into(),fixture.client.into(),pero_utils::crypto::sha256_hex(&raw).into()]).await;
     assert!(
-        enrollment::finalize(state, &raw, "new_user", "ValidPass123!", None, None)
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "new_user",
+                password: "ValidPass123!",
+                ..Default::default()
+            },
+            None,
+            None
+        )
+        .await
+        .is_err()
     );
     assert!(
         crate::db::helper::user::find_by_identifier(db, "email", "new@example.com")
@@ -3102,25 +3241,38 @@ async fn enrollment_policy_proof_and_membership_lifecycle() {
             .is_none()
     );
     enrollment::verify(state, &raw).await.unwrap();
-    enrollment::finalize(state, &raw, "new_user", "ValidPass123!", None, None)
-        .await
-        .unwrap();
-    let user = crate::db::helper::user::find_by_identifier(db, "email", "new@example.com")
+    enrollment::finalize(
+        state,
+        &raw,
+        enrollment::FinalizeInput {
+            username: "new_user",
+            password: "ValidPass123!",
+            ..Default::default()
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let user = crate::db::helper::user::find_by_identifier(db, "email", "NEW@example.com")
         .await
         .unwrap()
         .unwrap();
     assert!(user.email_verified_at.is_some());
     assert!(
-        user_app_access::Entity::find_by_id((user.id, app))
-            .one(db)
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert!(
-        enrollment::finalize(state, &raw, "other", "ValidPass123!", None, None)
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "other",
+                password: "ValidPass123!",
+                ..Default::default()
+            },
+            None,
+            None
+        )
+        .await
+        .is_err()
     );
     let (cookie, _) = state
         .session_service()
@@ -3133,6 +3285,11 @@ async fn enrollment_policy_proof_and_membership_lifecycle() {
         .await
         .unwrap()
         .unwrap();
+    assert!(
+        crate::service::application_request::submit(state, &session, app)
+            .await
+            .unwrap()
+    );
     crate::service::account_security::leave_app(state, &session, app)
         .await
         .unwrap();
@@ -3150,9 +3307,22 @@ async fn enrollment_policy_proof_and_membership_lifecycle() {
             .await
             .is_err()
     );
+    sql(
+        db,
+        "INSERT INTO application_access_requests(id,user_id,app_id,status,decided_by)
+         VALUES(uuidv7(),$1,$2,'rejected',$3)",
+        vec![user.id.into(), app.into(), fixture.user.into()],
+    )
+    .await;
     crate::service::account_security::close_account(state, &session, "new_user")
         .await
         .unwrap();
+    assert!(
+        crate::service::application_request::current(db, user.id, app)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let deleted = users::Entity::find_by_id(user.id)
         .one(db)
         .await
@@ -3192,13 +3362,23 @@ async fn enrollment_approval_and_emergency_stop() {
         "pending_approval"
     );
     assert!(
-        enrollment::finalize(state, &raw, "pending_user", "ValidPass123!", None, None)
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "pending_user",
+                password: "ValidPass123!",
+                ..Default::default()
+            },
+            None,
+            None
+        )
+        .await
+        .is_err()
     );
     sql(
         db,
-        "UPDATE registration_policies SET emergency_stop=true",
+        "UPDATE registration_policies SET emergency_stop=true WHERE app_id IS NULL",
         vec![],
     )
     .await;
@@ -3243,12 +3423,16 @@ async fn enrollment_invitation_delivery_rotation_and_acceptance() {
     .await;
     sql(db,"INSERT INTO user_mfa(user_id,secret_enc,enabled) VALUES($1,pgp_sym_encrypt('GEZDGNBVGY3TQOJQ',current_setting('app.encrypt_key')),true)",vec![fixture.user.into()]).await;
     sql(db,"UPDATE sso_sessions SET reauthenticated_at=now(),mfa_required=true,mfa_verified_at=now() WHERE id=$1",vec![session_id.into()]).await;
-    let actor = state
+    let session = state
         .session_service()
         .validate(&raw)
         .await
         .unwrap()
         .unwrap();
+    let actor = crate::service::permissions::Actor {
+        session,
+        idle_ttl_seconds: state.config.sso.session_idle_ttl_seconds,
+    };
     let address = format!("invite-{}@example.com", Uuid::now_v7().simple());
     enrollment::invite(
         &state,
@@ -3257,6 +3441,7 @@ async fn enrollment_invitation_delivery_rotation_and_acceptance() {
         &actor,
         false,
         "Team invitation",
+        enrollment::InvitationDelivery::Email,
     )
     .await
     .unwrap();
@@ -3294,14 +3479,56 @@ async fn enrollment_invitation_delivery_rotation_and_acceptance() {
     let second = emailed_token(db, id).await;
     assert_ne!(first, second);
     assert!(enrollment::lookup(db, &first).await.is_err());
-    enrollment::verify(&state, &second).await.unwrap();
-    enrollment::finalize(&state, &second, "invited_user", "ValidPass123!", None, None)
+    sql(
+        db,
+        "UPDATE enrollments SET last_sent_at=now()-interval '2 minutes' WHERE id=$1",
+        vec![id.into()],
+    )
+    .await;
+    let link = enrollment::manage(&state, &actor, id, "issue_link", "")
+        .await
+        .unwrap()
+        .unwrap();
+    let token = url::Url::parse(&link)
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "token")
+        .unwrap()
+        .1
+        .into_owned();
+    assert!(enrollment::lookup(db, &second).await.is_err());
+    assert_eq!(
+        enrollment::lookup(db, &token).await.unwrap().expires_at,
+        rows[0].expires_at
+    );
+    let queued = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM notification_outbox WHERE enrollment_id=$1",
+            [id.into()],
+        ))
         .await
         .unwrap();
+    assert!(queued.is_none());
+    enrollment::verify(&state, &token).await.unwrap();
+    enrollment::finalize(
+        &state,
+        &token,
+        enrollment::FinalizeInput {
+            username: "invited_user",
+            password: "ValidPass123!",
+            ..Default::default()
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let user = crate::db::helper::user::find_by_identifier(db, "email", &address)
         .await
         .unwrap()
         .unwrap();
+    assert!(user.email_verified_at.is_none());
     assert!(
         crate::service::access::active_app_access(db, user.id, fixture.app)
             .await
@@ -3337,9 +3564,18 @@ async fn enrollment_social_completion_requires_browser_proof() {
     sql(db,"INSERT INTO enrollments(id,email,token_hash,status,verified_at,provider_id,subject,expires_at) VALUES($1,'social@example.com',$2,'ready',now(),$3,'original-subject',now()+interval '1 hour')",vec![request.into(),pero_utils::crypto::sha256_hex(&raw).into(),provider.into()]).await;
     // Possessing the email link cannot authenticate another browser's upstream identity.
     assert!(
-        enrollment::finalize(state, &raw, "social_user", "", None, None)
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "social_user",
+                ..Default::default()
+            },
+            None,
+            None
+        )
+        .await
+        .is_err()
     );
     let mut proof = SocialProof {
         provider,
@@ -3350,16 +3586,34 @@ async fn enrollment_social_completion_requires_browser_proof() {
         enrollment_id: Some(request),
     };
     assert!(
-        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "social_user",
+                ..Default::default()
+            },
+            None,
+            Some(&proof)
+        )
+        .await
+        .is_err()
     );
     proof.subject = "original-subject".into();
     proof.proved_at -= 601;
     assert!(
-        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "social_user",
+                ..Default::default()
+            },
+            None,
+            Some(&proof)
+        )
+        .await
+        .is_err()
     );
     assert!(
         crate::db::helper::user::find_by_identifier(db, "email", "social@example.com")
@@ -3370,9 +3624,18 @@ async fn enrollment_social_completion_requires_browser_proof() {
     proof.proved_at = time::OffsetDateTime::now_utc().unix_timestamp();
     proof.invitation_hash = Some("another-flow".into());
     assert!(
-        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
-            .await
-            .is_err()
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "social_user",
+                ..Default::default()
+            },
+            None,
+            Some(&proof)
+        )
+        .await
+        .is_err()
     );
     proof.invitation_hash = None;
     sql(
@@ -3382,7 +3645,17 @@ async fn enrollment_social_completion_requires_browser_proof() {
     )
     .await;
     assert!(matches!(
-        enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof)).await,
+        enrollment::finalize(
+            state,
+            &raw,
+            enrollment::FinalizeInput {
+                username: "social_user",
+                ..Default::default()
+            },
+            None,
+            Some(&proof)
+        )
+        .await,
         Err(crate::service::ManagementError::Invalid(
             "registration_closed"
         ))
@@ -3393,9 +3666,18 @@ async fn enrollment_social_completion_requires_browser_proof() {
         vec![provider.into()],
     )
     .await;
-    enrollment::finalize(state, &raw, "social_user", "", None, Some(&proof))
-        .await
-        .unwrap();
+    enrollment::finalize(
+        state,
+        &raw,
+        enrollment::FinalizeInput {
+            username: "social_user",
+            ..Default::default()
+        },
+        None,
+        Some(&proof),
+    )
+    .await
+    .unwrap();
     assert!(
         crate::db::helper::user::find_by_identifier(db, "email", "social@example.com")
             .await
@@ -3647,7 +3929,6 @@ async fn lifecycle_guards_and_transactional_logout() {
 async fn account_sync_is_transactional_signed_and_scoped() {
     let f = SecurityFixture::new().await;
     let db = &f.state.db;
-    sql(db,"UPDATE oauth_clients SET account_sync_uri='https://rp.example.test/sync',scopes=ARRAY['openid','profile'] WHERE id=$1",vec![f.client.into()]).await;
     let count = |kind: &'static str| async move {
         db.query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -3660,6 +3941,21 @@ async fn account_sync_is_transactional_signed_and_scoped() {
         .try_get::<i64>("", "n")
         .unwrap()
     };
+    sql(db,"UPDATE oauth_clients SET status='disabled',account_sync_enabled=true,account_sync_uri='https://rp.example.test/sync',scopes=ARRAY['openid','profile'] WHERE id=$1",vec![f.client.into()]).await;
+    sql(
+        db,
+        "UPDATE users SET nickname='While disabled' WHERE id=$1",
+        vec![f.user.into()],
+    )
+    .await;
+    assert_eq!(count("sync.requested").await, 0);
+    assert_eq!(count("account.updated").await, 0);
+    sql(
+        db,
+        "UPDATE oauth_clients SET status='active' WHERE id=$1",
+        vec![f.client.into()],
+    )
+    .await;
     assert_eq!(count("sync.requested").await, 1);
     let txn = db.begin().await.unwrap();
     txn.execute_raw(Statement::from_sql_and_values(
@@ -3836,11 +4132,11 @@ async fn account_sync_is_transactional_signed_and_scoped() {
             .await
             .unwrap()
     );
-    assert!(
+    assert_eq!(
         crate::service::account_sync::snapshot(db, f.client, f.user)
             .await
-            .unwrap()
-            .is_none()
+            .unwrap(),
+        Some(snapshot)
     );
     f.cleanup().await;
 }
@@ -4405,6 +4701,26 @@ async fn tenant_quota_reduction_preserves_organizations_and_membership() {
             .filter(|t| t.kind == "organization")
             .count(),
         3
+    );
+    let empty = organizations.iter().find(|t| t.name == "Empty A").unwrap();
+    sql(
+        db,
+        "INSERT INTO tenant_app_requests(tenant_id,app_id,requested_by,status) VALUES($1,$2,$3,'pending')",
+        vec![empty.id.into(), fixture.app.into(), fixture.user.into()],
+    )
+    .await;
+    crate::service::tenant::delete(db, fixture.user, empty.id, empty.slug.as_deref().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        db.query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM tenant_app_requests WHERE tenant_id=$1",
+            [empty.id.into()],
+        ))
+        .await
+        .unwrap()
+        .is_none()
     );
     fixture.cleanup().await;
 }

@@ -59,12 +59,7 @@ impl TokenService<'_> {
             .column(ac::Column::AppId)
             .column(ac::Column::SessionId)
             .column(ac::Column::TenantId)
-            .into_tuple::<(
-                uuid::Uuid,
-                uuid::Uuid,
-                Option<uuid::Uuid>,
-                Option<uuid::Uuid>,
-            )>()
+            .into_tuple::<(uuid::Uuid, uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>)>()
             .one(&txn)
             .await;
         let (user_id, app_id, session_id, tenant_id) = match owner {
@@ -80,9 +75,6 @@ impl TokenService<'_> {
 
         // Lock the session before the grant row: logout updates the session first,
         // then revokes refresh tokens and queues backchannel notifications.
-        let Some(session_id) = session_id else {
-            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
-        };
         let active_session = match crate::db::helper::session::app_query(
             time::OffsetDateTime::now_utc(),
             self.state.config.sso.session_idle_ttl_seconds,
@@ -131,6 +123,13 @@ impl TokenService<'_> {
                 return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));
             }
         };
+
+        if auth_code.expires_at <= time::OffsetDateTime::now_utc() {
+            return Err(TokenEndpointError::error_desc(
+                OAuth2ErrorCode::InvalidGrant,
+                "Authorization code expired",
+            ));
+        }
 
         if let (Some(challenge), Some(verifier)) = (&auth_code.code_challenge, &form.code_verifier)
         {
@@ -227,13 +226,6 @@ impl TokenService<'_> {
             return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Authorization code already used",
-            ));
-        }
-
-        if auth_code.expires_at <= time::OffsetDateTime::now_utc() {
-            return Err(TokenEndpointError::error_desc(
-                OAuth2ErrorCode::InvalidGrant,
-                "Authorization code expired",
             ));
         }
 
@@ -376,14 +368,13 @@ impl TokenService<'_> {
                 tenant_version: Set(tenant.as_ref().map(|c| c.tenant_version)),
                 tenant_member_version: Set(tenant.as_ref().map(|c| c.tenant_member_version)),
                 client_id: Set(client.id),
-                session_id: Set(Some(sso_session_id)),
+                session_id: Set(sso_session_id),
                 client_session_id: Set(Some(session_id)),
                 scopes: Set(auth_code.scopes.clone()),
                 created_at: Set(now),
                 expires_at: Set(rt_expires),
                 revoked_at: Set(None),
                 revoke_reason: Set(None),
-                replaced_by_id: Set(None),
             };
             refresh_model = Some(rt_model);
             refresh_token = Some(rt_raw);

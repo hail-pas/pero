@@ -4,7 +4,7 @@ use crate::{
         entity::{apps, users},
         enums::UserStatus,
     },
-    service::{ManagementError, access},
+    service::{ManagementError, access, application_request, permissions::Permission},
     state::app::AppState,
     web::util,
 };
@@ -24,6 +24,7 @@ use uuid::Uuid;
 #[derive(Default, Deserialize)]
 pub struct Search {
     page: Option<u64>,
+    requests_page: Option<u64>,
     #[serde(default)]
     q: String,
     #[serde(default)]
@@ -52,20 +53,35 @@ pub async fn list(
         return pero_api_axum::json_error("invalid_request");
     }
     let page = query.page.unwrap_or(1).clamp(1, 1_000_000);
+    let requests_page = query.requests_page.unwrap_or(1).clamp(1, 1_000_000);
+    let (requests, more_requests) = if !app.system
+        && admin.access.can_app(id, Permission::AppsMembersManage)
+    {
+        match application_request::pending(&state.db, id, requests_page, admin.access.super_admin)
+            .await
+        {
+            Ok(requests) => requests,
+            Err(error) => return util::dependency_error(error),
+        }
+    } else {
+        (Vec::new(), false)
+    };
     let values: Vec<sea_orm::Value> = vec![id.into(), query.q.trim().into(), query.status.into()];
     let filter = "FROM user_app_access a JOIN users u ON u.id=a.user_id WHERE a.app_id=$1 AND u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM admin_roles r WHERE r.user_id=u.id) AND ($2='' OR strpos(lower(u.username::text),lower($2))>0 OR strpos(lower(COALESCE(u.nickname,'')),lower($2))>0) AND ($3='' OR a.status::text=$3)";
     let result=async {
         #[derive(FromQueryResult)] struct Count { total:i64 }
         let total=Count::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT count(*) AS total {filter}"),values.clone())).one(&state.db).await?.map(|v|v.total).unwrap_or(0);
         let mut values=values;values.extend([(crate::config::DASHBOARD_PAGE_SIZE as i64).into(),(((page-1)*crate::config::DASHBOARD_PAGE_SIZE) as i64).into()]);
-        let rows=Member::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT u.id AS user_id,u.username::text,u.nickname,a.status::text {filter} ORDER BY a.created_at DESC,u.id DESC LIMIT $4 OFFSET $5"),values)).all(&state.db).await?;
+        let rows=Member::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT u.id AS user_id,u.username::text,u.nickname,a.status::text {filter} ORDER BY a.created_at DESC,a.user_id DESC LIMIT $4 OFFSET $5"),values)).all(&state.db).await?;
         Ok::<_,sea_orm::DbErr>((rows,(total as u64).div_ceil(crate::config::DASHBOARD_PAGE_SIZE)))
     }.await;
     let p = AdminPage::new(&state, jar, admin);
     match result {
         Ok((rows, total_pages)) => util::view_response(
             "AppMembersView",
-            serde_json::json!({"layout":p.layout,"csrf_token":p.csrf_token,"app_id":id,"app_name":app.name,"system":app.system,"rows":rows,"page":page,"total_pages":total_pages}),
+            serde_json::json!({"layout":p.layout,"csrf_token":p.csrf_token,"app_id":id,"app_name":app.name,
+                "system":app.system,"rows":rows,"page":page,"total_pages":total_pages,
+                "requests":requests,"requests_page":requests_page,"more_requests":more_requests}),
             p.jar,
         ),
         Err(e) => util::dependency_error(e),
@@ -79,6 +95,9 @@ pub struct Change {
     #[serde(default)]
     username: String,
     user_id: Option<Uuid>,
+    request_id: Option<Uuid>,
+    #[serde(default)]
+    reason: String,
 }
 pub async fn change(
     State(state): State<AppState>,
@@ -90,6 +109,22 @@ pub async fn change(
 ) -> Response {
     if let Some(e) = util::verify_csrf_or_json_error(&jar, &f.csrf_token, &state) {
         return e;
+    }
+    if matches!(f.action.as_str(), "approve" | "reject") {
+        let Some(request_id) = f.request_id else {
+            return pero_api_axum::json_error("invalid_request");
+        };
+        return util::management_response(
+            application_request::review(
+                &state,
+                &admin.actor(&state),
+                id,
+                request_id,
+                f.action == "approve",
+                &f.reason,
+            )
+            .await,
+        );
     }
     if f.action == "grant" {
         let key = match pero_cache_redis::rate_limit_key::rl_admin_members
@@ -125,7 +160,7 @@ pub async fn change(
                     .ok_or(ManagementError::Invalid("not_found"))?
                     .id
             }
-            "revoke" => f
+            "revoke" | "restore" => f
                 .user_id
                 .ok_or(ManagementError::Invalid("invalid_request"))?,
             _ => return Err(ManagementError::Invalid("invalid_request")),
@@ -138,10 +173,10 @@ pub async fn change(
         }
         .update(&state.db)
         .await?;
-        if f.action == "grant" {
-            access::grant_app(&state.db, &admin.actor(&state), user_id, id).await
-        } else {
-            access::revoke_app(&state.db, &admin.actor(&state), user_id, id).await
+        match f.action.as_str() {
+            "grant" => access::grant_app(&state.db, &admin.actor(&state), user_id, id).await,
+            "restore" => access::restore_app(&state.db, &admin.actor(&state), user_id, id).await,
+            _ => access::revoke_app(&state.db, &admin.actor(&state), user_id, id).await,
         }
     }
     .await;

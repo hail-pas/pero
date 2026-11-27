@@ -74,6 +74,7 @@ pub async fn list_clients_by_app(
     oauth_clients::Entity::find()
         .filter(oauth_clients::Column::AppId.eq(app_id))
         .order_by_asc(oauth_clients::Column::CreatedAt)
+        .order_by_asc(oauth_clients::Column::Id)
         .all(db)
         .await
 }
@@ -89,7 +90,8 @@ pub async fn list_users(
 ) -> Result<(Vec<users::Model>, u64), DbErr> {
     let mut query = users::Entity::find()
         .filter(users::Column::DeletedAt.is_null())
-        .order_by_desc(users::Column::CreatedAt);
+        .order_by_desc(users::Column::CreatedAt)
+        .order_by_desc(users::Column::Id);
 
     if !access.super_admin {
         query = query.filter(Expr::cust(
@@ -158,7 +160,10 @@ pub async fn list_all_apps_brief(
     db: &DatabaseConnection,
     access: Option<&Access>,
 ) -> Result<Vec<(Uuid, String, String)>, DbErr> {
-    let mut query = apps::Entity::find().filter(apps::Column::System.eq(false));
+    let mut query = apps::Entity::find();
+    if !access.is_some_and(|access| access.super_admin) {
+        query = query.filter(apps::Column::System.eq(false));
+    }
     if let Some(access) = access.filter(|a| !a.super_admin) {
         query = query.filter(apps::Column::Id.is_in(access.app_ids(P::AppsMembersManage)));
     }

@@ -36,7 +36,6 @@ pub fn routes() -> Router<crate::state::app::AppState> {
         .route("/tenants/{id}/rename", post(tenant_management::rename))
         .route("/tenants/{id}/leave", post(tenant_management::leave))
         .route("/tenants/{id}/status", post(tenant_management::set_status))
-        .route_layer(axum::middleware::from_fn(no_store))
         .route("/accounts/sync", post(account_sync::snapshot))
         .route("/accounts/sync/list", post(tenant_reconcile::accounts))
         .route("/tenants/sync", post(tenant_reconcile::tenant))
@@ -49,6 +48,7 @@ pub fn routes() -> Router<crate::state::app::AppState> {
             "/tenants/membership/sync",
             post(tenant_reconcile::membership),
         )
+        .route_layer(axum::middleware::from_fn(no_store))
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/oauth2/token", post(token::token))
@@ -70,6 +70,10 @@ async fn no_store(
     response.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::PRAGMA,
+        axum::http::HeaderValue::from_static("no-cache"),
     );
     response
 }

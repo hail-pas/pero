@@ -1,4 +1,4 @@
-import { t, useLocale } from "./i18n";
+import { labelValue, t, useLocale } from "./i18n";
 import { useRef, useState } from "react";
 import {
   Alert,
@@ -13,6 +13,7 @@ import {
 import type { ViewDataMap } from "./contracts";
 import type { Actions } from "./shared";
 import { Panel } from "./shared";
+import { requestErrorText } from "./api";
 type Data = ViewDataMap["AdminRolesView"];
 export function AdminPermissions({
   row,
@@ -35,13 +36,13 @@ export function AdminPermissions({
   const [selected, setSelected] = useState("");
   const [review, setReview] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ cause: unknown }>();
   const [targets, setTargets] = useState<string[]>([]);
   const submitting = useRef(false);
   async function save() {
     if (submitting.current) return;
     submitting.current = true;
-    setError("");
+    setError(undefined);
     setSaving(true);
     try {
       await mutate(`/dashboard/admins/${row.user_id}/permissions`, {
@@ -55,8 +56,8 @@ export function AdminPermissions({
         ),
       });
       setOpen(false);
-    } catch (e) {
-      setError((e as Error).message);
+    } catch (cause) {
+      setError({ cause });
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -138,7 +139,7 @@ export function AdminPermissions({
             setSelected("");
             setTargets([]);
             setReview(false);
-            setError("");
+            setError(undefined);
           }
           setOpen(!open);
         }}
@@ -146,13 +147,13 @@ export function AdminPermissions({
         {t("分配权限")} · {row.username}
       </Button>
       {open && (
-        <Panel title={`${t("分配权限")}：${row.username}`}>
+        <Panel title={labelValue("分配权限", row.username)}>
           <Alert severity="info">
             {t(
               "全局用户权限影响所有非管理员账户。应用权限只对明确选择的应用生效；新应用不会自动获得授权。保存变更后，该管理员需要重新登录。",
             )}
           </Alert>
-          {error && <Alert severity="error">{t(error)}</Alert>}
+          {error && <Alert severity="error">{requestErrorText(error.cause)}</Alert>}
           <Typography variant="h6">{t("全局权限")}</Typography>
           {checks("global", global, setGlobal)}
           <Typography variant="h6">

@@ -6,7 +6,7 @@ use crate::db::entity::oauth_clients as oc;
 use crate::db::enums::{CommonStatus, OauthClientType};
 
 impl TokenService<'_> {
-    pub(super) async fn revalidate_client<C: ConnectionTrait>(
+    pub(crate) async fn revalidate_client<C: ConnectionTrait>(
         &self,
         db: &C,
         authenticated: &oc::Model,

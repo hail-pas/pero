@@ -22,14 +22,14 @@ import {
   TextField,
 } from "@mui/material";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
-import type { Values } from "./api";
-import { t, useLocale } from "./i18n";
+import { RequestError, requestErrorText, type Values } from "./api";
+import { t, useLocale, type Message } from "./i18n";
 
 export type FieldOptions = string[][];
 
 export interface Field {
   name: string;
-  label: string;
+  label: Message;
   type?: string;
   required?: boolean;
   disabled?: boolean;
@@ -47,8 +47,8 @@ export interface Field {
   requiredWhen?: (values: Values) => boolean;
   /** A field can be shown but read-only in some modes. */
   disabledWhen?: (values: Values) => boolean;
-  /** Inline validation; return a translated message to block submission. */
-  validate?: (value: Values[string], values: Values) => string | undefined;
+  /** Inline validation; return a source message to block submission. */
+  validate?: (value: Values[string], values: Values) => Message | undefined;
   /** Groups related fields under a section label. */
   group?: string;
   /** Long values such as URLs or descriptions span the whole row. */
@@ -138,14 +138,14 @@ export function FieldsForm({
   const [presetParameter, setPresetParameter] = useState("");
   const selectedPreset = presets?.find((preset) => preset.id === presetId);
   const [submittingState, setBusy] = useState(false),
-    [error, setError] = useState(serverError),
-    [fieldErrors, setFieldErrors] = useState<Record<string, string>>({}),
+    [error, setError] = useState<{ value: Message | Error }>(),
+    [fieldErrors, setFieldErrors] = useState<Record<string, Message>>({}),
     [visible, setVisible] = useState<Record<string, boolean>>({});
   const busy = submittingState || disabled;
   const submitting = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    setError(serverError);
+    setError(serverError ? { value: new RequestError(serverError) } : undefined);
   }, [serverError]);
   useEffect(() => {
     if (error) errorRef.current?.focus();
@@ -168,7 +168,7 @@ export function FieldsForm({
   function validateField(field: Field) {
     if (field.type === "notice") return "";
     if (isRequired(field) && field.type !== "checkbox" && isEmpty(values[field.name]))
-      return t("此字段为必填项");
+      return "此字段为必填项";
     return field.validate?.(values[field.name], values) ?? "";
   }
 
@@ -194,7 +194,7 @@ export function FieldsForm({
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitting.current || disabled) return;
-    const nextErrors: Record<string, string> = {};
+    const nextErrors: Record<string, Message> = {};
     for (const field of visibleFields) {
       const message = validateField(field);
       if (message) nextErrors[field.name] = message;
@@ -202,18 +202,18 @@ export function FieldsForm({
     setFieldErrors(nextErrors);
     const firstInvalid = Object.keys(nextErrors)[0];
     if (firstInvalid) {
-      setError(nextErrors[firstInvalid]);
+      setError({ value: nextErrors[firstInvalid] });
       focusField(firstInvalid);
       return;
     }
     submitting.current = true;
     setBusy(true);
     onBusyChange?.(true);
-    setError("");
+    setError(undefined);
     try {
       await submit(values);
     } catch (e) {
-      setError((e as Error).message);
+      setError({ value: e instanceof Error ? e : "操作未完成，请重试。" });
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -222,7 +222,7 @@ export function FieldsForm({
   }
 
   function change(name: string, value: Values[string]) {
-    setError("");
+    setError(undefined);
     clearFieldError(name);
     setValues((current) => ({ ...current, [name]: value }));
   }
@@ -243,7 +243,7 @@ export function FieldsForm({
           )}
         </Alert>
       );
-    const fieldError = fieldErrors[f.name];
+    const fieldError = t(fieldErrors[f.name]);
     if (f.type === "checkbox")
       return (
         <Box key={f.name} sx={{ minWidth: 0 }}>
@@ -431,7 +431,7 @@ export function FieldsForm({
       <Stack spacing={2.5}>
         {error && (
           <Alert ref={errorRef} tabIndex={-1} severity="error" role="alert">
-            {t(error)}
+            {error.value instanceof Error ? requestErrorText(error.value) : t(error.value)}
           </Alert>
         )}
         {presets && (
@@ -449,7 +449,7 @@ export function FieldsForm({
                 const id = event.target.value;
                 setPresetId(id);
                 setPresetParameter("");
-                setError("");
+                setError(undefined);
                 setFieldErrors({});
                 const preset = presets.find((preset) => preset.id === id);
                 if (preset)
@@ -477,7 +477,7 @@ export function FieldsForm({
                 onChange={(event) => {
                   const input = event.target.value.trim();
                   setPresetParameter(input);
-                  setError("");
+                  setError(undefined);
                   const parameter = selectedPreset.parameter!;
                   const valid = new RegExp(`^(?:${parameter.pattern})$`).test(
                     input,
@@ -559,7 +559,7 @@ const positiveInteger = (value: Values[string]) => {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 && number <= 2147483647
     ? undefined
-    : t("请输入有效的正整数");
+    : "请输入有效的正整数";
 };
 const hasOpenid = (values: Values) =>
   String(values.scopes ?? "")
@@ -575,6 +575,41 @@ export const userFields: Field[] = [
   { ...text("phone", "手机号"), group: "联系方式" },
   { ...text("avatar_url", "头像 URL"), group: "基本信息", type: "url", span: "full" },
 ];
+const needsInvitationEmail = (values: Values) => values.delivery !== "account_link";
+export const invitationEmailField: Field = {
+  name: "email",
+  label: "邀请邮箱",
+  type: "email",
+  required: true,
+  visibleWhen: needsInvitationEmail,
+};
+const invitationDeliveryField: Field = {
+  name: "delivery",
+  label: "交付方式",
+  default: "email",
+  span: "full",
+  options: [
+    ["email", "通过邮件发送"],
+    ["manual", "手动分享链接（指定邮箱）"],
+    ["account_link", "手动分享开户链接"],
+  ],
+};
+export const invitationExceptionFields: Field[] = [
+  { name: "domain_exception", label: "允许此邀请超出域名限制", type: "checkbox" },
+  {
+    name: "reason",
+    label: "邀请说明或例外理由",
+    requiredWhen: (values) => Boolean(values.domain_exception),
+  },
+];
+export const invitationFields = [
+  invitationDeliveryField,
+  invitationEmailField,
+  ...invitationExceptionFields,
+];
+export function invitationValues(values: Values): Values {
+  return needsInvitationEmail(values) ? values : { ...values, email: undefined };
+}
 export const appFields: Field[] = [
   { ...text("code", "应用标识", true), group: "基本信息", hint: "用于生成回调地址和区分应用，创建后不可修改。" },
   { ...text("name", "应用名称", true), group: "基本信息" },

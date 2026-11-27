@@ -45,6 +45,14 @@ pub async fn login(
     }
     if let Err(status) = crate::web::login_flow::check_login_start_rate_limit(&state, source).await
     {
+        if registration {
+            let code = if status == axum::http::StatusCode::TOO_MANY_REQUESTS {
+                "rate_limited"
+            } else {
+                "service_unavailable"
+            };
+            return social_error(jar, true, code);
+        }
         return status.into_response();
     }
     let svc = state.social_service();
@@ -61,7 +69,7 @@ pub async fn login(
                 return Redirect::to("/sso/register").into_response();
             }
             Ok(None) => None,
-            Err(e) => return crate::web::util::management_response(Err(e)),
+            Err(error) => return super::register::social_failure(jar, error),
         }
     } else if query.redirect.is_empty() {
         match super::register::active_request(&state, &jar).await {
@@ -189,6 +197,9 @@ pub async fn callback(
         Ok(u) => u,
         Err(SocialLoginError::Dependency(error)) => {
             tracing::error!(%error, "Upstream signing keys unavailable");
+            if return_to_registration {
+                return social_error(jar, true, "service_unavailable");
+            }
             return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
         Err(SocialLoginError::UserinfoFailed(e)) => {
@@ -537,7 +548,7 @@ async fn validate_login_context(
     )))
 }
 
-fn social_error(jar: CookieJar, registration: bool, code: &str) -> Response {
+pub(super) fn social_error(jar: CookieJar, registration: bool, code: &str) -> Response {
     let mut target = if registration {
         "/sso/register"
     } else {
@@ -566,6 +577,7 @@ async fn finish_social_login(
     ctx: &SocialLoginContext<'_>,
 ) -> Response {
     let session_svc = state.session_service();
+    let registration = ctx.redirect.split('?').next() == Some("/sso/register");
     let (token, _) = match session_svc
         .create_social(
             user_id,
@@ -580,11 +592,11 @@ async fn finish_social_login(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Session: {e}");
-            return Redirect::to("/sso/error?code=internal_error").into_response();
+            return social_error(jar, registration, "internal_error");
         }
     };
 
-    let redirect_target = if ctx.redirect.split('?').next() == Some("/sso/register") {
+    let redirect_target = if registration {
         "/sso/register".to_owned()
     } else if let Some(request) = ctx.request {
         match crate::web::login_flow::enrollment_resume_target(state, request, None, Some(&token)) {

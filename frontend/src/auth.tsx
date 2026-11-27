@@ -57,7 +57,7 @@ export function Auth({
     error = ["ErrorView", "ForbiddenView"].includes(view);
   let title =
     view === "AppAccessDeniedView"
-      ? t(data.expired ? "授权请求已失效" : "暂无应用访问权限")
+      ? t(data.expired ? "授权请求已失效" : "应用访问")
       : view === "SelectAccountView"
         ? t("选择账号")
         : login
@@ -79,36 +79,71 @@ export function Auth({
   if (view === "AppAccessDeniedView") {
     const recover = (action: string) =>
       runAction({ action, token: data.token }, "/oauth2/authorize/access");
+    const pending = data.application?.status === "pending" && !data.granted;
     content = (
       <Stack spacing={2}>
-        <Alert severity="warning">
+        <Alert
+          severity={data.granted ? "success" : pending ? "info" : "warning"}
+        >
           {data.expired
             ? t(
                 "本次授权已过期、已结束或登录账号已变化。请返回原应用重新发起登录。",
               )
-            : t("账号 {{0}} 尚无 {{1}} 的访问资格。", {
-                "0": data.username,
-                "1": data.app_name,
-              })}
+            : data.granted
+              ? t("应用访问已开通")
+              : data.tenant_unavailable
+                ? t("当前账号无法访问本次授权指定的工作空间。")
+                : pending
+                  ? t("申请待审批")
+                  : t("账号 {{0}} 尚无 {{1}} 的访问资格。", {
+                      "0": data.username,
+                      "1": data.app_name,
+                    })}
         </Alert>
         {!data.expired && (
           <>
-            <Typography color="text.secondary">
-              {data.system
-                ? t("请联系管理员开通此应用权限，完成后回到本页重试。")
-                : t(
-                    "请在新窗口申请或查看应用访问资格；审批通过后，回到本页重试。若资格已被停用，请联系管理员。",
-                  )}
-            </Typography>
-            {!data.system && (
-              <Button
-                component="a"
-                href={`/account/applications?recovery=${encodeURIComponent(data.token)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="outlined"
-              >
-                {t("申请或查看访问资格")}
+            {data.application?.status === "rejected" && !data.granted && (
+              <Alert severity="warning">
+                {t("已拒绝")}
+                {data.application.reason && ` · ${data.application.reason}`}
+              </Alert>
+            )}
+            {data.application?.status === "closed" && !data.granted && (
+              <Typography color="text.secondary">{t("申请已关闭")}</Typography>
+            )}
+            {data.admission_error && (!pending || data.opens_immediately) && (
+              <Stack spacing={1} sx={{ alignItems: "flex-start" }}>
+                <Alert severity="warning">
+                  {errorText(data.admission_error)}
+                </Alert>
+                <Button component={RouterLink} to="/account/profile">
+                  {t("个人资料")}
+                </Button>
+              </Stack>
+            )}
+            {!data.granted &&
+              !pending &&
+              !data.tenant_unavailable &&
+              !data.can_request &&
+              !data.admission_error && (
+                <Typography color="text.secondary">
+                  {t("请联系管理员开通此应用权限，完成后回到本页重试。")}
+                </Typography>
+              )}
+            {data.can_request &&
+              !data.granted &&
+              (!pending || data.opens_immediately) && (
+                <Button
+                  variant="contained"
+                  disabled={actionBusy}
+                  onClick={() => recover("join")}
+                >
+                  {data.opens_immediately ? t("开通访问") : t("申请访问")}
+                </Button>
+              )}
+            {pending && (
+              <Button disabled={actionBusy} onClick={() => recover("withdraw")}>
+                {t("撤回申请")}
               </Button>
             )}
             <Button
@@ -137,7 +172,7 @@ export function Auth({
         {data.expired && (
           <Button
             component={RouterLink}
-            to="/account/profile"
+            to="/account/applications"
             variant="contained"
           >
             {t("返回个人中心")}
@@ -310,7 +345,7 @@ export function Auth({
           <FieldsForm
             fullWidthSubmit
             key={view}
-            serverError={data.error ? errorText(data.error) : ""}
+            serverError={data.error}
             onBusyChange={(busy) => {
               setFormBusy(busy);
               if (busy) clearError();
@@ -387,7 +422,9 @@ export function Auth({
       <>
         {data.session_takeover && (
           <Typography color="warning.main" sx={{ mb: 2 }}>
-            {t("需要确认应用登录。继续后可能退出此应用的其他设备，不影响其他应用。")}
+            {t(
+              "需要确认应用登录。继续后可能退出此应用的其他设备，不影响其他应用。",
+            )}
           </Typography>
         )}
         <Typography color="text.secondary" sx={{ mb: 3 }}>
@@ -457,7 +494,7 @@ export function Auth({
         {data.has_password ? (
           <FieldsForm
             fullWidthSubmit
-            serverError={data.error ? errorText(data.error) : ""}
+            serverError={data.error}
             fields={[
               {
                 name: "password",
@@ -530,9 +567,10 @@ export function Auth({
             ? t("当前登录会话已退出。")
             : view === "ForbiddenView"
               ? t("你的账户没有此工作空间的管理权限。")
-              : t("请求无法完成（{{0}}）", {
-                  "0": data && "code" in data ? data.code : "404",
-                })}
+              : errorText(
+                  view === "ErrorView" ? data.code || "404" : "404",
+                  true,
+                )}
         </Alert>
         <Button
           component={RouterLink}
@@ -605,7 +643,7 @@ export function Auth({
           spacing={2.5}
         >
           <Chip
-            label="PERO IDENTITY"
+            label={t("Pero 身份认证")}
             sx={{
               alignSelf: "flex-start",
               bgcolor: "rgba(255,255,255,.72)",
@@ -670,7 +708,10 @@ export function Auth({
           }}
         >
           <Box sx={{ width: "100%", maxWidth: 440, minWidth: 0 }}>
-            <Typography variant="h3" sx={{ mb: 1, fontSize: { xs: 26, md: 30 } }}>
+            <Typography
+              variant="h3"
+              sx={{ mb: 1, fontSize: { xs: 26, md: 30 } }}
+            >
               {t(title)}
             </Typography>
             <Typography color="text.secondary" sx={{ mb: 4 }}>
@@ -682,7 +723,7 @@ export function Auth({
             </Typography>
             {actionFailure && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                {t(actionFailure)}
+                {actionFailure}
               </Alert>
             )}
             {content}

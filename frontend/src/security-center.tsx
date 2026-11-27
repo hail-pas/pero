@@ -22,7 +22,13 @@ import { FieldsForm } from "./forms";
 import { Copyable, Empty, Heading, Panel, type Actions } from "./shared";
 import type { ViewDataMap } from "./contracts";
 import { t, useLocale } from "./i18n";
-import { errorText } from "./api";
+import {
+  errorText,
+  fetchApi,
+  readJson,
+  RequestError,
+  requestErrorText,
+} from "./api";
 export function SecurityCenter({
   data: d,
   mutate,
@@ -401,12 +407,12 @@ export function AdminRoles({
     username: string;
   } | null>(null);
   const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState("");
+  const [searchError, setSearchError] = useState<{ cause: unknown }>();
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     setOptions([]);
-    setSearchError("");
+    setSearchError(undefined);
     if (!search.trim() || selected?.username === search) {
       setSearching(false);
       return;
@@ -414,19 +420,21 @@ export function AdminRoles({
     setSearching(true);
     const timer = setTimeout(async () => {
       try {
-        const response = await fetch(
+        const response = await fetchApi(
           `/dashboard/admins/users?q=${encodeURIComponent(search.trim())}`,
           {
-            headers: { Accept: "application/json" },
             signal: controller.signal,
           },
         );
-        if (!response.ok) throw new Error(errorText(String(response.status)));
-        const result = await response.json();
-        if (!Array.isArray(result.users)) throw new Error(errorText("401"));
-        setOptions(result.users);
-      } catch (e) {
-        if (!controller.signal.aborted) setSearchError((e as Error).message);
+        if (!response.ok) throw new RequestError(String(response.status));
+        const result = await readJson(response);
+        if (
+          !result || typeof result !== "object" || !("users" in result) ||
+          !Array.isArray(result.users)
+        ) throw new RequestError("invalid_response");
+        if (!controller.signal.aborted) setOptions(result.users);
+      } catch (cause) {
+        if (!controller.signal.aborted) setSearchError({ cause });
       } finally {
         if (!controller.signal.aborted) setSearching(false);
       }
@@ -504,10 +512,10 @@ export function AdminRoles({
                 sx={{ ml: "auto" }}
                 onClick={() =>
                   ask(
-                    t("移除管理员"),
+                    "移除管理员",
                     "/dashboard/admins",
                     { username: r.username, role: "remove" },
-                    t("确认移除 {{0}} 的管理员权限？", { "0": r.username }),
+                    () => t("确认移除 {{0}} 的管理员权限？", { "0": r.username }),
                   )
                 }
               >
@@ -560,7 +568,9 @@ export function AdminRoles({
               label={t("搜索并选择用户")}
               error={!!searchError}
               helperText={
-                searchError || t("输入用户名搜索，仅可选择匹配的用户。")
+                searchError
+                  ? requestErrorText(searchError.cause)
+                  : t("输入用户名搜索，仅可选择匹配的用户。")
               }
             />
           )}

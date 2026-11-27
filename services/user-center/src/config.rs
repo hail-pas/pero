@@ -174,7 +174,7 @@ impl Validatable for OAuth2Config {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PasswordConfig {
     pub min_length: u32,

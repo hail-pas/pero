@@ -248,6 +248,8 @@ pub struct GrantAppForm {
     #[serde(default)]
     pub csrf_token: String,
     pub app_id: String,
+    #[serde(default)]
+    pub restore: bool,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -348,6 +350,7 @@ pub struct ClientSummary {
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
     pub backchannel_logout_uri: Option<String>,
+    pub account_sync_enabled: bool,
     pub account_sync_uri: Option<String>,
     pub scopes: Vec<String>,
     pub grant_types: Vec<String>,
@@ -371,6 +374,7 @@ impl From<oauth_clients::Model> for ClientSummary {
             redirect_uris: model.redirect_uris,
             post_logout_redirect_uris: model.post_logout_redirect_uris,
             backchannel_logout_uri: model.backchannel_logout_uri,
+            account_sync_enabled: model.account_sync_enabled,
             account_sync_uri: model.account_sync_uri,
             scopes: model.scopes,
             grant_types: model.grant_types,

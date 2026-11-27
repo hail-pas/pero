@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-for (const action of ["retry", "other", "cancel"] as const) {
+for (const action of ["join", "retry", "other", "cancel"] as const) {
   test(`application access recovery submits ${action} with its bound request`, async ({
     page,
   }) => {
@@ -18,8 +18,8 @@ for (const action of ["retry", "other", "cancel"] as const) {
                   token: "signed-recovery",
                   app_name: "测试应用",
                   username: "member",
-                  system: false,
                   expired: false,
+                  can_request: true,
                 },
               },
       });
@@ -28,16 +28,12 @@ for (const action of ["retry", "other", "cancel"] as const) {
     await expect(
       page.getByText("账号 member 尚无 测试应用 的访问资格。"),
     ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "申请或查看访问资格" }),
-    ).toHaveAttribute("href", "/account/applications?recovery=signed-recovery");
-    await expect(
-      page.getByRole("link", { name: "申请或查看访问资格" }),
-    ).toHaveAttribute("target", "_blank");
+    await expect(page.getByRole("button", { name: "申请访问" })).toBeVisible();
     const submitted = page.waitForRequest((r) => r.method() === "POST");
     await page
       .getByRole("button", {
         name: {
+          join: "申请访问",
           retry: "已获得权限，重新尝试",
           other: "登录其他账号",
           cancel: "取消并返回个人中心",
@@ -64,7 +60,6 @@ test("expired authorization explains how to restart and hides recovery actions",
           token: "",
           app_name: "",
           username: "",
-          system: false,
           expired: true,
         },
       },
@@ -77,5 +72,5 @@ test("expired authorization explains how to restart and hides recovery actions",
   ).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "返回个人中心" }),
-  ).toHaveAttribute("href", "/account/profile");
+  ).toHaveAttribute("href", "/account/applications");
 });

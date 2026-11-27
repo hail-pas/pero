@@ -48,12 +48,7 @@ impl TokenService<'_> {
             .column(rt::Column::AppId)
             .column(rt::Column::SessionId)
             .column(rt::Column::TenantId)
-            .into_tuple::<(
-                uuid::Uuid,
-                uuid::Uuid,
-                Option<uuid::Uuid>,
-                Option<uuid::Uuid>,
-            )>()
+            .into_tuple::<(uuid::Uuid, uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>)>()
             .one(&txn)
             .await;
         let (user_id, app_id, session_id, tenant_id) = match owner {
@@ -69,9 +64,6 @@ impl TokenService<'_> {
 
         // Lock the session before the grant row: logout updates the session first,
         // then revokes refresh tokens and queues backchannel notifications.
-        let Some(session_id) = session_id else {
-            return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidGrant));
-        };
         let _active_session = match crate::db::helper::session::app_query(
             time::OffsetDateTime::now_utc(),
             self.state.config.sso.session_idle_ttl_seconds,
@@ -123,6 +115,13 @@ impl TokenService<'_> {
             return Err(TokenEndpointError::error_desc(
                 OAuth2ErrorCode::InvalidGrant,
                 "Client mismatch",
+            ));
+        }
+        let now = time::OffsetDateTime::now_utc();
+        if existing.expires_at <= now {
+            return Err(TokenEndpointError::error_desc(
+                OAuth2ErrorCode::InvalidGrant,
+                "Refresh token expired",
             ));
         }
         let Some(client_session_id) = existing.client_session_id else {
@@ -191,13 +190,6 @@ impl TokenService<'_> {
                 "Refresh token revoked",
             ));
         }
-        let now = time::OffsetDateTime::now_utc();
-        if existing.expires_at <= now {
-            return Err(TokenEndpointError::error_desc(
-                OAuth2ErrorCode::InvalidGrant,
-                "Refresh token expired",
-            ));
-        }
         if !crate::service::scope::allowed(&existing.scopes, &client.scopes) {
             let mut rev: rt::ActiveModel = existing.clone().into();
             rev.revoked_at = Set(Some(now));
@@ -243,7 +235,6 @@ impl TokenService<'_> {
                 None => return Err(TokenEndpointError::error(OAuth2ErrorCode::InvalidScope)),
             };
         let scopes_str = requested.join(" ");
-        let session_id = Some(session_id);
         let signing = match require_active_signing_key(&txn).await {
             Ok(k) => k,
             Err(_) => return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError)),
@@ -275,9 +266,8 @@ impl TokenService<'_> {
         let rt_raw_new = pero_utils::crypto::generate_token();
         let rt_hash_new = pero_utils::crypto::sha256_hex(&rt_raw_new);
         let rt_expires = now + time::Duration::seconds(client.refresh_token_ttl_seconds as i64);
-        let new_rt_id = uuid::Uuid::now_v7();
         let new_rt = rt::ActiveModel {
-            id: Set(new_rt_id),
+            id: Set(uuid::Uuid::now_v7()),
             token_hash: Set(rt_hash_new),
             user_id: Set(existing.user_id),
             app_id: Set(existing.app_id),
@@ -292,7 +282,6 @@ impl TokenService<'_> {
             expires_at: Set(rt_expires),
             revoked_at: Set(None),
             revoke_reason: Set(None),
-            replaced_by_id: Set(None),
         };
         if let Err(e) = new_rt.insert(&txn).await {
             tracing::error!("RT insert: {e}");
@@ -302,7 +291,6 @@ impl TokenService<'_> {
         let mut rev: rt::ActiveModel = existing.into();
         rev.revoked_at = Set(Some(now));
         rev.revoke_reason = Set(Some("rotation".to_owned()));
-        rev.replaced_by_id = Set(Some(new_rt_id));
         if let Err(e) = rev.update(&txn).await {
             tracing::error!("RT revoke: {e}");
             return Err(TokenEndpointError::error(OAuth2ErrorCode::ServerError));

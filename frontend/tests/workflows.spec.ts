@@ -127,8 +127,10 @@ test("registration completion and flow reset cannot run together", async ({
     return route.fulfill({ json: enrollment });
   });
   await page.goto("/sso/register");
-  const finalize = page.getByRole("button", { name: "完成注册或确认加入" });
+  const finalize = page.getByRole("button", { name: "创建账号" });
   const reset = page.getByRole("button", { name: "退出本次注册流程" });
+  await page.getByRole("textbox", { name: "用户名", exact: true }).fill("member");
+  await page.getByLabel(/^密码\s*\*?$/).fill("ValidPass123!");
   await finalize.click();
   await expect(reset).toBeDisabled();
   release();
@@ -143,6 +145,254 @@ test("registration completion and flow reset cannot run together", async ({
   ).toBeDisabled();
   release();
   await expect(finalize).toBeEnabled();
+});
+
+test("registration translates field guidance and existing errors without clearing the form", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  await page.route("**/sso/register", async (route) => {
+    const request = route.request();
+    if (!request.headers().accept?.includes("application/json"))
+      return route.continue();
+    if (request.method() === "POST") {
+      requests.push(request.headers()["accept-language"]);
+      return route.fulfill({
+        status: 400,
+        json: {
+          error:
+            requests.length === 1
+              ? "username can only contain letters, digits, underscore, and hyphen"
+              : "password must be at least 12 characters",
+        },
+      });
+    }
+    return route.fulfill({
+      json: {
+        view: "EnrollmentView",
+        data: {
+          mode: "self_service",
+          status: "ready",
+          email: "member@example.test",
+          flow: "register-flow",
+          csrf_token: "csrf-test",
+          password_policy: {
+            min_length: 12,
+            max_length: 64,
+            require_uppercase: true,
+            require_lowercase: false,
+            require_digit: false,
+            require_special: true,
+          },
+        },
+      },
+    });
+  });
+  await page.goto("/sso/register");
+  const username = page.locator('[name="username"]');
+  const password = page.locator('[name="password"]');
+  await expect(password).toHaveAccessibleDescription(
+    "密码长度为 12–64 个字符。 密码需包含大写字母和特殊字符。",
+  );
+  await username.fill("中文名");
+  await password.fill("short");
+  await page.getByRole("button", { name: "创建账号" }).click();
+  const characterError = "用户名只能包含英文字母、数字、下划线和连字符";
+  await expect(username).toHaveAccessibleDescription(characterError);
+  expect(requests).toEqual([]);
+  await username.fill("valid_name");
+  await page.getByRole("button", { name: "创建账号" }).click();
+  await expect(page.getByRole("alert").getByText(characterError)).toBeVisible();
+
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(
+    page
+      .getByRole("alert")
+      .getByText(
+        "Use only English letters, digits, underscores, and hyphens in your username",
+      ),
+  ).toBeVisible();
+  await expect(password).toHaveAccessibleDescription(
+    "Use 12–64 characters. Include an uppercase letter and a special character.",
+  );
+  await expect(username).toHaveValue("valid_name");
+  await expect(password).toHaveValue("short");
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(
+    page
+      .getByRole("alert")
+      .getByText("Password must be at least 12 characters"),
+  ).toBeVisible();
+  expect(requests).toEqual(["zh-CN", "en"]);
+  await page.getByRole("button", { name: "Change language" }).click();
+  await page.getByRole("menuitem", { name: /简体中文/ }).click();
+  await expect(
+    page.getByRole("alert").getByText("密码长度至少 12 个字符"),
+  ).toBeVisible();
+});
+
+test("phone registration localizes verification, approval, and an unknown resend error", async ({
+  page,
+}) => {
+  let data = {
+    csrf_token: "csrf-test",
+    flow: "phone-flow",
+    mode: "self_service",
+    phone: "",
+    status: "",
+    can_act: false,
+    can_resend: true,
+    allowed_methods: ["phone"],
+  };
+  await page.route("**/sso/register", async (route) => {
+    const request = route.request();
+    if (!request.headers().accept?.includes("application/json"))
+      return route.continue();
+    if (request.method() === "POST") {
+      const values = new URLSearchParams(request.postData()!);
+      if (values.get("action") === "resend") {
+        return route.fulfill({
+          status: 400,
+          json: { error: "unexpected_internal_result" },
+        });
+      }
+      data = {
+        ...data,
+        phone: values.get("phone")!,
+        status: "pending_verification",
+      };
+    }
+    return route.fulfill({ json: { view: "EnrollmentView", data } });
+  });
+  await page.goto("/sso/register");
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(
+    page.getByText("Verify your phone number to complete registration."),
+  ).toBeVisible();
+  const phone = page.locator('[name="phone"]');
+  const send = page.getByRole("button", { name: "Send verification SMS" });
+  await phone.fill("1234567");
+  await send.click();
+  await expect(phone).toHaveAccessibleDescription(
+    /Enter a phone number with its country code/,
+  );
+  await phone.fill("+8613800000000");
+  await send.click();
+  await expect(
+    page.getByText(
+      "The verification text has been queued. Open the link in the text to continue.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Resend the link" }).click();
+  await expect(
+    page.getByText("Unable to complete the request. Please try again."),
+  ).toBeVisible();
+
+  data = { ...data, status: "pending_approval" };
+  await page.reload();
+  await expect(page.getByText(/Your phone number is verified/)).toContainText(
+    "you’ll receive the result by text message",
+  );
+  await expect(
+    page.getByRole("button", { name: "Change language" }),
+  ).toBeVisible();
+});
+
+test("stale manual invitations direct the user to the administrator", async ({ page }) => {
+  await mock(page, {
+    "/sso/register": {
+      view: "EnrollmentView",
+      data: {
+        csrf_token: "csrf-test",
+        flow: "invite-flow",
+        mode: "invite_only",
+        status: "pending_verification",
+        email: "invited@example.test",
+        manual_delivery: true,
+        can_act: false,
+      },
+    },
+  });
+  await page.goto("/sso/register");
+  const notice = page.getByRole("alert");
+  await expect(notice).toHaveText("请联系发出邀请的管理员，获取最新的邀请链接。");
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(notice).toHaveText(
+    "Contact the administrator who invited you for the latest invitation link.",
+  );
+});
+
+test("social registration localizes callback failures and requires email for verification", async ({
+  page,
+}) => {
+  await mock(page, {
+    "/sso/register": {
+      view: "EnrollmentView",
+      data: {
+        mode: "self_service",
+        social: true,
+        status: "",
+        error: "userinfo_failed",
+        allowed_methods: ["email", "phone"],
+        flow: "social-flow",
+        csrf_token: "csrf-test",
+      },
+    },
+  });
+  await page.goto("/sso/register?error=userinfo_failed");
+  await expect(page.getByRole("alert")).toHaveText(
+    "无法获取第三方账户信息，请重试或选择其他登录方式。",
+  );
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Could not retrieve your account details from the provider. Try again or choose another sign-in method.",
+  );
+  await expect(
+    page.getByText(
+      "Enter your email address and open the verification link to continue signing up with your provider.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Send verification email" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Sign up with phone" }),
+  ).toHaveCount(0);
+});
+
+test("the invitation registration form submits optional contact details", async ({ page }) => {
+  await mock(page, {
+    "/sso/register": {
+      view: "EnrollmentView",
+      data: {
+        csrf_token: "csrf-test",
+        flow: "invite-flow",
+        mode: "invite_only",
+        status: "ready",
+        account_invitation: true,
+      },
+    },
+  });
+  await page.goto("/sso/register");
+  await page.getByLabel("用户名", { exact: false }).fill("invited_user");
+  await page.getByLabel(/^密码\s*\*?$/).fill("ValidPass123!");
+  const email = page.getByRole("textbox", { name: "邮箱", exact: true });
+  const phone = page.getByRole("textbox", { name: /手机号/ });
+  await expect(email).not.toHaveAttribute("required");
+  await expect(phone).not.toHaveAttribute("required");
+  await email.fill("invitee@example.test");
+  await phone.fill("+8613800000000");
+  const submitted = page.waitForRequest((r) => r.method() === "POST");
+  await page.getByRole("button", { name: "创建账号" }).click();
+  expect(Object.fromEntries(new URLSearchParams((await submitted).postData()!))).toMatchObject({
+    action: "finalize",
+    email: "invitee@example.test",
+    phone: "+8613800000000",
+  });
 });
 
 test("self-service registration explains when no verification channel is available", async ({
@@ -288,6 +538,88 @@ async function mock(page: Page, responses: Record<string, unknown>) {
     });
   });
 }
+test("invitation delivery controls whether the email is shown and submitted", async ({
+  page,
+}) => {
+  const path = "/dashboard/users/new";
+  const link = "https://sso.example.test/sso/register?token=invitation";
+  await mock(page, {
+    [path]: {
+      view: "UserFormView",
+      data: { ...base, mode: "create", form: {}, user_id: "" },
+    },
+  });
+  await page.route(`**${path}`, (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({
+          json: {
+            code: 0,
+            data: { secret: link, purpose: "invitation_activation" },
+          },
+        })
+      : route.fallback(),
+  );
+  await page.goto(path);
+  const delivery = page.getByRole("combobox", { name: "交付方式" });
+  const email = page.getByRole("textbox", { name: "邀请邮箱" });
+  await expect(email).toHaveAttribute("required", "");
+  await delivery.click();
+  await page.getByRole("option", { name: "手动分享链接（指定邮箱）" }).click();
+  await expect(email).toHaveAttribute("required", "");
+  await email.fill("invitee@example.test");
+  await delivery.click();
+  await page.getByRole("option", { name: "手动分享开户链接" }).click();
+  await expect(email).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "允许此邀请超出域名限制" }).check();
+  await page.getByRole("textbox", { name: "邀请说明或例外理由" }).fill("临时开户");
+  const submitted = page.waitForRequest((r) => r.method() === "POST");
+  await page.getByRole("button", { name: "创建邀请" }).click();
+  const values = Object.fromEntries(new URLSearchParams((await submitted).postData()!));
+  expect(values).toEqual({
+    delivery: "account_link",
+    domain_exception: "true",
+    reason: "临时开户",
+    csrf_token: "csrf-test",
+  });
+  const dialog = page.getByRole("dialog", { name: "邀请激活链接" });
+  await expect(dialog.getByRole("textbox", { name: "激活链接" })).toHaveValue(link);
+  await expect(dialog.getByRole("button", { name: "复制" })).toBeVisible();
+});
+
+test("app details issue account links scoped to the application", async ({ page }) => {
+  const path = "/dashboard/apps/app-1";
+  const link = "https://sso.example.test/sso/register?token=account-link";
+  await mock(page, {
+    [path]: {
+      view: "AppDetailView",
+      data: {
+        ...base,
+        app: { id: "app-1", code: "app", name: "App", status: "active", tenant_mode: "personal" },
+        clients: [],
+      },
+    },
+  });
+  await page.route("**/dashboard/invitations", (route) => route.fulfill({
+    json: { code: 0, data: { secret: link, purpose: "invitation_activation" } },
+  }));
+  await page.goto(path);
+  await page.getByRole("button", { name: "邀请开户" }).click();
+  const editor = page.getByRole("dialog", { name: "邀请开户" });
+  await editor.getByRole("checkbox", { name: "允许此邀请超出域名限制" }).check();
+  await editor.getByRole("textbox", { name: "邀请说明或例外理由" }).fill("临时开户");
+  const submitted = page.waitForRequest((r) => r.method() === "POST");
+  await editor.getByRole("button", { name: "保存更改" }).click();
+  const values = new URLSearchParams((await submitted).postData()!);
+  expect(Object.fromEntries(values)).toEqual({
+    app: "app-1",
+    delivery: "account_link",
+    domain_exception: "true",
+    reason: "临时开户",
+    csrf_token: "csrf-test",
+  });
+  await expect(page.getByRole("textbox", { name: "激活链接" })).toHaveValue(link);
+});
+
 test("approval filtering, rejection reasons and owner progress use the expected requests", async ({
   page,
 }) => {
@@ -307,6 +639,7 @@ test("approval filtering, rejection reasons and owner progress use the expected 
           version: 1,
         },
         inherited: false,
+        can_invite: true,
       },
     },
     "/account/applications": {
@@ -336,6 +669,71 @@ test("approval filtering, rejection reasons and owner progress use the expected 
   await page.getByRole("button", { name: "继续办理", exact: true }).click();
   expect((await continued).url()).toContain("/account/enrollments/request-1");
 });
+test("enrollment dialogs update their labels and instructions when another tab changes language", async ({
+  page,
+  context,
+}) => {
+  await mock(page, {
+    "/dashboard/registration": {
+      view: "EnrollmentAdminView",
+      data: {
+        ...base,
+        ...progress,
+        rows: [
+          ...progress.rows,
+          {
+            ...progress.rows[0],
+            id: "invite-1",
+            invitation: true,
+            status: "ready",
+          },
+        ],
+        policy: {
+          id: "app-1",
+          app_id: "app-1",
+          mode: "self_service",
+          domains: [],
+          approval_required: true,
+          emergency_stop: false,
+          version: 1,
+        },
+        inherited: false,
+        can_invite: true,
+      },
+    },
+  });
+  await page.goto("/dashboard/registration");
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await page.getByRole("button", { name: "Get activation link" }).click();
+
+  const otherTab = await context.newPage();
+  await mock(otherTab, { "/": { view: "HomeView", data: {} } });
+  await otherTab.goto("/");
+  await otherTab.getByRole("button", { name: "Change language" }).click();
+  await otherTab.getByRole("menuitem", { name: /简体中文/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "获取激活链接" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("将签发新链接，旧链接会立即失效。"),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "取消" }).click();
+
+  await page.getByRole("button", { name: "拒绝", exact: true }).click();
+  await dialog.getByRole("textbox", { name: "拒绝原因" }).fill("资料需要补充");
+  await otherTab.getByRole("button", { name: "切换语言" }).click();
+  await otherTab.getByRole("menuitem", { name: /English/ }).click();
+  await expect(
+    dialog.getByRole("heading", { name: "Reason for rejection" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("textbox", { name: "Reason for rejection" }),
+  ).toHaveValue("资料需要补充");
+  await otherTab.close();
+});
+
 test("members, audit details and account selection render their actions", async ({
   page,
 }) => {
@@ -778,16 +1176,17 @@ test("administrator roles require a searched user and expose removal as an actio
       },
     },
   });
-  await page.route("**/dashboard/admins/users?q=*", (route) =>
-    route.fulfill({
+  await page.route("**/dashboard/admins/users?q=*", async (route) => {
+    expect(await route.request().headerValue("accept-language")).toBe("zh-CN");
+    return route.fulfill({
       json: {
         users: [
           { id: "admin-1", username: "operator" },
           { id: "user-2", username: "alice" },
         ],
       },
-    }),
-  );
+    });
+  });
   await page.goto("/dashboard/admins");
   await expect(
     page.getByRole("button", { name: "移除管理员", exact: true }),

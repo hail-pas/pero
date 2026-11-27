@@ -7,6 +7,13 @@ use uuid::Uuid;
 
 use crate::state::app::AppState;
 
+mod text;
+pub(crate) use text::Locale;
+
+tokio::task_local! {
+    pub(crate) static NOTIFICATION_LOCALE: Option<Locale>;
+}
+
 #[derive(Serialize)]
 pub struct Notification<'a> {
     pub channel: &'a str,
@@ -14,6 +21,14 @@ pub struct Notification<'a> {
     pub to: &'a str,
     pub code: Option<&'a str>,
     pub link: &'a str,
+}
+
+#[derive(Serialize)]
+struct QueuedNotification<'a> {
+    #[serde(flatten)]
+    message: &'a Notification<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    locale: Option<Locale>,
 }
 
 pub async fn enqueue<C: ConnectionTrait>(
@@ -43,7 +58,15 @@ async fn enqueue_owned<C: ConnectionTrait>(
     message: &Notification<'_>,
     expires_at: OffsetDateTime,
 ) -> Result<Uuid, DbErr> {
-    let payload = serde_json::to_string(message)
+    // An organization invitation is addressed to someone other than the initiator.
+    let locale = if message.kind == "tenant_invitation" {
+        None
+    } else {
+        NOTIFICATION_LOCALE
+            .try_with(|locale| *locale)
+            .unwrap_or_default()
+    };
+    let payload = serde_json::to_string(&QueuedNotification { message, locale })
         .map_err(|_| DbErr::Custom("notification serialization failed".into()))?;
     let recipient = match message.channel {
         "email" => super::contact::ContactChannel::Email.mask(message.to),
@@ -99,12 +122,12 @@ pub async fn enqueue_verification<C: ConnectionTrait>(
     base_url: &str,
     channel: &str,
     to: &str,
-    code: &str,
-    nonce: &str,
+    verification: &super::verification::VerificationCode,
+    expires_at: OffsetDateTime,
 ) -> Result<(), DbErr> {
     let mut link =
         pero_utils::oauth::url::issuer_endpoint(base_url, "account/profile/verify-contact");
-    pero_utils::encode::append_query_param(&mut link, "nonce", nonce);
+    pero_utils::encode::append_query_param(&mut link, "nonce", &verification.nonce);
     enqueue(
         db,
         user_id,
@@ -112,10 +135,10 @@ pub async fn enqueue_verification<C: ConnectionTrait>(
             channel,
             kind: "verify_contact",
             to,
-            code: Some(code),
+            code: Some(&verification.code),
             link: &link,
         },
-        OffsetDateTime::now_utc() + time::Duration::minutes(15),
+        expires_at,
     )
     .await
     .map(|_| ())
@@ -129,11 +152,6 @@ struct Delivery {
 
 pub(crate) async fn deliver_one(state: &AppState) -> Result<bool, DbErr> {
     let txn = state.db.begin().await?;
-    let expired = txn.execute_raw(Statement::from_string(
-        DbBackend::Postgres,
-        "DELETE FROM notification_outbox WHERE id IN (SELECT id FROM notification_outbox WHERE expires_at <= now() ORDER BY expires_at FOR UPDATE SKIP LOCKED LIMIT 500)".to_owned(),
-    )).await?.rows_affected();
-    tracing::debug!(expired, "Expired notifications removed");
     let delivery = Delivery::find_by_statement(Statement::from_string(DbBackend::Postgres,
         "SELECT id, pgp_sym_decrypt(payload_enc, current_setting('app.encrypt_key')) AS payload FROM notification_outbox WHERE next_attempt_at <= now() AND expires_at > now() AND (leased_until IS NULL OR leased_until <= now()) ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1".to_owned()))
         .one(&txn).await?;
@@ -234,6 +252,11 @@ pub fn start_delivery_task(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 pub(crate) async fn deliver_batch(state: &AppState) {
+    match crate::db::helper::cleanup::clean_expired_notification_batch(&state.db).await {
+        Ok(expired) if expired > 0 => tracing::debug!(expired, "Expired notifications removed"),
+        Ok(_) => {}
+        Err(error) => tracing::error!(%error, "Expired notifications could not be removed"),
+    }
     // Keep the existing 20-attempt batch bound while isolating slow deliveries.
     // Dropping JoinSet on shutdown also aborts its workers; leases allow recovery.
     let mut workers = tokio::task::JoinSet::new();
@@ -266,6 +289,8 @@ struct Payload {
     to: String,
     code: Option<String>,
     link: String,
+    #[serde(default)]
+    locale: Option<Locale>,
 }
 async fn send(
     state: &AppState,
@@ -276,16 +301,11 @@ async fn send(
     use lettre::AsyncTransport;
     let message: Payload = serde_json::from_str(payload).map_err(|_| ("invalid_payload", None))?;
     let config = &state.config.notification;
-    let body = format!(
-        "Pero: {}\n{}\n{}\nIf you did not request this, review your account security.",
-        message.kind,
-        message.code.as_deref().unwrap_or(""),
-        message.link
-    );
     if message.channel == "email"
         && let Some(smtp) = &config.smtp
     {
         let transport = smtp.transport().map_err(|e| (e, None))?;
+        let (subject, body) = text::render(&message);
         let mail = lettre::Message::builder()
             .from(smtp.from.parse().map_err(|_| ("smtp_invalid_from", None))?)
             .to(message
@@ -293,7 +313,7 @@ async fn send(
                 .parse()
                 .map_err(|_| ("invalid_recipient", None))?)
             .message_id(Some(format!("<{id}@pero.invalid>")))
-            .subject(format!("Pero · {}", message.kind))
+            .subject(subject)
             .body(body)
             .map_err(|_| ("invalid_message", None))?;
         transport
@@ -317,6 +337,7 @@ async fn send(
             sms.account_sid,
             sms.auth_token.expose_secret()
         ));
+        let (_, body) = text::render(&message);
         let response = state
             .http_client
             .post(&endpoint)
@@ -339,7 +360,15 @@ async fn send(
     if !config.available(&message.channel) {
         return Err(("notification_disabled", None));
     }
-    let response = state
+    let body = serde_json::to_vec(&Notification {
+        channel: &message.channel,
+        kind: &message.kind,
+        to: &message.to,
+        code: message.code.as_deref(),
+        link: &message.link,
+    })
+    .map_err(|_| ("invalid_payload", None))?;
+    let request = state
         .http_client
         .post(&config.endpoint)
         .no_retry()
@@ -352,10 +381,12 @@ async fn send(
             http::HeaderName::from_static("idempotency-key"),
             http::HeaderValue::from_str(&id.to_string()).expect("UUID header"),
         )
-        .body(payload.as_bytes().to_vec())
-        .send()
-        .await
-        .map_err(http_error)?;
+        .body(body);
+    let request = match message.locale {
+        Some(locale) => request.header(http::header::ACCEPT_LANGUAGE, locale.header_value()),
+        None => request,
+    };
+    let response = request.send().await.map_err(http_error)?;
     Ok(Some(i32::from(response.status.as_u16())))
 }
 fn http_error(error: pero_error::AppError) -> (&'static str, Option<i32>) {

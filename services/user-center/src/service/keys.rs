@@ -58,7 +58,7 @@ impl KeyInput {
             &self.public_key_pem,
             self.private_key_pem.as_deref(),
         )
-        .map_err(ManagementError::Validation)
+        .map_err(|_| ManagementError::Invalid("invalid_signing_key"))
     }
 }
 
@@ -164,7 +164,7 @@ async fn activate_inner(
         &key.key.public_key_pem,
         key.private_key_pem.as_deref(),
     )
-    .map_err(ManagementError::Validation)?;
+    .map_err(|_| ManagementError::Invalid("invalid_signing_key"))?;
     deactivate_signing_keys(&txn, provider_id).await?;
     let mut active: keys::ActiveModel = key.key.into();
     active.active = Set(true);

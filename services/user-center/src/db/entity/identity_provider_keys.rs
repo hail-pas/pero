@@ -13,8 +13,7 @@ pub struct Model {
     #[sea_orm(unique)]
     pub provider_id: Uuid,
     #[sea_orm(
-        column_type = "custom(\"citext\")",
-        select_as = "text",
+        column_type = "Text",
         unique_key = "ux_identity_provider_keys_provider_kid"
     )]
     pub kid: String,

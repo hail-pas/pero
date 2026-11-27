@@ -181,6 +181,7 @@ test("inherited registration policy reveals configuration only when detached", a
           version: 1,
         },
         inherited: true,
+        can_invite: true,
         rows: [],
         page: 1,
         total_pages: 1,
@@ -210,14 +211,8 @@ test("inherited registration policy reveals configuration only when detached", a
   });
   await expect(mode).toBeVisible();
   await expect(page.getByLabel("允许的邮箱域名")).toBeVisible();
-  await expect(
-    page.getByRole("checkbox", { name: "自助准入需要审批", exact: true }),
-  ).toBeVisible();
 
   await mode.click();
   await page.getByRole("option", { name: "关闭", exact: true }).click();
   await expect(page.getByLabel("允许的邮箱域名")).toHaveCount(0);
-  await expect(
-    page.getByRole("checkbox", { name: "自助准入需要审批", exact: true }),
-  ).toHaveCount(0);
 });

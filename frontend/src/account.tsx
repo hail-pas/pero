@@ -109,7 +109,7 @@ export function Profile({
               color="text.secondary"
               sx={{ mt: 0.75, fontSize: 14, overflowWrap: "anywhere" }}
             >
-              @{u.username} {t("· 加入于")} {date(u.created_at).slice(0, 10)}
+              @{u.username} {t("· 加入于")} {date(u.created_at, false)}
             </Typography>
           </Box>
           <Box sx={{ ml: { sm: "auto!important" }, flexShrink: 0 }}>
@@ -230,12 +230,12 @@ export function Profile({
                       color="inherit"
                       onClick={() =>
                         editor(
-                          t("更换{{0}}", { "0": t(label) }),
+                          () => t("更换{{0}}", { "0": t(label) }),
                           `/account/profile/change-${channel}`,
                           [
                             {
                               name: "value",
-                              label: t("新{{0}}", { "0": t(label) }),
+                              label: () => t("新{{0}}", { "0": t(label) }),
                               required: true,
                               type: channel === "email" ? "email" : "text",
                             },
@@ -253,7 +253,7 @@ export function Profile({
                         color="inherit"
                         onClick={() =>
                           ask(
-                            t("发送{{0}}验证码", { "0": t(label) }),
+                            () => t("发送{{0}}验证码", { "0": t(label) }),
                             `/account/profile/send-verify-${channel}`,
                           )
                         }
@@ -273,12 +273,12 @@ export function Profile({
                           size="small"
                           onClick={() =>
                             editor(
-                              t("验证联系方式"),
+                              "验证联系方式",
                               "/account/profile/verify-contact",
                               [
                                 {
                                   name: "code",
-                                  label: t("验证码"),
+                                  label: "验证码",
                                   required: true,
                                 },
                               ],
@@ -294,7 +294,7 @@ export function Profile({
                           color="inherit"
                           onClick={() =>
                             ask(
-                              t("取消验证"),
+                              "取消验证",
                               "/account/profile/cancel-contact",
                               {
                                 nonce,

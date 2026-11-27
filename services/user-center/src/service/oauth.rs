@@ -139,7 +139,7 @@ impl<'a> OAuthService<'a> {
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))
     }
 
-    /// 检查应用准入；超级管理员缺少资格时自动开通本人的访问权限。
+    /// An interactive request may activate existing organization eligibility.
     pub async fn ensure_app_access(
         &self,
         session: &SsoSession,

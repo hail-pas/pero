@@ -50,6 +50,33 @@ async fn session(state: &AppState, jar: &CookieJar) -> Result<sso_sessions::Mode
         .map_err(IntoResponse::into_response)?
         .ok_or_else(|| Box::new(Redirect::to("/account/login").into_response()))
 }
+
+pub(crate) async fn pending_target(
+    state: &AppState,
+    jar: &CookieJar,
+) -> Result<Option<&'static str>, Response> {
+    let session = crate::web::session::extract_browser_session(state, jar)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    let Some(session) = session.filter(|s| s.mfa_required && s.mfa_verified_at.is_none()) else {
+        return Ok(None);
+    };
+    let enrolled = sec::mfa_enabled(&state.db, session.user_id)
+        .await
+        .map_err(util::dependency_error)?;
+    Ok(Some(if enrolled {
+        "/sso/mfa"
+    } else {
+        "/account/security"
+    }))
+}
+
+pub(crate) fn redirect_to(path: &str, return_to: &str) -> Redirect {
+    let mut target = path.to_owned();
+    pero_utils::encode::append_query_param(&mut target, "redirect", return_to);
+    Redirect::to(&target)
+}
+
 async fn page(
     state: &AppState,
     jar: CookieJar,

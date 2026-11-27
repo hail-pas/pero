@@ -24,19 +24,22 @@ pub(crate) async fn save_security_change(
     let txn = db.begin().await?;
     let access = permissions::authorize(&txn, actor).await?;
     permissions::app(&txn, &access, expected.app_id, permission).await?;
-    // Provisioning exposes member profiles without individual consent. Only a super
-    // administrator may enable/redirect it, change its field policy or obtain new credentials.
+    // Sync access exposes member data without a user grant.
     if !access.super_admin
-        && (active.account_sync_uri.as_ref() != &expected.account_sync_uri
-            || expected.account_sync_uri.is_some()
-                && (active.scopes.as_ref() != &expected.scopes
+        && (active.account_sync_enabled.as_ref() != &expected.account_sync_enabled
+            || active.account_sync_uri.as_ref() != &expected.account_sync_uri
+            || expected.account_sync_enabled
+                && (active.r#type.as_ref() != &expected.r#type
+                    || active.scopes.as_ref() != &expected.scopes
                     || active.secret_hash.as_ref() != &expected.secret_hash
+                    || (expected.status == CommonStatus::Disabled
+                        && *active.status.as_ref() == CommonStatus::Active)
                     || permission == P::ClientsSecretRotate))
     {
         return Err(ManagementError::Invalid("forbidden"));
     }
-    if active.account_sync_uri.as_ref().is_some()
-        && active.account_sync_uri.as_ref() != &expected.account_sync_uri
+    if *active.account_sync_enabled.as_ref()
+        && !expected.account_sync_enabled
         && apps::Entity::find_by_id(expected.app_id)
             .one(&txn)
             .await?
@@ -116,6 +119,7 @@ impl ClientInput {
     fn apply(self, active: &mut oauth_clients::ActiveModel) {
         active.require_pkce = Set(self.require_pkce || self.client_type == OauthClientType::Public);
         if self.client_type == OauthClientType::Public {
+            active.account_sync_enabled = Set(false);
             active.account_sync_uri = Set(None);
         }
         active.r#type = Set(self.client_type);

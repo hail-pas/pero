@@ -21,9 +21,9 @@ import {
 } from "react-router-dom";
 import { FieldsForm } from "./forms";
 import type { ViewDataMap, ViewEnvelope } from "./contracts";
-import { date, errorText } from "./api";
+import { date, dateTimeInput, errorText } from "./api";
 import { Empty, Heading, MetaGrid, Panel, type Actions } from "./shared";
-import { t, useLocale } from "./i18n";
+import { labelValue, t, useLocale } from "./i18n";
 
 export type SecurityView =
   | "SessionListView"
@@ -31,6 +31,19 @@ export type SecurityView =
   | "AuthorizationListView"
   | "IdentityListView"
   | "AuditListView";
+
+const eventNames: Record<string, string> = {
+  login_success: "登录成功",
+  login_failure: "登录失败",
+  logout: "退出登录",
+  pending: "结果待确认",
+  success: "成功",
+  failure: "失败",
+};
+
+function eventName(value: string) {
+  return t(Object.hasOwn(eventNames, value) ? eventNames[value] : "未知状态");
+}
 
 export function Security({
   page,
@@ -54,14 +67,6 @@ export function Security({
     IdentityListView: t("关联账号"),
     AuditListView: t("操作审计"),
   };
-  const eventNames: Record<string, string> = {
-    login_success: t("登录成功"),
-    login_failure: t("登录失败"),
-    logout: t("退出登录"),
-    pending: t("结果待确认"),
-    success: t("成功"),
-    failure: t("失败"),
-  };
   return (
     <>
       <Heading
@@ -72,10 +77,10 @@ export function Security({
               <Button
                 onClick={() =>
                   ask(
-                    t("退出其他设备"),
+                    "退出其他设备",
                     "/account/sessions/revoke",
                     { scope: "others" },
-                    t("保留当前会话，退出其他设备并撤销其关联令牌。"),
+                    "保留当前会话，退出其他设备并撤销其关联令牌。",
                   )
                 }
               >
@@ -85,10 +90,10 @@ export function Security({
                 color="warning"
                 onClick={() =>
                   ask(
-                    t("退出全部设备"),
+                    "退出全部设备",
                     "/account/sessions/revoke",
                     { scope: "all" },
-                    t("包括当前设备在内的所有会话将退出，你需要重新登录。"),
+                    "包括当前设备在内的所有会话将退出，你需要重新登录。",
                   )
                 }
               >
@@ -134,10 +139,7 @@ export function Security({
               ].map((k) => [
                 k,
                 ["from", "to"].includes(k) && params.get(k)
-                  ? new Date(params.get(k)!)
-                      .toLocaleString("sv-SE")
-                      .replace(" ", "T")
-                      .slice(0, 16)
+                  ? dateTimeInput(params.get(k)!)
                   : params.get(k) || "",
               ]),
             )}
@@ -191,10 +193,10 @@ export function Security({
                     color="warning"
                     onClick={() =>
                       ask(
-                        t("退出此设备"),
+                        "退出此设备",
                         "/account/sessions/revoke",
                         { scope: "one", session_id: session.id },
-                        t("此会话及其关联刷新令牌将失效。"),
+                        "此会话及其关联刷新令牌将失效。",
                       )
                     }
                   >
@@ -243,8 +245,7 @@ export function Security({
                           variant="body2"
                           sx={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}
                         >
-                          {app.app_name} · {t("最大登录设备数")}：
-                          {app.max_sessions === 0 ? t("不限制") : app.max_sessions}
+                          {app.app_name} · {labelValue("最大登录设备数", app.max_sessions === 0 ? t("不限制") : app.max_sessions)}
                           {" · "}
                           {date(app.created_at)}
                         </Typography>
@@ -257,10 +258,10 @@ export function Security({
                             color="warning"
                             onClick={() =>
                               ask(
-                                t("退出此应用设备"),
+                                "退出此应用设备",
                                 "/account/sessions/revoke",
                                 { scope: "app", session_id: app.id },
-                                t("只结束此应用设备会话，保留其他应用和全局登录。"),
+                                "只结束此应用设备会话，保留其他应用和全局登录。",
                               )
                             }
                           >
@@ -272,10 +273,10 @@ export function Security({
                               color="inherit"
                               onClick={() =>
                                 ask(
-                                  t("退出此应用的其他设备"),
+                                  "退出此应用的其他设备",
                                   "/account/sessions/revoke",
                                   { scope: "app_others", app_id: app.app_id },
-                                  t("保留当前设备，只结束此应用的其他设备会话。"),
+                                  "保留当前设备，只结束此应用的其他设备会话。",
                                 )
                               }
                             >
@@ -307,7 +308,7 @@ export function Security({
               <MenuItem value="">{t("全部")}</MenuItem>
               {["login_success", "login_failure", "logout"].map((value) => (
                 <MenuItem key={value} value={value}>
-                  {eventNames[value]}
+                      {eventName(value)}
                 </MenuItem>
               ))}
             </TextField>
@@ -343,7 +344,7 @@ export function Security({
                       </TableCell>
                     )}
                     <TableCell>
-                      {eventNames[event.event_type] || event.event_type}
+                      {eventName(event.event_type)}
                     </TableCell>
                     <TableCell>
                       {event.provider_name ||
@@ -376,12 +377,10 @@ export function Security({
                   color="warning"
                   onClick={() =>
                     ask(
-                      t("撤销应用授权"),
+                      "撤销应用授权",
                       `/account/authorizations/${grant.app_id}/revoke`,
                       {},
-                      t(
-                        "该应用所有客户端的授权和关联令牌将被撤销，其他应用不受影响。",
-                      ),
+                      "该应用所有客户端的授权和关联令牌将被撤销，其他应用不受影响。",
                     )
                   }
                 >
@@ -390,7 +389,7 @@ export function Security({
               }
             >
               <Typography variant="body2" sx={{ mb: 1 }}>
-                {t("客户端")}：{grant.client_name}
+                {labelValue("客户端", grant.client_name)}
               </Typography>
               <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1, mb: 1 }}>
                 {grant.scopes.map((scope) => (
@@ -398,7 +397,7 @@ export function Security({
                 ))}
               </Stack>
               <Typography variant="body2" color="text.secondary">
-                {t("授权时间")}：{date(grant.granted_at)}
+                {labelValue("授权时间", date(grant.granted_at))}
               </Typography>
             </Panel>
           ))}
@@ -435,10 +434,10 @@ export function Security({
                   color="warning"
                   onClick={() =>
                     ask(
-                      t("解绑账号"),
+                      "解绑账号",
                       `/account/identities/${identity.id}/unlink`,
                       {},
-                      t("解绑后无法再通过此第三方身份登录，相关会话也将退出。"),
+                      "解绑后无法再通过此第三方身份登录，相关会话也将退出。",
                     )
                   }
                 >
@@ -450,7 +449,7 @@ export function Security({
                 <Chip size="small" label={t("身份源已停用")} sx={{ mb: 1 }} />
               )}
               <Typography variant="body2">
-                {t("最近登录")}：{date(identity.last_login_at)}
+                {labelValue("最近登录", date(identity.last_login_at))}
               </Typography>
             </Panel>
           ))}
@@ -462,10 +461,10 @@ export function Security({
                   variant="outlined"
                   onClick={() =>
                     ask(
-                      t("绑定账号"),
+                      "绑定账号",
                       `/account/identities/${encodeURIComponent(provider.key)}/link`,
                       {},
-                      t("将前往身份提供方验证账号，并绑定到当前账户。"),
+                      "将前往身份提供方验证账号，并绑定到当前账户。",
                     )
                   }
                 >
@@ -502,7 +501,7 @@ export function Security({
                 <MenuItem value="">{t("全部")}</MenuItem>
                 {["success", "failure", "pending"].map((value) => (
                   <MenuItem key={value} value={value}>
-                    {eventNames[value]}
+                    {eventName(value)}
                   </MenuItem>
                 ))}
               </TextField>
@@ -547,7 +546,7 @@ export function Security({
                         </Button>
                       </TableCell>
                       <TableCell>
-                        {eventNames[event.outcome] || event.outcome}{" "}
+                        {eventName(event.outcome)}{" "}
                         {event.http_status ?? ""}
                       </TableCell>
                       <TableCell>{event.ip || "—"}</TableCell>
@@ -583,24 +582,25 @@ export function AuditDetail({
 }: {
   data: ViewDataMap["AuditDetailView"];
 }) {
+  useLocale();
   const e = data.event;
   return (
     <>
       <Heading title={t("审计详情")} back="/dashboard/audit" />
       <Panel title={t("操作记录")}>
         <Stack spacing={1}>
-          {[
+          {([
             [t("时间"), date(e.created_at)],
             [t("操作者"), `${e.actor_username} (${e.actor_id})`],
             [t("操作路由"), e.action],
             [t("操作目标"), e.target],
-            [t("处理结果"), `${e.outcome} · ${e.http_status ?? "—"}`],
+            [t("处理结果"), `${eventName(e.outcome)} · ${e.http_status ?? "—"}`],
             [t("IP 地址"), e.ip],
             [t("设备"), e.user_agent],
             [t("请求编号"), e.request_id],
-          ].map(([label, value]) => (
+          ] as const).map(([label, value]) => (
             <Typography key={label} sx={{ overflowWrap: "anywhere" }}>
-              {label}：{value || "—"}
+              {labelValue(label, value || "—")}
             </Typography>
           ))}
         </Stack>

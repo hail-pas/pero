@@ -46,6 +46,20 @@ export function Notifications({
     http_error: t("发送服务拒绝请求"),
     transport_error: t("发送服务连接失败"),
     timeout: t("发送请求超时"),
+    invalid_payload: t("通知内容格式不正确"),
+    invalid_recipient: t("收件地址无效"),
+    invalid_message: t("无法生成通知内容"),
+    smtp_invalid_from: t("SMTP 发件地址无效"),
+    smtp_invalid_configuration: t("SMTP 配置无效"),
+    smtp_not_configured: t("SMTP 未配置"),
+    smtp_invalid_security: t("SMTP 加密方式无效"),
+    smtp_missing_password: t("SMTP 缺少认证密码"),
+    sms_invalid_configuration: t("短信服务配置无效"),
+    sms_not_configured: t("短信服务未配置"),
+    invalid_endpoint: t("通知回调地址无效"),
+    database_error: t("无法读取发送所需的数据"),
+    signing_unavailable: t("通知签名暂不可用"),
+    delivery_failed: t("通知投递失败"),
   };
   const kinds: Record<string, string> = {
     verify_contact: t("联系方式验证"),
@@ -62,7 +76,22 @@ export function Notifications({
     identity_unlinked: t("第三方身份已解绑"),
     enrollment: t("注册与邀请"),
     enrollment_rejected: t("申请已拒绝"),
+    tenant_invitation: t("组织邀请"),
+    sessions_revoked: t("登录会话已撤销"),
+    "sync.requested": t("请求同步"),
+    "membership.granted": t("已授予应用访问资格"),
+    "membership.revoked": t("已撤销应用访问资格"),
+    "account.updated": t("账户资料已更新"),
+    "account.status_changed": t("账户状态已变更"),
+    "account.deleted": t("账户已注销"),
+    "tenant.membership.changed": t("租户成员资格已变更"),
   };
+  const deliveryError = (code?: string | null) =>
+    !code ? "—" : Object.hasOwn(errors, code) ? errors[code] : t("通知投递失败");
+  const deliveryKind = (code: string) =>
+    Object.hasOwn(kinds, code) ? kinds[code] : t("未知通知类型");
+  const deliveryStatus = (code: string) =>
+    Object.hasOwn(statuses, code) ? statuses[code] : t("未知状态");
   return (
     <>
       <Heading
@@ -157,7 +186,7 @@ export function Notifications({
                     <Box color="text.secondary">{date(row.updated_at)}</Box>
                   </TableCell>
                   <TableCell>
-                    {kinds[row.kind] || row.kind}
+                    {deliveryKind(row.kind)}
                     <Box
                       sx={{
                         fontSize: 12,
@@ -173,19 +202,17 @@ export function Notifications({
                       ? t("邮箱")
                       : row.channel === "phone"
                         ? t("手机")
-                        : row.channel}{" "}
+                        : t("未知渠道")}{" "}
                     {row.recipient}
                   </TableCell>
                   <TableCell>
                     <Label color={tones[row.status] ?? "default"}>
-                      {statuses[row.status] || row.status}
+                      {deliveryStatus(row.status)}
                     </Label>
                   </TableCell>
                   <TableCell>{row.attempts}</TableCell>
                   <TableCell>
-                    {row.last_error
-                      ? errors[row.last_error] || row.last_error
-                      : "—"}{" "}
+                    {deliveryError(row.last_error)}{" "}
                     {row.http_status ?? ""}
                   </TableCell>
                   <TableCell>
@@ -193,10 +220,10 @@ export function Notifications({
                       disabled={!data.enabled || !row.can_retry}
                       onClick={() =>
                         ask(
-                          t("立即重试"),
+                          "立即重试",
                           `/dashboard/notifications/${row.id}/retry`,
                           {},
-                          t("立即调度原通知重试，沿用原幂等键和有效期。"),
+                          "立即调度原通知重试，沿用原幂等键和有效期。",
                         )
                       }
                     >
@@ -234,17 +261,17 @@ export function Notifications({
                   <TableCell>{row.identifier}</TableCell>
                   <TableCell>
                     <Label color={tones[row.status] ?? "default"}>
-                      {statuses[row.status] || row.status}
+                      {deliveryStatus(row.status)}
                     </Label>
                   </TableCell>
                   <TableCell>{row.attempts}</TableCell>
-                  <TableCell>{row.last_error || "—"}</TableCell>
+                  <TableCell>{deliveryError(row.last_error)}</TableCell>
                   <TableCell>
                     <Button
                       disabled={!row.can_retry}
                       onClick={() =>
                         ask(
-                          t("立即重试"),
+                          "立即重试",
                           `/dashboard/logout-deliveries/${row.id}/retry`,
                         )
                       }
@@ -289,22 +316,22 @@ export function Notifications({
                   <TableCell>{row.identifier}</TableCell>
                   <TableCell>{row.user_id}</TableCell>
                   <TableCell>
-                    {row.kind}
+                    {deliveryKind(row.kind)}
                     <Box color="text.secondary">{row.id}</Box>
                   </TableCell>
                   <TableCell>
                     <Label color={tones[row.status] ?? "default"}>
-                      {statuses[row.status] || row.status}
+                      {deliveryStatus(row.status)}
                     </Label>
                   </TableCell>
                   <TableCell>{row.attempts}</TableCell>
-                  <TableCell>{row.last_error || "—"}</TableCell>
+                  <TableCell>{deliveryError(row.last_error)}</TableCell>
                   <TableCell>
                     <Button
                       disabled={!row.can_retry}
                       onClick={() =>
                         ask(
-                          t("立即重试"),
+                          "立即重试",
                           `/dashboard/account-sync-deliveries/${row.id}/retry`,
                         )
                       }

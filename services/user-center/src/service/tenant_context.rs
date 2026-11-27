@@ -33,9 +33,52 @@ pub async fn active<C: ConnectionTrait>(
     app: Uuid,
     tenant: Uuid,
 ) -> Result<Option<TenantContext>, DbErr> {
-    TenantContext::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT t.id AS tenant_id,t.kind AS tenant_kind,m.role AS membership_role,t.auth_version AS tenant_version,m.auth_version AS tenant_member_version FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3 JOIN users u ON u.id=m.user_id WHERE t.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.user_id=$2 AND m.status='active' AND t.status='active' AND a.status='active' AND (a.tenant_mode='both' OR a.tenant_mode=t.kind) AND (t.kind='personal' OR a.organization_access='open' OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id)) AND EXISTS (SELECT 1 FROM user_app_access ua WHERE ua.app_id=a.id AND ua.user_id=m.user_id AND ua.status='active' AND (ua.admission_origin='explicit' OR (ua.admission_origin='organization' AND a.organization_auto_access AND t.kind='organization')))",
-        [tenant.into(),user.into(),app.into()])).one(db).await
+    context(db, user, app, tenant, true).await
+}
+
+/// Checks the requested space before the user has applied for individual access.
+pub(crate) async fn eligible<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+    app: Uuid,
+    tenant: Uuid,
+) -> Result<Option<TenantContext>, DbErr> {
+    context(db, user, app, tenant, false).await
+}
+
+async fn context<C: ConnectionTrait>(
+    db: &C,
+    user: Uuid,
+    app: Uuid,
+    tenant: Uuid,
+    require_access: bool,
+) -> Result<Option<TenantContext>, DbErr> {
+    let base = "SELECT t.id AS tenant_id,t.kind AS tenant_kind,m.role AS membership_role,
+                t.auth_version AS tenant_version,m.auth_version AS tenant_member_version
+        FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id JOIN apps a ON a.id=$3
+        JOIN users u ON u.id=m.user_id
+        WHERE t.id=$1 AND u.status='active' AND u.deleted_at IS NULL AND m.user_id=$2
+          AND m.status='active' AND t.status='active' AND a.status='active'
+          AND (a.tenant_mode='both' OR a.tenant_mode=t.kind)
+          AND (t.kind='personal' OR a.organization_access='open'
+               OR EXISTS (SELECT 1 FROM tenant_app_grants g WHERE g.tenant_id=t.id AND g.app_id=a.id))";
+    let sql = if require_access {
+        format!(
+            "{base} AND EXISTS (SELECT 1 FROM user_app_access ua
+            WHERE ua.app_id=a.id AND ua.user_id=m.user_id AND ua.status='active'
+              AND (ua.admission_origin='explicit' OR (ua.admission_origin='organization'
+                   AND a.organization_auto_access AND t.kind='organization')))"
+        )
+    } else {
+        base.to_owned()
+    };
+    TenantContext::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [tenant.into(), user.into(), app.into()],
+    ))
+    .one(db)
+    .await
 }
 /// Policy mutations lock the tenant before its memberships. Issuance takes
 /// shared locks before device/grant rows, then rechecks the live context.

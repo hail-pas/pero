@@ -42,7 +42,7 @@ pub async fn post_forgot(
 
     let identifier = form.identifier.trim();
     if identifier.is_empty() {
-        return render_forgot(jar, &state, "identifier is required".to_owned(), false);
+        return render_forgot(jar, &state, "identifier_required".to_owned(), false);
     }
 
     let Ok(source_key) = rl_reset_ip.key(&source.for_rate_limit()) else {

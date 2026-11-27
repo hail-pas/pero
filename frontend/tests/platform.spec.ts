@@ -107,7 +107,7 @@ test("home and all main navigation routes render without runtime errors", async 
     /resources\/icons\/logo\.svg$/,
   );
   await expect(
-    page.getByRole("heading", { name: /User Center/ }),
+    page.getByRole("heading", { name: /用户中心/ }),
   ).toBeVisible();
   const filing = page.getByRole("link", { name: "渝ICP备2025069387号-1" });
   await expect(filing).toBeVisible();
@@ -548,23 +548,32 @@ test("provider key activation addresses the key identifier and asks for confirma
   await page.getByRole("button", { name: "确认", exact: true }).click();
   await submitted;
 });
-test("application list renders server timestamps as calendar dates", async ({
+test("application list formats timestamps in the selected language", async ({
   page,
 }) => {
+  const timestamp = "2026-10-22T12:30:00Z";
   await mock(page, {
     "/dashboard/apps": {
       view: "AppListView",
       data: {
         layout,
         csrf_token: "csrf-test",
-        apps: [{ ...app, created_at: "2026-10-22T12:30:00Z" }],
+        apps: [{ ...app, created_at: timestamp }],
         page: 1,
         total_pages: 1,
       },
     },
   });
   await page.goto("/dashboard/apps");
-  await expect(page.getByRole("cell", { name: /2026-10-22/ })).toBeVisible();
+  const dates = await page.evaluate((value) =>
+    ["zh-CN", "en"].map((locale) => new Date(value).toLocaleString(locale, {
+      dateStyle: "medium", timeStyle: "medium",
+    })), timestamp);
+  await expect(page.getByRole("cell", { name: dates[0], exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(page.getByRole("cell", { name: dates[1], exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: app.name })).toBeVisible();
 });
 
 test("language switch persists across navigation and reload without losing form edits", async ({
@@ -638,6 +647,30 @@ test("English forms, modals, validation and sign-in are fully localized", async 
   expect(bodyText.replace("渝ICP备2025069387号-1", "")).not.toMatch(
     /[\u3400-\u9fff]/,
   );
+});
+
+test("an open profile dialog updates its field labels and errors when another tab changes language", async ({ page, context }) => {
+  await mock(page);
+  await page.route("**/account/profile/change-email", (route) =>
+    route.fulfill({ status: 400, json: { error: "same_email" } }),
+  );
+  await page.goto("/account/profile");
+  await page.getByRole("button", { name: "更换邮箱", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("新邮箱").fill(user.email);
+  await dialog.getByRole("button", { name: "保存更改" }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("新邮箱不能与当前邮箱相同");
+
+  const otherTab = await context.newPage();
+  await mock(otherTab);
+  await otherTab.goto("/");
+  await otherTab.getByRole("button", { name: "切换语言" }).click();
+  await otherTab.getByRole("menuitem", { name: /English/ }).click();
+  await expect(dialog.getByRole("heading", { name: "Change Email" })).toBeVisible();
+  await expect(dialog.getByLabel("New Email")).toHaveValue(user.email);
+  await expect(dialog.getByRole("alert")).toHaveText("New email must be different from current email");
+  await expect.poll(async () => (await context.cookies()).find((cookie) => cookie.name === "pero_lang")?.value).toBe("en");
+  await otherTab.close();
 });
 test("language is available on mobile and errors from the backend use the selected language", async ({
   page,
@@ -1152,6 +1185,8 @@ test("notification operations filter records and confirm safe retries", async ({
           row,
           { ...row, id: "delivery-2", status: "delivered", can_retry: false },
         ],
+        logout_rows: [{ ...row, id: "logout-1", identifier: "app-client", last_error: "signing_unavailable", can_retry: false }],
+        sync_rows: [{ ...row, id: "sync-1", identifier: "app-client", user_id: "u1", kind: "account.updated", last_error: "invalid_endpoint", can_retry: false }],
         page: 1,
         total_pages: 2,
       },
@@ -1183,6 +1218,13 @@ test("notification operations filter records and confirm safe retries", async ({
     .getByRole("button", { name: "确认", exact: true })
     .click();
   expect((await sent).postData()).toContain("csrf_token=csrf-test");
+  await expect(page.getByText("通知签名暂不可用")).toBeVisible();
+  await expect(page.getByText("账户资料已更新")).toBeVisible();
+  await page.getByRole("button", { name: "切换语言" }).click();
+  await page.getByRole("menuitem", { name: /English/ }).click();
+  await expect(page.getByText("Notification signing is unavailable")).toBeVisible();
+  await expect(page.getByText("Account profile updated")).toBeVisible();
+  await expect(page.getByText("Invalid notification endpoint")).toBeVisible();
 });
 
 test("admission pages preserve application policy and explicit account closure confirmation", async ({
@@ -1204,6 +1246,7 @@ test("admission pages preserve application policy and explicit account closure c
           version: 2,
         },
         inherited: false,
+        can_invite: true,
         rows: [],
       },
     },
@@ -1219,6 +1262,9 @@ test("admission pages preserve application policy and explicit account closure c
   });
   await page.goto("/dashboard/registration?app=app-1");
   await expect(page.getByLabel("允许的邮箱域名")).toHaveValue("example.com");
+  await expect(
+    page.getByRole("checkbox", { name: "自助访问需要审批" }),
+  ).toBeChecked();
   const saved = page.waitForRequest(
     (r) =>
       r.method() === "POST" &&
@@ -1228,6 +1274,7 @@ test("admission pages preserve application policy and explicit account closure c
   const values = new URLSearchParams((await saved).postData()!);
   expect(values.get("app")).toBe("app-1");
   expect(values.get("version")).toBe("2");
+  expect(values.get("approval_required")).toBe("true");
   await page.goto("/account/applications");
   await page.getByLabel("输入当前用户名确认").fill("lin");
   await page.getByRole("button", { name: "注销账户", exact: true }).click();

@@ -76,6 +76,10 @@ async fn run_cleanup(
         crate::db::helper::cleanup::clean_expired_client_secrets
     );
     do_clean!(
+        "signing_key_material",
+        crate::db::helper::cleanup::clean_expired_signing_key_material
+    );
+    do_clean!(
         "tenant_invitations",
         crate::db::helper::cleanup::clean_tenant_invitations
     );

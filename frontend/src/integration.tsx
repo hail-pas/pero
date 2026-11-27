@@ -31,7 +31,7 @@ function checkText(code: string) {
     membership: t("当前测试账号拥有此应用访问资格"),
     test_callback: t("已登记诊断回调地址"),
   };
-  return messages[code] || code;
+  return Object.hasOwn(messages, code) ? messages[code] : t("未知检查项");
 }
 export function Integration({
   data: d,
@@ -114,7 +114,7 @@ export function Integration({
               color="primary"
               onClick={() =>
                 editor(
-                  t("新建 OAuth 客户端"),
+                  "新建 OAuth 客户端",
                   "/dashboard/clients/new",
                   clientFields,
                   {

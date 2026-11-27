@@ -16,7 +16,7 @@ pub struct Model {
     pub tenant_version: Option<i64>,
     pub tenant_member_version: Option<i64>,
     pub client_id: Uuid,
-    pub session_id: Option<Uuid>,
+    pub session_id: Uuid,
     pub client_session_id: Option<Uuid>,
     pub scopes: Vec<String>,
     pub created_at: TimeDateTimeWithTimeZone,
@@ -24,7 +24,6 @@ pub struct Model {
     pub revoked_at: Option<TimeDateTimeWithTimeZone>,
     #[sea_orm(column_type = "Text", nullable)]
     pub revoke_reason: Option<String>,
-    pub replaced_by_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -46,19 +45,11 @@ pub enum Relation {
     )]
     OauthClients,
     #[sea_orm(
-        belongs_to = "Entity",
-        from = "Column::ReplacedById",
-        to = "Column::Id",
-        on_update = "NoAction",
-        on_delete = "SetNull"
-    )]
-    SelfRef,
-    #[sea_orm(
         belongs_to = "super::sso_sessions::Entity",
         from = "Column::SessionId",
         to = "super::sso_sessions::Column::Id",
         on_update = "NoAction",
-        on_delete = "SetNull"
+        on_delete = "Cascade"
     )]
     SsoSessions,
     #[sea_orm(

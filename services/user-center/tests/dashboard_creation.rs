@@ -53,7 +53,6 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
     let config: AppConfig = serde_json::from_value(serde_json::json!({
         "database":{"url":fixture.url,"encrypt_key":"test-only-key","min_connections":1},
         "redis":{"url":std::env::var("PERO_TEST_REDIS_URL").unwrap()},
-        "notification":{"endpoint":"https://notifications.example.test","bearer_token":"test-only-notification-token"},
         "sso":{"cookie_signing_secret":"test-only-signing-secret-long-enough"},
         "password_reset":{"signing_key":"test-only-reset-secret-long-enough"}
     }))
@@ -197,18 +196,54 @@ async fn dashboard_creation_returns_json_for_success_and_validation_errors() {
         post(&app, &cookies, "/dashboard/apps/new", &app_fields).await["error"],
         "invalid_url"
     );
+    db.execute_unprepared(
+        "UPDATE registration_policies SET domains=ARRAY['example.test'] WHERE app_id IS NULL",
+    )
+    .await
+    .unwrap();
+    let mut account = vec![("csrf_token", csrf.as_str()), ("delivery", "account_link")];
+    assert_eq!(
+        post(&app, &cookies, "/dashboard/users/new", &account).await["error"],
+        "email_domain_not_allowed"
+    );
+    account.extend([
+        ("domain_exception", "true"),
+        ("reason", "Temporary account"),
+    ]);
+
     // Redis quotas outlive the isolated SQL schema; keep repeated runs independent.
     let invited_email = format!("created_{}@example.test", user_id.simple());
-    assert_eq!(
-        post(
-            &app,
-            &cookies,
-            "/dashboard/users/new",
-            &[("csrf_token", &csrf), ("email", invited_email.as_str())]
-        )
-        .await["code"],
-        0
-    );
+    let addressed = [
+        ("csrf_token", csrf.as_str()),
+        ("delivery", "manual"),
+        ("email", invited_email.as_str()),
+    ];
+    for (fields, status) in [
+        (account.as_slice(), "ready"),
+        (addressed.as_slice(), "pending_verification"),
+    ] {
+        let invitation = post(&app, &cookies, "/dashboard/users/new", fields).await;
+        assert_eq!(invitation["data"]["purpose"], "invitation_activation");
+        let link = url::Url::parse(invitation["data"]["secret"].as_str().unwrap()).unwrap();
+        assert_eq!(link.path(), "/sso/register");
+        let (_, token) = link.query_pairs().find(|(key, _)| key == "token").unwrap();
+        let row = user_center::service::enrollment::lookup(&db, &token)
+            .await
+            .unwrap();
+        assert_eq!(row.status, status);
+    }
+    for delivery in ["email", "manual"] {
+        assert_eq!(
+            post(
+                &app,
+                &cookies,
+                "/dashboard/users/new",
+                &[("csrf_token", &csrf), ("delivery", delivery)],
+            )
+            .await["error"],
+            "invalid_email"
+        );
+    }
     assert_eq!(
         post(
             &app,

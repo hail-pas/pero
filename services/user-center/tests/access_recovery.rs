@@ -260,10 +260,34 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
         .await["data"]["expired"],
         true
     );
-    // A fresh request can switch identity; the old recovery token becomes unusable.
-    let next = request(&app, &cookie, &start, None).await;
+    // A request for another account's workspace still permits switching identity.
+    let other_user = Uuid::now_v7();
+    execute(
+        &db,
+        "INSERT INTO users(id,username) VALUES($1,'other-recovery-member')",
+        vec![other_user.into()],
+    )
+    .await
+    .unwrap();
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use user_center::db::entity::tenants;
+    let workspace = tenants::Entity::find()
+        .filter(tenants::Column::OwnerUserId.eq(other_user))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let next = request(
+        &app,
+        &cookie,
+        &format!("{start}&tenant_id={}", workspace.id),
+        None,
+    )
+    .await;
     let next = next["redirect"].as_str().unwrap();
     let view = request(&app, &cookie, next, None).await;
+    assert_eq!(view["data"]["tenant_unavailable"], true);
+    assert_eq!(view["data"]["can_request"], false);
     let switch_form = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("csrf_token", &csrf)
         .append_pair("token", view["data"]["token"].as_str().unwrap())
@@ -282,7 +306,7 @@ async fn denied_authorization_can_retry_switch_cancel_and_expire_safely() {
 
 #[tokio::test]
 #[ignore = "requires dedicated PERO_TEST_DATABASE_URL and PERO_TEST_REDIS_URL"]
-async fn super_admin_self_provisions_access_and_continues_oauth() {
+async fn oauth_never_restores_super_admin_access_and_system_apps_require_mfa() {
     use sea_orm::EntityTrait;
     use user_center::db::{entity::user_app_access, enums::CommonStatus};
     let fixture = database::DatabaseFixture::new().await;
@@ -350,57 +374,46 @@ async fn super_admin_self_provisions_access_and_continues_oauth() {
     )
     .await
     .unwrap();
-    // The same live session now receives a persisted entitlement and proceeds to consent.
-    assert_eq!(
-        request(&app, &cookie, start, None).await["redirect"],
-        "/sso/consent"
-    );
-    let access = user_app_access::Entity::find_by_id((user, application))
-        .one(&db)
+    for system in [false, true] {
+        execute(
+            &db,
+            "UPDATE apps SET system=$2 WHERE id=$1",
+            vec![application.into(), system.into()],
+        )
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(access.status, CommonStatus::Active);
-    // Reactivation preserves the existing MFA policy and token revocation version.
-    execute(&db, "UPDATE user_app_access SET status='disabled',require_mfa=true,token_version=7 WHERE user_id=$1 AND app_id=$2", vec![user.into(),application.into()]).await.unwrap();
+        let denied = request(&app, &cookie, start, None).await;
+        assert!(
+            denied["redirect"]
+                .as_str()
+                .unwrap()
+                .starts_with("/oauth2/authorize/access?")
+        );
+        let silent = request(&app, &cookie, &format!("{start}&prompt=none"), None).await;
+        assert!(
+            silent["redirect"]
+                .as_str()
+                .unwrap()
+                .contains("error=access_denied")
+        );
+        assert!(
+            user_app_access::Entity::find_by_id((user, application))
+                .one(&db)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    let administrator = database::management_actor(&db).await;
+    user_center::service::access::grant_app(&db, &administrator, user, application)
+        .await
+        .unwrap();
     let mfa = request(&app, &cookie, start, None).await;
     assert!(
         mfa["redirect"]
             .as_str()
             .unwrap()
             .starts_with("/account/security?")
-    );
-    let access = user_app_access::Entity::find_by_id((user, application))
-        .one(&db)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(access.status, CommonStatus::Active);
-    assert!(access.require_mfa);
-    assert_eq!(access.token_version, 7);
-    // Silent requests provision entitlement too, but never bypass MFA or consent.
-    execute(
-        &db,
-        "UPDATE user_app_access SET status='disabled' WHERE user_id=$1 AND app_id=$2",
-        vec![user.into(), application.into()],
-    )
-    .await
-    .unwrap();
-    let silent = request(&app, &cookie, &format!("{start}&prompt=none"), None).await;
-    assert!(
-        silent["redirect"]
-            .as_str()
-            .unwrap()
-            .contains("error=interaction_required")
-    );
-    assert_eq!(
-        user_app_access::Entity::find_by_id((user, application))
-            .one(&db)
-            .await
-            .unwrap()
-            .unwrap()
-            .status,
-        CommonStatus::Active
     );
     execute(
         &db,
@@ -409,68 +422,27 @@ async fn super_admin_self_provisions_access_and_continues_oauth() {
     )
     .await
     .unwrap();
-    let silent = request(&app, &cookie, &format!("{start}&prompt=none"), None).await;
+    assert_eq!(
+        request(&app, &cookie, start, None).await["redirect"],
+        "/sso/consent"
+    );
+    user_center::service::access::revoke_app(&db, &administrator, user, application)
+        .await
+        .unwrap();
+    let denied = request(&app, &cookie, start, None).await;
     assert!(
-        silent["redirect"]
+        denied["redirect"]
             .as_str()
             .unwrap()
-            .contains("error=consent_required")
+            .starts_with("/oauth2/authorize/access?")
     );
-    execute(
-        &db,
-        "INSERT INTO user_consents(user_id,client_id,scopes) VALUES($1,$2,ARRAY['openid'])",
-        vec![user.into(), client.into()],
-    )
-    .await
-    .unwrap();
-    let completed = request(&app, &cookie, start, None).await;
-    let callback = url::Url::parse(completed["redirect"].as_str().unwrap()).unwrap();
-    assert!(
-        callback
-            .query_pairs()
-            .any(|(k, v)| k == "code" && !v.is_empty())
-    );
-    assert!(
-        callback
-            .query_pairs()
-            .any(|(k, v)| k == "state" && v == "auto-grant-state")
-    );
-    // Disabled applications remain inaccessible even to a super administrator.
-    execute(
-        &db,
-        "UPDATE user_app_access SET status='disabled' WHERE user_id=$1 AND app_id=$2",
-        vec![user.into(), application.into()],
-    )
-    .await
-    .unwrap();
-    execute(
-        &db,
-        "UPDATE apps SET status='disabled' WHERE id=$1",
-        vec![application.into()],
-    )
-    .await
-    .unwrap();
-    let session = user_center::state::session::SsoSession {
-        id: sid,
-        user_id: user,
-        identity_id: None,
-        created_at: time::OffsetDateTime::now_utc(),
-        authenticated_at: time::OffsetDateTime::now_utc(),
-    };
-    assert!(
-        !user_center::service::access::ensure_oauth_app_access(&db, &session, application, 3600)
-            .await
-            .unwrap()
-    );
-    assert_eq!(
-        user_app_access::Entity::find_by_id((user, application))
-            .one(&db)
-            .await
-            .unwrap()
-            .unwrap()
-            .status,
-        CommonStatus::Disabled
-    );
+    let access = user_app_access::Entity::find_by_id((user, application))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(access.status, CommonStatus::Disabled);
+    assert!(access.token_version > 0);
     db.close().await.unwrap();
     drop(guard);
     fixture.cleanup().await;

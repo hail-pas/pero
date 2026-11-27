@@ -148,11 +148,17 @@ pub async fn admit<C: ConnectionTrait>(
         }
         id
     };
+    // The grant and parent device remain locked throughout admission.
     let id = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO client_sessions(app_session_id,client_id,tenant_id) VALUES($1,$2,$3)
-         ON CONFLICT(app_session_id,client_id,tenant_id) WHERE revoked_at IS NULL
-         DO UPDATE SET client_id=EXCLUDED.client_id RETURNING id",
+        "WITH existing AS (
+             SELECT id FROM client_sessions WHERE app_session_id=$1 AND client_id=$2
+                 AND tenant_id IS NOT DISTINCT FROM $3 AND revoked_at IS NULL
+         ), created AS (
+             INSERT INTO client_sessions(app_session_id,client_id,tenant_id)
+             SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM existing) RETURNING id
+         )
+         SELECT id FROM existing UNION ALL SELECT id FROM created",
         [
             app_session.into(),
             code.client_id.into(),

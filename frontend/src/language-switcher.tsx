@@ -26,10 +26,10 @@ export function LanguageSwitcher() {
       >
         {(
           [
-            ["zh-CN", "简体中文", "Chinese"],
-            ["en", "English", "英语"],
+            ["zh-CN", "简体中文"],
+            ["en", "English"],
           ] as const
-        ).map(([value, label, subtitle]) => (
+        ).map(([value, label]) => (
           <MenuItem
             key={value}
             selected={locale === value}
@@ -39,7 +39,12 @@ export function LanguageSwitcher() {
             }}
             sx={{ gap: 2, py: 1, borderRadius: 1 }}
           >
-            <ListItemText primary={label} secondary={subtitle} />
+            <ListItemText
+              primary={<span lang={value}>{label}</span>}
+              secondary={
+                locale === value ? undefined : t(value === "en" ? "英语" : "简体中文")
+              }
+            />
             {locale === value && (
               <CheckRounded color="primary" sx={{ fontSize: 18 }} />
             )}

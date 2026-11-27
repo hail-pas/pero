@@ -102,7 +102,7 @@ export function Home({ data }: { data: ViewDataMap["HomeView"] }) {
               Pero
               <br />
               <Box component="span" sx={{ color: "primary.main" }}>
-                User Center
+                {t("用户中心")}
               </Box>
             </Typography>
             <Typography

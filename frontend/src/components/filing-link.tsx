@@ -9,6 +9,7 @@ export function FilingLink() {
       variant="caption"
       color="text.secondary"
       underline="hover"
+      lang="zh-CN"
     >
       渝ICP备2025069387号-1
     </Link>

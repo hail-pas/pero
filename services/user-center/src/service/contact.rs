@@ -2,8 +2,8 @@ use pero_cache_redis::RedisCacheStore;
 use pero_cache_redis::rate_limit::{RateLimitError, enforce_rate_limit};
 use pero_cache_redis::rate_limit_key::{rl_verify_attempt, rl_verify_send};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    QueryFilter, QuerySelect, Set, Statement, TransactionTrait, sea_query::OnConflict,
 };
 use uuid::Uuid;
 
@@ -134,6 +134,7 @@ impl<'a> ContactVerificationService<'a> {
     ) -> Result<(), ContactError> {
         super::account_security::lock_account_session(txn, session, self.sso)
             .await
+            .map(|_| ())
             .map_err(|error| match error {
                 super::ManagementError::Invalid(_) => ContactError::Unauthorized,
                 _ => ContactError::ServiceUnavailable,
@@ -151,25 +152,6 @@ impl<'a> ContactVerificationService<'a> {
                 Err(ContactError::ServiceUnavailable)
             }
         }
-    }
-
-    pub async fn has_pending_same_value_in_txn<C: sea_orm::ConnectionTrait>(
-        &self,
-        user_id: Uuid,
-        change_type: ContactChangeType,
-        value: &str,
-        db: &C,
-    ) -> Result<bool, ContactError> {
-        Ok(ccr::Entity::find()
-            .filter(ccr::Column::UserId.eq(user_id))
-            .filter(ccr::Column::ChangeType.eq(change_type))
-            .filter(ccr::Column::Status.eq(ContactChangeStatus::Pending))
-            .filter(ccr::Column::ExpiresAt.gt(time::OffsetDateTime::now_utc()))
-            .filter(ccr::Column::NewValue.eq(value))
-            .one(db)
-            .await
-            .map_err(|_| ContactError::ServiceUnavailable)?
-            .is_some())
     }
 
     pub async fn check_rate_limit(
@@ -206,25 +188,52 @@ impl<'a> ContactVerificationService<'a> {
             ContactError::Internal("internal_error".into())
         })?;
 
-        let user_id = session.user_id;
         self.lock_session(&txn, session).await?;
-        expire_reservations(&txn, channel, &value, user_id)
+        let verification = Self::create_request_in_transaction(
+            &txn,
+            session.user_id,
+            channel,
+            value,
+            notification_base_url,
+        )
+        .await?;
+        txn.commit().await.map_err(|e| {
+            tracing::error!("Transaction commit: {e}");
+            ContactError::Internal("internal_error".into())
+        })?;
+        Ok(verification)
+    }
+
+    // The caller holds the user's lock or is creating the user in this transaction.
+    pub(crate) async fn create_request_in_transaction(
+        txn: &sea_orm::DatabaseTransaction,
+        user_id: Uuid,
+        channel: ContactChannel,
+        value: String,
+        notification_base_url: Option<&str>,
+    ) -> Result<(String, String), ContactError> {
+        expire_reservations(txn, channel, &value, user_id)
             .await
             .map_err(|_| ContactError::ServiceUnavailable)?;
 
-        if self
-            .has_pending_same_value_in_txn(user_id, channel.change_type(), &value, &txn)
-            .await?
+        if ccr::Entity::find()
+            .filter(ccr::Column::UserId.eq(user_id))
+            .filter(ccr::Column::ChangeType.eq(channel.change_type()))
+            .filter(ccr::Column::Status.eq(ContactChangeStatus::Pending))
+            .filter(ccr::Column::ExpiresAt.gt(time::OffsetDateTime::now_utc()))
+            .filter(ccr::Column::NewValue.eq(&value))
+            .one(txn)
+            .await
+            .map_err(|_| ContactError::ServiceUnavailable)?
+            .is_some()
         {
-            let _ = txn.rollback().await;
             return Err(ContactError::SamePendingValue);
         }
 
-        if is_contact_taken(&txn, channel, &value, user_id)
+        if is_contact_taken(txn, channel, &value, user_id)
             .await
             .map_err(|_| ContactError::ServiceUnavailable)?
         {
-            let _ = txn.rollback().await;
             return Err(ContactError::ContactTaken);
         }
 
@@ -234,7 +243,7 @@ impl<'a> ContactVerificationService<'a> {
             .filter(ccr::Column::UserId.eq(user_id))
             .filter(ccr::Column::ChangeType.eq(channel.change_type()))
             .filter(ccr::Column::Status.eq(ContactChangeStatus::Pending))
-            .exec(&txn)
+            .exec(txn)
             .await
             .map_err(|e| {
                 tracing::error!("Cancel pending: {e}");
@@ -242,77 +251,69 @@ impl<'a> ContactVerificationService<'a> {
             })?;
 
         let now = time::OffsetDateTime::now_utc();
-        let existing = ccr::Entity::find()
-            .filter(ccr::Column::UserId.eq(user_id))
-            .filter(ccr::Column::ChangeType.eq(channel.change_type()))
-            .filter(ccr::Column::NewValue.eq(&value))
-            .one(&txn)
-            .await;
-        match existing {
-            Ok(Some(model)) => {
-                let mut active: ccr::ActiveModel = model.into();
-                active.status = Set(ContactChangeStatus::Pending);
-                active.verification_code_hash = Set(verification.code_hash.clone());
-                active.nonce = Set(verification.nonce.clone());
-                active.requested_at = Set(now);
-                active.expires_at = Set(crate::service::verification::expires_in(
-                    time::Duration::minutes(15),
-                ));
-                active.verified_at = Set(None);
-                active.cancelled_at = Set(None);
-                active.updated_at = Set(now);
-                if let Err(e) = active.update(&txn).await {
-                    tracing::error!("Contact change update: {e}");
-                    return Err(ContactError::Internal("internal_error".into()));
-                }
+        let expires_at = now + time::Duration::minutes(15);
+        ccr::Entity::insert(ccr::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            user_id: Set(user_id),
+            change_type: Set(channel.change_type()),
+            new_value: Set(value.clone()),
+            status: Set(ContactChangeStatus::Pending),
+            verification_code_hash: Set(verification.code_hash.clone()),
+            nonce: Set(verification.nonce.clone()),
+            requested_at: Set(now),
+            expires_at: Set(expires_at),
+            verified_at: Set(None),
+            cancelled_at: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        })
+        .on_conflict(
+            OnConflict::columns([
+                ccr::Column::UserId,
+                ccr::Column::ChangeType,
+                ccr::Column::NewValue,
+            ])
+            .update_columns([
+                ccr::Column::NewValue,
+                ccr::Column::Status,
+                ccr::Column::VerificationCodeHash,
+                ccr::Column::Nonce,
+                ccr::Column::RequestedAt,
+                ccr::Column::ExpiresAt,
+                ccr::Column::VerifiedAt,
+                ccr::Column::CancelledAt,
+                ccr::Column::UpdatedAt,
+            ])
+            .to_owned(),
+        )
+        .exec_without_returning(txn)
+        .await
+        .map_err(|e| {
+            tracing::error!("Contact change upsert: {e}");
+            if crate::db::error::is_unique_violation(&e) {
+                ContactError::ContactTaken
+            } else {
+                ContactError::Internal("internal_error".into())
             }
-            Ok(None) => {
-                let req = ccr::ActiveModel {
-                    id: Set(Uuid::now_v7()),
-                    user_id: Set(user_id),
-                    change_type: Set(channel.change_type()),
-                    new_value: Set(value.clone()),
-                    status: Set(ContactChangeStatus::Pending),
-                    verification_code_hash: Set(verification.code_hash.clone()),
-                    nonce: Set(verification.nonce.clone()),
-                    requested_at: Set(now),
-                    expires_at: Set(crate::service::verification::expires_in(
-                        time::Duration::minutes(15),
-                    )),
-                    verified_at: Set(None),
-                    cancelled_at: Set(None),
-                    created_at: Set(now),
-                    updated_at: Set(now),
-                };
-                if let Err(e) = req.insert(&txn).await {
-                    tracing::error!("Contact change insert: {e}");
-                    return Err(ContactError::Internal("internal_error".into()));
-                }
-            }
-            Err(e) => {
-                tracing::error!("Contact change lookup: {e}");
-                return Err(ContactError::Internal("internal_error".into()));
-            }
-        }
+        })?;
+
+        cancel_verification_messages(txn, user_id, Some(channel.key()))
+            .await
+            .map_err(|_| ContactError::ServiceUnavailable)?;
 
         if let Some(base_url) = notification_base_url {
             crate::service::notify::enqueue_verification(
-                &txn,
+                txn,
                 user_id,
                 base_url,
                 channel.key(),
                 &value,
-                &verification.code,
-                &verification.nonce,
+                &verification,
+                expires_at,
             )
             .await
             .map_err(|_| ContactError::SendFailed)?;
         }
-
-        txn.commit().await.map_err(|e| {
-            tracing::error!("Transaction commit: {e}");
-            ContactError::Internal("internal_error".into())
-        })?;
 
         Ok((verification.code, verification.nonce))
     }
@@ -398,9 +399,9 @@ impl<'a> ContactVerificationService<'a> {
         let new_value = req.new_value.clone();
         drop(req);
 
-        let contact_column = match change_type {
-            ContactChangeType::Email => users::Column::Email,
-            ContactChangeType::Phone => users::Column::Phone,
+        let (channel, contact_column) = match change_type {
+            ContactChangeType::Email => (ContactChannel::Email, users::Column::Email),
+            ContactChangeType::Phone => (ContactChannel::Phone, users::Column::Phone),
         };
 
         let contact_taken = match users::Entity::find()
@@ -437,29 +438,34 @@ impl<'a> ContactVerificationService<'a> {
             }
         }
 
-        if let Err(e) = user_active.update(&txn).await {
+        let mut recipient = user_active.update(&txn).await.map_err(|e| {
             tracing::error!("Update user contact: {e}");
             if crate::db::error::is_unique_violation(&e) {
-                return Err(ContactError::ContactTaken);
+                ContactError::ContactTaken
+            } else {
+                ContactError::Internal("internal_error".into())
             }
-            return Err(ContactError::Internal("internal_error".into()));
-        }
+        })?;
 
+        if contact_changed && channel.current_value(&user).is_some() {
+            invalidate_contact_credentials(&txn, user_id, Some(req_id))
+                .await
+                .map_err(|_| ContactError::ServiceUnavailable)?;
+        } else {
+            cancel_verification_messages(&txn, user_id, Some(channel.key()))
+                .await
+                .map_err(|_| ContactError::ServiceUnavailable)?;
+            if contact_changed {
+                // A first-time binding should preserve the other channel's verification.
+                super::recovery::invalidate(&txn, user_id)
+                    .await
+                    .map_err(|_| ContactError::ServiceUnavailable)?;
+            }
+        }
         if contact_changed {
             super::security::notify(&txn, &user, "contact_changed")
                 .await
                 .map_err(|_| ContactError::ServiceUnavailable)?;
-            invalidate_contact_credentials(&txn, user_id, Some(req_id))
-                .await
-                .map_err(|_| ContactError::ServiceUnavailable)?;
-        }
-
-        if contact_changed {
-            let mut recipient = users::Entity::find_by_id(user_id)
-                .one(&txn)
-                .await
-                .map_err(|_| ContactError::ServiceUnavailable)?
-                .ok_or(ContactError::ServiceUnavailable)?;
             match change_type {
                 ContactChangeType::Email => recipient.phone_verified_at = None,
                 ContactChangeType::Phone => recipient.email_verified_at = None,
@@ -501,19 +507,24 @@ impl<'a> ContactVerificationService<'a> {
         self.lock_session(&txn, session).await?;
         // Check ownership, nonce and state in the write itself. A concurrent
         // verification or replacement must not be deleted after a stale read.
-        let deleted = ccr::Entity::delete_many()
-            .filter(ccr::Column::UserId.eq(session.user_id))
-            .filter(ccr::Column::Nonce.eq(nonce))
-            .filter(ccr::Column::Status.eq(ContactChangeStatus::Pending))
-            .exec(&txn)
+        let deleted = txn.query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM contact_change_requests WHERE user_id=$1 AND nonce=$2 AND status='pending'
+             RETURNING change_type::text AS channel",
+            [session.user_id.into(), nonce.into()],
+        ))
             .await
             .map_err(|error| {
                 tracing::error!(%error, "Cancel contact request failed");
                 ContactError::ServiceUnavailable
-            })?;
-        if deleted.rows_affected == 0 {
-            return Err(ContactError::InvalidNonce);
-        }
+            })?
+            .ok_or(ContactError::InvalidNonce)?;
+        let channel: String = deleted
+            .try_get("", "channel")
+            .map_err(|_| ContactError::ServiceUnavailable)?;
+        cancel_verification_messages(&txn, session.user_id, Some(&channel))
+            .await
+            .map_err(|_| ContactError::ServiceUnavailable)?;
         txn.commit()
             .await
             .map_err(|_| ContactError::ServiceUnavailable)?;
@@ -565,10 +576,20 @@ pub async fn invalidate_contact_credentials<C: sea_orm::ConnectionTrait>(
         pending = pending.filter(ccr::Column::Id.ne(id));
     }
     pending.exec(db).await?;
-    db.execute_raw(sea_orm::Statement::from_sql_and_values(
-        sea_orm::DbBackend::Postgres,
-        "DELETE FROM notification_outbox WHERE user_id = $1 AND kind = 'verify_contact'",
-        [user_id.into()],
+    cancel_verification_messages(db, user_id, None).await
+}
+
+async fn cancel_verification_messages<C: ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+    channel: Option<&str>,
+) -> Result<(), sea_orm::DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM notification_outbox o USING notification_deliveries d
+         WHERE o.id=d.id AND o.user_id=$1 AND o.kind='verify_contact'
+           AND ($2::text IS NULL OR d.channel=$2)",
+        [user_id.into(), channel.into()],
     ))
     .await?;
     Ok(())

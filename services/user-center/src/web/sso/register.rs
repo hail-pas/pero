@@ -42,7 +42,7 @@ pub struct Input {
     pub app: Option<Uuid>,
 }
 #[derive(Serialize)]
-struct View {
+struct View<'a> {
     csrf_token: String,
     mode: String,
     app: Option<Uuid>,
@@ -54,6 +54,9 @@ struct View {
     social: bool,
     tenant_name: String,
     tenant_invitation: bool,
+    account_invitation: bool,
+    manual_delivery: bool,
+    password_policy: &'a crate::config::PasswordConfig,
     existing_account: bool,
     signed_in: bool,
     matching_account: bool,
@@ -520,13 +523,16 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, error: &str
     );
     let social_only =
         row.as_ref().is_none() && proof.as_ref().is_some_and(|p| p.is_fresh() && p.app == app);
+    let account_invitation = row
+        .as_ref()
+        .is_some_and(enrollment::Enrollment::is_account_invitation);
     let mut allowed_methods = Vec::new();
     if state.config.notification.available("email") {
         allowed_methods.push("email");
     }
-    if !social_only
-        && p.as_ref().is_some_and(|p| p.domains.is_empty())
-        && state.config.notification.available("phone")
+    if state.config.notification.available("phone")
+        && (account_invitation
+            || (!social_only && p.as_ref().is_some_and(|p| p.domains.is_empty())))
     {
         allowed_methods.push("phone");
     }
@@ -564,21 +570,20 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, error: &str
     } else {
         None
     };
+    let blocked = if existing.is_some()
+        && row
+            .as_ref()
+            .is_some_and(|r| r.invitation && r.app_id.is_some())
+    {
+        "enrollment_existing_app_invitee"
+    } else {
+        blocked
+    };
     let matching_account = session.as_ref().is_some_and(|s| {
         existing.as_ref().is_some_and(|user| s.user_id == user.id)
             || row
                 .as_ref()
                 .is_some_and(|r| r.completed_user_id == Some(s.user_id))
-    });
-    let contact_changed = row.as_ref().is_some_and(|row| {
-        can_act
-            && row.verified_at.is_some()
-            && !terminal
-            && enrollment::requires_existing_account(row)
-            && (existing.is_none()
-                || row
-                    .requested_user_id
-                    .is_some_and(|id| existing.as_ref().map(|u| u.id) != Some(id)))
     });
     let already_admitted = if let Some(user) = existing.as_ref().filter(|_| matching_account) {
         match enrollment::already_admitted(&state.db, user.id, app).await {
@@ -595,7 +600,9 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, error: &str
         View {
             csrf_token,
             app,
-            mode: if p.as_ref().is_none_or(|p| p.emergency_stop) || contact_changed || entry_blocked
+            mode: if !blocked.is_empty()
+                || entry_blocked
+                || p.as_ref().is_some_and(|p| p.emergency_stop)
             {
                 "closed".into()
             } else if organization_only && row.is_none() {
@@ -631,12 +638,15 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, error: &str
             status: row.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
             reason: row
                 .as_ref()
-                .filter(|_| may_disclose)
+                .filter(|r| may_disclose && !r.is_account_invitation())
                 .map(|r| r.reason.clone())
                 .unwrap_or_default(),
             social: social_only || row.as_ref().is_some_and(|r| r.provider_id.is_some()),
             tenant_name: String::new(),
             tenant_invitation: false,
+            account_invitation,
+            manual_delivery: row.as_ref().is_some_and(|row| row.manual_delivery),
+            password_policy: &state.config.password,
             existing_account: existing.is_some(),
             signed_in: session.is_some(),
             matching_account,
@@ -650,17 +660,9 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, error: &str
                 .is_some_and(|(row, claim)| {
                     claim.id == row.id && row.allows_browser_resend(claim.verified)
                 })
-                && blocked.is_empty()
-                && !contact_changed,
+                && blocked.is_empty(),
             already_admitted,
-            error: if contact_changed {
-                "enrollment_contact_changed"
-            } else if !blocked.is_empty() {
-                blocked
-            } else {
-                error
-            }
-            .to_owned(),
+            error: if blocked.is_empty() { error } else { blocked }.to_owned(),
             expires_at: row.as_ref().and_then(|r| {
                 r.expires_at
                     .format(&time::format_description::well_known::Rfc3339)
@@ -806,6 +808,9 @@ async fn render_invitation(state: &AppState, jar: CookieJar, error: &str) -> Res
             social,
             tenant_name: invite.tenant_name,
             tenant_invitation: true,
+            account_invitation: false,
+            manual_delivery: false,
+            password_policy: &state.config.password,
             existing_account: existing.is_some(),
             signed_in: session.is_some(),
             matching_account,
@@ -949,7 +954,7 @@ async fn continue_registration(state: &AppState, jar: CookieJar) -> Response {
         Ok(Some(session)) => session,
         Ok(None) => {
             return util::management_response(Err(ManagementError::Invalid(
-                "existing_account_login_required",
+                "enrollment_completed_login_required",
             )));
         }
         Err(response) => return *response,
@@ -965,7 +970,6 @@ async fn continue_registration(state: &AppState, jar: CookieJar) -> Response {
                         app_id: invite.app_id,
                         client_id: invite.client_id,
                         auth_request_id: None,
-                        resume_portal: false,
                         tenant_id: Some(invite.tenant_id),
                     })
             })
@@ -1153,8 +1157,12 @@ pub async fn post(
             match enrollment::finalize(
                 &state,
                 token,
-                &input.username,
-                &input.password,
+                enrollment::FinalizeInput {
+                    username: &input.username,
+                    password: &input.password,
+                    email: &input.email,
+                    phone: &input.phone,
+                },
                 session.as_ref(),
                 proof.as_ref(),
             )
@@ -1240,7 +1248,7 @@ pub async fn social(
     request: Option<&authorization_requests::Model>,
 ) -> Response {
     if let Err(e) = enrollment::allow_social(&state.db, provider).await {
-        return util::management_response(Err(e));
+        return social_failure(jar, e);
     }
     let app = request.map(|request| request.app_id);
     let invitation_hash = tenant_token(&jar).map(pero_utils::crypto::sha256_hex);
@@ -1255,12 +1263,12 @@ pub async fn social(
     let mut pending_id = None;
     if let Some(token) = tenant_token(&jar) {
         if let Err(e) = crate::service::tenant::invitation(&state.db, token).await {
-            return util::management_response(Err(e));
+            return social_failure(jar, e);
         }
     } else if let Some(token) = flow_token(&jar) {
         let row = match enrollment::lookup(&state.db, token).await {
             Ok(row) => row,
-            Err(e) => return util::management_response(Err(e)),
+            Err(e) => return social_failure(jar, e),
         };
         if row.provider_id != Some(provider) || row.subject.as_deref() != Some(&info.sub) {
             return (
@@ -1283,26 +1291,35 @@ pub async fn social(
                 pending_id = Some(id);
                 proof.enrollment_id = Some(id);
             }
-            Err(crate::service::ManagementError::Invalid(code)) => {
-                let mut target = "/sso/register".to_owned();
-                pero_utils::encode::append_query_param(&mut target, "error", code);
-                return (jar, Redirect::to(&target)).into_response();
-            }
-            Err(e) => return util::management_response(Err(e)),
+            Err(e) => return social_failure(jar, e),
         }
     }
-    let jar = match with_social_proof(state, jar, &proof) {
+    let jar = match with_social_proof(state, jar.clone(), &proof) {
         Ok(jar) => jar,
-        Err(e) => return util::management_response(Err(e)),
+        Err(e) => return social_failure(jar, e),
     };
     let jar = match pending_id {
-        Some(id) => match with_progress(state, jar, id, false) {
+        Some(id) => match with_progress(state, jar.clone(), id, false) {
             Ok(jar) => jar,
-            Err(e) => return util::management_response(Err(e)),
+            Err(e) => return social_failure(jar, e),
         },
         None => jar,
     };
     (jar, Redirect::to("/sso/register")).into_response()
+}
+
+pub(super) fn social_failure(jar: CookieJar, error: crate::service::ManagementError) -> Response {
+    use crate::service::ManagementError;
+
+    let code = match error {
+        ManagementError::Invalid("not_found") => "invalid_invitation",
+        ManagementError::Invalid(code) => code,
+        error => {
+            tracing::error!(%error, "Social registration failed");
+            "service_unavailable"
+        }
+    };
+    super::social::social_error(jar, true, code)
 }
 
 #[cfg(test)]

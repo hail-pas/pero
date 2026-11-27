@@ -159,8 +159,7 @@ async fn inspect(
         rt.tenant_id,
     )
     .await?
-        != rt.session_id
-        || rt.session_id.is_none()
+        != Some(rt.session_id)
     {
         return Ok(serde_json::json!({"active":false}));
     }

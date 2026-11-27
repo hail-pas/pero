@@ -1,7 +1,7 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect};
 
 use crate::db::entity::identity_provider_keys as ipk;
 use crate::db::enums::KeyAlgorithm;
@@ -23,12 +23,25 @@ pub async fn jwks(State(state): State<AppState>) -> Response {
         }
     };
 
+    // Public key publication ends after the signing and verification windows.
+    // Local verification also handles expired logout hints.
+    let now = time::OffsetDateTime::now_utc();
     let keys = match apply_verification_key_filter(
         ipk::Entity::find()
+            .select_only()
+            .column(ipk::Column::Kid)
+            .column(ipk::Column::PublicKeyPem)
             .filter(ipk::Column::ProviderId.eq(provider.id))
             .filter(ipk::Column::Use.eq(KeyUse::Sig))
-            .filter(ipk::Column::Algorithm.eq(KeyAlgorithm::Rs256)),
+            .filter(ipk::Column::Algorithm.eq(KeyAlgorithm::Rs256))
+            .filter(
+                ipk::Column::ExpiresAt
+                    .is_null()
+                    .or(ipk::Column::ExpiresAt.gt(now))
+                    .or(ipk::Column::LastIssuedUntil.gt(now)),
+            ),
     )
+    .into_tuple::<(String, String)>()
     .all(&state.db)
     .await
     {
@@ -41,13 +54,11 @@ pub async fn jwks(State(state): State<AppState>) -> Response {
 
     let jwks: Vec<serde_json::Value> = keys
         .iter()
-        .filter_map(|k| {
-            let alg_str = "RS256";
-            match pero_utils::oauth::jwk::rsa_public_key_to_jwk(&k.public_key_pem, &k.kid, alg_str)
-            {
+        .filter_map(|(kid, public_key)| {
+            match pero_utils::oauth::jwk::rsa_public_key_to_jwk(public_key, kid, "RS256") {
                 Ok(jwk) => Some(jwk),
                 Err(e) => {
-                    tracing::warn!("JWKS: skip key {}: {e}", k.kid);
+                    tracing::warn!("JWKS: skip key {kid}: {e}");
                     None
                 }
             }

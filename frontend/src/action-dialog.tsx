@@ -13,15 +13,16 @@ import {
   Typography,
 } from "@mui/material";
 import { ContentCopyRounded } from "@mui/icons-material";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { FieldsForm, type Field } from "./forms";
 import type { Values } from "./contracts";
 import type { Actions } from "./shared";
-import { t, useLocale } from "./i18n";
+import { t, useLocale, type Message } from "./i18n";
+import { useAction } from "./use-action";
 
 interface DialogHeading {
-  title: string;
-  description?: string;
+  title: Message;
+  description?: Message;
 }
 export type ActionModal = DialogHeading &
   (
@@ -40,7 +41,7 @@ export type ActionModal = DialogHeading &
 function isDestructive(modal: ActionModal) {
   if (modal.kind !== "confirm") return false;
   return /revoke|delete|remove|disable|unlink|retire|reset|close|reject|withdraw|leave|suspend|lock|撤销|删除|停用|移除|解绑|解散|注销|重置|拒绝|撤回|退出|锁定/i.test(
-    `${modal.title} ${modal.endpoint}`,
+    `${t(modal.title)} ${modal.endpoint}`,
   );
 }
 
@@ -54,10 +55,10 @@ export function ActionDialog({
   onClose: () => void;
 }) {
   useLocale();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [formBusy, setFormBusy] = useState(false);
+  const { busy: actionBusy, error, run } = useAction();
+  const busy = formBusy || actionBusy;
   const [copied, setCopied] = useState(false);
-  const submitting = useRef(false);
   const destructive = isDestructive(modal);
   async function copySecret() {
     if (modal.kind !== "secret") return;
@@ -88,12 +89,12 @@ export function ActionDialog({
         )}
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            {t(error)}
+            {error}
           </Alert>
         )}
         {modal.kind === "secret" ? (
           <TextField
-            label={modal.label || t("客户端密钥")}
+            label={t(modal.label || "客户端密钥")}
             value={modal.secret}
             fullWidth
             multiline
@@ -126,7 +127,7 @@ export function ActionDialog({
             <FieldsForm
               fields={modal.fields}
               initial={modal.initial}
-              onBusyChange={setBusy}
+              onBusyChange={setFormBusy}
               onCancel={onClose}
               submit={(values) =>
                 mutate(modal.endpoint, { ...modal.values, ...values })
@@ -145,20 +146,7 @@ export function ActionDialog({
               variant="contained"
               color={destructive ? "error" : "primary"}
               disabled={busy}
-              onClick={async () => {
-                if (submitting.current) return;
-                submitting.current = true;
-                setBusy(true);
-                setError("");
-                try {
-                  await mutate(modal.endpoint, modal.values);
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  submitting.current = false;
-                  setBusy(false);
-                }
-              }}
+              onClick={() => run(() => mutate(modal.endpoint, modal.values))}
             >
               {busy ? t("正在处理…") : t("确认")}
             </Button>

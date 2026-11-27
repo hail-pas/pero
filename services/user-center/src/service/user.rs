@@ -116,6 +116,7 @@ pub async fn set_status(
     active.update(&txn).await?;
     if status != UserStatus::Active {
         PasswordIdentityService::invalidate_reset_tokens(&txn, id).await?;
+        super::application_request::close(&txn, Some(id), None).await?;
         super::session::SessionService::revoke_all_login_state_for_user_in_db(
             &txn,
             id,
@@ -175,22 +176,22 @@ pub(crate) enum RegistrationCredential<'a> {
     },
 }
 
-/// Persist a verified contact and its initial identity in the caller's transaction.
-pub(crate) async fn create_verified_user(
+/// Create an account and its initial identity in the caller's transaction.
+pub(crate) async fn create_registered_user(
     txn: &sea_orm::DatabaseTransaction,
     username: &str,
     email: Option<String>,
     phone: Option<String>,
+    contact_verified: bool,
     credential: RegistrationCredential<'_>,
 ) -> Result<(users::Model, identities::Model), ManagementError> {
-    crate::db::helper::user::validate_username(username.trim())
-        .map_err(ManagementError::Validation)?;
+    crate::db::helper::user::validate_username(username).map_err(ManagementError::Invalid)?;
     let now = time::OffsetDateTime::now_utc();
     let user = users::ActiveModel {
         id: Set(uuid::Uuid::now_v7()),
         username: Set(username.trim().to_owned()),
-        email_verified_at: Set(email.as_ref().map(|_| now)),
-        phone_verified_at: Set(phone.as_ref().map(|_| now)),
+        email_verified_at: Set((contact_verified && email.is_some()).then_some(now)),
+        phone_verified_at: Set((contact_verified && phone.is_some()).then_some(now)),
         email: Set(email),
         phone: Set(phone),
         status: Set(UserStatus::Active),

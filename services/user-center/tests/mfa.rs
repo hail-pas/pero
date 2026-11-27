@@ -569,13 +569,6 @@ async fn mfa_enrollment_challenge_recovery_and_admin_boundary() {
     )
     .await
     .unwrap();
-    sec::execute(
-        &db,
-        "INSERT INTO admin_permission_state(user_id) VALUES($1)",
-        vec![user.into()],
-    )
-    .await
-    .unwrap();
     let (status, _) = b.call(&app, "/dashboard/apps", None).await;
     assert_eq!(status, StatusCode::OK);
     sec::execute(

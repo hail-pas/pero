@@ -7,33 +7,45 @@ import {
 } from "react";
 import english from "./locales/en.json";
 export type Locale = "zh-CN" | "en";
+export type Message = string | (() => string);
 const dictionary: Record<string, string> = english;
-const reverse = new Map(
-  Object.entries(dictionary).map(([key, value]) => [value, key]),
-);
+function preferredLocale(value?: string | null): Locale | undefined {
+  if (/^zh(?:-|$)/i.test(value ?? "")) return "zh-CN";
+  if (/^en(?:-|$)/i.test(value ?? "")) return "en";
+}
+function browserLocale(): Locale {
+  for (const language of navigator.languages) {
+    const locale = preferredLocale(language);
+    if (locale) return locale;
+  }
+  return preferredLocale(navigator.language) ?? "en";
+}
 function initialLocale(): Locale {
   try {
-    const saved = localStorage.getItem("pero.lang");
-    if (saved) return saved.startsWith("en") ? "en" : "zh-CN";
+    const saved = preferredLocale(localStorage.getItem("pero.lang"));
+    if (saved) return saved;
   } catch {}
-  return navigator.language.startsWith("zh") ? "zh-CN" : "en";
+  return browserLocale();
 }
 let current: Locale = initialLocale();
 /** Source-language message keys keep all product text in one searchable catalogue. */
 export function t(
-  value: string | undefined,
-  params: Record<string, unknown> = {},
+  value: Message | undefined,
+  params?: Record<string, unknown>,
 ): string {
   if (!value) return "";
-  const key = Object.hasOwn(dictionary, value)
-    ? value
-    : reverse.get(value) || value;
-  const text = current === "en" && Object.hasOwn(dictionary, key)
-    ? dictionary[key]
-    : current === "en"
-      ? value
-      : key;
-  return text.replace(/\{\{(\w+)\}\}/g, (_, key) => String(params[key] ?? ""));
+  if (typeof value === "function") return value();
+  const text =
+    current === "en" && Object.hasOwn(dictionary, value)
+      ? dictionary[value]
+      : value;
+  return params
+    ? text.replace(/\{\{(\w+)\}\}/g, (_, key) => String(params[key] ?? ""))
+    : text;
+}
+
+export function labelValue(label: string, value: string | number) {
+  return t("{{label}}：{{value}}", { label: t(label), value });
 }
 const LocaleContext = createContext<{
   locale: Locale;
@@ -50,17 +62,17 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   }
   useEffect(() => {
     document.documentElement.lang = locale;
+    // Document redirects (such as social sign-in callbacks) use browser headers.
+    // Keep the selected language available for notifications initiated there.
+    try {
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `pero_lang=${locale}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+    } catch {}
   }, [locale]);
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key === "pero.lang") {
-        const next: Locale = event.newValue
-          ? event.newValue.startsWith("en")
-            ? "en"
-            : "zh-CN"
-          : navigator.language.startsWith("zh")
-            ? "zh-CN"
-            : "en";
+        const next = preferredLocale(event.newValue) ?? browserLocale();
         current = next;
         update(next);
       }

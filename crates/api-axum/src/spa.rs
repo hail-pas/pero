@@ -14,7 +14,8 @@ fn accepts(req: &Request<Body>, mime: &str) -> bool {
         .is_some_and(|value| value.contains(mime))
 }
 
-fn is_navigation(req: &Request<Body>) -> bool {
+/// Identify document navigation separately from requests for JSON page data.
+pub fn is_navigation(req: &Request<Body>) -> bool {
     req.method() == axum::http::Method::GET
         && accepts(req, "text/html")
         && !accepts(req, "application/json")

@@ -230,42 +230,9 @@ pub async fn finish_enrollment(
     } else {
         jar
     };
-    if result.resume_portal
-        && let Some(id) = result.auth_request_id
-    {
-        use crate::db::entity::authorization_requests;
-        match authorization_requests::Entity::find_by_id(id)
-            .one(&state.db)
-            .await
-        {
-            Ok(Some(request))
-                if Some(request.client_id) == result.client_id
-                    && Some(request.app_id) == result.app_id
-                    && request.diagnostic_session_id.is_none()
-                    && request.completed_at.is_none()
-                    && request.expires_at > time::OffsetDateTime::now_utc() =>
-            {
-                match crate::web::oauth2::authorize::resolve_pending_authorization(
-                    state, &jar, &request, true,
-                )
-                .await
-                {
-                    Ok((jar, response)) => {
-                        return (crate::web::sso::register::clear_flow(jar), response)
-                            .into_response();
-                    }
-                    Err(error) => {
-                        tracing::warn!(?error, "Registration authorization could not resume")
-                    }
-                }
-            }
-            Err(error) => tracing::warn!(%error, "Registration authorization lookup failed"),
-            _ => {}
-        }
-    }
     // Enrollment may outlive its short-lived OAuth request. Recheck the
     // browser nonce and request after committing registration and creating the session.
-    let pending = if let Some(id) = result.auth_request_id.filter(|_| !result.resume_portal) {
+    let pending = if let Some(id) = result.auth_request_id {
         match crate::web::sso::register::active_request(state, &jar).await {
             Ok(current) => current.filter(|r| r.id == id && Some(r.client_id) == result.client_id),
             Err(error) => {

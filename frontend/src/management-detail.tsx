@@ -1,9 +1,5 @@
 import { can, isSuper } from "./permissions";
-import {
-  AddRounded,
-  EditRounded,
-  MoreHorizRounded,
-} from "@mui/icons-material";
+import { AddRounded, EditRounded, MoreHorizRounded } from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -20,7 +16,8 @@ import { Link as RouterLink } from "react-router-dom";
 import { date, lower, errorText } from "./api";
 import type { ViewEnvelope, DetailView, ViewDataMap } from "./contracts";
 import { clientFields, keyFields } from "./forms";
-import { t, useLocale } from "./i18n";
+import { AccountInvitationButton } from "./enrollment";
+import { labelValue, t, useLocale } from "./i18n";
 import {
   Empty,
   Heading,
@@ -28,6 +25,7 @@ import {
   Panel,
   Status,
   names,
+  providerKind,
   type Actions,
 } from "./shared";
 
@@ -44,8 +42,8 @@ export function ManagementDetail({
       page.view === "AppDetailView" ? page.data.app.id : undefined,
     );
   const superAdmin = isSuper(data.layout);
-  const canRotateSecret = (syncUri: string | null) =>
-    allowed("clients.secret.rotate") && (!syncUri || superAdmin);
+  const canRotateSecret = (syncEnabled: boolean) =>
+    allowed("clients.secret.rotate") && (!syncEnabled || superAdmin);
   useLocale();
   const isApp = view === "AppDetailView",
     isUser = view === "UserDetailView",
@@ -88,7 +86,7 @@ export function ManagementDetail({
         ]
       : [
           [t("标识"), data.provider.code],
-          [t("协议"), lower(data.provider.kind)],
+          [t("协议"), providerKind(data.provider.kind)],
           ["Issuer", data.provider.issuer],
           ["Client ID", data.provider.client_id],
         ];
@@ -97,6 +95,16 @@ export function ManagementDetail({
     : isUser
       ? allowed("users.update") || allowed("users.contact.update")
       : superAdmin && !system;
+  const disabledApps = new Set(
+    isUser
+      ? data.access_list
+          ?.filter((access) => lower(access.status) === "disabled")
+          .map((access) => access.app_id)
+      : [],
+  );
+  const grantableApps = isUser
+    ? (data.all_apps ?? []).filter(([id]) => !disabledApps.has(id))
+    : [];
   return (
     <>
       <Heading
@@ -150,9 +158,20 @@ export function ManagementDetail({
             </Button>
           )}
           {isApp &&
+            superAdmin &&
+            !system &&
+            status === "active" &&
+            data.app.tenant_mode !== "organization" && (
+              <AccountInvitationButton editor={editor} app={data.app.id} />
+            )}
+          {isApp &&
             !system &&
             [
-              ["/dashboard/registration?app=" + row.id, t("注册策略与邀请"), superAdmin],
+              [
+                "/dashboard/registration?app=" + row.id,
+                t("注册策略与邀请"),
+                superAdmin,
+              ],
               [
                 `/dashboard/apps/${row.id}/members`,
                 t("本应用成员"),
@@ -182,17 +201,17 @@ export function ManagementDetail({
               color="inherit"
               onClick={() =>
                 editor(
-                  t("调整组织创建权限"),
+                  "调整组织创建权限",
                   `${base}/tenant-policy`,
                   [
                     {
                       name: "enabled",
-                      label: t("允许创建组织"),
+                      label: "允许创建组织",
                       type: "checkbox",
                     },
                     {
                       name: "max_tenants",
-                      label: t("最多创建组织数"),
+                      label: "最多创建组织数",
                       type: "number",
                       required: true,
                     },
@@ -236,16 +255,14 @@ export function ManagementDetail({
       {isApp && allowed("clients.read") && (
         <Panel
           title={t("OAuth 客户端")}
-          description={t(
-            "管理接入应用的客户端、回调地址与密钥轮换。",
-          )}
+          description={t("管理接入应用的客户端、回调地址与密钥轮换。")}
           action={
             <Button
               sx={{ display: allowed("clients.manage") ? undefined : "none" }}
               startIcon={<AddRounded />}
               onClick={() =>
                 editor(
-                  t("新建 OAuth 客户端"),
+                  "新建 OAuth 客户端",
                   "/dashboard/clients/new",
                   clientFields,
                   {},
@@ -335,15 +352,15 @@ export function ManagementDetail({
             title={t("应用访问权限")}
             action={
               <Button
-                disabled={!data.all_apps?.length}
+                disabled={!grantableApps.length}
                 startIcon={<AddRounded />}
                 onClick={() =>
-                  editor(t("授予应用访问权限"), `${base}/grant-app`, [
+                  editor("授予应用访问权限", `${base}/grant-app`, [
                     {
                       name: "app_id",
-                      label: t("应用"),
+                      label: "应用",
                       required: true,
-                      options: data.all_apps?.map(([id, code, name]) => [
+                      options: grantableApps.map(([id, code, name]) => [
                         id,
                         `${name} (${code})`,
                       ]),
@@ -377,24 +394,48 @@ export function ManagementDetail({
                     sx={{ alignItems: "center", flexShrink: 0 }}
                   >
                     <Status value={access.status} />
-                    <Button
-                      size="small"
-                      color="error"
-                      disabled={
-                        !can(data.layout, "apps.members.manage", access.app_id) ||
-                        lower(access.status) !== "active"
-                      }
-                      onClick={() =>
-                        ask(
-                          t("撤销应用权限"),
-                          `${base}/revoke-app`,
-                          { app_id: access.app_id },
-                          t("撤销后，该用户与此应用相关的授权及令牌将失效。"),
-                        )
-                      }
-                    >
-                      {t("撤销权限")}
-                    </Button>
+                    {lower(access.status) === "disabled" ? (
+                      <Button
+                        size="small"
+                        disabled={
+                          !can(
+                            data.layout,
+                            "apps.members.manage",
+                            access.app_id,
+                          )
+                        }
+                        onClick={() =>
+                          ask("恢复访问", `${base}/grant-app`, {
+                            app_id: access.app_id,
+                            restore: true,
+                          })
+                        }
+                      >
+                        {t("恢复访问")}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="small"
+                        color="error"
+                        disabled={
+                          !can(
+                            data.layout,
+                            "apps.members.manage",
+                            access.app_id,
+                          ) || lower(access.status) !== "active"
+                        }
+                        onClick={() =>
+                          ask(
+                            "撤销应用权限",
+                            `${base}/revoke-app`,
+                            { app_id: access.app_id },
+                            "撤销后，该用户与此应用相关的授权及令牌将失效。",
+                          )
+                        }
+                      >
+                        {t("撤销权限")}
+                      </Button>
+                    )}
                   </Stack>
                 </Stack>
               ))}
@@ -434,7 +475,13 @@ export function ManagementDetail({
                         color="text.secondary"
                         sx={{ display: "block" }}
                       >
-                        {lower(identity.kind)}
+                        {t(
+                          lower(identity.kind) === "password"
+                            ? "本地密码"
+                            : lower(identity.kind) === "oauth"
+                              ? "第三方登录"
+                              : "未知登录方式",
+                        )}
                       </Typography>
                     </Box>
                     <Typography variant="body2" color="text.secondary">
@@ -460,7 +507,7 @@ export function ManagementDetail({
             <Button
               startIcon={<AddRounded />}
               onClick={() =>
-                editor(t("添加签名密钥"), `${base}/keys/new`, keyFields)
+                editor("添加签名密钥", `${base}/keys/new`, keyFields)
               }
             >
               {t("添加密钥")}
@@ -532,15 +579,20 @@ export function ManagementDetail({
                       sx={{ mt: 1, flexWrap: "wrap", gap: 1 }}
                     >
                       <Typography variant="body2" color="text.secondary">
-                        {t("到期时间")}：{date(key.expires_at)}
+                        {labelValue("到期时间", date(key.expires_at))}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        {t("计划激活")}：{date(key.activate_at)}
+                        {labelValue("计划激活", date(key.activate_at))}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         {key.active
                           ? t("先激活替代密钥后再退役")
-                          : `${t("可安全撤销时间")}：${key.safe_revoke_at ? date(key.safe_revoke_at) : t("现在")}`}
+                          : labelValue(
+                              "可安全撤销时间",
+                              key.safe_revoke_at
+                                ? date(key.safe_revoke_at)
+                                : t("现在"),
+                            )}
                       </Typography>
                     </Stack>
                   </Box>
@@ -559,7 +611,7 @@ export function ManagementDetail({
                         color="inherit"
                         onClick={() =>
                           ask(
-                            t("取消轮换计划"),
+                            "取消轮换计划",
                             `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
                             { activate_at: "" },
                           )
@@ -573,12 +625,12 @@ export function ManagementDetail({
                       disabled={!!key.revoked_at || key.active}
                       onClick={() =>
                         editor(
-                          t("轮换计划"),
+                          "轮换计划",
                           `${base}/keys/${encodeURIComponent(key.kid)}/schedule`,
                           [
                             {
                               name: "activate_at",
-                              label: t("计划激活时间（RFC3339，带时区）"),
+                              label: "计划激活时间（RFC3339，带时区）",
                               required: true,
                             },
                           ],
@@ -593,7 +645,7 @@ export function ManagementDetail({
                       disabled={!!key.revoked_at || key.active}
                       onClick={() =>
                         ask(
-                          t("激活密钥"),
+                          "激活密钥",
                           `${base}/keys/${encodeURIComponent(key.kid!)}/activate`,
                         )
                       }
@@ -611,12 +663,10 @@ export function ManagementDetail({
                       }
                       onClick={() =>
                         ask(
-                          t("撤销密钥"),
+                          "撤销密钥",
                           `${base}/keys/${encodeURIComponent(key.kid!)}/revoke`,
                           {},
-                          t(
-                            "撤销会从公钥集移除此密钥，旧令牌将无法验签。确认已超过安全撤销时间？",
-                          ),
+                          "撤销会从公钥集移除此密钥，旧令牌将无法验签。确认已超过安全撤销时间？",
                         )
                       }
                     >
@@ -628,12 +678,10 @@ export function ManagementDetail({
                       disabled={!!key.revoked_at}
                       onClick={() =>
                         ask(
-                          t("紧急撤销泄露密钥"),
+                          "紧急撤销泄露密钥",
                           `${base}/keys/${encodeURIComponent(key.kid)}/revoke`,
                           { emergency: true },
-                          t(
-                            "仅限密钥泄露：立即停止签名并移除公钥，所有旧令牌验签会失败，可能中断登录。确认继续？",
-                          ),
+                          "仅限密钥泄露：立即停止签名并移除公钥，所有旧令牌验签会失败，可能中断登录。确认继续？",
                         )
                       }
                     >
@@ -655,14 +703,14 @@ export function ManagementDetail({
               }}
               color="inherit"
               onClick={() =>
-                editor(t("修改用户状态"), `${base}/set-status`, [
+                editor("修改用户状态", `${base}/set-status`, [
                   {
                     name: "status",
-                    label: t("账户状态"),
+                    label: "账户状态",
                     options: [
-                      ["active", t("启用")],
-                      ["disabled", t("停用")],
-                      ["locked", t("锁定")],
+                      ["active", "启用"],
+                      ["disabled", "停用"],
+                      ["locked", "锁定"],
                     ],
                     default: lower(data.user.status),
                   },
@@ -677,10 +725,10 @@ export function ManagementDetail({
               }}
               color="warning"
               onClick={() =>
-                editor(t("重置用户密码"), `${base}/reset-password`, [
+                editor("重置用户密码", `${base}/reset-password`, [
                   {
                     name: "new_password",
-                    label: t("新密码"),
+                    label: "新密码",
                     type: "password",
                     required: true,
                   },
@@ -700,7 +748,7 @@ export function ManagementDetail({
               disabled={
                 system || (isApp ? !allowed("apps.manage") : !superAdmin)
               }
-              onClick={() => ask(t("切换启用状态"), `${base}/toggle`)}
+              onClick={() => ask("切换启用状态", `${base}/toggle`)}
             >
               {t("切换启用状态")}
             </Button>
@@ -727,7 +775,7 @@ function ClientActions({
   allowed: (permission: string) => boolean;
   ask: Actions["ask"];
   editor: Actions["editor"];
-  canRotateSecret: (syncUri: string | null) => boolean;
+  canRotateSecret: (syncEnabled: boolean) => boolean;
   system: boolean;
 }) {
   useLocale();
@@ -735,7 +783,12 @@ function ClientActions({
   const close = () => setAnchor(null);
   const confidential = lower(client.type) === "confidential";
   const canManage = allowed("clients.manage");
-  const canRotate = canRotateSecret(client.account_sync_uri) && confidential;
+  const canRotate = canRotateSecret(client.account_sync_enabled) && confidential;
+  const canToggle =
+    canManage &&
+    (!client.account_sync_enabled ||
+      lower(client.status) === "active" ||
+      isSuper(data.layout));
   const secondary = [
     canManage
       ? {
@@ -743,13 +796,13 @@ function ClientActions({
           label: t("应用注销通知"),
           onClick: () =>
             editor(
-              t("应用注销通知"),
+              "应用注销通知",
               `/dashboard/clients/${client.id}/backchannel-logout`,
               [
                 {
                   name: "backchannel_logout_uri",
-                  label: t("Back-channel Logout 地址"),
-                  hint: t("应用接收注销令牌的 HTTPS 地址；留空停用"),
+                  label: "Back-channel Logout 地址",
+                  hint: "应用接收注销令牌的 HTTPS 地址；留空停用",
                 },
               ],
               { backchannel_logout_uri: client.backchannel_logout_uri || "" },
@@ -762,18 +815,26 @@ function ClientActions({
           label: t("账户生命周期同步"),
           onClick: () =>
             editor(
-              t("账户生命周期同步"),
+              "账户生命周期同步",
               `/dashboard/clients/${client.id}/account-sync`,
               [
                 {
+                  name: "account_sync_enabled",
+                  label: "授权查询账户、租户和成员",
+                  type: "checkbox",
+                  hint: "请确认客户端密钥由可信服务持有。资料字段按客户端 scope 返回。",
+                },
+                {
                   name: "account_sync_uri",
-                  label: t("账户同步地址"),
-                  hint: t(
-                    "应用接收签名事件的 HTTPS 地址；保存后同步现有成员，留空停用。资料按客户端 scope 提供。",
-                  ),
+                  label: "账户同步地址",
+                  hint: "可选填接收签名事件的 HTTPS 地址。设置地址后会推送现有成员的同步事件。",
+                  visibleWhen: (values) => values.account_sync_enabled === true,
                 },
               ],
-              { account_sync_uri: client.account_sync_uri || "" },
+              {
+                account_sync_enabled: client.account_sync_enabled,
+                account_sync_uri: client.account_sync_uri || "",
+              },
             ),
         }
       : null,
@@ -783,7 +844,7 @@ function ClientActions({
           label: t("停用旧密钥"),
           onClick: () =>
             ask(
-              t("立即停用旧密钥"),
+              "立即停用旧密钥",
               `/dashboard/clients/${client.id}/retire-secret`,
             ),
         }
@@ -794,16 +855,16 @@ function ClientActions({
           label: t("平滑轮换密钥"),
           onClick: () =>
             editor(
-              t("平滑轮换密钥"),
+              "平滑轮换密钥",
               `/dashboard/clients/${client.id}/rotate-secret`,
               [
                 {
                   name: "grace_seconds",
-                  label: t("旧密钥保留时间"),
+                  label: "旧密钥保留时间",
                   options: [
-                    ["3600", t("1 小时")],
-                    ["86400", t("24 小时")],
-                    ["604800", t("7 天")],
+                    ["3600", "1 小时"],
+                    ["86400", "24 小时"],
+                    ["604800", "7 天"],
                   ],
                 },
               ],
@@ -818,22 +879,19 @@ function ClientActions({
           danger: true,
           onClick: () =>
             ask(
-              t("重置客户端密钥"),
+              "重置客户端密钥",
               `/dashboard/clients/${client.id}/reset-secret`,
               {},
-              t("现有密钥将立即失效，使用该密钥的应用需要更新配置。"),
+              "现有密钥将立即失效，使用该密钥的应用需要更新配置。",
             ),
         }
       : null,
-    canManage
+    canToggle
       ? {
           key: "toggle",
           label: t("切换状态"),
           onClick: () =>
-            ask(
-              t("切换客户端状态"),
-              `/dashboard/clients/${client.id}/toggle`,
-            ),
+            ask("切换客户端状态", `/dashboard/clients/${client.id}/toggle`),
         }
       : null,
   ].filter((item): item is NonNullable<typeof item> => !!item);
@@ -849,25 +907,23 @@ function ClientActions({
           color="inherit"
           onClick={() =>
             editor(
-              t("编辑 OAuth 客户端"),
+              "编辑 OAuth 客户端",
               `/dashboard/clients/${client.id}/edit`,
               clientFields
                 .filter(
                   (field) =>
                     field.name !== "identifier" &&
                     (field.name !== "secret" ||
-                      canRotateSecret(client.account_sync_uri)),
+                      canRotateSecret(client.account_sync_enabled)),
                 )
                 .map((field) =>
-                  client.account_sync_uri &&
+                  client.account_sync_enabled &&
                   !isSuper(data.layout) &&
                   ["scopes", "client_type"].includes(field.name)
                     ? {
                         ...field,
                         disabled: true,
-                        hint: t(
-                          "账户同步已启用，请由超级管理员调整类型和 scope。",
-                        ),
+                        hint: "账户同步已启用，请由超级管理员调整类型和 scope。",
                       }
                     : field,
                 ),
@@ -931,7 +987,7 @@ function ClientActions({
       )}
       {client.previous_secret_expires_at && (
         <Typography variant="caption" color="text.secondary">
-          {t("旧密钥到期")}：{date(client.previous_secret_expires_at)}
+          {labelValue("旧密钥到期", date(client.previous_secret_expires_at))}
         </Typography>
       )}
     </Stack>

@@ -43,7 +43,7 @@ where
         tenant_version: Set(params.tenant.as_ref().map(|c| c.tenant_version)),
         tenant_member_version: Set(params.tenant.as_ref().map(|c| c.tenant_member_version)),
         client_id: Set(params.client_id),
-        session_id: Set(Some(params.session_id)),
+        session_id: Set(params.session_id),
         admission_session_id: Set(admission.as_ref().map(|d| d.id)),
         admission_revoked: Set(admission.is_some_and(|d| d.revoked)),
         takeover_allowed: Set(params.takeover_allowed),

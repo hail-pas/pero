@@ -20,7 +20,7 @@ import { Link as RouterLink } from "react-router-dom";
 import { lower, type Values } from "./api";
 import { Label } from "./components/label";
 import { type Field } from "./forms";
-import { t, useLocale } from "./i18n";
+import { t, useLocale, type Message } from "./i18n";
 
 export const names: Record<string, string> = {
   apps: "应用",
@@ -172,15 +172,32 @@ const statusMap: Record<
   revoked: { label: "已撤销", color: "error" },
 };
 
-export function Status({ value }: { value: unknown }) {
-  useLocale();
-  const status = statusMap[lower(value)];
-  if (status)
-    return <Label color={status.color}>{t(status.label)}</Label>;
-  return <Label>{t("已停用")}</Label>;
+export function providerKind(value: string) {
+  switch (lower(value)) {
+    case "local":
+      return t("本地账户");
+    case "wechat":
+      return t("微信");
+    case "oidc":
+      return "OpenID Connect";
+    case "oauth2":
+      return "OAuth 2.0";
+    default:
+      return t("未知协议");
+  }
 }
 
-export function Empty({ text = t("暂无数据") }: { text?: string }) {
+export function Status({ value }: { value: unknown }) {
+  useLocale();
+  const key = lower(value);
+  if (Object.hasOwn(statusMap, key)) {
+    const status = statusMap[key];
+    return <Label color={status.color}>{t(status.label)}</Label>;
+  }
+  return <Label>{t("未知状态")}</Label>;
+}
+
+export function Empty({ text = "暂无数据" }: { text?: string }) {
   useLocale();
   return (
     <Stack sx={{ alignItems: "center", py: 6, textAlign: "center" }}>
@@ -394,13 +411,13 @@ export type Actions = {
     after?: () => void,
   ) => Promise<void>;
   ask: (
-    title: string,
+    title: Message,
     endpoint: string,
     values?: Values,
-    description?: string,
+    description?: Message,
   ) => void;
   editor: (
-    title: string,
+    title: Message,
     endpoint: string,
     fields: Field[],
     initial?: Values,

@@ -14,7 +14,12 @@ pub struct Model {
     pub user_id: Uuid,
     #[sea_orm(unique_key = "ux_contact_change_value_pending")]
     pub change_type: ContactChangeType,
-    #[sea_orm(column_type = "Text", unique_key = "ux_contact_change_value_pending")]
+    #[sea_orm(
+        column_type = "custom(\"citext\")",
+        select_as = "text",
+        save_as = "citext",
+        unique_key = "ux_contact_change_value_pending"
+    )]
     pub new_value: String,
     pub status: ContactChangeStatus,
     #[sea_orm(column_type = "Text")]
