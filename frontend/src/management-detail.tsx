@@ -157,13 +157,13 @@ export function ManagementDetail({
               {t("接入向导与诊断")}
             </Button>
           )}
-          {isApp &&
-            superAdmin &&
-            !system &&
-            status === "active" &&
-            data.app.tenant_mode !== "organization" && (
-              <AccountInvitationButton editor={editor} app={data.app.id} />
-            )}
+          {isApp && data.invitation_domains && (
+            <AccountInvitationButton
+              editor={editor}
+              app={data.app.id}
+              domains={data.invitation_domains}
+            />
+          )}
           {isApp &&
             !system &&
             [

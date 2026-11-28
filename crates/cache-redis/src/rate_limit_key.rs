@@ -25,6 +25,12 @@ cache_key_specs! {
 
     pub rl_enrollment_email: RlEnrollmentEmailKey => u64 { pattern: "rl:enrollment:email:{hash}", ttl: 3600, args: (hash: &str), }
 
+    pub rl_enrollment_invite_recipient: RlEnrollmentInviteRecipientKey => u64 {
+        pattern: "rl:enrollment:invite:recipient:{hash}",
+        ttl: 3600,
+        args: (hash: &str),
+    }
+
     pub rl_register_ip: RlRegisterIpKey => u64 {
         pattern: "rl:register:ip:{ip}",
         ttl: 3600,

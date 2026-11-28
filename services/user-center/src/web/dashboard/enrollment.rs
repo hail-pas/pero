@@ -38,7 +38,8 @@ pub async fn get(
         let mut policy = svc::policy(&state.db, scope.app).await?;
         let inherited = scope.app.is_some() && policy.app_id.is_none();
         policy.app_id = scope.app;
-        let can_invite = svc::supports_personal_enrollment(&state.db, scope.app).await?;
+        let can_invite = policy.invitations_open()
+            && svc::supports_personal_enrollment(&state.db, scope.app).await?;
         let list = svc::list(&state.db, &scope, None).await?;
         Ok::<_, ManagementError>((policy, inherited, can_invite, list))
     }

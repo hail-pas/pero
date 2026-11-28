@@ -443,7 +443,7 @@ export interface ViewDataMap {
   };
   ProviderListView: ListPage & { providers: ProviderSummary[] };
   AppFormView: FormPage & { app_id: string };
-  UserFormView: FormPage & { user_id: string };
+  UserFormView: FormPage & { user_id: string; invitation_domains: string[] | null };
   ProviderFormView: FormPage & { provider_id: string };
   AppMembersView: RowsPage<{
     user_id: string;
@@ -461,6 +461,7 @@ export interface ViewDataMap {
   AppDetailView: AccountPage & {
     app: AppSummary;
     clients: ClientSummary[];
+    invitation_domains: string[] | null;
     error: string;
   };
   UserDetailView: AccountPage & {

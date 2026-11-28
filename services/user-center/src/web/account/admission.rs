@@ -135,7 +135,7 @@ pub async fn app(
                 return super::mfa::redirect_to(target, "/account/applications").into_response();
             }
             Ok(None) => {}
-            Err(response) => return response,
+            Err(response) => return *response,
         }
     }
     util::management_response(result)

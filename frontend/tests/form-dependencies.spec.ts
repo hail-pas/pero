@@ -134,6 +134,7 @@ test("client editor hides secret and ID token fields when not applicable", async
           created_at: "2026-10-20T12:00:00Z",
         },
         clients: [client],
+        invitation_domains: null,
         all_apps: [],
         access_list: [],
         identities: [],
@@ -141,6 +142,7 @@ test("client editor hides secret and ID token fields when not applicable", async
     },
   });
   await page.goto("/dashboard/apps/app-1");
+  await expect(page.getByRole("button", { name: "邀请开户", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "添加客户端", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(
@@ -210,6 +212,10 @@ test("inherited registration policy reveals configuration only when detached", a
     exact: true,
   });
   await expect(mode).toBeVisible();
+  await expect(page.getByLabel("允许的邮箱域名")).toBeVisible();
+
+  await mode.click();
+  await page.getByRole("option", { name: "仅邀请", exact: true }).click();
   await expect(page.getByLabel("允许的邮箱域名")).toBeVisible();
 
   await mode.click();

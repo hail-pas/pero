@@ -118,12 +118,67 @@ async fn delegated_user_invitations_follow_current_permissions() {
     }
     for complete in [true, false] {
         let address = format!("delegated-{}@example.test", Uuid::now_v7().simple());
+        if complete {
+            let mut without_delivery = f.state.clone();
+            std::sync::Arc::make_mut(&mut without_delivery.config).notification =
+                Default::default();
+            for _ in 0..3 {
+                assert!(matches!(
+                    enrollment::invite(&without_delivery, &address, None, &actor, false, "", Email)
+                        .await,
+                    Err(user_center::service::ManagementError::Invalid(
+                        "notification_disabled"
+                    ))
+                ));
+            }
+            assert!(matches!(
+                enrollment::start_from_request(&without_delivery, &address, false, None, None)
+                    .await,
+                Err(user_center::service::ManagementError::Invalid(
+                    "notification_disabled"
+                ))
+            ));
+            f.sql("UPDATE registration_policies SET mode='closed'", vec![])
+                .await;
+            assert!(matches!(
+                enrollment::start_from_request(&f.state, &address, false, None, None).await,
+                Err(user_center::service::ManagementError::Invalid(
+                    "registration_closed"
+                ))
+            ));
+            f.sql(
+                "UPDATE registration_policies SET mode='self_service'",
+                vec![],
+            )
+            .await;
+            for _ in 0..3 {
+                enrollment::start_from_request(&f.state, &address, false, None, None)
+                    .await
+                    .unwrap();
+            }
+            assert!(matches!(
+                enrollment::start_from_request(&f.state, &address, false, None, None).await,
+                Err(user_center::service::ManagementError::Invalid(
+                    "rate_limited"
+                ))
+            ));
+        }
         enrollment::invite(&f.state, &address, None, &actor, false, "", Email)
             .await
             .unwrap();
+        if complete {
+            for _ in 0..3 {
+                assert!(matches!(
+                    enrollment::invite(&f.state, &address, None, &actor, false, "", Email).await,
+                    Err(user_center::service::ManagementError::Invalid(
+                        "enrollment_invitation_exists"
+                    ))
+                ));
+            }
+        }
         let row = f.state.db.query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT pgp_sym_decrypt(n.payload_enc,current_setting('app.encrypt_key')) AS payload FROM notification_outbox n JOIN enrollments e ON e.id=n.enrollment_id WHERE e.email=$1",
+            "SELECT pgp_sym_decrypt(n.payload_enc,current_setting('app.encrypt_key')) AS payload FROM notification_outbox n JOIN enrollments e ON e.id=n.enrollment_id WHERE e.invitation AND e.email=$1",
             [address.clone().into()],
         )).await.unwrap().unwrap();
         let payload: Value =
@@ -926,6 +981,13 @@ async fn account_links_create_users_and_grant_only_the_invited_app() {
     )
     .await;
 
+    let app_path = format!("/dashboard/apps/{app_id}");
+    let (_, app_page, _) = call(&router, &admin, &app_path, None).await;
+    assert_eq!(
+        app_page["data"]["invitation_domains"],
+        json!(["example.test"])
+    );
+
     let account = [("csrf_token", csrf.as_str()), ("delivery", "account_link")];
     let mut app_fields = account.to_vec();
     app_fields.push(("app", &app_id));
@@ -996,6 +1058,10 @@ async fn account_links_create_users_and_grant_only_the_invited_app() {
         assert_eq!(replayed["data"]["status"], "completed");
         if let Some((_, phone)) = contact {
             let (cookies, csrf, _, _) = f.login(user.id).await;
+            let (_, portal, _) = call(&router, &cookies, "/account/applications", None).await;
+            let progress = portal["data"]["progress"]["rows"].as_array().unwrap();
+            assert_eq!(progress.len(), 1);
+            assert_eq!(progress[0]["reason"], "");
             let (_, profile, _) = call(&router, &cookies, "/account/profile", None).await;
             let profile = &profile["data"]["user"];
             for (channel, value) in [("email", "invitee@example.test"), ("phone", phone)] {
@@ -1028,7 +1094,7 @@ async fn account_links_create_users_and_grant_only_the_invited_app() {
             assert!(user.email_verified_at.is_some() && user.phone_verified_at.is_some());
         }
     }
-
+    let address = format!("registered-later-{}@external.test", f.app.simple());
     let (_, invitation, _) = call(
         &router,
         &admin,
@@ -1037,14 +1103,22 @@ async fn account_links_create_users_and_grant_only_the_invited_app() {
             ("csrf_token", &csrf),
             ("delivery", "manual"),
             ("app", &app_id),
-            ("email", "registered-later@example.test"),
+            ("email", &address),
+            ("domain_exception", "true"),
+            ("reason", "Temporary account"),
         ]),
     )
     .await;
+    for _ in 0..3 {
+        user_center::service::enrollment::start_from_request(&f.state, &address, false, None, None)
+            .await
+            .unwrap();
+    }
+    let registered_later = Uuid::now_v7();
     f.sql(
-        "INSERT INTO users(username,email,email_verified_at)
-         VALUES('registered_later','registered-later@example.test',now())",
-        vec![],
+        "INSERT INTO users(id,username,email,email_verified_at)
+         VALUES($1,'registered_later',$2,now())",
+        vec![registered_later.into(), address.into()],
     )
     .await;
     let link = url::Url::parse(invitation["data"]["secret"].as_str().unwrap()).unwrap();
@@ -1053,9 +1127,23 @@ async fn account_links_create_users_and_grant_only_the_invited_app() {
         .find(|(key, _)| key == "token")
         .unwrap()
         .1;
-    user_center::service::enrollment::verify(&f.state, &token)
+    let invitation_id = user_center::service::enrollment::verify(&f.state, &token)
         .await
         .unwrap();
+    let (account_cookies, account_csrf, _, _) = f.login(registered_later).await;
+    let (_, portal, _) = call(&router, &account_cookies, "/account/applications", None).await;
+    let rows = portal["data"]["progress"]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|row| row["invitation"] == false));
+    let (status, continuation, _) = call(
+        &router,
+        &account_cookies,
+        &format!("/account/enrollments/{invitation_id}"),
+        Some(&[("csrf_token", &account_csrf), ("action", "continue")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(continuation["error"], "enrollment_unavailable");
     let entry = format!("{}?{}", link.path(), link.query().unwrap());
     let (_, _, headers) = call(&router, "", &entry, None).await;
     let cookies = headers
@@ -1067,6 +1155,32 @@ async fn account_links_create_users_and_grant_only_the_invited_app() {
     let (_, blocked, _) = call(&router, &cookies, "/sso/register", None).await;
     assert_eq!(blocked["data"]["mode"], "closed");
     assert_eq!(blocked["data"]["error"], "enrollment_existing_app_invitee");
+    assert_eq!(blocked["data"]["reason"], "");
+
+    f.sql(
+        "UPDATE registration_policies SET emergency_stop=true WHERE app_id IS NULL",
+        vec![],
+    )
+    .await;
+    for path in [app_path.as_str(), "/dashboard/users/new"] {
+        let (_, page, _) = call(&router, &admin, path, None).await;
+        assert_eq!(page["data"].get("invitation_domains"), Some(&Value::Null));
+    }
+    let (_, policy_page, _) = call(
+        &router,
+        &admin,
+        &format!("/dashboard/registration?app={app_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(policy_page["data"]["can_invite"], false);
+    assert!(
+        policy_page["data"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["reason"] == "Temporary account")
+    );
     f.cleanup().await;
 }
 
@@ -1312,6 +1426,14 @@ async fn open_app_access_checks_verified_domains_after_oauth_request_expires() {
     let application = &catalogue["data"]["rows"][0];
     assert_eq!(application["self_service_open"], false);
     assert_eq!(application["admission_error"], "verified_email_required");
+    let (_, left, _) = call(
+        &router,
+        &cookies,
+        &portal,
+        Some(&[("csrf_token", &csrf), ("action", "leave")]),
+    )
+    .await;
+    assert_eq!(left["code"], 0);
     for (email, verified, error) in [
         ("member@example.test", false, "verified_email_required"),
         ("member@sub.example.test", true, "email_domain_not_allowed"),

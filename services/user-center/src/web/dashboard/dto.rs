@@ -72,6 +72,7 @@ pub struct AppDetailView {
     pub csrf_token: String,
     pub app: AppSummary,
     pub clients: Vec<ClientSummary>,
+    pub invitation_domains: Option<Vec<String>>,
     pub error: String,
 }
 
@@ -178,6 +179,7 @@ pub struct UserFormView {
     pub mode: String,
     pub user_id: String,
     pub form: UserFormData,
+    pub invitation_domains: Option<Vec<String>>,
     pub error: String,
 }
 

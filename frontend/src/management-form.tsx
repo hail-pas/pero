@@ -1,3 +1,4 @@
+import { Alert } from "@mui/material";
 import { providerPresets } from "./provider-presets";
 import { can, isSuper } from "./permissions";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -13,7 +14,7 @@ import {
 import type { ViewEnvelope, FormView } from "./contracts";
 import { Heading, Panel, names, type Actions } from "./shared";
 import { t, useLocale } from "./i18n";
-import { RequestError } from "./api";
+import { errorText, RequestError } from "./api";
 
 export function ManagementForm({
   page,
@@ -32,13 +33,15 @@ export function ManagementForm({
       ? "users"
       : "providers";
   const inviting = kind === "users" && data.mode === "create";
+  const invitationDomains =
+    view === "UserFormView" ? data.invitation_domains : null;
   const fields =
     kind === "apps"
       ? appFields
       : kind === "users"
         ? inviting
           ? isSuper(data.layout)
-            ? invitationFields
+            ? invitationFields(invitationDomains ?? [])
             : [invitationEmailField]
           : userFields.filter((f) =>
               ["email", "phone"].includes(f.name)
@@ -71,43 +74,51 @@ export function ManagementForm({
         title={t(inviting ? "创建邀请" : "基本信息")}
         description={inviting ? undefined : t("带 * 的字段为必填项，保存后立即生效。")}
       >
-        <FieldsForm
-          key={path}
-          label={inviting ? t("创建邀请") : undefined}
-          presets={
-            kind === "providers" && data.mode === "create"
-              ? providerPresets
-              : undefined
-          }
-          fields={fields.map((field) =>
-            data.mode === "edit" && immutableFields.has(field.name)
-              ? { ...field, disabled: true }
-              : field,
-          )}
-          initial={
-            kind === "apps"
-              ? {
-                  tenant_mode: "personal",
-                  ...data.form,
-                  session_limit_mode: Number(data.form.max_sessions) === 0 ? "unlimited" : "limited",
-                  max_sessions: Number(data.form.max_sessions) || 1,
-                }
-              : data.form
-          }
-          serverError={data.error}
-          submit={async (values) => {
-            if (kind === "apps") {
-              const { session_limit_mode, max_sessions, ...rest } = values;
-              const limit = session_limit_mode === "unlimited" ? 0 : Number(max_sessions);
-              if (session_limit_mode !== "unlimited" && (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)) {
-                throw new RequestError("invalid_limited_sessions");
-              }
-              await mutate(path, { ...rest, max_sessions: limit }, () => navigate(`/dashboard/${kind}`));
-            } else {
-              await mutate(path, inviting ? invitationValues(values) : values, () => navigate(`/dashboard/${kind}`));
+        {inviting && invitationDomains === null ? (
+          <Alert severity="info">{errorText("registration_closed")}</Alert>
+        ) : (
+          <FieldsForm
+            key={path}
+            label={inviting ? t("创建邀请") : undefined}
+            presets={
+              kind === "providers" && data.mode === "create"
+                ? providerPresets
+                : undefined
             }
-          }}
-        />
+            fields={fields.map((field) =>
+              data.mode === "edit" && immutableFields.has(field.name)
+                ? { ...field, disabled: true }
+                : field,
+            )}
+            initial={
+              kind === "apps"
+                ? {
+                    tenant_mode: "personal",
+                    ...data.form,
+                    session_limit_mode: Number(data.form.max_sessions) === 0 ? "unlimited" : "limited",
+                    max_sessions: Number(data.form.max_sessions) || 1,
+                  }
+                : data.form
+            }
+            serverError={data.error}
+            submit={async (values) => {
+              if (kind === "apps") {
+                const { session_limit_mode, max_sessions, ...rest } = values;
+                const limit = session_limit_mode === "unlimited" ? 0 : Number(max_sessions);
+                if (session_limit_mode !== "unlimited" && (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)) {
+                  throw new RequestError("invalid_limited_sessions");
+                }
+                await mutate(path, { ...rest, max_sessions: limit }, () => navigate(`/dashboard/${kind}`));
+              } else {
+                await mutate(
+                  path,
+                  inviting ? invitationValues(values, invitationDomains ?? []) : values,
+                  () => navigate(`/dashboard/${kind}`),
+                );
+              }
+            }}
+          />
+        )}
       </Panel>
     </>
   );

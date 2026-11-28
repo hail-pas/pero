@@ -10,7 +10,7 @@ use crate::db::entity::{
     apps, identities, identity_providers, oauth_clients, refresh_tokens, sso_sessions,
     user_app_access, user_consents, users,
 };
-use crate::db::enums::{IdentityKind, UserStatus};
+use crate::db::enums::{CommonStatus, IdentityKind, UserStatus};
 
 /// The selection is always intersected with the authenticated user's sessions.
 pub async fn revoke_sessions<C: ConnectionTrait>(
@@ -227,11 +227,11 @@ pub async fn leave_app(
     if app.system {
         return Err(ManagementError::Invalid("system_app_protected"));
     }
-    user_app_access::Entity::find_by_id((session.user_id, app_id))
-        .lock_exclusive()
-        .one(&txn)
-        .await?;
+    let access = super::access::lock_user_app_access(&txn, session.user_id, app_id).await?;
     lock_account_session(&txn, session, &state.config.sso).await?;
+    if !access.is_some_and(|access| access.status == CommonStatus::Active) {
+        return Ok(());
+    }
     super::access::revoke_explicit(&txn, session.user_id, app_id, "membership_withdrawn").await?;
     super::security::execute(&txn,"DELETE FROM user_consents WHERE user_id=$1 AND client_id IN (SELECT id FROM oauth_clients WHERE app_id=$2)",vec![session.user_id.into(),app_id.into()]).await?;
     super::security::execute(&txn,"INSERT INTO audit_events(actor_id,actor_username,action,target,outcome,http_status) SELECT id,username,'membership_withdrawn',$2,'success',200 FROM users WHERE id=$1",vec![session.user_id.into(),app_id.to_string().into()]).await?;

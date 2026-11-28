@@ -95,6 +95,7 @@ export function Enrollment({
   const blocked = data.mode === "closed" || data.status === "blocked";
   const hasFlow = Boolean(data.status || data.app || data.tenant_invitation);
   const canAct = data.can_act !== false;
+  const contact = data.phone || data.email;
   const loginQuery = `redirect=%2Fsso%2Fregister&flow=${encodeURIComponent(data.flow)}`;
   const loginHref = `/sso/register/login?${loginQuery}`;
   const methods = (data.allowed_methods ?? ["email", "phone"]).filter(
@@ -241,6 +242,11 @@ export function Enrollment({
       )}
       <Heading title={t("注册与应用准入")} description={description} />
       <Panel title={t("注册进度")}>
+        {data.app_name && (
+          <Typography sx={{ mb: 2 }}>
+            {labelValue("注册应用", data.app_name)}
+          </Typography>
+        )}
         {terminal ? (
           <Stack spacing={2}>
             <Alert severity={completed ? "success" : "info"}>
@@ -268,11 +274,7 @@ export function Enrollment({
           </Stack>
         ) : data.status && !canAct ? (
           <Stack spacing={2}>
-            <Typography>
-              {[data.phone || data.email, data.app_name]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
+            {contact && <Typography>{contact}</Typography>}
             <Alert severity="info">
               {data.manual_delivery
                 ? t("请联系发出邀请的管理员，获取最新的邀请链接。")
@@ -299,11 +301,11 @@ export function Enrollment({
           (data.existing_account &&
             (data.status === "ready" || data.status === "pending_approval")) ? (
           <Stack spacing={2}>
-            <Typography>
-              {[data.tenant_name || data.app_name, data.phone || data.email]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
+            {(data.tenant_name || contact) && (
+              <Typography>
+                {[data.tenant_name, contact].filter(Boolean).join(" · ")}
+              </Typography>
+            )}
             {data.already_admitted && (
               <Alert severity="info">
                 {t(
@@ -359,13 +361,7 @@ export function Enrollment({
           </Stack>
         ) : data.status ? (
           <Stack spacing={3}>
-            {(data.phone || data.email || data.app_name) && (
-              <Typography>
-                {[data.phone || data.email, data.app_name]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Typography>
-            )}
+            {contact && <Typography>{contact}</Typography>}
             {data.status === "pending_verification" && (
               <>
                 <Alert severity="info">
@@ -501,9 +497,11 @@ export function Enrollment({
 export function AccountInvitationButton({
   editor,
   app,
+  domains,
 }: {
   editor: Actions["editor"];
   app?: string;
+  domains: string[];
 }) {
   return (
     <Button
@@ -514,7 +512,7 @@ export function AccountInvitationButton({
         editor(
           "邀请开户",
           "/dashboard/invitations",
-          invitationExceptionFields,
+          invitationExceptionFields(domains, true),
           {},
           {
             app,
@@ -594,9 +592,9 @@ export function EnrollmentAdmin({
               name: "domains",
               label: t("允许的邮箱域名"),
               group: "准入规则",
-              visibleWhen: selfService,
+              visibleWhen: (values) => !values.inherit && values.mode !== "closed",
               hint: t(
-                "逗号分隔，精确匹配域名。配置后，自助访问要求账号有符合域名限制的已验证邮箱。",
+                "逗号分隔，精确匹配域名。自助访问要求账号使用符合条件的已验证邮箱。签发不符合条件的邀请时须填写域名例外理由。",
               ),
             },
             {
@@ -638,10 +636,10 @@ export function EnrollmentAdmin({
       {data.can_invite && (
         <Panel title={t("创建邀请")}>
           <FieldsForm
-            fields={invitationFields}
+            fields={invitationFields(p.domains)}
             submit={(values) =>
               mutate("/dashboard/invitations", {
-                ...invitationValues(values),
+                ...invitationValues(values, p.domains),
                 app: p.app_id,
               })
             }
@@ -835,9 +833,12 @@ export function Admission({
                   <Button
                     color="error"
                     onClick={() =>
-                      ask("退出应用", endpoint, {
-                        action: "leave",
-                      })
+                      ask(
+                        "退出应用",
+                        endpoint,
+                        { action: "leave" },
+                        "退出后，此应用的访问资格将被撤销。如需重新访问，请联系管理员恢复资格。",
+                      )
                     }
                   >
                     {t("退出应用")}

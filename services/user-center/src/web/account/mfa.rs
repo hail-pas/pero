@@ -54,7 +54,7 @@ async fn session(state: &AppState, jar: &CookieJar) -> Result<sso_sessions::Mode
 pub(crate) async fn pending_target(
     state: &AppState,
     jar: &CookieJar,
-) -> Result<Option<&'static str>, Response> {
+) -> Result<Option<&'static str>, Box<Response>> {
     let session = crate::web::session::extract_browser_session(state, jar)
         .await
         .map_err(IntoResponse::into_response)?;
@@ -63,7 +63,7 @@ pub(crate) async fn pending_target(
     };
     let enrolled = sec::mfa_enabled(&state.db, session.user_id)
         .await
-        .map_err(util::dependency_error)?;
+        .map_err(|error| Box::new(util::dependency_error(error)))?;
     Ok(Some(if enrolled {
         "/sso/mfa"
     } else {

@@ -2,20 +2,38 @@ use serde_json::{Value, json};
 use user_center::db::entity::{
     apps, identity_provider_keys, identity_providers, oauth_clients, users,
 };
-use user_center::db::enums::CommonStatus;
+use user_center::db::enums::{CommonStatus, OauthClientType};
 
 #[test]
 fn browser_dtos_never_serialize_backend_credential_material() {
     let id = uuid::Uuid::now_v7();
     let now = serde_json::to_value(time::OffsetDateTime::UNIX_EPOCH).unwrap();
-    let client: oauth_clients::Model = serde_json::from_value(json!({
-        "id":id,"app_id":id,"identifier":"test-client","type":"Confidential",
-        "secret_hash":"private-hash","redirect_uris":[],"post_logout_redirect_uris":[],
-        "scopes":[],"grant_types":[],"require_pkce":true,"access_token_ttl_seconds":7200,
-        "refresh_token_ttl_seconds":86400,"id_token_ttl_seconds":7200,"status":"Active","token_version":0,
-        "created_at":now,"updated_at":now
-    }))
-    .unwrap();
+    let client = oauth_clients::Model {
+        id,
+        app_id: id,
+        identifier: "test-client".into(),
+        secret_hash: Some("private-hash".into()),
+        previous_secret_hash: None,
+        previous_secret_expires_at: None,
+        name: None,
+        r#type: OauthClientType::Confidential,
+        login_uri: None,
+        redirect_uris: Vec::new(),
+        post_logout_redirect_uris: Vec::new(),
+        backchannel_logout_uri: None,
+        account_sync_enabled: false,
+        account_sync_uri: None,
+        scopes: Vec::new(),
+        grant_types: Vec::new(),
+        require_pkce: true,
+        access_token_ttl_seconds: 7200,
+        refresh_token_ttl_seconds: 86400,
+        id_token_ttl_seconds: 7200,
+        status: CommonStatus::Active,
+        token_version: 0,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
     let provider: identity_providers::Model = serde_json::from_value(json!({
         "id":id,"code":"test-provider","name":"Test","kind":"Oidc","scopes":[],
         "settings":{},"enabled":true,"client_secret_enc":"encrypted-client-secret",

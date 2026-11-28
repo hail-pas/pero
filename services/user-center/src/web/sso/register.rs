@@ -638,7 +638,7 @@ async fn render(state: &AppState, jar: CookieJar, app: Option<Uuid>, error: &str
             status: row.as_ref().map(|r| r.status.clone()).unwrap_or_default(),
             reason: row
                 .as_ref()
-                .filter(|r| may_disclose && !r.is_account_invitation())
+                .filter(|r| may_disclose && !r.domain_exception && !r.is_account_invitation())
                 .map(|r| r.reason.clone())
                 .unwrap_or_default(),
             social: social_only || row.as_ref().is_some_and(|r| r.provider_id.is_some()),

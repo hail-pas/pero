@@ -45,6 +45,8 @@ export interface Field {
   visibleWhen?: (values: Values) => boolean;
   /** A field can become required only in some modes. */
   requiredWhen?: (values: Values) => boolean;
+  /** Clear this field when any of the listed inputs changes. */
+  clearOnChange?: string[];
   /** A field can be shown but read-only in some modes. */
   disabledWhen?: (values: Values) => boolean;
   /** Inline validation; return a source message to block submission. */
@@ -224,7 +226,14 @@ export function FieldsForm({
   function change(name: string, value: Values[string]) {
     setError(undefined);
     clearFieldError(name);
-    setValues((current) => ({ ...current, [name]: value }));
+    const changes: Values = { [name]: value };
+    for (const field of fields) {
+      if (field.clearOnChange?.includes(name)) {
+        changes[field.name] = undefined;
+        clearFieldError(field.name);
+      }
+    }
+    setValues((current) => ({ ...current, ...changes }));
   }
 
   function renderField(f: Field) {
@@ -253,9 +262,9 @@ export function FieldsForm({
                 name={f.name}
                 slotProps={{
                   input: {
-                    "aria-describedby": f.hint
-                      ? `${formId}-${f.name}-hint`
-                      : undefined,
+                    "aria-describedby":
+                      f.hint || fieldError ? `${formId}-${f.name}-hint` : undefined,
+                    "aria-invalid": fieldError ? true : undefined,
                   },
                 }}
                 disabled={isDisabled(f)}
@@ -594,21 +603,76 @@ const invitationDeliveryField: Field = {
     ["account_link", "手动分享开户链接"],
   ],
 };
-export const invitationExceptionFields: Field[] = [
-  { name: "domain_exception", label: "允许此邀请超出域名限制", type: "checkbox" },
-  {
-    name: "reason",
-    label: "邀请说明或例外理由",
-    requiredWhen: (values) => Boolean(values.domain_exception),
-  },
-];
-export const invitationFields = [
-  invitationDeliveryField,
-  invitationEmailField,
-  ...invitationExceptionFields,
-];
-export function invitationValues(values: Values): Values {
-  return needsInvitationEmail(values) ? values : { ...values, email: undefined };
+const invitationTargetFields = ["delivery", "email"];
+
+function needsInvitationException(values: Values, domains: string[]) {
+  if (!domains.length) return false;
+  if (!needsInvitationEmail(values)) return true;
+  const domain = String(values.email ?? "")
+    .trim()
+    .match(/^[^\s@]+@(\[[a-f\d:.]+\]|[^\s@:/\\?#%]+)$/i)?.[1];
+  if (!domain) return false;
+  try {
+    return !domains.includes(new URL(`https://${domain}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function invitationExceptionFields(
+  domains: string[],
+  accountLink = false,
+): Field[] {
+  const visible = (values: Values) =>
+    accountLink ? domains.length > 0 : needsInvitationException(values, domains);
+  return [
+    {
+      name: "account_link_exception_notice",
+      label: "此链接不绑定邮箱，需勾选域名例外并填写理由才能签发。",
+      type: "notice",
+      visibleWhen: (values) =>
+        visible(values) && (accountLink || !needsInvitationEmail(values)),
+    },
+    {
+      name: "domain_exception",
+      label: "允许此邀请超出域名限制",
+      type: "checkbox",
+      visibleWhen: visible,
+      clearOnChange: invitationTargetFields,
+      validate: (value) =>
+        !value ? "请勾选域名例外后再创建邀请。" : undefined,
+    },
+    {
+      name: "reason",
+      label: accountLink && !domains.length ? "邀请说明" : "域名例外理由",
+      visibleWhen: accountLink ? undefined : visible,
+      requiredWhen: visible,
+      clearOnChange: invitationTargetFields,
+    },
+  ];
+}
+
+export function invitationFields(domains: string[]): Field[] {
+  return [
+    invitationDeliveryField,
+    invitationEmailField,
+    ...invitationExceptionFields(domains),
+    {
+      name: "invitation_note",
+      label: "邀请说明",
+      visibleWhen: (values) => !needsInvitationException(values, domains),
+    },
+  ];
+}
+
+export function invitationValues(values: Values, domains: string[]): Values {
+  const exception = needsInvitationException(values, domains);
+  return {
+    delivery: values.delivery,
+    email: needsInvitationEmail(values) ? values.email : undefined,
+    domain_exception: exception ? values.domain_exception : undefined,
+    reason: exception ? values.reason : values.invitation_note,
+  };
 }
 export const appFields: Field[] = [
   { ...text("code", "应用标识", true), group: "基本信息", hint: "用于生成回调地址和区分应用，创建后不可修改。" },

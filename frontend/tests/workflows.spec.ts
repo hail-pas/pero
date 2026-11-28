@@ -546,7 +546,13 @@ test("invitation delivery controls whether the email is shown and submitted", as
   await mock(page, {
     [path]: {
       view: "UserFormView",
-      data: { ...base, mode: "create", form: {}, user_id: "" },
+      data: {
+        ...base,
+        mode: "create",
+        form: {},
+        user_id: "",
+        invitation_domains: ["example.test"],
+      },
     },
   });
   await page.route(`**${path}`, (route) =>
@@ -562,16 +568,34 @@ test("invitation delivery controls whether the email is shown and submitted", as
   await page.goto(path);
   const delivery = page.getByRole("combobox", { name: "交付方式" });
   const email = page.getByRole("textbox", { name: "邀请邮箱" });
+  const exception = page.getByRole("checkbox", { name: "允许此邀请超出域名限制" });
+  const exceptionReason = page.getByRole("textbox", { name: "域名例外理由" });
+  const note = page.getByRole("textbox", { name: "邀请说明" });
   await expect(email).toHaveAttribute("required", "");
+  await note.fill("欢迎加入");
   await delivery.click();
   await page.getByRole("option", { name: "手动分享链接（指定邮箱）" }).click();
   await expect(email).toHaveAttribute("required", "");
   await email.fill("invitee@example.test");
+  await expect(exception).toHaveCount(0);
+  await expect(note).toHaveValue("欢迎加入");
+  await email.fill("invitee@external.test");
+  await exception.check();
+  await exceptionReason.fill("仅供管理员查看");
+  await email.fill("another@example.test");
+  await expect(exceptionReason).toHaveCount(0);
+  await expect(note).toHaveValue("欢迎加入");
+  await email.fill("invitee@external.test");
+  await expect(exceptionReason).toHaveValue("");
+  await exception.check();
   await delivery.click();
   await page.getByRole("option", { name: "手动分享开户链接" }).click();
   await expect(email).toHaveCount(0);
-  await page.getByRole("checkbox", { name: "允许此邀请超出域名限制" }).check();
-  await page.getByRole("textbox", { name: "邀请说明或例外理由" }).fill("临时开户");
+  await expect(exception).not.toBeChecked();
+  await page.getByRole("button", { name: "创建邀请" }).click();
+  await expect(exception).toHaveAccessibleDescription("请勾选域名例外后再创建邀请。");
+  await exception.check();
+  await exceptionReason.fill("临时开户");
   const submitted = page.waitForRequest((r) => r.method() === "POST");
   await page.getByRole("button", { name: "创建邀请" }).click();
   const values = Object.fromEntries(new URLSearchParams((await submitted).postData()!));
@@ -596,6 +620,7 @@ test("app details issue account links scoped to the application", async ({ page 
         ...base,
         app: { id: "app-1", code: "app", name: "App", status: "active", tenant_mode: "personal" },
         clients: [],
+        invitation_domains: ["example.test"],
       },
     },
   });
@@ -606,7 +631,7 @@ test("app details issue account links scoped to the application", async ({ page 
   await page.getByRole("button", { name: "邀请开户" }).click();
   const editor = page.getByRole("dialog", { name: "邀请开户" });
   await editor.getByRole("checkbox", { name: "允许此邀请超出域名限制" }).check();
-  await editor.getByRole("textbox", { name: "邀请说明或例外理由" }).fill("临时开户");
+  await editor.getByRole("textbox", { name: "域名例外理由" }).fill("临时开户");
   const submitted = page.waitForRequest((r) => r.method() === "POST");
   await editor.getByRole("button", { name: "保存更改" }).click();
   const values = new URLSearchParams((await submitted).postData()!);

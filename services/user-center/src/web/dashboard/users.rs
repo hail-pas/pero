@@ -73,6 +73,16 @@ pub async fn new_form(
     jar: CookieJar,
     admin: AdminContext,
 ) -> Response {
+    let invitation_domains = match crate::service::enrollment::policy(&state.db, None).await {
+        Ok(policy) => policy.invitations_open().then(|| {
+            if admin.access.super_admin {
+                policy.domains
+            } else {
+                Vec::new()
+            }
+        }),
+        Err(error) => return util::management_response(Err(error)),
+    };
     let AdminPage {
         layout,
         csrf_token,
@@ -86,6 +96,7 @@ pub async fn new_form(
         mode: "create".to_owned(),
         user_id: String::new(),
         form: UserFormData::default(),
+        invitation_domains,
         error: String::new(),
     };
     view_response("UserFormView", tpl, jar)
@@ -257,6 +268,7 @@ pub async fn edit_form(
             nickname: user.nickname.unwrap_or_default(),
             avatar_url: user.avatar_url.unwrap_or_default(),
         },
+        invitation_domains: None,
         error: String::new(),
     };
     view_response("UserFormView", tpl, jar)

@@ -126,12 +126,26 @@ pub async fn detail(
             Err(error) => return util::dependency_error(error),
         }
     };
+    let invitation_domains = if access.super_admin
+        && !app.system
+        && app.status == crate::db::enums::CommonStatus::Active
+        && app.tenant_mode != "organization"
+    {
+        match crate::service::enrollment::policy(&state.db, Some(id)).await {
+            Ok(policy) => policy.invitations_open().then_some(policy.domains),
+            Err(crate::service::ManagementError::Invalid("enrollment_unavailable")) => None,
+            Err(error) => return util::management_response(Err(error)),
+        }
+    } else {
+        None
+    };
 
     let tpl = AppDetailView {
         layout,
         csrf_token,
         app: app.into(),
         clients: clients.into_iter().map(Into::into).collect(),
+        invitation_domains,
         error: String::new(),
     };
     view_response("AppDetailView", tpl, jar)

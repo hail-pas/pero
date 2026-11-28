@@ -25,7 +25,7 @@ struct Recovery {
 }
 
 enum RecoveryRequest {
-    Pending(SsoSession, authorization_requests::Model),
+    Pending(SsoSession, Box<authorization_requests::Model>),
     Expired(ApplicationSource),
 }
 
@@ -95,7 +95,7 @@ async fn load(
                 && request.expires_at > time::OffsetDateTime::now_utc()
         });
     Ok(match request {
-        Some(request) => RecoveryRequest::Pending(session, request),
+        Some(request) => RecoveryRequest::Pending(session, Box::new(request)),
         None => RecoveryRequest::Expired(recovery.source),
     })
 }
@@ -268,7 +268,7 @@ pub async fn post(
                             .into_response()
                     }
                     Ok(None) => util::management_response(Err(error)),
-                    Err(response) => response,
+                    Err(response) => *response,
                 };
             }
             Err(error) => return util::management_response(Err(error)),

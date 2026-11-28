@@ -1,4 +1,12 @@
-use crate::{service::account_sync, service::scope, state::app::AppState};
+use crate::{
+    db::{entity::oauth_clients, enums::OauthClientType},
+    service::{
+        account_sync, scope,
+        token::{TokenEndpointError, TokenService},
+    },
+    state::app::AppState,
+    web::util,
+};
 use axum::{
     Form,
     extract::State,
@@ -16,37 +24,49 @@ pub struct Input {
     client_secret: Option<String>,
 }
 
+pub(super) enum AuthError {
+    Client(TokenEndpointError),
+    Forbidden,
+    Database(sea_orm::DbErr),
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Client(error) => error.into_response(),
+            Self::Forbidden => StatusCode::FORBIDDEN.into_response(),
+            Self::Database(error) => util::dependency_error(error),
+        }
+    }
+}
+
 pub(super) async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
     client_id: &mut String,
     client_secret: &mut Option<String>,
     source: &str,
-) -> Result<(DatabaseTransaction, crate::db::entity::oauth_clients::Model), Response> {
-    use crate::db::{entity::apps, enums::OauthClientType};
+) -> Result<(DatabaseTransaction, oauth_clients::Model), AuthError> {
+    use crate::db::entity::apps;
 
     let client = super::client_auth::authenticate(state, headers, client_id, client_secret, source)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(AuthError::Client)?;
     if client.r#type != OauthClientType::Confidential || !client.account_sync_enabled {
-        return Err(StatusCode::FORBIDDEN.into_response());
+        return Err(AuthError::Forbidden);
     }
-    let db = state
-        .db
-        .begin()
-        .await
-        .map_err(crate::web::util::dependency_error)?;
+    let db = state.db.begin().await.map_err(AuthError::Database)?;
     // Bind the projection to the client policy and credentials authenticated above.
-    crate::service::token::TokenService::new(state)
+    TokenService::new(state)
         .revalidate_client(&db, &client)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(AuthError::Client)?;
     let app = apps::Entity::find_by_id(client.app_id)
         .one(&db)
         .await
-        .map_err(crate::web::util::dependency_error)?;
+        .map_err(AuthError::Database)?;
     if app.is_none_or(|app| app.system) {
-        return Err(StatusCode::FORBIDDEN.into_response());
+        return Err(AuthError::Forbidden);
     }
     Ok((db, client))
 }
@@ -65,7 +85,8 @@ pub async fn snapshot(
             &mut input.client_secret,
             &format!("account-sync:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         let lookup = match (input.sub, input.username.as_deref().map(str::trim)) {
             (Some(sub), None) => account_sync::snapshot(&db, client.id, sub).await,
             (None, Some(username)) if !username.is_empty() && !username.contains('\0') => {
@@ -79,7 +100,7 @@ pub async fn snapshot(
         match lookup {
             Ok(Some(snapshot)) => Ok(axum::Json(snapshot).into_response()),
             Ok(None) => Err(StatusCode::NOT_FOUND.into_response()),
-            Err(error) => Err(crate::web::util::dependency_error(error)),
+            Err(error) => Err(util::dependency_error(error)),
         }
     }
     .await;

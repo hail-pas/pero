@@ -90,6 +90,7 @@ async function mock(page: Page, responses: Record<string, unknown> = {}) {
           mode: "create",
           app,
           clients: [],
+          invitation_domains: [],
         },
       },
     });
@@ -762,6 +763,7 @@ test("editing a client keeps its identifier immutable", async ({ page }) => {
         layout,
         csrf_token: "csrf-test",
         app,
+        invitation_domains: [],
         clients: [
           {
             id: "client-1",

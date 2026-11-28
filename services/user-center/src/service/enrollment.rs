@@ -46,6 +46,13 @@ pub struct Policy {
     pub emergency_stop: bool,
     pub version: i64,
 }
+
+impl Policy {
+    pub(crate) fn invitations_open(&self) -> bool {
+        !self.emergency_stop && self.mode != "closed"
+    }
+}
+
 /// A fresh provider callback, authenticated by the browser's signed HttpOnly cookie.
 #[derive(Serialize, Deserialize)]
 pub struct SocialProof {
@@ -73,7 +80,7 @@ impl SocialProof {
     }
 }
 
-#[derive(Clone, Serialize, FromQueryResult)]
+#[derive(FromQueryResult)]
 pub struct Enrollment {
     pub id: Uuid,
     pub app_id: Option<Uuid>,
@@ -83,29 +90,17 @@ pub struct Enrollment {
     pub phone: Option<String>,
     pub invitation: bool,
     pub invited_by: Option<Uuid>,
-    #[serde(skip)]
     pub(crate) manual_delivery: bool,
     pub domain_exception: bool,
     pub reason: String,
-    #[serde(skip)]
-    pub token_hash: String,
     pub status: String,
-    #[serde(with = "time::serde::rfc3339::option")]
     pub verified_at: Option<OffsetDateTime>,
     pub approved_by: Option<Uuid>,
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub approved_at: Option<OffsetDateTime>,
     pub provider_id: Option<Uuid>,
-    #[serde(skip)]
     pub subject: Option<String>,
     pub completed_user_id: Option<Uuid>,
-    #[serde(skip)]
     pub tenant_id: Option<Uuid>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
     pub last_sent_at: OffsetDateTime,
 }
 fn invalid() -> Error {
@@ -179,7 +174,7 @@ fn eligible(
     invited: bool,
     exception: bool,
 ) -> Result<(), Error> {
-    if p.emergency_stop || p.mode == "closed" || (!invited && p.mode != "self_service") {
+    if !p.invitations_open() || (!invited && p.mode != "self_service") {
         return Err(Error::Invalid("registration_closed"));
     }
     if !exception
@@ -399,7 +394,14 @@ fn registration_link(state: &AppState, token: &str) -> String {
     link
 }
 
-async fn send<C: ConnectionTrait>(
+fn require_notification_channel(state: &AppState, channel: &str) -> Result<(), Error> {
+    if !state.config.notification.available(channel) {
+        return Err(Error::Invalid("notification_disabled"));
+    }
+    Ok(())
+}
+
+async fn enqueue_delivery<C: ConnectionTrait>(
     db: &C,
     state: &AppState,
     id: Uuid,
@@ -408,9 +410,6 @@ async fn send<C: ConnectionTrait>(
     expires: OffsetDateTime,
 ) -> Result<(), Error> {
     let (channel, address) = contact;
-    if !state.config.notification.available(channel) {
-        return Err(Error::Invalid("notification_disabled"));
-    }
     super::notify::enqueue_enrollment(
         db,
         id,
@@ -529,15 +528,7 @@ async fn start_contact(
         }
     );
     let account_invitation = manual && address.is_none();
-    let limit_before_transaction = matches!(
-        &kind,
-        StartKind::Invitation { .. } | StartKind::SelfService { previous: None, .. }
-    );
-    if limit_before_transaction && let Some(address) = address {
-        limit_contact(state, address).await?;
-    }
     let txn = state.db.begin().await?;
-    super::admin::lock_policy(&txn).await?;
     let (invitation, source, social, previous) = match kind {
         StartKind::Invitation {
             actor,
@@ -549,7 +540,10 @@ async fn start_contact(
             request,
             social,
             previous,
-        } => (None, request.map(ApplicationSource::from), social, previous),
+        } => {
+            super::admin::read_lock_policy(&txn).await?;
+            (None, request.map(ApplicationSource::from), social, previous)
+        }
     };
     let (client_id, request_id) = if let Some(source) = source {
         if Some(source.app_id) != app {
@@ -642,9 +636,6 @@ async fn start_contact(
             });
         }
     }
-    if !limit_before_transaction && let Some(address) = address {
-        limit_contact(state, address).await?;
-    }
     // Only addressed invitations compete for the partial unique index.
     if invited && let Some(address) = address {
         if app.is_some()
@@ -673,6 +664,15 @@ async fn start_contact(
         )
         .await?;
     }
+    let delivery_contact = if manual {
+        None
+    } else {
+        let channel = if is_phone { "phone" } else { "email" };
+        let address = address.ok_or_else(invalid)?;
+        require_notification_channel(state, channel)?;
+        limit_contact(state, address, invited).await?;
+        Some((channel, address))
+    };
     let token = pero_utils::crypto::generate_token();
     let id = Uuid::now_v7();
     let expiry = OffsetDateTime::now_utc() + time::Duration::hours(if invited { 72 } else { 24 });
@@ -702,17 +702,8 @@ async fn start_contact(
         ],
     )
     .await?;
-    if !manual {
-        let channel = if is_phone { "phone" } else { "email" };
-        send(
-            &txn,
-            state,
-            id,
-            (channel, address.ok_or_else(invalid)?),
-            &token,
-            expiry,
-        )
-        .await?;
+    if let Some(contact) = delivery_contact {
+        enqueue_delivery(&txn, state, id, contact, &token, expiry).await?;
     }
     txn.commit().await?;
     Ok(StartedEnrollment {
@@ -782,7 +773,9 @@ pub async fn manage(
             execute(&txn,"UPDATE enrollments SET status=$2,approved_by=$3,approved_at=now(),reason=$4,token_hash=$5,last_sent_at=now() WHERE id=$1",vec![id.into(),(if action=="approve" {"ready"} else {"rejected"}).into(),actor_id.into(),reason.into(),pero_utils::crypto::sha256_hex(&token).into()]).await?;
             cancel_notifications(&txn, id).await?;
             if action == "approve" {
-                send(&txn, state, id, contact(&row)?, &token, row.expires_at).await?;
+                let contact = contact(&row)?;
+                require_notification_channel(state, contact.0)?;
+                enqueue_delivery(&txn, state, id, contact, &token, row.expires_at).await?;
             } else {
                 let (channel, to) = contact(&row)?;
                 super::notify::enqueue_enrollment(
@@ -860,11 +853,12 @@ async fn redeliver<C: ConnectionTrait>(
 ) -> Result<(), Error> {
     check_redelivery(db, row).await?;
     let contact = contact(row)?;
+    require_notification_channel(state, contact.0)?;
     if limit_recipient {
-        limit_contact(state, contact.1).await?;
+        limit_contact(state, contact.1, false).await?;
     }
     let token = rotate_token(db, row, false).await?;
-    send(db, state, row.id, contact, &token, row.expires_at).await
+    enqueue_delivery(db, state, row.id, contact, &token, row.expires_at).await
 }
 
 async fn check_redelivery<C: ConnectionTrait>(db: &C, row: &Enrollment) -> Result<(), Error> {
@@ -1161,7 +1155,9 @@ async fn require_personal_app<C: ConnectionTrait>(db: &C, app: Option<Uuid>) -> 
     Ok(())
 }
 
-async fn limit_contact(state: &AppState, address: &str) -> Result<(), Error> {
+async fn limit_contact(state: &AppState, address: &str, invitation: bool) -> Result<(), Error> {
+    use pero_cache_redis::rate_limit_key::{rl_enrollment_email, rl_enrollment_invite_recipient};
+
     let hash = pero_utils::crypto::hmac_sha256(
         address.as_bytes(),
         state
@@ -1171,7 +1167,11 @@ async fn limit_contact(state: &AppState, address: &str) -> Result<(), Error> {
             .expose_secret()
             .as_bytes(),
     );
-    let key = pero_cache_redis::rate_limit_key::rl_enrollment_email.key(&hash)?;
+    let key = if invitation {
+        rl_enrollment_invite_recipient.key(&hash)?
+    } else {
+        rl_enrollment_email.key(&hash)?
+    };
     match pero_cache_redis::enforce_rate_limit(&state.cache, &key, 3).await {
         Ok(()) => Ok(()),
         Err(pero_cache_redis::RateLimitError::Denied { .. }) => Err(Error::Invalid("rate_limited")),
@@ -1315,7 +1315,8 @@ pub async fn list(
         FROM enrollments e LEFT JOIN apps a ON a.id=e.app_id
     ) e WHERE ($1 OR app_id=$2 OR ($2::uuid IS NULL AND app_id IS NULL))
       AND ($3::uuid IS NULL OR completed_user_id=$3
-           OR (completed_user_id IS NULL AND (email=$4::citext OR phone=$5::citext)))
+           OR (completed_user_id IS NULL AND (NOT invitation OR app_id IS NULL)
+               AND (email=$4::citext OR phone=$5::citext)))
       AND ($6='' OR strpos(lower(COALESCE(email::text,phone::text)),lower($6))>0 OR strpos(lower(COALESCE(app_name,'')),lower($6))>0)";
     let mut values: Vec<sea_orm::Value> = vec![
         (owner.is_some() || query.all_apps.unwrap_or(query.app.is_none())).into(),
@@ -1338,7 +1339,21 @@ pub async fn list(
         (crate::config::DASHBOARD_PAGE_SIZE as i64).into(),
         (((page - 1) * crate::config::DASHBOARD_PAGE_SIZE) as i64).into(),
     ]);
-    let rows=ProgressRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,format!("SELECT id,app_id,app_name,COALESCE(email::text,phone::text,'') AS email,invitation,effective_status AS status,reason,created_at,expires_at {filter} AND ($7='' OR effective_status=$7) ORDER BY (effective_status='pending_approval') DESC,created_at DESC,id DESC LIMIT $8 OFFSET $9"),values)).all(db).await?;
+    let rows = ProgressRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT id,app_id,app_name,COALESCE(email::text,phone::text,'') AS email,
+                    invitation,effective_status AS status,
+                    CASE WHEN $3::uuid IS NOT NULL AND (domain_exception OR (manual_delivery AND email IS NULL))
+                         THEN '' ELSE reason END AS reason,
+                    created_at,expires_at
+             {filter} AND ($7='' OR effective_status=$7)
+             ORDER BY (effective_status='pending_approval') DESC,created_at DESC,id DESC LIMIT $8 OFFSET $9"
+        ),
+        values,
+    ))
+    .all(db)
+    .await?;
     Ok(ProgressList {
         rows,
         page,
@@ -1347,7 +1362,7 @@ pub async fn list(
     })
 }
 
-/// Never disclose or resume an invitation using an unverified account address.
+/// Only flows available to existing accounts can be managed through the portal.
 pub async fn owner_action(
     state: &AppState,
     actor: &SsoSession,
@@ -1358,7 +1373,26 @@ pub async fn owner_action(
     super::admin::lock_policy(&txn).await?;
     let user =
         super::account_security::lock_account_session(&txn, actor, &state.config.sso).await?;
-    let row=Enrollment::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT * FROM enrollments WHERE id=$1 AND (email=$2::citext OR phone=$3::citext) AND expires_at>now() AND status IN ('pending_verification','pending_approval','ready')",[id.into(),user.email.clone().filter(|_| user.email_verified_at.is_some()).into(),user.phone.clone().filter(|_| user.phone_verified_at.is_some()).into()])).one(&txn).await?.ok_or_else(invalid)?;
+    let row = Enrollment::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT * FROM enrollments WHERE id=$1 AND (NOT invitation OR app_id IS NULL)
+         AND (email=$2::citext OR phone=$3::citext) AND expires_at>now()
+         AND status IN ('pending_verification','pending_approval','ready')",
+        [
+            id.into(),
+            user.email
+                .as_deref()
+                .filter(|_| user.email_verified_at.is_some())
+                .into(),
+            user.phone
+                .as_deref()
+                .filter(|_| user.phone_verified_at.is_some())
+                .into(),
+        ],
+    ))
+    .one(&txn)
+    .await?
+    .ok_or_else(invalid)?;
     let token = match action {
         "withdraw" => {
             execute(

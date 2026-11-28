@@ -1,6 +1,11 @@
 import { IdentityGraphic } from "./components/identity-graphic";
 import { FilingLink } from "./components/filing-link";
-import { CheckCircleRounded } from "@mui/icons-material";
+import {
+  CheckCircleRounded,
+  MailOutlineRounded,
+  PersonOutlineRounded,
+  SmartphoneRounded,
+} from "@mui/icons-material";
 import {
   Alert,
   Box,
@@ -23,6 +28,15 @@ import { LanguageSwitcher } from "./language-switcher";
 import { Brand } from "./layout";
 
 import { type Actions } from "./shared";
+
+const loginMethods = {
+  username: ["用户名", PersonOutlineRounded],
+  email: ["邮箱", MailOutlineRounded],
+  phone: ["手机号", SmartphoneRounded],
+} as const;
+
+type IdentifierType = keyof typeof loginMethods;
+
 export function Auth({
   page,
   mutate,
@@ -33,7 +47,8 @@ export function Auth({
   useLocale();
   const { view, data } = page;
   const location = useLocation();
-  const [identifierType, setIdentifierType] = useState("username");
+  const [identifierType, setIdentifierType] =
+    useState<IdentifierType>("username");
   const {
     busy: actionBusy,
     error: actionFailure,
@@ -239,12 +254,7 @@ export function Auth({
       ? [
           {
             name: "identifier",
-            label:
-              identifierType === "username"
-                ? t("用户名")
-                : identifierType === "email"
-                  ? t("邮箱")
-                  : t("手机号"),
+            label: t(loginMethods[identifierType][0]),
             required: true,
           },
           {
@@ -300,30 +310,91 @@ export function Auth({
         {login && (
           <ToggleButtonGroup
             exclusive
-            fullWidth
-            size="small"
             value={identifierType}
             disabled={actionBusy || formBusy}
-            onChange={(_, value) => value && setIdentifierType(value)}
+            onChange={(_, value: IdentifierType | null) => {
+              if (value) setIdentifierType(value);
+            }}
             aria-label={t("登录方式")}
-            sx={{
-              mb: 3,
-              "& .MuiToggleButton-root": {
-                py: 0.75,
-                fontWeight: 600,
-                fontSize: 13,
-                textTransform: "none",
+            sx={(theme) => {
+              const { primary } = theme.vars.palette;
+              const selected =
+                Object.keys(loginMethods).indexOf(identifierType);
+
+              return {
+                mb: 3,
+                display: "grid",
+                gridAutoFlow: "column",
+                gridAutoColumns: "minmax(0, 1fr)",
+                position: "relative",
+                borderBottom: 1,
                 borderColor: "divider",
-              },
+                borderRadius: 0,
+                "&::before": {
+                  content: '""',
+                  position: "absolute",
+                  gridArea: "1 / 1 / 2 / 2",
+                  insetInline: 0,
+                  bottom: "-1px",
+                  height: 2,
+                  px: 1,
+                  bgcolor: "primary.main",
+                  backgroundClip: "content-box",
+                  pointerEvents: "none",
+                  zIndex: 1,
+                  transform: `translateX(${selected * 100}%)`,
+                  transition: theme.transitions.create("transform", {
+                    duration: theme.transitions.duration.shorter,
+                    easing: theme.transitions.easing.easeOut,
+                  }),
+                  "@media (prefers-reduced-motion: reduce)": {
+                    transition: "none",
+                  },
+                },
+                "& .MuiToggleButton-root.MuiToggleButtonGroup-grouped": {
+                  position: "relative",
+                  minHeight: 48,
+                  m: 0,
+                  px: 0.5,
+                  py: 1,
+                  gap: { xs: 0.5, sm: 1 },
+                  border: 0,
+                  borderRadius: `${theme.shape.borderRadius}px ${theme.shape.borderRadius}px 0 0`,
+                  color: "text.secondary",
+                  fontWeight: 600,
+                  lineHeight: 1.25,
+                  "& .MuiSvgIcon-root": { fontSize: 18, flexShrink: 0 },
+                  "&.Mui-selected": {
+                    color: "primary.dark",
+                    bgcolor: "transparent",
+                  },
+                  "@media (hover: hover)": {
+                    "&:hover, &.Mui-selected:hover": {
+                      color: "primary.dark",
+                      bgcolor: theme.alpha(primary.main, 0.05),
+                    },
+                  },
+                  "&:active, &.Mui-selected:active": {
+                    bgcolor: theme.alpha(primary.main, 0.1),
+                  },
+                  "&.Mui-focusVisible": {
+                    zIndex: 2,
+                    outline: "2px solid",
+                    outlineColor: "primary.dark",
+                    outlineOffset: "-3px",
+                  },
+                  "&.Mui-disabled": { color: "text.disabled" },
+                  "@media (forced-colors: active)": {
+                    "&.Mui-selected": { textDecoration: "underline" },
+                  },
+                },
+              };
             }}
           >
-            {[
-              ["username", t("用户名")],
-              ["email", t("邮箱")],
-              ["phone", t("手机号")],
-            ].map(([value, label]) => (
-              <ToggleButton key={value} value={value}>
-                {label}
+            {Object.entries(loginMethods).map(([value, [label, Icon]]) => (
+              <ToggleButton key={value} value={value} disableRipple>
+                <Icon />
+                {t(label)}
               </ToggleButton>
             ))}
           </ToggleButtonGroup>

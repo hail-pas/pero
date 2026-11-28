@@ -96,7 +96,8 @@ pub async fn membership(
             &mut f.client_secret,
             &format!("tenant-sync:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         let row = MemberRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!(
@@ -132,7 +133,8 @@ pub async fn memberships(
             &mut f.client_secret,
             &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         let mut values = vec![c.app_id.into()];
         let cursor = if let (Some(tenant), Some(user)) = (f.after_tenant_id, f.after_user_id) {
             values.extend([tenant.into(), user.into()]);
@@ -205,7 +207,8 @@ pub async fn accounts(
             &mut f.client_secret,
             &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         if search.is_some() && !scope::contains(&c.scopes, "profile") {
             return Err(StatusCode::FORBIDDEN.into_response());
         }
@@ -308,7 +311,8 @@ pub async fn tenant(
             &mut f.client_secret,
             &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         let row = TenantRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!(
@@ -345,7 +349,8 @@ pub async fn tenants(
             &mut f.client_secret,
             &format!("reconcile:{}", source.for_rate_limit()),
         )
-        .await?;
+        .await
+        .map_err(IntoResponse::into_response)?;
         let mut values = vec![c.app_id.into()];
         let cursor = if let Some(tenant) = f.after_tenant_id {
             values.push(tenant.into());
