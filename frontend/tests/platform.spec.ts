@@ -103,10 +103,20 @@ test("home and all main navigation routes render without runtime errors", async 
   page.on("pageerror", (e) => errors.push(e.message));
   await mock(page);
   await page.goto("/");
-  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
-    "href",
-    /resources\/icons\/logo\.svg$/,
+  const favicon = page.locator('link[rel="icon"]');
+  await expect(favicon).toHaveAttribute("type", "image/png");
+  const brandLogo = page
+    .getByRole("link", { name: /^pero\s*\.$/ })
+    .locator("img");
+  await expect(brandLogo).toHaveJSProperty(
+    "src",
+    await favicon.evaluate((link: HTMLLinkElement) => link.href),
   );
+  await expect
+    .poll(() =>
+      brandLogo.evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
+    .toBeGreaterThan(0);
   await expect(
     page.getByRole("heading", { name: /用户中心/ }),
   ).toBeVisible();

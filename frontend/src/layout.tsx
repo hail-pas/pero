@@ -39,6 +39,7 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
+import logoUrl from "./assets/logo.png";
 import type { UserLayout } from "./contracts";
 import { t, useLocale } from "./i18n";
 import { LanguageSwitcher } from "./language-switcher";
@@ -139,7 +140,7 @@ export function Brand() {
     >
       <Box
         component="img"
-        src={`${import.meta.env.BASE_URL}resources/icons/logo.svg`}
+        src={logoUrl}
         alt=""
         sx={{ width: 30, height: 30 }}
       />
