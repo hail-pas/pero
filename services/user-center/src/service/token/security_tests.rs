@@ -2069,9 +2069,10 @@ async fn consent_submissions_bind_to_the_displayed_request_and_session() {
         .ensure_csrf(CookieJar::new().add(Cookie::new("pero_sso", raw)));
     let request_cookie = state.cookie_factory().auth_req_cookie_name();
     let mut requests = Vec::new();
+    let pkce = pero_utils::oauth::pkce::PkcePair::generate();
     for client in [fixture.client, client_b] {
         let id = Uuid::now_v7();
-        sql(&state.db,"INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],now()+interval '5 minutes')",vec![id.into(),client.into(),fixture.app.into()]).await;
+        sql(&state.db,"INSERT INTO authorization_requests(id,client_id,app_id,redirect_uri,scopes,code_challenge,code_challenge_method,expires_at) VALUES($1,$2,$3,'https://client.example.test/callback',ARRAY['openid'],$4,'S256',now()+interval '5 minutes')",vec![id.into(),client.into(),fixture.app.into(),pkce.code_challenge.clone().into()]).await;
         bind_test_grants(&state.db, fixture.user, fixture.app).await;
         let token = state
             .cookie_factory()
@@ -2155,6 +2156,32 @@ async fn consent_submissions_bind_to_the_displayed_request_and_session() {
         &state.db,
         "INSERT INTO user_consents(user_id,client_id,scopes) VALUES($1,$2,ARRAY['openid'])",
         vec![fixture.user.into(), client_b.into()],
+    )
+    .await;
+    sql(
+        &state.db,
+        "UPDATE oauth_clients SET redirect_uris=ARRAY['https://client.example.test/new-callback'] WHERE id=$1",
+        vec![client_b.into()],
+    )
+    .await;
+    let response = consent::post(
+        axum::extract::State(state.clone()),
+        jar.clone(),
+        axum::Form(ConsentForm {
+            action: "deny".into(),
+            csrf_token: csrf_token.clone(),
+            request_token: requests[1].1.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(
+        response.headers()["location"],
+        "/sso/error?code=invalid_request"
+    );
+    sql(
+        &state.db,
+        "UPDATE oauth_clients SET redirect_uris=ARRAY['https://client.example.test/callback'] WHERE id=$1",
+        vec![client_b.into()],
     )
     .await;
     let response = consent::post(

@@ -5,14 +5,17 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
     db::entity::{apps, authorization_requests, oauth_clients, user_app_access, users},
     db::enums::CommonStatus,
-    service::{application_request, enrollment::ApplicationSource},
+    service::{
+        application_request, enrollment::ApplicationSource, oauth::OAuthService,
+        session::SessionService,
+    },
     state::{app::AppState, session::SsoSession},
     web::{error::OAuthError, session::extract_session, util},
 };
@@ -91,6 +94,9 @@ async fn load(
             request.client_id == recovery.source.client_id
                 && request.app_id == recovery.source.app_id
                 && request.diagnostic_session_id.is_some() == recovery.diagnostic
+                && request
+                    .diagnostic_session_id
+                    .is_none_or(|id| id == session.id)
                 && request.completed_at.is_none()
                 && request.expires_at > time::OffsetDateTime::now_utc()
         });
@@ -210,6 +216,7 @@ pub async fn get(
             serde_json::json!({
                 "csrf_token": csrf_token, "token": params.token, "app_name": app.name,
                 "username": user.username, "expired": false,
+                "diagnostic": request.diagnostic_session_id.is_some(),
                 "can_request": can_request, "opens_immediately": opens_immediately,
                 "tenant_unavailable": tenant_unavailable,
                 "admission_error": admission_error,
@@ -240,18 +247,17 @@ pub async fn post(
         Err(OAuthError::BadRequest(_)) => return expired(&state, jar, None),
         Err(e) => return e.into_response(),
     };
+    if input.action == "other" && request.diagnostic_session_id.is_some() {
+        return pero_api_axum::json_error("invalid_request");
+    }
     if input.action == "cancel" {
-        let result = authorization_requests::Entity::update_many()
-            .col_expr(
-                authorization_requests::Column::CompletedAt,
-                sea_orm::sea_query::Expr::value(time::OffsetDateTime::now_utc()),
-            )
-            .filter(authorization_requests::Column::Id.eq(request.id))
-            .filter(authorization_requests::Column::CompletedAt.is_null())
-            .exec(&state.db)
+        let result = state
+            .oauth_service()
+            .finish_authorization_request(&state.db, request.id, &session, false)
             .await;
         return match result {
-            Ok(_) => Redirect::to("/account/profile").into_response(),
+            Ok(true) => Redirect::to("/account/profile").into_response(),
+            Ok(false) => expired_with_source(&state, jar, (&*request).into()).await,
             Err(e) => util::dependency_error(e),
         };
     }
@@ -276,17 +282,40 @@ pub async fn post(
     }
     // Validate current client configuration before resuming a pending request.
     let result = async {
-        state
-            .oauth_service()
-            .validate_pending_authorization(&request)
-            .await?;
         if input.action == "other" {
-            let jar = super::select_account::switch(&state, jar.clone())
+            let db_error = |error| OAuthError::Internal(crate::db::error::to_app_error(error));
+            let txn = state.db.begin().await.map_err(db_error)?;
+            OAuthService::lock_pending_authorization_policy(&txn, &request).await?;
+            // Issuance also locks the session before the request.
+            if !SessionService::revoke_login_state_in_db(&txn, session.id, "account_switch")
                 .await
-                .map_err(|_| OAuthError::Unavailable)?;
-            super::authorize::pending_redirect(&state, &jar, request.id).await
+                .map_err(db_error)?
+            {
+                return Err(OAuthError::BadRequest(
+                    "Authorization session expired".into(),
+                ));
+            }
+            let pending = txn
+                .query_one_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id FROM authorization_requests WHERE id=$1 AND completed_at IS NULL
+                     AND expires_at>clock_timestamp() FOR UPDATE",
+                    [request.id.into()],
+                ))
+                .await
+                .map_err(db_error)?;
+            if pending.is_none() {
+                return Err(OAuthError::BadRequest("Authorization request ended".into()));
+            }
+            let (jar, response) =
+                super::authorize::pending_redirect(&state, &jar, request.id).await?;
+            txn.commit().await.map_err(db_error)?;
+            Ok((
+                super::select_account::clear_session_cookie(&state, jar),
+                response,
+            ))
         } else {
-            super::authorize::resolve_authorization(&state, &jar, &request).await
+            super::authorize::resolve_pending_authorization(&state, &jar, &request, true).await
         }
     }
     .await;

@@ -62,7 +62,7 @@ pub async fn bind_tenant<C: ConnectionTrait>(
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "UPDATE authorization_requests SET tenant_id=$2 WHERE id=$1 AND tenant_id IS NULL AND completed_at IS NULL AND expires_at>now() RETURNING *",
+            "UPDATE authorization_requests SET tenant_id=$2 WHERE id=$1 AND tenant_id IS NULL AND completed_at IS NULL AND expires_at>clock_timestamp() RETURNING *",
             [request_id.into(), tenant_id.into()],
         ))
         .await?;

@@ -1,8 +1,11 @@
 use crate::{
     db::entity::{authorization_requests, users},
-    service::oauth::has_prompt,
+    service::{
+        oauth::{OAuthService, has_prompt},
+        session::SessionService,
+    },
     state::app::AppState,
-    web::{session::extract_session, util},
+    web::{session::extract_browser_session, util},
 };
 use axum::{
     Form,
@@ -10,13 +13,15 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{
+    ConnectionTrait, DbBackend, EntityTrait, FromQueryResult, Statement, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize)]
 struct Choice {
-    request_id: Uuid,
+    account_choice_request_id: Uuid,
     session_id: Option<Uuid>,
 }
 #[derive(Default, Deserialize)]
@@ -48,12 +53,12 @@ pub async fn redirect(
     jar: CookieJar,
     id: Uuid,
 ) -> Result<(CookieJar, Response), crate::web::error::OAuthError> {
-    let session = extract_session(state, &jar)
+    let session = extract_browser_session(state, &jar)
         .await
         .map_err(|_| crate::web::error::OAuthError::Unavailable)?;
     let token = pero_utils::crypto::encode_signed_json(
         &Choice {
-            request_id: id,
+            account_choice_request_id: id,
             session_id: session.map(|s| s.id),
         },
         key(state),
@@ -66,10 +71,14 @@ pub async fn redirect(
 async fn request(
     state: &AppState,
     raw: &str,
-) -> Result<(Choice, authorization_requests::Model), Box<Response>> {
+    session_id: Option<Uuid>,
+) -> Result<authorization_requests::Model, Box<Response>> {
     let choice: Choice = pero_utils::crypto::decode_signed_json(raw, key(state))
         .map_err(|_| pero_api_axum::json_error("invalid_request"))?;
-    let request = authorization_requests::Entity::find_by_id(choice.request_id)
+    if choice.session_id != session_id {
+        return Err(Box::new(pero_api_axum::json_error("invalid_request")));
+    }
+    authorization_requests::Entity::find_by_id(choice.account_choice_request_id)
         .one(&state.db)
         .await
         .map_err(util::dependency_error)?
@@ -78,24 +87,23 @@ async fn request(
                 && r.expires_at > time::OffsetDateTime::now_utc()
                 && has_prompt(r.prompt.as_deref(), "select_account")
         })
-        .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))?;
-    Ok((choice, request))
+        .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))
 }
 pub async fn get(
     State(state): State<AppState>,
     jar: CookieJar,
     Query(params): Query<Params>,
 ) -> Response {
-    if !params.token.is_empty()
-        && let Err(e) = request(&state, &params.token).await
-    {
-        return *e;
-    }
-    let session = match extract_session(&state, &jar).await {
+    let session = match extract_browser_session(&state, &jar).await {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
-    let username = if let Some(s) = session {
+    if !params.token.is_empty()
+        && let Err(e) = request(&state, &params.token, session.as_ref().map(|s| s.id)).await
+    {
+        return *e;
+    }
+    let username = if let Some(s) = session.filter(|s| !s.recovery_pending) {
         match users::Entity::find_by_id(s.user_id).one(&state.db).await {
             Ok(Some(u)) => u.username,
             Ok(None) => String::new(),
@@ -117,8 +125,9 @@ pub async fn post(
     if !matches!(input.action.as_str(), "current" | "other") {
         return pero_api_axum::json_error("invalid_request");
     }
+    let choose_other = input.action == "other";
     if input.token.is_empty() {
-        if input.action == "current" {
+        if !choose_other {
             return Redirect::to(&util::safe_redirect(&input.redirect)).into_response();
         }
         let jar = match switch(&state, jar).await {
@@ -133,54 +142,103 @@ pub async fn post(
         );
         return (jar, Redirect::to(&url)).into_response();
     }
-    let (choice, request) = match request(&state, &input.token).await {
+    let session = match extract_browser_session(&state, &jar).await {
+        Ok(s) => s,
+        Err(e) => return e.into_response(),
+    };
+    let session_id = session.as_ref().map(|s| s.id);
+    let request = match request(&state, &input.token, session_id).await {
         Ok(v) => v,
         Err(e) => return *e,
     };
-    if input.action == "current" {
-        let session = match extract_session(&state, &jar).await {
-            Ok(s) => s,
-            Err(e) => return e.into_response(),
-        };
-        if session.is_none() || session.as_ref().map(|s| s.id) != choice.session_id {
-            return pero_api_axum::json_error("invalid_request");
-        }
-    }
     let mut prompts = request
         .prompt
         .as_deref()
         .unwrap_or("")
         .split_whitespace()
         .filter(|p| *p != "select_account")
-        .map(String::from)
         .collect::<Vec<_>>();
-    if input.action == "other" && !prompts.iter().any(|p| p == "login") {
-        prompts.push("login".into());
+    if choose_other && !prompts.contains(&"login") {
+        prompts.push("login");
     }
-    let mut active: authorization_requests::ActiveModel = request.into();
-    active.prompt = Set((!prompts.is_empty()).then(|| prompts.join(" ")));
-    let updated = match active.update(&state.db).await {
+    let prompt = (!prompts.is_empty()).then(|| prompts.join(" "));
+    if choose_other {
+        return switch_for_authorization(&state, &jar, session_id, request, prompt)
+            .await
+            .unwrap_or_else(|response| *response);
+    }
+    let Some(session) = session.filter(|s| !s.recovery_pending) else {
+        return pero_api_axum::json_error("invalid_request");
+    };
+    let updated = match async {
+        let txn = state
+            .oauth_service()
+            .begin_authorization_choice(&request, session.id, session.user_id)
+            .await
+            .map_err(super::authorize::pending_form_error)?;
+        let updated = consume_choice(&txn, request, prompt).await?;
+        txn.commit().await.map_err(util::dependency_error)?;
+        Ok::<_, Box<Response>>(updated)
+    }
+    .await
+    {
         Ok(r) => r,
-        Err(e) => return util::dependency_error(e),
+        Err(e) => return *e,
     };
-    let result = if input.action == "other" {
-        let jar = match switch(&state, jar).await {
-            Ok(j) => j,
-            Err(e) => return *e,
-        };
-        super::authorize::pending_redirect(&state, &jar, updated.id).await
-    } else {
-        super::authorize::resolve_authorization(&state, &jar, &updated).await
-    };
-    match result {
-        Ok(v) => v.into_response(),
-        Err(e) => e.into_response(),
+    super::authorize::resolve_pending_authorization(&state, &jar, &updated, true)
+        .await
+        .into_response()
+}
+
+async fn consume_choice<C: ConnectionTrait>(
+    db: &C,
+    request: authorization_requests::Model,
+    prompt: Option<String>,
+) -> Result<authorization_requests::Model, Box<Response>> {
+    // Consume the choice once, even when two tabs submit different actions.
+    authorization_requests::Model::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE authorization_requests SET prompt=$2 WHERE id=$1 AND prompt=$3
+         AND completed_at IS NULL AND expires_at>clock_timestamp() RETURNING *",
+        [request.id.into(), prompt.into(), request.prompt.into()],
+    ))
+    .one(db)
+    .await
+    .map_err(util::dependency_error)?
+    .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))
+}
+
+async fn switch_for_authorization(
+    state: &AppState,
+    jar: &CookieJar,
+    session_id: Option<Uuid>,
+    request: authorization_requests::Model,
+    prompt: Option<String>,
+) -> Result<Response, Box<Response>> {
+    let txn = state.db.begin().await.map_err(util::dependency_error)?;
+    OAuthService::lock_pending_authorization_policy(&txn, &request)
+        .await
+        .map_err(super::authorize::pending_form_error)?;
+    // Match issuance's lock order: session before authorization request.
+    if let Some(session_id) = session_id
+        && !SessionService::revoke_login_state_in_db(&txn, session_id, "account_switch")
+            .await
+            .map_err(util::dependency_error)?
+    {
+        return Err(Box::new(pero_api_axum::json_error("invalid_request")));
     }
+    let updated = consume_choice(&txn, request, prompt).await?;
+    // Store the continuation only after the request passes validation, and before commit.
+    let (jar, response) = super::authorize::pending_redirect(state, jar, updated.id)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    txn.commit().await.map_err(util::dependency_error)?;
+    Ok((clear_session_cookie(state, jar), response).into_response())
 }
 pub(crate) async fn switch(state: &AppState, jar: CookieJar) -> Result<CookieJar, Box<Response>> {
     // Switching must also revoke incomplete MFA and recovery sessions. The
     // authenticated extractor intentionally excludes these browser credentials.
-    let session = crate::web::session::extract_browser_session(state, &jar)
+    let session = extract_browser_session(state, &jar)
         .await
         .map_err(IntoResponse::into_response)?;
     if let Some(session) = session {
@@ -190,6 +248,10 @@ pub(crate) async fn switch(state: &AppState, jar: CookieJar) -> Result<CookieJar
             .await
             .map_err(util::dependency_error)?;
     }
+    Ok(clear_session_cookie(state, jar))
+}
+
+pub(super) fn clear_session_cookie(state: &AppState, jar: CookieJar) -> CookieJar {
     let cookies = state.cookie_factory();
-    Ok(jar.add(cookies.clear_cookie(cookies.session_cookie_name())))
+    jar.add(cookies.clear_cookie(cookies.session_cookie_name()))
 }

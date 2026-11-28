@@ -189,10 +189,10 @@ pub async fn post(
         jar
     };
 
+    let oauth = state.oauth_service();
     if form.action == "deny" {
-        match state
-            .oauth_service()
-            .deny_authorization_request(ctx.auth_request.id, &session)
+        match oauth
+            .deny_authorization_request(&ctx.auth_request, &session)
             .await
         {
             Ok(()) => {}
@@ -215,7 +215,6 @@ pub async fn post(
         return Redirect::to("/sso/error?code=invalid_action").into_response();
     }
 
-    let oauth = state.oauth_service();
     let raw_code = match oauth
         .issue_auth_code_with_consent(
             ctx.auth_request.id,

@@ -254,6 +254,8 @@ pub async fn create(db: &DatabaseConnection, user: Uuid, name: &str, slug: &str)
         return Err(Error::Invalid("invalid_request"));
     }
     let txn = db.begin().await?;
+    // Membership and application admission both populate tenant application history.
+    super::admin::lock_policy(&txn).await?;
     super::tenant_policy::authorize_create(&txn, user).await?;
     let verified = txn.query_one_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -739,6 +741,8 @@ pub async fn set_status(
 ) -> Result<()> {
     validate_status(status)?;
     let txn = db.begin().await?;
+    // Serialize activation and its history trigger with application admission.
+    super::admin::lock_policy(&txn).await?;
     lock_organization(&txn, tenant).await?;
     let space = get(&txn, actor, tenant).await?;
     if space.role != "owner" {

@@ -44,20 +44,21 @@ where
     model.insert(db).await
 }
 
-pub async fn revoke<C>(db: &C, id: Uuid, reason: Option<String>) -> Result<(), sea_orm::DbErr>
+pub async fn revoke<C>(db: &C, id: Uuid, reason: Option<String>) -> Result<bool, sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    let now = OffsetDateTime::now_utc();
-    let session = sso_sessions::Entity::find_by_id(id)
-        .one(db)
-        .await?
-        .ok_or(sea_orm::DbErr::RecordNotFound("session not found".into()))?;
-    let mut active: sso_sessions::ActiveModel = session.into();
-    active.revoked_at = Set(Some(now));
-    active.revoke_reason = Set(reason);
-    active.update(db).await?;
-    Ok(())
+    sso_sessions::Entity::update_many()
+        .col_expr(
+            sso_sessions::Column::RevokedAt,
+            Expr::value(Some(OffsetDateTime::now_utc())),
+        )
+        .col_expr(sso_sessions::Column::RevokeReason, Expr::value(reason))
+        .filter(sso_sessions::Column::Id.eq(id))
+        .filter(sso_sessions::Column::RevokedAt.is_null())
+        .exec(db)
+        .await
+        .map(|result| result.rows_affected == 1)
 }
 
 pub async fn revoke_all_for_user<C>(

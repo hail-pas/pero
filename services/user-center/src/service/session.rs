@@ -1,8 +1,8 @@
 use ipnetwork::IpNetwork;
 use pero_error::AppError;
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait, QueryFilter,
-    TransactionTrait,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, ExprTrait,
+    QueryFilter, TransactionTrait,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -258,13 +258,8 @@ impl<'a> SessionService<'a> {
     pub async fn revoke_login_state(&self, session_id: Uuid, reason: &str) -> Result<(), AppError> {
         let result: Result<(), sea_orm::DbErr> = async {
             let txn = self.db.begin().await?;
-            session_helper::revoke(&txn, session_id, Some(reason.to_owned())).await?;
-            Self::revoke_refresh_tokens_where_on(&txn, reason, |query| {
-                query.filter(refresh_tokens::Column::SessionId.eq(session_id))
-            })
-            .await?;
-            txn.commit().await?;
-            Ok(())
+            Self::revoke_login_state_in_db(&txn, session_id, reason).await?;
+            txn.commit().await
         }
         .await;
         result.map_err(|e| {
@@ -272,6 +267,19 @@ impl<'a> SessionService<'a> {
                 .with_source(e)
         })?;
         Ok(())
+    }
+
+    pub(crate) async fn revoke_login_state_in_db(
+        db: &DatabaseTransaction,
+        session_id: Uuid,
+        reason: &str,
+    ) -> Result<bool, sea_orm::DbErr> {
+        let revoked = session_helper::revoke(db, session_id, Some(reason.to_owned())).await?;
+        Self::revoke_refresh_tokens_where_on(db, reason, |query| {
+            query.filter(refresh_tokens::Column::SessionId.eq(session_id))
+        })
+        .await?;
+        Ok(revoked)
     }
 
     pub async fn revoke_app_grants<C: ConnectionTrait>(

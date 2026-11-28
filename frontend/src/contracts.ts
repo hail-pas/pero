@@ -302,6 +302,7 @@ export interface ViewDataMap {
     app_name: string;
     username: string;
     expired: boolean;
+    diagnostic?: boolean;
     can_request?: boolean;
     tenant_unavailable?: boolean;
     opens_immediately?: boolean;

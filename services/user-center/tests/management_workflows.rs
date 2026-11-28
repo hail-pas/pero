@@ -2284,12 +2284,73 @@ async fn account_selection_preserves_authorization_and_switches_the_session() {
         "/oauth2/authorize?client_id={}&redirect_uri=https%3A%2F%2Fclient.example.test%2Fcallback&response_type=code&scope=openid&prompt=select_account&state=preserved&code_challenge={}&code_challenge_method=S256",
         f.client, pkce.code_challenge
     );
+    let (other_cookies, other_csrf, _, other_raw) = f.login(f.user).await;
     for action in ["current", "other"] {
         let (_, redirect, _) = call(&router, &cookies, &uri, None).await;
         let url = redirect["redirect"].as_str().unwrap();
         let (_, selection, _) = call(&router, &cookies, url, None).await;
         assert_eq!(selection["view"], "SelectAccountView");
         let token = selection["data"]["token"].as_str().unwrap();
+        let (status, rejected, _) = call(
+            &router,
+            &other_cookies,
+            "/sso/select-account",
+            Some(&[
+                ("csrf_token", &other_csrf),
+                ("token", token),
+                ("action", action),
+            ]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(rejected["error"], "invalid_request");
+        if action == "other" {
+            f.sql(
+                "UPDATE oauth_clients SET status='disabled' WHERE id=$1",
+                vec![f.client.into()],
+            )
+            .await;
+            let (status, rejected, _) = call(
+                &router,
+                &cookies,
+                "/sso/select-account",
+                Some(&[("csrf_token", &csrf), ("token", token), ("action", action)]),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(rejected["error"], "invalid_request");
+            f.sql(
+                "UPDATE oauth_clients SET status='active' WHERE id=$1",
+                vec![f.client.into()],
+            )
+            .await;
+            f.sql(
+                "ALTER TABLE sso_sessions ADD CONSTRAINT test_revoke_failure CHECK (revoke_reason IS DISTINCT FROM 'account_switch')",
+                vec![],
+            )
+            .await;
+            let (status, _, _) = call(
+                &router,
+                &cookies,
+                "/sso/select-account",
+                Some(&[("csrf_token", &csrf), ("token", token), ("action", action)]),
+            )
+            .await;
+            assert!(status.is_server_error());
+            assert!(
+                f.state
+                    .session_service()
+                    .validate(&raw)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+            f.sql(
+                "ALTER TABLE sso_sessions DROP CONSTRAINT test_revoke_failure",
+                vec![],
+            )
+            .await;
+        }
         let (_, next, _) = call(
             &router,
             &cookies,
@@ -2312,6 +2373,14 @@ async fn account_selection_preserves_authorization_and_switches_the_session() {
             );
         }
     }
+    assert!(
+        f.state
+            .session_service()
+            .validate(&other_raw)
+            .await
+            .unwrap()
+            .is_some()
+    );
     // An incomplete MFA/recovery session is still a browser credential and
     // must be revoked when the user chooses another account.
     for recovery in [false, true] {
@@ -2655,9 +2724,52 @@ async fn guided_integration_completes_authorization_and_validates_tokens() {
     )
     .await
     .unwrap();
+    f.sql(
+        "UPDATE user_app_access SET status='disabled' WHERE user_id=$1 AND app_id=$2",
+        vec![f.admin.into(), f.app.into()],
+    )
+    .await;
+    let (_, denied, _) = call(
+        &router,
+        &cookies,
+        &format!("/oauth2/diagnostic/authorize?request={request_id}"),
+        None,
+    )
+    .await;
+    let (_, recovery, _) = call(
+        &router,
+        &cookies,
+        denied["redirect"].as_str().unwrap(),
+        None,
+    )
+    .await;
+    assert_eq!(recovery["data"]["diagnostic"], true);
+    let token = recovery["data"]["token"].as_str().unwrap();
+    let (status, rejected, _) = call(
+        &router,
+        &cookies,
+        "/oauth2/authorize/access",
+        Some(&[("csrf_token", &csrf), ("token", token), ("action", "other")]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(rejected["error"], "invalid_request");
+    f.sql(
+        "UPDATE user_app_access SET status='active' WHERE user_id=$1 AND app_id=$2",
+        vec![f.admin.into(), f.app.into()],
+    )
+    .await;
+    let (_, retry, _) = call(
+        &router,
+        &cookies,
+        "/oauth2/authorize/access",
+        Some(&[("csrf_token", &csrf), ("token", token), ("action", "retry")]),
+    )
+    .await;
+    assert_eq!(retry["redirect"], "/sso/consent");
     f.state
         .oauth_service()
-        .deny_authorization_request(request.id, &session)
+        .deny_authorization_request(&request, &session)
         .await
         .unwrap();
     let saved = f

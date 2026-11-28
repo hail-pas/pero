@@ -168,13 +168,15 @@ export function Auth({
             >
               {t("已获得权限，重新尝试")}
             </Button>
-            <Button
-              variant="outlined"
-              disabled={actionBusy}
-              onClick={() => recover("other")}
-            >
-              {t("登录其他账号")}
-            </Button>
+            {!data.diagnostic && (
+              <Button
+                variant="outlined"
+                disabled={actionBusy}
+                onClick={() => recover("other")}
+              >
+                {t("登录其他账号")}
+              </Button>
+            )}
             <Button
               color="inherit"
               disabled={actionBusy}

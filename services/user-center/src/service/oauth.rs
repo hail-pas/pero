@@ -1,8 +1,8 @@
 use pero_cache_redis::RedisCacheStore;
 use pero_error::AppError;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    DbBackend, EntityTrait, QueryFilter, QuerySelect, Set, Statement, TransactionTrait,
 };
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -78,16 +78,60 @@ impl<'a> OAuthService<'a> {
         &self,
         request: &authorization_requests::Model,
     ) -> Result<(), OAuthError> {
-        let client = oauth_clients::Entity::find_by_id(request.client_id)
-            .one(self.db)
-            .await
-            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
-            .ok_or(OAuthError::AccessDenied)?;
-        if !client_allows_authorization(&client, request) {
-            return Err(OAuthError::AccessDenied);
-        }
+        let client = pending_client(self.db, request, false).await?;
         self.validate_app(&client).await?;
         Ok(())
+    }
+
+    /// Keep the callback and application policy stable until the request mutation commits.
+    pub(crate) async fn lock_pending_authorization_policy(
+        txn: &DatabaseTransaction,
+        request: &authorization_requests::Model,
+    ) -> Result<(), OAuthError> {
+        pending_client(txn, request, true).await?;
+        let app = apps::Entity::find_by_id(request.app_id)
+            .lock_shared()
+            .one(txn)
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+        if !app.is_some_and(|app| app.status == CommonStatus::Active) {
+            return Err(OAuthError::AccessDenied);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn begin_authorization_choice(
+        &self,
+        request: &authorization_requests::Model,
+        session_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<DatabaseTransaction, OAuthError> {
+        let db_error = |error| OAuthError::Internal(crate::db::error::to_app_error(error));
+        let txn = self.db.begin().await.map_err(db_error)?;
+        Self::lock_pending_authorization_policy(&txn, request).await?;
+        // Credential changes lock the user before modifying its sessions.
+        let user = crate::db::entity::users::Entity::find_by_id(user_id)
+            .lock_shared()
+            .one(&txn)
+            .await
+            .map_err(db_error)?;
+        if !user.is_some_and(|user| {
+            user.status == crate::db::enums::UserStatus::Active && user.deleted_at.is_none()
+        }) {
+            return Err(OAuthError::AccessDenied);
+        }
+
+        let session = crate::db::helper::session::primary_query(
+            OffsetDateTime::now_utc(),
+            self.sso_config.session_idle_ttl_seconds,
+        )
+        .filter(crate::db::entity::sso_sessions::Column::Id.eq(session_id))
+        .filter(crate::db::entity::sso_sessions::Column::UserId.eq(user_id))
+        .lock_shared()
+        .one(&txn)
+        .await
+        .map_err(db_error)?;
+        session.map(|_| txn).ok_or(OAuthError::AccessDenied)
     }
 
     /// 校验客户端关联的 App 是否存在且 active
@@ -207,22 +251,30 @@ impl<'a> OAuthService<'a> {
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
             .ok_or(OAuthError::AccessDenied)?;
-        let client = oauth_clients::Entity::find_by_id(request.client_id)
-            .lock_shared()
-            .one(&txn)
+        let open_access = grant_consent
+            && request.tenant_id.is_some()
+            && request.diagnostic_session_id.is_none()
+            && !has_prompt(request.prompt.as_deref(), "none")
+            && super::access::can_open_super_admin_access(&txn, session.user_id, request.app_id)
+                .await
+                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+        if open_access {
+            // Keep role and policy changes serialized ahead of client/app locks.
+            super::admin::read_lock_policy(&txn)
+                .await
+                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+        }
+        let client = pending_client(&txn, &request, true).await?;
+        let opened_access = open_access
+            && super::access::open_super_admin_access(&txn, session.user_id, request.app_id)
+                .await
+                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+        let access = super::access::lock_grant_access(&txn, session.user_id, request.app_id)
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
             .ok_or(OAuthError::AccessDenied)?;
-        if !client_allows_authorization(&client, &request)
-            || crate::service::access::lock_grant_access(&txn, session.user_id, request.app_id)
-                .await
-                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
-                .is_none()
-        {
-            return Err(OAuthError::AccessDenied);
-        }
 
-        if crate::db::helper::session::app_query(
+        if !crate::db::helper::session::app_query(
             OffsetDateTime::now_utc(),
             self.sso_config.session_idle_ttl_seconds,
             request.app_id,
@@ -233,7 +285,7 @@ impl<'a> OAuthService<'a> {
         .one(&txn)
         .await
         .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
-        .is_none()
+        .is_some_and(|live_session| !opened_access || live_session.mfa_verified_at.is_some())
         {
             return Err(OAuthError::AccessDenied);
         }
@@ -279,7 +331,10 @@ impl<'a> OAuthService<'a> {
         }
 
         let now = OffsetDateTime::now_utc();
-        if auth_request.completed_at.is_some() || auth_request.expires_at <= now {
+        if auth_request.completed_at.is_some()
+            || auth_request.expires_at <= now
+            || auth_request.tenant_id != request.tenant_id
+        {
             return Err(OAuthError::AccessDenied);
         }
 
@@ -294,29 +349,16 @@ impl<'a> OAuthService<'a> {
             return Err(OAuthError::AccessDenied);
         }
 
-        let system_app = apps::Entity::find_by_id(request.app_id)
-            .one(&txn)
-            .await
-            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
-            .is_some_and(|a| a.system);
-        let tenant = if !system_app {
-            Some(
-                crate::service::tenant_context::resolve(
-                    &txn,
-                    session.user_id,
-                    auth_request.app_id,
-                    auth_request.tenant_id,
-                )
-                .await
-                .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
-                .ok_or(OAuthError::AccessDenied)?,
-            )
-        } else {
-            None
+        let tenant = match (access.app.system, auth_request.tenant_id) {
+            (true, None) => None,
+            (false, Some(tenant)) => Some(
+                super::tenant_context::active(&txn, session.user_id, auth_request.app_id, tenant)
+                    .await
+                    .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?
+                    .ok_or(OAuthError::AccessDenied)?,
+            ),
+            _ => return Err(OAuthError::AccessDenied),
         };
-        if auth_request.tenant_id != tenant.as_ref().map(|c| c.tenant_id) {
-            return Err(OAuthError::AccessDenied);
-        }
         let takeover_allowed = grant_consent
             && confirm_takeover
             && !has_prompt(auth_request.prompt.as_deref(), "none");
@@ -377,6 +419,18 @@ impl<'a> OAuthService<'a> {
             .await
             .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
         }
+        if opened_access {
+            super::access::record_explicit_grant(
+                &txn,
+                session.user_id,
+                auth_request.app_id,
+                session.user_id,
+                "app_access_granted",
+                serde_json::json!({ "source": "super_admin_oauth" }),
+            )
+            .await
+            .map_err(|e| OAuthError::Internal(crate::db::error::to_app_error(e)))?;
+        }
 
         let mut active: authorization_requests::ActiveModel = auth_request.into();
         active.completed_at = Set(Some(now));
@@ -396,34 +450,64 @@ impl<'a> OAuthService<'a> {
     /// Reject only this request; existing consent is withdrawn by explicit revocation.
     pub async fn deny_authorization_request(
         &self,
-        auth_request_id: Uuid,
+        request: &authorization_requests::Model,
         session: &SsoSession,
     ) -> Result<(), OAuthError> {
-        let now = OffsetDateTime::now_utc();
-        let result = authorization_requests::Entity::update_many()
-            .col_expr(
-                authorization_requests::Column::CompletedAt,
-                sea_orm::sea_query::Expr::value(Some(now)),
-            )
-            .col_expr(
-                authorization_requests::Column::AuthorizedUserId,
-                sea_orm::sea_query::Expr::value(Some(session.user_id)),
-            )
-            .filter(authorization_requests::Column::Id.eq(auth_request_id))
-            .filter(authorization_requests::Column::CompletedAt.is_null())
-            .filter(authorization_requests::Column::ExpiresAt.gt(now))
-            .filter(
-                sea_orm::Condition::any()
-                    .add(authorization_requests::Column::DiagnosticSessionId.is_null())
-                    .add(authorization_requests::Column::DiagnosticSessionId.eq(session.id)),
-            )
-            .exec(self.db)
+        let txn = self
+            .db
+            .begin()
             .await
             .map_err(|error| OAuthError::Internal(crate::db::error::to_app_error(error)))?;
-        if result.rows_affected != 1 {
+        Self::lock_pending_authorization_policy(&txn, request).await?;
+        let finished = self
+            .finish_authorization_request(&txn, request.id, session, true)
+            .await
+            .map_err(|error| OAuthError::Internal(crate::db::error::to_app_error(error)))?;
+        if !finished {
             return Err(OAuthError::AccessDenied);
         }
-        Ok(())
+        txn.commit()
+            .await
+            .map_err(|error| OAuthError::Internal(crate::db::error::to_app_error(error)))
+    }
+
+    /// Complete a cancellation or denial while the initiating session is still live.
+    pub(crate) async fn finish_authorization_request<C: ConnectionTrait>(
+        &self,
+        db: &C,
+        auth_request_id: Uuid,
+        session: &SsoSession,
+        record_user: bool,
+    ) -> Result<bool, sea_orm::DbErr> {
+        let idle_cutoff = OffsetDateTime::now_utc()
+            - time::Duration::seconds(self.sso_config.session_idle_ttl_seconds as i64);
+        // Denial writes a user foreign key. Lock the user before the session
+        // and request, in the same order as issuance and credential changes.
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "WITH live_user AS MATERIALIZED (
+                    SELECT id FROM users
+                    WHERE id=$3 AND status='active' AND deleted_at IS NULL FOR SHARE
+                ), live_session AS MATERIALIZED (
+                    SELECT s.id FROM sso_sessions s JOIN live_user u ON s.user_id=u.id
+                    WHERE s.id=$2 AND s.revoked_at IS NULL AND NOT s.recovery_pending
+                      AND s.expires_at>clock_timestamp() AND s.last_seen_at>$4 FOR SHARE OF s
+                )
+                UPDATE authorization_requests SET completed_at=clock_timestamp(),
+                    authorized_user_id=CASE WHEN $5 THEN $3 ELSE authorized_user_id END
+                WHERE id=$1 AND completed_at IS NULL AND expires_at>clock_timestamp()
+                  AND (diagnostic_session_id IS NULL OR diagnostic_session_id=$2)
+                  AND EXISTS (SELECT 1 FROM live_session)",
+            [
+                auth_request_id.into(),
+                session.id.into(),
+                session.user_id.into(),
+                idle_cutoff.into(),
+                record_user.into(),
+            ],
+        ))
+        .await
+        .map(|result| result.rows_affected() == 1)
     }
 
     /// 将 authorization_request ID 存入 Redis（短命 pending），返回 nonce 作为 cookie 值
@@ -526,6 +610,21 @@ fn validate_client_parameters(
         return Err(OAuthError::InvalidScope(scope.clone()));
     }
     Ok(())
+}
+
+async fn pending_client<C: ConnectionTrait>(
+    db: &C,
+    request: &authorization_requests::Model,
+    lock: bool,
+) -> Result<oauth_clients::Model, OAuthError> {
+    let query = oauth_clients::Entity::find_by_id(request.client_id);
+    let query = if lock { query.lock_shared() } else { query };
+    query
+        .one(db)
+        .await
+        .map_err(|error| OAuthError::Internal(crate::db::error::to_app_error(error)))?
+        .filter(|client| client_allows_authorization(client, request))
+        .ok_or(OAuthError::AccessDenied)
 }
 
 fn client_allows_authorization(

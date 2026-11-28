@@ -219,6 +219,12 @@ async fn authorize_request(
     }
 
     let app = oauth.validate_app(&client).await?;
+    if app.system && params.tenant_id.is_some() {
+        return Err(params.redirect_err(
+            "invalid_request",
+            Some("System applications do not accept a tenant_id"),
+        ));
+    }
     if crate::service::oauth::has_prompt(params.prompt.as_deref(), "create")
         && !client
             .login_uri
@@ -460,7 +466,7 @@ pub async fn resume(
     }
 }
 
-async fn resolve_pending_authorization(
+pub(super) async fn resolve_pending_authorization(
     state: &AppState,
     jar: &CookieJar,
     request: &authorization_requests::Model,
@@ -471,6 +477,15 @@ async fn resolve_pending_authorization(
         .validate_pending_authorization(request)
         .await?;
     resolve_authorization_inner(state, jar, request, require_session).await
+}
+
+pub(super) fn pending_form_error(error: crate::service::oauth::OAuthError) -> Box<Response> {
+    Box::new(match error {
+        crate::service::oauth::OAuthError::Internal(error) => {
+            crate::web::util::dependency_error(error)
+        }
+        _ => pero_api_axum::json_error("invalid_request"),
+    })
 }
 
 async fn take_pending_authorization(
@@ -556,6 +571,14 @@ async fn resolve_authorization_inner(
         .await
         .map_err(|_| OAuthError::Unavailable)?;
 
+    if auth_request
+        .diagnostic_session_id
+        .is_some_and(|id| session.as_ref().is_none_or(|session| session.id != id))
+    {
+        return Err(OAuthError::BadRequest(
+            "Authorization session expired".into(),
+        ));
+    }
     let Some(session) = session else {
         if require_session {
             return Err(OAuthError::BadRequest(
@@ -584,41 +607,67 @@ async fn resolve_authorization_inner(
         .map_err(|_| OAuthError::Unavailable)?
         .filter(|app| app.status == crate::db::enums::CommonStatus::Active)
         .ok_or_else(|| OAuthError::BadRequest("Application access denied".into()))?;
-    use crate::service::tenant_context;
+    use crate::service::{access, tenant_context};
     let interactive = auth_request.diagnostic_session_id.is_none();
-    let entitled = if !app.system
-        && let Some(tenant) = auth_request.tenant_id
-    {
-        if tenant_context::active(&state.db, session.user_id, app.id, tenant)
+    let tenant = auth_request.tenant_id.filter(|_| !app.system);
+    let mut entitled = if let Some(tenant) = tenant {
+        tenant_context::active(&state.db, session.user_id, app.id, tenant)
             .await
             .map_err(|_| OAuthError::Unavailable)?
             .is_some()
-        {
-            true
-        } else {
-            let space = tenant_context::eligible(&state.db, session.user_id, app.id, tenant)
-                .await
-                .map_err(|_| OAuthError::Unavailable)?;
-            interactive
-                && app.organization_auto_access
-                && space.is_some_and(|space| space.tenant_kind == "organization")
-                && oauth.ensure_app_access(&session, app.id).await?
-                && tenant_context::active(&state.db, session.user_id, app.id, tenant)
-                    .await
-                    .map_err(|_| OAuthError::Unavailable)?
-                    .is_some()
-        }
-    } else if !app.system && interactive {
-        oauth.ensure_app_access(&session, app.id).await?
     } else {
-        crate::service::access::has_oauth_app_access(&state.db, session.user_id, app.id)
+        access::has_oauth_app_access(&state.db, session.user_id, app.id)
             .await
             .map_err(|_| OAuthError::Unavailable)?
     };
-    if !entitled {
+    let mut first_access = false;
+    if !entitled && !app.system && interactive {
+        let allows_organization_admission = if let Some(tenant) = tenant {
+            let Some(space) = tenant_context::eligible(&state.db, session.user_id, app.id, tenant)
+                .await
+                .map_err(|_| OAuthError::Unavailable)?
+            else {
+                return super::access::redirect(state, jar.clone(), auth_request, session.id);
+            };
+            space.tenant_kind == "organization"
+        } else {
+            true
+        };
+        first_access = access::can_open_super_admin_access(&state.db, session.user_id, app.id)
+            .await
+            .map_err(|_| OAuthError::Unavailable)?;
+        if !first_access
+            && allows_organization_admission
+            && app.organization_auto_access
+            && oauth.ensure_app_access(&session, app.id).await?
+        {
+            entitled = match tenant {
+                Some(tenant) => tenant_context::active(&state.db, session.user_id, app.id, tenant)
+                    .await
+                    .map_err(|_| OAuthError::Unavailable)?
+                    .is_some(),
+                None => true,
+            };
+        }
+    }
+    if !entitled && !first_access {
         return super::access::redirect(state, jar.clone(), auth_request, session.id);
     }
 
+    let choices = if !app.system && tenant.is_none() {
+        let choices =
+            tenant_context::authorization_choices(&state.db, session.user_id, app.id, first_access)
+                .await
+                .map_err(|_| OAuthError::Unavailable)?;
+        if choices.is_empty() {
+            return super::tenant::redirect(state, jar.clone(), auth_request.id, session.id);
+        }
+        Some(choices)
+    } else {
+        None
+    };
+
+    // Without an app grant, only an MFA-verified session passes the app session check.
     if !app_session_ready(state, session.id, auth_request.app_id).await? {
         let enrolled = crate::service::security::mfa_enabled(&state.db, session.user_id)
             .await
@@ -631,38 +680,31 @@ async fn resolve_authorization_inner(
         return resume_after_mfa(state, jar, auth_request.id, target).await;
     }
 
-    if !app.system && auth_request.tenant_id.is_none() {
-        let choices = tenant_context::choices(&state.db, session.user_id, app.id)
-            .await
-            .map_err(|_| OAuthError::Unavailable)?;
-        if choices.len() != 1 {
-            return super::tenant::redirect(state, jar.clone(), auth_request.id, session.id);
+    let bound_request;
+    let auth_request = match choices.as_deref() {
+        Some([choice]) => {
+            bound_request =
+                crate::db::helper::auth_request::bind_tenant(&state.db, auth_request.id, choice.id)
+                    .await
+                    .map_err(|_| OAuthError::Unavailable)?
+                    .ok_or_else(|| OAuthError::BadRequest("Tenant access denied".into()))?;
+            &bound_request
         }
-        let request =
-            crate::db::helper::auth_request::bind_tenant(&state.db, auth_request.id, choices[0].id)
-                .await
-                .map_err(|_| OAuthError::Unavailable)?
-                .ok_or_else(|| OAuthError::BadRequest("Tenant access denied".into()))?;
-        return Box::pin(resolve_authorization_inner(
-            state,
-            jar,
-            &request,
-            require_session,
-        ))
-        .await;
-    }
+        Some(_) => return super::tenant::redirect(state, jar.clone(), auth_request.id, session.id),
+        None => auth_request,
+    };
     // prompt=consent 强制展示 consent 页面，忽略已有 consent 记录
-    let force_consent =
-        crate::service::oauth::has_prompt(auth_request.prompt.as_deref(), "consent")
-            || crate::service::app_session::needs_confirmation(
-                &state.db,
-                session.user_id,
-                auth_request.app_id,
-                session.id,
-                state.config.sso.session_idle_ttl_seconds,
-            )
-            .await
-            .map_err(|_| OAuthError::Unavailable)?;
+    let force_consent = first_access
+        || crate::service::oauth::has_prompt(auth_request.prompt.as_deref(), "consent")
+        || crate::service::app_session::needs_confirmation(
+            &state.db,
+            session.user_id,
+            auth_request.app_id,
+            session.id,
+            state.config.sso.session_idle_ttl_seconds,
+        )
+        .await
+        .map_err(|_| OAuthError::Unavailable)?;
     let has_consent = if force_consent {
         false
     } else {

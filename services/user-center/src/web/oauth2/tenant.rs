@@ -1,6 +1,7 @@
 //! Signed, session-bound choice for multi-workspace OAuth grants.
 use crate::{
     db::entity::authorization_requests,
+    service::{access, tenant_context},
     state::{app::AppState, session::SsoSession},
     web::{error::OAuthError, session::extract_session, util},
 };
@@ -10,13 +11,13 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::EntityTrait;
+use sea_orm::{ConnectionTrait, EntityTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize)]
 struct Ticket {
-    request_id: Uuid,
+    tenant_choice_request_id: Uuid,
     session_id: Uuid,
 }
 #[derive(Deserialize)]
@@ -44,7 +45,7 @@ pub fn redirect(
 ) -> Result<(CookieJar, Response), OAuthError> {
     let token = pero_utils::crypto::encode_signed_json(
         &Ticket {
-            request_id,
+            tenant_choice_request_id: request_id,
             session_id,
         },
         key(s),
@@ -68,7 +69,7 @@ async fn load(
     if session.id != ticket.session_id {
         return Err(Box::new(pero_api_axum::json_error("invalid_request")));
     }
-    let req = authorization_requests::Entity::find_by_id(ticket.request_id)
+    let req = authorization_requests::Entity::find_by_id(ticket.tenant_choice_request_id)
         .one(&s.db)
         .await
         .map_err(util::dependency_error)?
@@ -80,16 +81,36 @@ async fn load(
         .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))?;
     Ok((session, req))
 }
+
+async fn first_access<C: ConnectionTrait>(
+    db: &C,
+    session: &SsoSession,
+    req: &authorization_requests::Model,
+) -> Result<bool, sea_orm::DbErr> {
+    Ok(req.diagnostic_session_id.is_none()
+        && access::can_open_super_admin_access(db, session.user_id, req.app_id).await?)
+}
+
 pub async fn get(State(s): State<AppState>, jar: CookieJar, Query(p): Query<Params>) -> Response {
     let (session, req) = match load(&s, &jar, &p.token).await {
         Ok(v) => v,
         Err(e) => return *e,
     };
-    let choices =
-        match crate::service::tenant_context::choices(&s.db, session.user_id, req.app_id).await {
-            Ok(v) => v,
-            Err(e) => return util::dependency_error(e),
-        };
+    let first_access = match first_access(&s.db, &session, &req).await {
+        Ok(value) => value,
+        Err(e) => return util::dependency_error(e),
+    };
+    let choices = match tenant_context::authorization_choices(
+        &s.db,
+        session.user_id,
+        req.app_id,
+        first_access,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return util::dependency_error(e),
+    };
     s.web_security()
         .view_with_csrf(jar, "TenantChoiceView", |csrf_token| {
             serde_json::json!({
@@ -105,22 +126,36 @@ pub async fn post(State(s): State<AppState>, jar: CookieJar, Form(p): Form<Choic
         Ok(v) => v,
         Err(e) => return *e,
     };
-    match crate::service::tenant_context::active(&s.db, session.user_id, req.app_id, p.tenant_id)
-        .await
-    {
-        Ok(Some(_)) => {}
-        Ok(None) => return pero_api_axum::json_error("forbidden"),
-        Err(e) => return util::dependency_error(e),
-    };
-    // Consume the initial choice exactly once; concurrent submissions cannot rewrite its tenant.
-    let updated =
-        match crate::db::helper::auth_request::bind_tenant(&s.db, req.id, p.tenant_id).await {
-            Ok(Some(request)) => request,
-            Ok(None) => return pero_api_axum::json_error("invalid_request"),
-            Err(error) => return util::dependency_error(error),
+    let updated = match async {
+        let txn = s
+            .oauth_service()
+            .begin_authorization_choice(&req, session.id, session.user_id)
+            .await
+            .map_err(super::authorize::pending_form_error)?;
+        let context = if first_access(&txn, &session, &req)
+            .await
+            .map_err(util::dependency_error)?
+        {
+            tenant_context::eligible(&txn, session.user_id, req.app_id, p.tenant_id).await
+        } else {
+            tenant_context::active(&txn, session.user_id, req.app_id, p.tenant_id).await
         };
-    match super::authorize::resolve_authorization(&s, &jar, &updated).await {
-        Ok(v) => v.into_response(),
-        Err(e) => e.into_response(),
+        if context.map_err(util::dependency_error)?.is_none() {
+            return Err(Box::new(pero_api_axum::json_error("forbidden")));
+        }
+        let updated = crate::db::helper::auth_request::bind_tenant(&txn, req.id, p.tenant_id)
+            .await
+            .map_err(util::dependency_error)?
+            .ok_or_else(|| Box::new(pero_api_axum::json_error("invalid_request")))?;
+        txn.commit().await.map_err(util::dependency_error)?;
+        Ok(updated)
     }
+    .await
+    {
+        Ok(updated) => updated,
+        Err(response) => return *response,
+    };
+    super::authorize::resolve_pending_authorization(&s, &jar, &updated, true)
+        .await
+        .into_response()
 }
