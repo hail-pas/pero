@@ -868,7 +868,7 @@ export function Admission({
             {
               name: "confirmation",
               label: t("输入当前用户名确认"),
-              hint: data.username,
+              hint: t("输入当前用户名 {{0}} 以确认。", { "0": data.username }),
               required: true,
             },
           ]}

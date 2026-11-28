@@ -1050,6 +1050,8 @@ test("my applications filters authorized cards and opens configured homepages", 
 test("permission assignment checks dependencies and submits explicit application grants", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const appName = "ApplicationWithALongName".repeat(4);
   let revision = 2;
   const views = {
     "/dashboard/admins": {
@@ -1065,8 +1067,9 @@ test("permission assignment checks dependencies and submits explicit application
           },
         ],
         apps: [
-          ["app-1", "alpha", "应用 A"],
+          ["app-1", "alpha", appName],
           ["app-2", "beta", "应用 B"],
+          ["app-3", "gamma", "应用 C"],
         ],
         catalog: [
           {
@@ -1123,8 +1126,19 @@ test("permission assignment checks dependencies and submits explicit application
   });
   await page.goto("/dashboard/admins");
   await page.getByRole("button", { name: "分配权限 · operator" }).click();
-  await page.getByRole("combobox", { name: "选择应用", exact: true }).click();
-  await page.getByRole("option", { name: "应用 A" }).click();
+  const appPicker = page.getByRole("combobox", { name: "选择应用", exact: true });
+  const emptyWidth = await appPicker.evaluate((element) => element.clientWidth);
+  expect(emptyWidth).toBeGreaterThan(200);
+  await appPicker.click();
+  await page.getByRole("option", { name: appName }).click();
+  await expect(page.getByRole("listbox")).toBeHidden();
+  await expect(appPicker).toHaveText(appName);
+  expect(
+    await appPicker.evaluate((element) => [
+      element.clientWidth,
+      element.scrollWidth,
+    ]),
+  ).toEqual([emptyWidth, emptyWidth]);
   await page
     .getByRole("checkbox", { name: "客户端管理 (clients.manage)", exact: true })
     .check();
@@ -1137,6 +1151,17 @@ test("permission assignment checks dependencies and submits explicit application
       exact: true,
     }),
   ).toBeChecked();
+  const targetPicker = page.getByRole("combobox", { name: "目标应用" });
+  expect(await targetPicker.evaluate((element) => element.clientWidth)).toBe(
+    emptyWidth,
+  );
+  await targetPicker.click();
+  await page.getByRole("option", { name: "应用 B" }).click();
+  await page.keyboard.press("Escape");
+  await expect(targetPicker).toHaveText("应用 B");
+  await page.getByRole("button", { name: "全选其他应用" }).click();
+  await expect(targetPicker).toHaveText("已选 2 个应用");
+  await page.getByRole("button", { name: "复制勾选到已选应用" }).click();
   // Refreshing while editing must not submit an old draft with a new revision.
   revision = 3;
   const refreshed = page.waitForResponse(
@@ -1171,6 +1196,14 @@ test("permission assignment checks dependencies and submits explicit application
     app_grants: [
       {
         app_id: "app-1",
+        permissions: ["apps.read", "clients.manage", "clients.read"],
+      },
+      {
+        app_id: "app-2",
+        permissions: ["apps.read", "clients.manage", "clients.read"],
+      },
+      {
+        app_id: "app-3",
         permissions: ["apps.read", "clients.manage", "clients.read"],
       },
     ],

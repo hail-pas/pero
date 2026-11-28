@@ -2,8 +2,10 @@ import { labelValue, t, useLocale } from "./i18n";
 import { useRef, useState } from "react";
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
+  Divider,
   FormControlLabel,
   MenuItem,
   Stack,
@@ -120,6 +122,7 @@ export function AdminPermissions({
     global: t("全局权限"),
     ...Object.fromEntries(data.apps.map(([id, , name]) => [id, name])),
   };
+  const targetApps = selected ? data.apps.filter(([id]) => id !== selected) : [];
   const diff = Object.keys({ ...before, ...after })
     .map((id) => ({
       id,
@@ -131,6 +134,7 @@ export function AdminPermissions({
     <>
       <Button
         disabled={saving}
+        aria-expanded={open}
         onClick={() => {
           if (!open) {
             setBaseline(row.grants);
@@ -148,147 +152,172 @@ export function AdminPermissions({
       </Button>
       {open && (
         <Panel title={labelValue("分配权限", row.username)}>
-          <Alert severity="info">
-            {t(
-              "全局用户权限影响所有非管理员账户。应用权限只对明确选择的应用生效；新应用不会自动获得授权。保存变更后，该管理员需要重新登录。",
-            )}
-          </Alert>
-          {error && <Alert severity="error">{requestErrorText(error.cause)}</Alert>}
-          <Typography variant="h6">{t("全局权限")}</Typography>
-          {checks("global", global, setGlobal)}
-          <Typography variant="h6">
-            {t("应用权限：{{0}} 个应用 / {{1}} 项权限", {
-              "0": Object.keys(apps).length,
-              "1": Object.values(apps).flat().length,
-            })}
-          </Typography>
-          <TextField
-            disabled={saving}
-            select
-            label={t("选择应用")}
-            value={selected}
-            onChange={(e) => {
-              setSelected(e.target.value);
-              setTargets([]);
-            }}
-          >
-            <MenuItem value="">{t("请选择")}</MenuItem>
-            {data.apps.map(([id, , name]) => (
-              <MenuItem key={id} value={id}>
-                {name}
-              </MenuItem>
-            ))}
-          </TextField>
-          {selected && (
-            <>
-              <Typography>{labels[selected]}</Typography>
-              {checks("app", apps[selected] || [], (v) =>
-                setApps((prev) => {
-                  const next = { ...prev };
-                  if (v.length) next[selected] = v;
-                  else delete next[selected];
-                  return next;
-                }),
+          <Stack spacing={3}>
+            <Alert severity="info">
+              {t(
+                "全局用户权限影响所有非管理员账户。应用权限只对明确选择的应用生效；新应用不会自动获得授权。保存变更后，该管理员需要重新登录。",
               )}
-              <Button
-                disabled={saving}
-                onClick={() => {
-                  setApps((prev) => {
-                    const n = { ...prev };
-                    delete n[selected];
-                    return n;
-                  });
-                  setReview(false);
-                }}
-              >
-                {t("撤回该应用全部权限")}
-              </Button>
-            </>
-          )}
-          {selected && (
-            <>
+            </Alert>
+            {error && (
+              <Alert severity="error">{requestErrorText(error.cause)}</Alert>
+            )}
+            <Box>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                {t("全局权限")}
+              </Typography>
+              {checks("global", global, setGlobal)}
+            </Box>
+            <Stack spacing={2}>
+              <Typography variant="h6">
+                {t("应用权限：{{0}} 个应用 / {{1}} 项权限", {
+                  "0": Object.keys(apps).length,
+                  "1": Object.values(apps).reduce(
+                    (count, permissions) => count + permissions.length,
+                    0,
+                  ),
+                })}
+              </Typography>
               <TextField
                 disabled={saving}
+                fullWidth
                 select
-                label={t("复制当前勾选到指定应用")}
-                value={targets}
-                slotProps={{ select: { multiple: true } }}
-                onChange={(e) =>
-                  setTargets(
-                    typeof e.target.value === "string"
-                      ? e.target.value.split(",")
-                      : e.target.value,
-                  )
-                }
+                label={t("选择应用")}
+                value={selected}
+                sx={{ maxWidth: 480 }}
+                onChange={(e) => {
+                  setSelected(e.target.value);
+                  setTargets([]);
+                }}
               >
-                {data.apps
-                  .filter(([id]) => id !== selected)
-                  .map(([id, , name]) => (
-                    <MenuItem key={id} value={id}>
-                      {name}
-                    </MenuItem>
-                  ))}
+                <MenuItem value="">{t("请选择")}</MenuItem>
+                {data.apps.map(([id, , name]) => (
+                  <MenuItem key={id} value={id}>
+                    {name}
+                  </MenuItem>
+                ))}
               </TextField>
+              {selected && (
+                <Box>
+                  {checks("app", apps[selected] || [], (v) =>
+                    setApps((prev) => {
+                      const next = { ...prev };
+                      if (v.length) next[selected] = v;
+                      else delete next[selected];
+                      return next;
+                    }),
+                  )}
+                  <Button
+                    disabled={saving || !apps[selected]?.length}
+                    sx={{ mt: 1 }}
+                    onClick={() => {
+                      setApps((prev) => {
+                        const next = { ...prev };
+                        delete next[selected];
+                        return next;
+                      });
+                      setReview(false);
+                    }}
+                  >
+                    {t("撤回该应用全部权限")}
+                  </Button>
+                </Box>
+              )}
+              {targetApps.length > 0 && (
+                <Stack spacing={1.5}>
+                  <TextField
+                    disabled={saving}
+                    fullWidth
+                    select
+                    label={t("目标应用")}
+                    value={targets}
+                    sx={{ maxWidth: 480 }}
+                    slotProps={{
+                      select: {
+                        multiple: true,
+                        renderValue: () =>
+                          targets.length === 1
+                            ? (labels[targets[0]] ?? targets[0])
+                            : t("已选 {{0}} 个应用", { "0": targets.length }),
+                      },
+                    }}
+                    onChange={(e) =>
+                      setTargets(
+                        typeof e.target.value === "string"
+                          ? e.target.value.split(",")
+                          : e.target.value,
+                      )
+                    }
+                  >
+                    {targetApps.map(([id, , name]) => (
+                      <MenuItem key={id} value={id}>
+                        {name}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
+                    <Button
+                      disabled={saving}
+                      onClick={() => setTargets(targetApps.map(([id]) => id))}
+                    >
+                      {t("全选其他应用")}
+                    </Button>
+                    <Button
+                      disabled={
+                        saving || !targets.length || !apps[selected]?.length
+                      }
+                      onClick={() => {
+                        setApps((prev) => ({
+                          ...prev,
+                          ...Object.fromEntries(
+                            targets.map((id) => [id, [...prev[selected]]]),
+                          ),
+                        }));
+                        setReview(false);
+                      }}
+                    >
+                      {t("复制勾选到已选应用")}
+                    </Button>
+                  </Stack>
+                </Stack>
+              )}
+            </Stack>
+            <Divider />
+            <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1 }}>
               <Button
                 disabled={saving}
-                onClick={() =>
-                  setTargets(
-                    data.apps
-                      .filter(([id]) => id !== selected)
-                      .map(([id]) => id),
-                  )
-                }
-              >
-                {t("全选当前应用")}
-              </Button>
-              <Button
-                disabled={saving || !targets.length || !apps[selected]?.length}
+                color="warning"
                 onClick={() => {
-                  setApps((prev) => ({
-                    ...prev,
-                    ...Object.fromEntries(
-                      targets.map((id) => [id, [...prev[selected]]]),
-                    ),
-                  }));
+                  setGlobal([]);
+                  setApps({});
                   setReview(false);
                 }}
               >
-                {t("复制勾选到已选应用")}
+                {t("清空全部权限")}
               </Button>
-            </>
-          )}
-          <Button
-            disabled={saving}
-            color="warning"
-            onClick={() => {
-              setGlobal([]);
-              setApps({});
-              setReview(false);
-            }}
-          >
-            {t("清空全部权限")}
-          </Button>
-          <Button
-            disabled={saving || !diff.length}
-            onClick={() => setReview(true)}
-          >
-            {t("预览权限变更")}
-          </Button>
-          {review && (
-            <>
-              <Typography>{t("确认以下新增和撤回：")}</Typography>
-              {diff.map((d) => (
-                <Alert key={d.id} severity="warning">
-                  {labels[d.id] || d.id} · {t("新增")}{" "}
-                  {d.added.join(", ") || "—"} · {t("撤回")}{" "}
-                  {d.removed.join(", ") || "—"}
-                </Alert>
-              ))}
-              <Button variant="contained" disabled={saving} onClick={save}>
-                {t("确认保存")}
+              <Button
+                variant="outlined"
+                disabled={saving || !diff.length}
+                onClick={() => setReview(true)}
+              >
+                {t("预览权限变更")}
               </Button>
-            </>
-          )}
+            </Stack>
+            {review && (
+              <Stack spacing={1.5} sx={{ alignItems: "flex-start" }}>
+                <Typography>{t("确认以下新增和撤回：")}</Typography>
+                {diff.map((d) => (
+                  <Alert key={d.id} severity="warning" sx={{ width: "100%" }}>
+                    {labels[d.id] || d.id} · {t("新增")}{" "}
+                    {d.added.join(", ") || "—"} · {t("撤回")}{" "}
+                    {d.removed.join(", ") || "—"}
+                  </Alert>
+                ))}
+                <Button variant="contained" disabled={saving} onClick={save}>
+                  {t("确认保存")}
+                </Button>
+              </Stack>
+            )}
+          </Stack>
         </Panel>
       )}
     </>

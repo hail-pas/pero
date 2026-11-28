@@ -175,6 +175,16 @@ const MuiInputLabel: Components<Theme>["MuiInputLabel"] = {
   },
 };
 
+const MuiSelect: Components<Theme>["MuiSelect"] = {
+  styleOverrides: {
+    select: {
+      minWidth: 0,
+      whiteSpace: "normal",
+      overflowWrap: "anywhere",
+    },
+  },
+};
+
 const MuiFormHelperText: Components<Theme>["MuiFormHelperText"] = {
   styleOverrides: {
     root: ({ theme }) => ({
@@ -240,6 +250,10 @@ const MuiMenuItem: Components<Theme>["MuiMenuItem"] = {
       borderRadius: Number(theme.shape.borderRadius),
       minHeight: 38,
       marginInline: theme.spacing(0.5),
+      '&[role="option"]': {
+        whiteSpace: "normal",
+        overflowWrap: "anywhere",
+      },
       "&.Mui-selected": {
         fontWeight: theme.typography.fontWeightSemiBold,
       },
@@ -489,6 +503,7 @@ export const components = {
   MuiMenu,
   MuiPaper,
   MuiRadio,
+  MuiSelect,
   MuiAlert,
   MuiButton,
   MuiDialog,

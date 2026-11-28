@@ -80,7 +80,7 @@ export function Home({ data }: { data: ViewDataMap["HomeView"] }) {
             "&::before": {
               content: '""',
               position: "absolute",
-              inset: { xs: "-10% -20%", md: "-20% -10% -10% -30%" },
+              inset: { xs: "-10% 0", md: "-20% 0 -10% -30%" },
               background:
                 "radial-gradient(60% 60% at 40% 40%, rgba(24,119,242,.08), transparent 70%)",
               pointerEvents: "none",

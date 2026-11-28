@@ -90,10 +90,17 @@ export function Tenants({
           </Stack>
         </Panel>}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 2 }}>
-          <TextField size="small" label={t("搜索组织（回车）")} defaultValue={data.tenants.q}
-            key={data.tenants.q} onKeyDown={e => {
-              if (e.key === "Enter") setQuery("q", (e.target as HTMLInputElement).value);
-            }} />
+          <TextField
+            size="small"
+            label={t("搜索组织（回车）")}
+            defaultValue={data.tenants.q}
+            key={data.tenants.q}
+            onKeyDown={(e) => {
+              if (e.key === "Enter")
+                setQuery("q", (e.target as HTMLInputElement).value);
+            }}
+            sx={{ width: { xs: "100%", sm: 240 } }}
+          />
           <TextField select size="small" label={t("状态")} value={data.tenants.status}
             onChange={e => setQuery("status",e.target.value)} sx={{ minWidth: 140 }}>
             <MenuItem value="">{t("全部")}</MenuItem>
@@ -243,6 +250,7 @@ export function Tenants({
                       type="submit"
                       name="tenant_id"
                       value={option.id}
+                      sx={{ overflowWrap: "anywhere" }}
                     >
                       {option.name} · {option.kind === "personal" ? t("个人") : t("组织")}
                     </Button>
